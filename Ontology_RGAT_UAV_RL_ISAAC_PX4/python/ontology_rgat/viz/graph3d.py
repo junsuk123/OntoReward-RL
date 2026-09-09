@@ -97,6 +97,27 @@ def layout_3d(src: Sequence[int], dst: Sequence[int], n_nodes: int,
     return pos
 
 
+_GEOMETRY: dict[Any, tuple[np.ndarray, np.ndarray]] = {}
+
+
+def _geometry(src, dst, n_nodes: int, goal_node: int) -> tuple[np.ndarray, np.ndarray]:
+    """Positions and depths for a topology, computed once.
+
+    The schema is fixed for a whole run and this is called from inside the
+    50 Hz control loop's monitor, so re-deriving the same layout every few
+    steps would be pure waste. Keyed on the edge list, so a schema change still
+    produces a new layout rather than a stale one.
+    """
+    key = (int(n_nodes), int(goal_node),
+           np.asarray(src, dtype=np.int64).tobytes(),
+           np.asarray(dst, dtype=np.int64).tobytes())
+    cached = _GEOMETRY.get(key)
+    if cached is None:
+        cached = _GEOMETRY[key] = (layout_3d(src, dst, n_nodes, goal_node),
+                                   layer_of(src, dst, n_nodes))
+    return cached
+
+
 def _role(index: int, goal_node: int) -> str:
     if index == goal_node:
         return "goal"
@@ -134,15 +155,14 @@ def graph_payload(graph, values: Sequence[float] | None = None, *,
             print(f"WARNING: attention read-out failed for the 3D graph: {exc}")
             alpha = None
 
-    pos = layout_3d(src, dst, n_nodes, graph.goal_node)
+    pos, layers = _geometry(src, dst, n_nodes, int(graph.goal_node))
     nodes = [{
         "name": str(name),
         "value": float(values[i]) if i < values.size else 0.0,
         "pos": [round(float(c), 4) for c in pos[i]],
         "layer": int(layer),
         "role": _role(i, int(graph.goal_node)),
-    } for i, (name, layer) in enumerate(zip(graph.node_names,
-                                            layer_of(src, dst, n_nodes)))]
+    } for i, (name, layer) in enumerate(zip(graph.node_names, layers))]
 
     edges = []
     for e in range(src.size):

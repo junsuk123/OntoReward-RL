@@ -149,6 +149,15 @@ when a graphical ROS 2 session is available, RViz 2. Training progress is
 also exported to `results/live/*.csv` and `results/live/*.png`; the dashboard
 is served at `http://127.0.0.1:8770/`.
 
+The dashboard's first panel is a rotatable 3D view of the ontology graph the
+R-GAT is learning over: nodes placed by their distance from the raw semantic
+channels to `SafeLanding`, sized and coloured by their current activation, and
+edges weighted by the second layer's attention. It follows the R-GAT through
+training epoch by epoch and then follows the live episode step by step, so the
+relations the potential leans on -- markers against GNSS as the pad leaves the
+frame, for one -- can be read off while the run is still going. Attention is
+learned importance, not causal proof.
+
 Each episode starts in the air. Isaac draws the entry pose from the same
 distribution as the original simulator but does **not** teleport the vehicle:
 PX4 flies there under its own position controller, and the policy takes over

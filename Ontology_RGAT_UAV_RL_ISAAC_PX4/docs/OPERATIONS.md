@@ -356,6 +356,14 @@ episodes or epochs. While the run is up, the dashboard at
 `http://127.0.0.1:8770/` and RViz 2 (`./scripts/run_rviz.sh`) show the same data
 live.
 
+The dashboard's 3D ontology panel is published on the same throttle,
+`cfg.viz.graph3d.every` control steps during an episode and epochs during R-GAT
+training (`cfg.viz.graph3d.enabled: false` turns it off). Its snapshot travels
+in the `/api/state` payload alongside the series, so it needs no extra port and
+survives the SSH forward the rest of the dashboard uses. Before stage 3 finishes
+there is no trained model to ask, and the panel says so: it draws the schema
+with uniform edges and labels itself *schema only*.
+
 ## Reproducibility
 
 Archive `config/system.yaml`, PX4 ULog, gateway JSONL log, Isaac version, Pegasus

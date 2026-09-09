@@ -52,6 +52,12 @@ map. Four things are worth stating as design decisions rather than transcription
 - **The views are ROS 2 and Python.** RViz 2 for the live 3D view, an Isaac
   in-window overlay, a self-contained web dashboard for unattended progress, and
   matplotlib for the publication figures. See `python/ontology_rgat/viz/`.
+- **The ontology is drawn twice, on purpose.** RViz's overlay hangs the graph
+  beside the vehicle from a hand-written flat layout that stays readable from
+  one viewpoint; `viz/graph3d.py` computes a depth-and-ring layout from the edge
+  list for the dashboard's rotatable view, which nothing else in the frame has
+  to share space with. A schema that gains a node changes the second
+  automatically and the first by hand.
 
 ### The city
 

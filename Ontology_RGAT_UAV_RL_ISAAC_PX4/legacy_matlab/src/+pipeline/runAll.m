@@ -34,9 +34,12 @@ fprintf('\n=== 5) PPO ontology-RGAT PBRS on PX4 ===\n');
 save(fullfile(cfg.paths.models,'ppo_rgats_pbrs_external.mat'), ...
     'proposedAgent','proposedHistory','cfg','rgatModel');
 
-fprintf('\n=== 6) Paired external evaluation ===\n');
+fprintf('\n=== 6) Paired external evaluation (moving pad + energy) ===\n');
 results = evaluation.comparePolicies(baselineAgent,proposedAgent,rgatModel,cfg);
 results.windSweep = evaluation.windSweep(baselineAgent,proposedAgent,rgatModel,cfg);
+results.padSweep = evaluation.padSweep(baselineAgent,proposedAgent,rgatModel,cfg);
+results.batteryBins = evaluation.batterySweep( ...
+    baselineAgent,proposedAgent,rgatModel,cfg);
 save(fullfile(cfg.paths.results,'comparison_results_external.mat'),'results','cfg');
 writetable(results.summary,fullfile(cfg.paths.results,'summary_metrics_external.csv'));
 writetable(results.perEpisode,fullfile(cfg.paths.results,'episode_metrics_external.csv'));

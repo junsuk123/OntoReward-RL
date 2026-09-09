@@ -13,44 +13,56 @@ grid on; ylim([0 1]); xlabel('Episode'); ylabel('Moving success rate');
 legend('Manual','Ontology-RGAT','Location','best');
 exportgraphics(f,fullfile(figdir,'training_curves.png'),'Resolution',180);
 
-f=figure('Name','Evaluation summary'); tiledlayout(2,2);
+f=figure('Name','Evaluation summary'); tiledlayout(2,3);
 nexttile; bar(100*R.summary.SuccessRate); set(gca,'XTickLabel',R.summary.Policy);
 ylabel('Success [%]'); ylim([0 100]); grid on; title('Landing success');
 nexttile; bar(R.summary.MeanTouchdownXY); set(gca,'XTickLabel',R.summary.Policy);
 ylabel('m'); grid on; title('Touchdown XY error');
+nexttile; bar(R.summary.MeanTouchdownRelSpeedXY); set(gca,'XTickLabel',R.summary.Policy);
+ylabel('m/s'); grid on; title('Relative touchdown speed');
 nexttile; bar(R.summary.MeanMaxTiltDeg); set(gca,'XTickLabel',R.summary.Policy);
 ylabel('deg'); grid on; title('Maximum tilt');
 nexttile; bar(R.summary.MeanMaxAeroForce); set(gca,'XTickLabel',R.summary.Policy);
 ylabel('N'); grid on; title('Peak Isaac aerodynamic force');
+nexttile; yyaxis left; bar(R.summary.MeanEnergyJ); ylabel('Energy [J]');
+yyaxis right; plot(1:height(R.summary),100*R.summary.DepletedRate,'ko-', ...
+    'LineWidth',1.2); ylabel('Depleted [%]'); ylim([0 100]);
+set(gca,'XTick',1:height(R.summary),'XTickLabel',R.summary.Policy);
+grid on; title('Episode energy and depletion');
 exportgraphics(f,fullfile(figdir,'evaluation_summary.png'),'Resolution',180);
 
 Lb=R.baseline.representative; Lp=R.proposed.representative;
 f=figure('Name','Representative 3D trajectories');
 plot3(Lb.x(1,:),Lb.x(2,:),Lb.x(3,:),'LineWidth',1.4); hold on;
 plot3(Lp.x(1,:),Lp.x(2,:),Lp.x(3,:),'LineWidth',1.4);
-plot3(0,0,cfg.sim.groundZ,'o','MarkerSize',8); grid on; axis equal;
+plot3(0,0,0,'o','MarkerSize',8); grid on; axis equal;
 xlabel('East x [m]'); ylabel('North y [m]'); zlabel('Up z [m]');
 legend('Manual','Ontology-RGAT','Pad','Location','best');
-title('Representative Isaac/PX4 landing trajectories');
+title('Representative trajectories in translated pad-ENU');
 exportgraphics(f,fullfile(figdir,'representative_trajectory_3d.png'),'Resolution',180);
 
-f=figure('Name','Representative disturbance response'); tiledlayout(3,1);
+f=figure('Name','Representative disturbance response'); tiledlayout(5,1);
 nexttile; plot(Lp.t,Lp.wind','LineWidth',1.0); grid on; ylabel('Wind [m/s]');
 legend('East','North','Up'); title('Isaac wind field');
 nexttile; plot(Lp.t,Lp.aeroF,'LineWidth',1.2); grid on;
 ylabel('|F_a| [N]'); title('Isaac aerodynamic resultant');
 nexttile; plot(Lp.t,rad2deg(Lp.tilt),'LineWidth',1.2); grid on;
-ylabel('Tilt [deg]'); xlabel('Time [s]'); title('PX4 attitude response');
+ylabel('Tilt [deg]'); title('PX4 attitude response');
+nexttile; plot(Lp.t,Lp.padSpeed,'LineWidth',1.2); hold on;
+plot(Lp.t,Lp.closingSpeed,'LineWidth',1.2); grid on;
+ylabel('m/s'); legend('Deck','Relative UAV','Location','best');
+title('Moving-target velocity');
+nexttile; yyaxis left; plot(Lp.t,Lp.hoverSecondsLeft,'LineWidth',1.2);
+ylabel('Hover seconds'); yyaxis right;
+plot(Lp.t,Lp.batteryPowerW,'LineWidth',1.2); ylabel('Power [W]');
+grid on; xlabel('Time [s]'); title('Onboard energy budget');
 exportgraphics(f,fullfile(figdir,'proposed_disturbance_response.png'),'Resolution',180);
 
 relAcc=zeros(1,cfg.ontology.nRelations); nRelSamples=0;
 for k=1:size(Lp.graphX,3)
     if mod(k,5)~=1, continue; end
-    g=semantic.buildOntologyGraph(struct('positionError',0,'verticalSpeed',0, ...
-        'tilt',0,'angularRate',0,'windRisk',0,'markerQuality',0, ...
-        'visualStability',0,'alignment',0,'attitudeStability',0, ...
-        'touchdownSafety',0),cfg);
-    g.X=Lp.graphX(:,:,k); e=rgat.explain(R.proposedModel,g);
+    g=Lp.graphTemplate; g.X=Lp.graphX(:,:,k);
+    e=rgat.explain(R.proposedModel,g);
     relAcc=relAcc+e.relationMean; nRelSamples=nRelSamples+1;
 end
 if nRelSamples>0
@@ -80,5 +92,41 @@ if isfield(R,'windSweep') && ~isempty(R.windSweep)
     grid on; ylim([0 100]); xlabel('Isaac wind intensity scale'); ylabel('Success [%]');
     legend(cellstr(labels),'Location','best'); title('External disturbance generalization');
     exportgraphics(f,fullfile(figdir,'wind_generalization_success.png'),'Resolution',180);
+end
+
+if isfield(R,'padSweep') && ~isempty(R.padSweep)
+    f=figure('Name','Moving-pad generalization'); tiledlayout(2,1);
+    labels=unique(R.padSweep.Policy,'stable');
+    nexttile; hold on;
+    for j=1:numel(labels)
+        ix=R.padSweep.Policy==labels(j);
+        plot(R.padSweep.MeanPadSpeed(ix),100*R.padSweep.SuccessRate(ix), ...
+            '-o','LineWidth',1.3);
+    end
+    grid on; ylim([0 100]); ylabel('Success [%]');
+    legend(cellstr(labels),'Location','best'); title('Success versus measured deck speed');
+    nexttile; hold on;
+    for j=1:numel(labels)
+        ix=R.padSweep.Policy==labels(j);
+        plot(R.padSweep.MeanPadSpeed(ix),R.padSweep.MeanRelSpeedXY(ix), ...
+            '-o','LineWidth',1.3);
+    end
+    yline(cfg.criteria.relSpeedXY,'--','Success limit'); grid on;
+    xlabel('Mean deck speed [m/s]'); ylabel('Relative touchdown speed [m/s]');
+    exportgraphics(f,fullfile(figdir,'pad_speed_generalization.png'),'Resolution',180);
+end
+
+if isfield(R,'batteryBins') && ~isempty(R.batteryBins)
+    f=figure('Name','Battery-reserve outcomes'); hold on;
+    labels=unique(R.batteryBins.Policy,'stable');
+    centres=0.5*(R.batteryBins.ReserveLowS+R.batteryBins.ReserveHighS);
+    for j=1:numel(labels)
+        ix=R.batteryBins.Policy==labels(j);
+        plot(centres(ix),100*R.batteryBins.SuccessRate(ix),'-o','LineWidth',1.3);
+    end
+    grid on; ylim([0 100]); xlabel('Starting reserve [hover s]');
+    ylabel('Success [%]'); legend(cellstr(labels),'Location','best');
+    title('Landing success versus onboard energy reserve');
+    exportgraphics(f,fullfile(figdir,'battery_reserve_success.png'),'Resolution',180);
 end
 end

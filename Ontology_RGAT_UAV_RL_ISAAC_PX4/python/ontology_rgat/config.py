@@ -1,0 +1,424 @@
+"""Experiment configuration.
+
+Port of the retired ``config/defaultConfig.m`` plus ``defaultExternalConfig.m``.
+The two files were split because the original workspace was read-only; here
+there is one function and the external terms are simply part of it.
+
+Everything the in-process MATLAB rigid-body simulator owned is gone: rotor and
+motor models, the analytic wind field, the panel aerodynamics and the synthetic
+sensor noise. Isaac and PX4 own all four, so keeping a second set of numbers
+here would only invite them to disagree. What survives is what the *learning*
+side needs: the semantic feature scalings, the landing criteria, the ontology
+schema, and the R-GAT/PPO hyperparameters.
+
+``config/system.yaml`` remains the authority for anything the simulator or the
+gateway acts on. The two overlap in exactly three places -- the collective
+mapping, the relative-speed success criterion and the protocol -- and each
+overlap is checked at run time rather than trusted (see ``bridge.PX4Bridge``).
+"""
+from __future__ import annotations
+
+import copy
+import math
+from pathlib import Path
+from typing import Any, Iterator
+
+__all__ = ["Config", "default_config", "WORKSPACE_ROOT"]
+
+WORKSPACE_ROOT = Path(__file__).resolve().parents[2]
+
+
+class Config(dict):
+    """A nested dict with attribute access, so ``cfg.rgat.lr`` reads naturally.
+
+    MATLAB structs are value types: ``c = cfg; c.external.padScale = s`` left
+    the caller's ``cfg`` untouched. Python dicts are not, so the sweeps use
+    :meth:`derive` where the MATLAB code relied on copy-on-assign.
+    """
+
+    def __getattr__(self, name: str) -> Any:
+        try:
+            return self[name]
+        except KeyError as exc:
+            raise AttributeError(name) from exc
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        self[name] = _wrap(value)
+
+    def __delattr__(self, name: str) -> None:
+        del self[name]
+
+    def __setitem__(self, key: str, value: Any) -> None:
+        super().__setitem__(key, _wrap(value))
+
+    def derive(self, **overrides: Any) -> "Config":
+        """Deep copy with dotted-path overrides: ``cfg.derive(**{'external.pad_scale': 2.0})``."""
+        out = copy.deepcopy(self)
+        for path, value in overrides.items():
+            node = out
+            parts = path.split(".")
+            for part in parts[:-1]:
+                node = node[part]
+            node[parts[-1]] = value
+        return out
+
+    def flatten(self, prefix: str = "") -> Iterator[tuple[str, Any]]:
+        for key, value in self.items():
+            path = f"{prefix}{key}"
+            if isinstance(value, Config):
+                yield from value.flatten(path + ".")
+            else:
+                yield path, value
+
+
+def _wrap(value: Any) -> Any:
+    if isinstance(value, Config):
+        return value
+    if isinstance(value, dict):
+        return Config({k: _wrap(v) for k, v in value.items()})
+    if isinstance(value, list):
+        return [_wrap(v) for v in value]
+    return value
+
+
+def default_config(mode: str = "quick", target: str = "sitl") -> Config:
+    """Full configuration for one experiment.
+
+    ``mode`` is ``'quick'`` (smoke and iteration) or ``'full'`` (the paper-scale
+    sweep). ``target`` is ``'sitl'`` or ``'hardware'``.
+    """
+    mode = mode.lower()
+    target = target.lower()
+    if mode not in {"quick", "full"}:
+        raise ValueError(f"mode must be 'quick' or 'full', got {mode!r}")
+    if target not in {"sitl", "hardware"}:
+        raise ValueError(f"target must be 'sitl' or 'hardware', got {target!r}")
+
+    cfg = Config()
+    cfg.mode = mode
+    cfg.seed = 42
+
+    # ---------------------------------------------------------------- episode
+    cfg.sim = {
+        "dt": 0.02,                 # s, the 50 Hz control period
+        # A lorry at urban speed covers a hundred metres in an episode, and the
+        # vehicle has to match its velocity before it can afford to descend.
+        "max_time": 20.0,           # s
+        "g": 9.80665,
+        "world_xy_limit": 30.0,     # m, pad-relative: losing the lorry ends it
+        "max_altitude": 18.0,       # m, above the lorry's roof
+        "crash_tilt": math.radians(75.0),
+        "ground_z": 0.06,           # m above the deck, pad-relative
+        "monitor_every": 5,         # control steps between real-time viz updates
+    }
+    cfg.sim.max_steps = int(round(cfg.sim.max_time / cfg.sim.dt))
+
+    # Only the two terms the semantic features price thrust with survive from
+    # the retired airframe model; Isaac flies the vehicle.
+    cfg.drone = {"mass": 1.477, "max_total_thrust": 30.0}
+
+    # ------------------------------------------------- semantic feature scales
+    cfg.semantic = {
+        "wind_accel_thr": 4.0,                  # m/s^2
+        "wind_dir_thr": math.radians(50.0),
+        "wind_risk_w": [2.0, 1.4, 1.0],
+        "wind_risk_b": -1.4,
+        "align_scale": 0.75,
+        "att_tilt_scale": math.radians(22.0),
+        "att_rate_scale": math.radians(80.0),
+        "vz_safe_scale": 0.65,
+        # The deck speed at which chasing the target dominates the landing.
+        # Urban traffic, so this is a lorry moving with the flow rather than a
+        # rover creeping across a laboratory floor.
+        "pad_speed_scale": 6.0,                 # m/s
+        # Energy margin normalisation, in units of the episode horizon.
+        "energy_scale": 1.0,
+        # The horizontal position uncertainty at which the fix has stopped
+        # being a usable input for a landing. A canyon fix runs 5-25 m; a good
+        # open-sky one is under 2 m.
+        "gnss_sigma_scale": 12.0,               # m
+    }
+
+    # ---------------------------------------------- landing success criteria
+    # Evaluation ground truth, never training reward weights. ``rel_speed_xy``
+    # matches ``landing.success_rel_speed_xy_m_s`` in config/system.yaml.
+    cfg.criteria = {
+        "xy": 0.35,                       # m, on the roof of a box lorry
+        "vz": 0.55,                       # m/s at contact
+        "tilt": math.radians(10.0),
+        "rate": math.radians(45.0),
+        "rel_speed_xy": 0.45,             # m/s relative to the moving deck
+    }
+
+    # ------------------------------------------------------- policy interface
+    cfg.rl = {
+        # pad-relative pose/velocity, attitude, rates, three semantic channels,
+        # deck velocity feed-forward, deck motion, reserve and energy margin,
+        # and the receiver's own account of itself.
+        "obs_dim": 23,
+        "act_dim": 4,                     # collective, roll, pitch, yaw rate
+        "max_roll_pitch": math.radians(28.0),
+        "max_yaw_rate": math.radians(90.0),
+        "collective_span": 0.85,          # hover*(1 + span*a)
+    }
+
+    # ------------------------------------------------------------- rewards
+    cfg.reward = {
+        "manual": {
+            "w_pos": 1.3, "w_vel": 0.35, "w_tilt": 0.65, "w_rate": 0.10,
+            "w_wind": 0.45, "w_act": 0.025,
+            # Hand-tuned weights for the three external factors. The point of
+            # the baseline is that these are arbitrary; the proposed arm has to
+            # derive the same trade-offs from the ontology instead. w_nav
+            # prices flying on a pose nothing can vouch for -- which the policy
+            # can act on, by keeping the markers in frame when the fix is bad.
+            "w_pad_track": 0.55, "w_energy": 0.40, "w_nav": 0.35,
+            "success": 20.0, "failure": -20.0, "timeout": -20.0,
+            "battery_depleted": -20.0,
+            "time": 0.25,                 # per-second pressure; hovering is not free
+            "viol_span": 2.0,             # criteria-ratio span the crash penalty grades over
+            "failure_floor": 0.25,        # fraction of the crash penalty a near miss costs
+        },
+        "sparse": {
+            "success": 10.0, "failure": -10.0, "time": -0.15,
+            "timeout": -10.0, "battery_depleted": -10.0,
+        },
+        "pbrs": {
+            "lambda": 2.0,
+            # Must equal ppo.gamma, or the shaping is no longer policy-invariant.
+            "gamma": 0.999,
+        },
+    }
+
+    # -------------------------------------------------------- ontology schema
+    # PadMotion (11), BatteryReserve (12) and GnssIntegrity (13) are the three
+    # nodes the external environment introduces, so SafeLanding is node 14. A
+    # model trained against a shorter schema is not loadable: the dimension
+    # check in semantic.build_ontology_graph refuses it rather than quietly
+    # attending over the wrong nodes.
+    cfg.ontology = {
+        "node_names": [
+            "PositionError", "VerticalSpeed", "TiltAngle", "AngularRate",
+            "WindRisk", "MarkerQuality", "VisualStability", "Alignment",
+            "AttitudeStability", "TouchdownSafety", "PadMotion",
+            "BatteryReserve", "GnssIntegrity", "SafeLanding",
+        ],
+        "relation_names": ["degrades", "supports", "contributes", "self"],
+    }
+    cfg.ontology.n_nodes = len(cfg.ontology.node_names)
+    cfg.ontology.n_relations = len(cfg.ontology.relation_names)
+    cfg.ontology.in_dim = 4 + cfg.ontology.n_nodes
+
+    # ------------------------------------------------------------------ R-GAT
+    # The layer follows Busbridge et al. 2019 ("Relational Graph Attention
+    # Networks", https://openreview.net/forum?id=Bklzkh0qFm) as implemented by
+    # babylonhealth/rgat. The defaults below are the exact configuration the
+    # retired MATLAB layer implemented, so numbers stay comparable across the
+    # port; the remaining knobs are the parts of that paper the MATLAB code
+    # never had. See python/ontology_rgat/rgat/layers.py.
+    cfg.rgat = {
+        "hidden_dim": 24,
+        "rel_dim": 6,                     # relation-embedding width in the logits
+        "lr": 2e-3,
+        "batch_size": 32,
+        "sample_stride": 3,
+        # Behaviour-policy perturbation is sampled log-uniformly: the expert
+        # success boundary sits near sigma=0.05, so a uniform sweep to 0.65
+        # would label ~96% of the dataset negative.
+        "noise_range": [0.02, 0.65],
+        "val_fraction": 0.2,
+        "output_l2": 1e-4,                # weak regularisation on the potential
+        # --- Busbridge et al. options -------------------------------------
+        "heads": 1,
+        "head_aggregation": "mean",       # mean | sum | concat | projection
+        "attention_mode": "argat",        # argat | wirgat
+        "attention_style": "sum",         # sum (GAT additive) | dot (transformer)
+        "attention_units": 1,             # must be 1 for 'sum' style
+        "attn_leaky_relu_slope": 0.2,
+        "kernel_basis_size": None,        # W_r = sum_i c_{i,r} W'_i; None disables
+        "attn_kernel_basis_size": None,
+        "feature_dropout": 0.0,
+        "support_dropout": 0.0,
+        "residual": True,                 # second layer is H2 = tanh(layer(H1) + H1)
+        "softmax_floor": 1e-9,            # the MATLAB layer's denominator floor
+        "stable_softmax": False,          # True subtracts the per-node max first
+    }
+
+    # -------------------------------------------------------------------- PPO
+    cfg.ppo = {
+        "hidden": 64,
+        "gamma": 0.999,                   # horizon >> max_steps, so terminals are visible
+        "lambda_gae": 0.95,
+        "clip": 0.20,
+        "entropy_coef": 0.003,
+        "value_coef": 0.5,
+        "actor_lr": 2e-4,
+        "critic_lr": 7e-4,
+        "epochs": 5,
+        "minibatch": 64,
+        "rollout_steps": 2048,            # batch many episodes before each update
+        "init_log_std": -0.55,
+        "log_std_bounds": [-3.0, 0.5],
+        "grad_clip": 5.0,
+        "mu_scale": 1.5,                  # mu = mu_scale*tanh(...) before squashing
+    }
+
+    # ----------------------------------------------------------------- device
+    # Measured, not assumed: python/ontology_rgat/rgat/benchmark.py re-measures
+    # the crossover on the active machine. The graph has 14 nodes and a 24-wide
+    # hidden layer, so a small batch is kernel-launch bound rather than FLOP
+    # bound and the GPU can still lose. 'auto' therefore declines below
+    # ``min_batch_for_gpu`` instead of quietly rebatching -- raising the batch
+    # size changes how many Adam steps the potential sees, which is a
+    # hyperparameter decision and not a free speedup.
+    #
+    # On this RTX 4060 laptop, per forward+backward pass (40 repetitions):
+    #
+    #     batch      CPU        GPU      speedup
+    #        32     4.3 ms     4.8 ms      0.9x
+    #        64     7.4 ms     5.0 ms      1.5x
+    #       128    32.7 ms     4.9 ms      6.6x
+    #      1024    88.8 ms     6.6 ms     13.4x
+    #      4096   193.9 ms     9.5 ms     20.4x
+    #
+    # Batch 32 is a tie that varies between runs, 64 is the first clear gain.
+    # The retired MATLAB layer needed batch 1024 before the GPU paid for
+    # itself, because every relation was a separate traced dlarray operation.
+    cfg.device = {
+        "rgat": "auto",                   # auto | cuda | cpu
+        "min_batch_for_gpu": 64,
+        "rgat_precision": "float32",      # float32 | float64 | bfloat16 (autocast)
+        "allow_tf32": True,
+        "compile": False,                 # torch.compile the potential
+        # PPO's networks are 64 wide and one 2048-step update costs ~2 s on the
+        # CPU against ~41 s of real-time flight collection, so the GPU cannot
+        # shorten this pipeline. Override only to measure it.
+        "ppo": "cpu",
+    }
+
+    # ----------------------------------------------------------- evaluation
+    cfg.eval = {
+        "seed0": 5000,
+        "wind_scales": [0.5, 1.0, 1.5, 2.0],
+        # 0.0 is the parked-lorry control condition, i.e. the original
+        # experiment. 1.5 puts the lorry at up to 12 m/s, which is already
+        # faster than PX4's position controller holds the entry pose behind.
+        "pad_scales": [0.0, 0.5, 1.0, 1.5],
+        # 0.0 is open sky in the same city: the buildings still stand and still
+        # block the camera's view, but no satellite is lost or reflected. That
+        # is what isolates the GNSS effect from the geometry.
+        "gnss_scales": [0.0, 0.5, 1.0, 1.5, 2.0],
+        "battery_bins_s": [0.0, 10.0, 20.0, 30.0, 50.0],
+    }
+
+    # ------------------------------------------------------- visualization
+    # Every panel the retired MATLAB monitors drew now has a Python owner:
+    # RViz 2 for the 3D/real-time view, the web dashboard for unattended
+    # progress, matplotlib for the publication figures. See viz/.
+    cfg.viz = {
+        "training": True,                 # live training telemetry at all
+        "realtime": True,                 # per-step episode telemetry
+        "live_every": 5,                  # episodes/epochs between snapshot exports
+        "live_export": True,              # PNG + CSV under results/live
+        "rviz": {
+            "enabled": True,              # publish RViz 2 topics when rclpy is present
+            "namespace": "/landing_rl",
+            "world_frame": "map",
+            "pad_frame": "landing_pad",
+            "body_frame": "uav_body",
+            "trail_length": 900,
+            "publish_ontology_graph": True,
+            "graph_origin_pad_m": [0.0, -2.6, 1.6],
+            "graph_scale_m": 0.42,
+        },
+        "dashboard": {
+            "enabled": True,
+            "host": "127.0.0.1",
+            "port": 8770,
+            "history": 4000,              # points retained per live series
+        },
+        # The dashboard's 3D view of the ontology with the R-GAT's attention
+        # on its edges. One snapshot is ~40 edges, so the cost is the attention
+        # read-out itself, which is why it is throttled rather than per step.
+        "graph3d": {
+            "enabled": True,
+            "every": 5,                   # control steps/epochs between snapshots
+        },
+        "isaac_overlay": True,            # 3D debug draw inside the Isaac window
+    }
+
+    # ------------------------------------------------------- external factors
+    cfg.pad = {"enabled": True}
+    cfg.gnss = {"enabled": True}
+    cfg.battery = {
+        "enabled": True,
+        # Descent rate the margin calculation prices "can I still land from
+        # here" with, deliberately conservative next to the expert's profile.
+        "plan_descent_rate": 0.55,        # m/s
+    }
+
+    # ------------------------------------------------------- external stack
+    cfg.external = {
+        "enabled": True,
+        "target": target,
+        "protocol_version": 1,
+        "gateway_host": "127.0.0.1",
+        "gateway_port": 14650,
+        "local_host": "127.0.0.1",
+        "local_port": 14651,
+        "timeout": 2.0,
+        "estimator_warmup": 5.0,
+        "auto_arm": target == "sitl",
+        "prestream_count": 24,
+        "control_hz": 50.0,
+        "reset_settle": 0.15,
+        "outcome_settle_timeout": 20.0,
+        # PX4 flies the seeded entry pose before the policy takes over. With a
+        # moving deck that pose is an offset in the pad frame and the gateway
+        # re-aims it at the live deck, so these tolerances are on the
+        # pad-relative state and never on a world point. They are looser than
+        # the fixed-pad experiment's because PX4's position controller lags a
+        # setpoint that is itself driving at 8 m/s, and the entry pose is a
+        # starting condition rather than a landing.
+        "entry_frame": "pad",
+        "entry_tolerance": 0.90,          # m
+        "entry_speed_tolerance": 0.60,    # m/s, pad-relative
+        "entry_settle": 0.5,              # s held inside tolerance
+        "entry_timeout": 90.0,            # s; must outlast PX4's post-boot arm refusal
+        "arm_retry": 2.0,                 # s between arm attempts during the climb
+        # PX4 SITL stops accepting arm commands after hours of lockstep; a
+        # pipeline that owns the simulator cycles it rather than losing the run.
+        "reset_recoveries": 2,
+        "wind_scale": 1.0,
+        "pad_scale": 1.0,
+        "gnss_scale": 1.0,
+    }
+
+    # ------------------------------------------------------------------ sizes
+    if mode == "quick":
+        cfg.rgat.data_episodes = 24
+        cfg.rgat.epochs = 10
+        cfg.ppo.train_episodes = 150
+        cfg.eval.episodes = 12
+        cfg.eval.sweep_episodes = 6
+    else:
+        cfg.rgat.data_episodes = 400
+        cfg.rgat.epochs = 80
+        cfg.ppo.train_episodes = 3000
+        cfg.eval.episodes = 200
+        cfg.eval.sweep_episodes = 50
+
+    # ------------------------------------------------------------------ paths
+    root = WORKSPACE_ROOT
+    cfg.paths = {
+        "root": str(root),
+        "system_yaml": str(root / "config" / "system.yaml"),
+        "results": str(root / "results"),
+        "models": str(root / "results" / "models"),
+        "figures": str(root / "results" / "figures"),
+        "data": str(root / "results" / "data"),
+        "live": str(root / "results" / "live"),
+    }
+    for key in ("results", "models", "figures", "data", "live"):
+        Path(cfg.paths[key]).mkdir(parents=True, exist_ok=True)
+    return cfg

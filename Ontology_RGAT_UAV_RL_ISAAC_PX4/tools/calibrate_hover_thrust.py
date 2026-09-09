@@ -51,11 +51,25 @@ class Client:
 
 
 def climb_to_entry(client, seed: int, timeout_s: float):
-    ack = client.send("reset", seed=seed, wind_scale=0.0)
+    """Fly to the seeded entry pose and hold it.
+
+    The deck is held still (pad_scale=0) and the wind switched off: this
+    measures what it costs to hover, so anything the vehicle has to chase would
+    only add thrust that is not hover thrust.
+    """
+    ack = client.send("reset", seed=seed, wind_scale=0.0, pad_scale=0.0)
     if not ack or "detail" not in ack or not ack["detail"]:
         raise SystemExit("no reset acknowledgement; is Isaac running?")
-    entry = ack["detail"]["entry_position_enu_m"]
-    client.send("goto", position=entry, yaw=0.0, hold_s=timeout_s)
+    detail = ack["detail"]
+    if "entry_offset_pad_m" not in detail:
+        raise SystemExit(
+            "reset acknowledgement carries no entry_offset_pad_m; restart Isaac "
+            "with the current landing_world.py"
+        )
+    # An offset in the pad frame, which is also the frame the state comes back
+    # in, so the convergence test below compares like with like.
+    entry = detail["entry_offset_pad_m"]
+    client.send("goto", position=entry, yaw=0.0, hold_s=timeout_s, frame="pad")
     deadline = time.monotonic() + timeout_s
     last_arm = 0.0
     while time.monotonic() < deadline:

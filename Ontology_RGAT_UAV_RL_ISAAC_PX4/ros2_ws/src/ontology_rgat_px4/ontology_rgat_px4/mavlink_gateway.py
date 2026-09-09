@@ -46,6 +46,16 @@ class MavlinkGateway:
         self.offboard_enabled = cfg.target == "sitl"
         self.last_control = 0.0
         self.q_ned_frd = np.array([1.0, 0.0, 0.0, 0.0])
+        if not cfg.pad_is_static:
+            raise SystemExit(
+                f"config/system.yaml sets pad.motion={cfg.pad_motion!r}, but this link "
+                "carries no deck state and would silently measure every pad-relative "
+                "number against a stationary origin. Use the ROS 2 gateway for a "
+                "moving pad, or set pad.motion: static."
+            )
+        if cfg.battery.enabled:
+            print("MAVLink link reports no energy state; battery fields are marked "
+                  "unavailable and the episode will never end on depletion.")
 
     def run(self) -> None:
         print("Waiting for PX4 MAVLink heartbeat...")
@@ -96,6 +106,9 @@ class MavlinkGateway:
             self._ack(seq, "disarm_requested")
         elif kind == "reset":
             raise PermissionError("MAVLink gateway cannot reset Isaac; use the ROS 2 gateway for SITL episodes")
+        elif kind == "goto":
+            raise PermissionError(
+                "MAVLink gateway flies no autonomous climb; the pilot flies the entry pose")
         elif kind == "enable_offboard":
             self.safety.require_offboard()
             self.last_command_seq = seq
@@ -117,8 +130,13 @@ class MavlinkGateway:
     def _on_mavlink(self, msg) -> None:
         kind = msg.get_type()
         if kind == "LOCAL_POSITION_NED":
+            # No deck feed on this link, so the pad frame is the PX4 local
+            # origin and pad-relative equals world. The constructor refuses to
+            # start against a moving-pad configuration for exactly this reason.
             self.sample.position_enu = tuple(ned_to_enu((msg.x, msg.y, msg.z)))
             self.sample.velocity_enu = tuple(ned_to_enu((msg.vx, msg.vy, msg.vz)))
+            self.sample.position_world_enu = self.sample.position_enu
+            self.sample.velocity_world_enu = self.sample.velocity_enu
             self.sample.timestamp_ns = now_ns()
             self.sample.estimator_valid = True
             if self.pending_state_ack >= 0:

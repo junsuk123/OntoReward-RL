@@ -6,6 +6,8 @@ from typing import Any
 
 import yaml
 
+from .battery import BatteryConfig
+
 
 @dataclass(frozen=True)
 class GatewayConfig:
@@ -30,6 +32,20 @@ class GatewayConfig:
     offboard_prestream_count: int
     estimator_warmup_s: float
     marker_pose_drives_policy: bool
+    pad_motion: str
+    pad_deck_height_m: float
+    world_xy_limit_m: float
+    max_altitude_m: float
+    # How far from the origin the deck's own route can reach. The deck drives a
+    # lap of a city block, so the guard rail on a world-frame setpoint is the
+    # city and not the pad-relative arena.
+    world_radius_m: float
+    gnss_enabled: bool
+    battery: BatteryConfig
+
+    @property
+    def pad_is_static(self) -> bool:
+        return self.pad_motion == "static"
 
     @classmethod
     def from_mapping(cls, data: dict[str, Any], target: str | None = None) -> "GatewayConfig":
@@ -39,6 +55,13 @@ class GatewayConfig:
         network = data["network"]
         px4 = data["px4"]
         vision = data.get("vision", {})
+        pad = data.get("pad", {}) or {}
+        landing = data.get("landing", {}) or {}
+        urban = data.get("urban", {}) or {}
+        gnss = data.get("gnss", {}) or {}
+        block = [float(v) for v in pad.get(
+            "route_size_m", urban.get("block_size_m", (0.0, 0.0)))]
+        route_reach = 0.5 * math.hypot(*block) if len(block) == 2 else 0.0
         resolved_target = target or system["target"]
         if resolved_target not in {"sitl", "hardware"}:
             raise ValueError("target must be 'sitl' or 'hardware'")
@@ -64,6 +87,19 @@ class GatewayConfig:
             offboard_prestream_count=int(px4["offboard_prestream_count"]),
             estimator_warmup_s=float(px4["estimator_warmup_s"]),
             marker_pose_drives_policy=bool(vision.get("pose_source_for_policy", False)),
+            pad_motion=str(pad.get("motion", "static")).lower(),
+            pad_deck_height_m=float(pad.get("deck_height_m", 0.0)),
+            world_xy_limit_m=float(landing.get("world_xy_limit_m", 12.0)),
+            max_altitude_m=float(landing.get("max_altitude_m", 12.0)),
+            # The lap, plus the pad-relative slack the vehicle is allowed on
+            # top of it. Falls back to the pad-relative limit when there is no
+            # city, which is the fixed-pad control condition.
+            world_radius_m=float(landing.get(
+                "world_radius_m",
+                route_reach + float(landing.get("world_xy_limit_m", 12.0))
+                if route_reach > 0.0 else landing.get("world_xy_limit_m", 12.0))),
+            gnss_enabled=bool(gnss.get("enabled", False)),
+            battery=BatteryConfig.from_mapping(data),
         )
 
 

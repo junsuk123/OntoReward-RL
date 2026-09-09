@@ -8,8 +8,12 @@ env2=env; env2.x=x2; env2.t=env.t+elapsedSeconds(env,s,cfg); env2.step=env.step+
 env2.prevSem=cur.sem; env2.lastDiag=d2; env2.externalState=s;
 env2.hasBeenAirborne=env.hasBeenAirborne || ~logical(s.landed);
 next=sim.getCurrent(env2,cfg);
-[done,status,viol]=sim.terminalStatus(x2,cfg,env2.hasBeenAirborne);
-if ~done && env2.hasBeenAirborne && logical(s.landed)
+[done,status,viol]=sim.terminalStatus(x2,cfg,env2.hasBeenAirborne,d2.battery.depleted);
+if ~done && env2.hasBeenAirborne && logical(s.landed) && landDetectorAuthoritative(s)
+    % PX4 decides "landed" from world-frame motion, so a vehicle sitting on a
+    % driving deck still looks airborne to it. Only trust the detector when the
+    % gateway says it can be trusted; otherwise pad-relative altitude in
+    % terminalStatus is the touchdown test.
     done=true;
     if viol<=1, status='success'; else, status='unsafe_touchdown'; end
 end
@@ -26,12 +30,22 @@ switch lower(rewardMode)
 end
 env2.done=done;
 info=struct('status',status,'rewardParts',parts,'diag',d2,'viol',viol, ...
-    'armed',logical(s.armed),'landed',logical(s.landed),'navState',s.nav_state);
+    'armed',logical(s.armed),'landed',logical(s.landed),'navState',s.nav_state, ...
+    'padSpeed',d2.padSpeed,'batteryReserve',d2.battery.reserve, ...
+    'energyUsedJ',d2.battery.energyUsedJ);
 if done && strcmpi(cfg.external.target,'sitl')
     try
         env2.bridge.disarm();
     catch
     end
+end
+end
+
+function tf = landDetectorAuthoritative(s)
+tf=true;
+if isfield(s,'extra') && isstruct(s.extra) && ...
+        isfield(s.extra,'land_detector_authoritative')
+    tf=logical(s.extra.land_detector_authoritative);
 end
 end
 

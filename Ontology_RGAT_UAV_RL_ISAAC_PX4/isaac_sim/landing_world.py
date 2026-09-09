@@ -46,9 +46,11 @@ simulation_app.update()
 
 import rclpy
 from geometry_msgs.msg import PoseStamped, Vector3Stamped
+from nav_msgs.msg import Odometry
 from std_msgs.msg import Float32, String
 from scipy.spatial.transform import Rotation
 from isaacsim.core.api import World
+from isaacsim.core.utils.viewports import set_camera_view
 
 from pegasus.simulator.params import ROBOTS, SIMULATION_ENVIRONMENTS
 from pegasus.simulator.logic.backends.px4_mavlink_backend import (
@@ -61,7 +63,7 @@ from pegasus.simulator.logic.interface.pegasus_interface import PegasusInterface
 from pegasus.simulator.logic.vehicles.multirotor import Multirotor, MultirotorConfig
 from isaacsim.core.api.materials import OmniPBR
 from isaacsim.sensors.camera import Camera
-from pxr import Gf, Sdf, UsdGeom, UsdShade
+from pxr import Gf, Sdf, UsdGeom, UsdPhysics, UsdShade
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from marker_vision import (
@@ -72,6 +74,10 @@ from marker_vision import (
     intrinsics_from_fov,
     texture_side_ratio,
 )
+from pad_motion import PadMotionConfig, PadTrajectory
+from urban_scene import UrbanConfig, UrbanLayout, UrbanScene
+from gnss import GnssConfig, UrbanGnss
+from live_overlay import LiveOverlay
 
 
 IDENTITY_QUAT = np.array([1.0, 0.0, 0.0, 0.0])
@@ -92,23 +98,28 @@ def _matrix_to_quat_wxyz(m):
 
 
 class LandingPadMarkers:
-    """The ArUco tags painted on the pad, as textured quads in the stage."""
+    """The ArUco tags painted on the pad, as textured quads in the stage.
 
-    def __init__(self, config: dict, workspace: Path):
+    The quads are children of the deck prim, so they ride the rover without any
+    per-frame bookkeeping here: moving the parent moves the pad.
+    """
+
+    def __init__(self, config: dict, workspace: Path, parent_path: str = "/World/landing_pad"):
         self.board = MarkerBoard.from_config(config["board"])
         self.dictionary = str(config["dictionary"])
         self.texture_dir = workspace / "assets" / "markers"
         self.ratio = texture_side_ratio(self.dictionary)
+        self.parent_path = parent_path
 
     def spawn(self, world) -> None:
         stage = world.stage
-        UsdGeom.Xform.Define(stage, "/World/landing_pad")
+        UsdGeom.Xform.Define(stage, self.parent_path)
         for marker in self.board.markers.values():
             texture = generate_marker_png(
                 self.texture_dir / f"{self.dictionary}_{marker.marker_id}.png",
                 self.dictionary, marker.marker_id)
             material = OmniPBR(
-                prim_path=f"/World/landing_pad/material_{marker.marker_id}",
+                prim_path=f"{self.parent_path}/material_{marker.marker_id}",
                 name=f"landing_marker_{marker.marker_id}",
                 texture_path=str(texture),
                 texture_scale=np.array([1.0, 1.0]),
@@ -117,7 +128,7 @@ class LandingPadMarkers:
             # which ignores the quad's own UVs and crops the marker's black
             # border and quiet zone away. Without both, it is not a tag.
             material.set_project_uvw(False)
-            path = f"/World/landing_pad/marker_{marker.marker_id}"
+            path = f"{self.parent_path}/marker_{marker.marker_id}"
             self._quad(stage, path, marker.center_xy_m, marker.side_m * self.ratio)
             UsdShade.MaterialBindingAPI(stage.GetPrimAtPath(path)).Bind(
                 UsdShade.Material(stage.GetPrimAtPath(material.prim_path)))
@@ -282,6 +293,134 @@ class DownwardCamera:
         cv2.imwrite(str(path / f"frame_{self.frames:06d}.png"), canvas)
 
 
+class LandingDeck:
+    """The ground vehicle the landing pad is bolted to.
+
+    The deck is a kinematic rigid body: PhysX derives its velocity from the
+    poses written each physics step, so a vehicle resting on it is carried along
+    and friction behaves. A plain static collider that is teleported would let
+    the drone slide as if the deck were standing still, and no collider at all
+    would let it fall through to the ground plane between episodes.
+    """
+
+    PRIM = "/World/landing_rover"
+    BODY = "/World/landing_rover/deck"
+
+    def __init__(self, config: dict):
+        self.cfg = PadMotionConfig.from_mapping(config)
+        self.trajectory = PadTrajectory(self.cfg)
+        # Asking the trajectory where it starts, rather than assuming the
+        # configured origin *is* the start. For the road profile they are not
+        # the same point: the route is centred on the city block, so its origin
+        # is the middle of the block -- inside a building. Anything placed
+        # there, including the vehicle that spawns on this deck, is placed
+        # inside the masonry.
+        self.position, self.velocity = self.trajectory.pose(0.0)
+        self.yaw = 0.0
+        self.yaw_rate = 0.0
+        self.physics_ok = False
+        self._xform = None
+
+    @property
+    def surface_z(self) -> float:
+        """World height of the marker plane the drone has to land on."""
+        return float(self.position[2])
+
+    def spawn(self, world) -> None:
+        stage = world.stage
+        root = UsdGeom.Xform.Define(stage, self.PRIM)
+        self._xform = UsdGeom.XformCommonAPI(root)
+        length, width = self.cfg.deck_size_m
+        thickness = 0.08
+        body = UsdGeom.Cube.Define(stage, self.BODY)
+        body.CreateSizeAttr(1.0)
+        # A unit cube scaled to the deck, so the collider is an exact box and
+        # the marker plane sits at the parent's origin (pad-frame z = 0).
+        UsdGeom.XformCommonAPI(body).SetScale(
+            Gf.Vec3f(float(length), float(width), float(thickness)))
+        UsdGeom.XformCommonAPI(body).SetTranslate(Gf.Vec3d(0.0, 0.0, -thickness / 2.0))
+        try:
+            rigid = UsdPhysics.RigidBodyAPI.Apply(stage.GetPrimAtPath(self.PRIM))
+            rigid.CreateKinematicEnabledAttr(True)
+            UsdPhysics.CollisionAPI.Apply(stage.GetPrimAtPath(self.BODY))
+            mass = UsdPhysics.MassAPI.Apply(stage.GetPrimAtPath(self.PRIM))
+            mass.CreateMassAttr(120.0)
+            self.physics_ok = True
+        except Exception as exc:                            # noqa: BLE001
+            # Worth continuing without: the episode ends on pad-relative
+            # altitude, not on contact. Worth shouting about: nothing will hold
+            # the disarmed vehicle up between episodes.
+            carb.log_error(
+                f"could not make the landing deck a kinematic collider ({exc}); "
+                "the vehicle will fall through it")
+        self.apply_pose()
+
+    def reset(self, seed: int, sim_time: float, speed_scale: float = 1.0) -> dict:
+        info = self.trajectory.reset(seed, sim_time, speed_scale)
+        self.position, self.velocity = self.trajectory.pose(sim_time)
+        self.yaw = float(info["yaw_rad"])
+        self.yaw_rate = 0.0
+        self.apply_pose()
+        info["surface_z_m"] = self.surface_z
+        return info
+
+    def advance(self, sim_time: float, dt: float) -> None:
+        self.position, self.velocity = self.trajectory.pose(sim_time)
+        self.yaw, self.yaw_rate = self.trajectory.step_heading(self.velocity, dt)
+        self.apply_pose()
+
+    def apply_pose(self) -> None:
+        if self._xform is None:
+            return
+        self._xform.SetTranslate(Gf.Vec3d(*(float(v) for v in self.position)))
+        self._xform.SetRotate(Gf.Vec3f(0.0, 0.0, float(math.degrees(self.yaw))))
+
+    def pad_from_world(self, point) -> np.ndarray:
+        """World ENU point expressed in the pad frame."""
+        return np.asarray(point, dtype=float) - self.position
+
+    def world_from_pad(self, offset) -> np.ndarray:
+        return self.position + np.asarray(offset, dtype=float)
+
+    def odometry(self, stamp, position_error=None, velocity_error=None,
+                 sigma_xy_m: float = 0.0) -> Odometry:
+        """The deck's own broadcast.
+
+        A cooperative vehicle sends where it *believes* it is, so the offsets
+        are the errors its own receiver is making; passing none of them gives
+        the ground truth, which is published on a separate topic and is for
+        evaluation only. The reported accuracy goes into the pose covariance,
+        because that is the field a consumer is entitled to read.
+        """
+        position = np.asarray(self.position, dtype=float)
+        velocity = np.asarray(self.velocity, dtype=float)
+        if position_error is not None:
+            position = position + np.asarray(position_error, dtype=float)
+        if velocity_error is not None:
+            velocity = velocity + np.asarray(velocity_error, dtype=float)
+        msg = Odometry()
+        msg.header.stamp = stamp
+        msg.header.frame_id = "map"
+        msg.child_frame_id = "landing_pad"
+        msg.pose.pose.position.x = float(position[0])
+        msg.pose.pose.position.y = float(position[1])
+        msg.pose.pose.position.z = float(position[2])
+        half = 0.5 * self.yaw
+        msg.pose.pose.orientation.w = float(math.cos(half))
+        msg.pose.pose.orientation.x = 0.0
+        msg.pose.pose.orientation.y = 0.0
+        msg.pose.pose.orientation.z = float(math.sin(half))
+        msg.twist.twist.linear.x = float(velocity[0])
+        msg.twist.twist.linear.y = float(velocity[1])
+        msg.twist.twist.linear.z = float(velocity[2])
+        msg.twist.twist.angular.z = float(self.yaw_rate)
+        variance = float(sigma_xy_m) ** 2
+        msg.pose.covariance[0] = variance
+        msg.pose.covariance[7] = variance
+        msg.pose.covariance[14] = variance
+        return msg
+
+
 class WindField:
     def __init__(self, config: dict):
         self.config = config
@@ -290,6 +429,8 @@ class WindField:
         self.freq = np.linspace(0.23, 1.91, 6)
         self.episode_t0 = 0.0
         self.scale = 1.0
+        self.street: np.ndarray | None = None
+        self.openness = 0.0
 
     def reset(self, seed: int, sim_time: float, scale: float = 1.0) -> None:
         self.rng = np.random.default_rng(int(seed) + int(self.config.get("seed", 49)))
@@ -302,6 +443,7 @@ class WindField:
             return np.zeros(3)
         t = sim_time - self.episode_t0
         wind = np.asarray(self.config["mean_enu_m_s"], dtype=float).copy()
+        wind = self._channel(wind)
         amp = float(self.config.get("turbulence_m_s", 0.0)) / math.sqrt(3.0)
         for axis in range(3):
             wind[axis] += amp * float(np.mean(np.sin(self.freq * t + self.phases[axis])))
@@ -309,6 +451,36 @@ class WindField:
             tau = (t - float(gust["t0_s"])) / max(float(gust["sigma_s"]), 1e-3)
             wind += np.asarray(gust["vector_enu_m_s"], dtype=float) * math.exp(-0.5 * tau * tau)
         return self.scale * wind
+
+    def set_street_axis(self, heading_rad: float, openness: float = 0.0) -> None:
+        """Which way the canyon runs here, and how much of it is still canyon.
+
+        OPENNESS is the local sky view: at an intersection the facades stop
+        channeling and the gradient wind comes back, so the drone gets a
+        crosswind exactly where the GNSS also recovers.
+        """
+        self.street = np.array([math.cos(heading_rad), math.sin(heading_rad), 0.0])
+        self.openness = float(np.clip(openness, 0.0, 1.0))
+
+    def _channel(self, wind: np.ndarray) -> np.ndarray:
+        """Split the gradient wind along and across the street.
+
+        Facades turn a wind that crosses the street into one that runs along
+        it: the along-street component is accelerated and the cross-street one
+        is largely blocked. Only the mean flow is channeled -- the turbulence
+        is what is left after the facades have finished with it.
+        """
+        canyon = self.config.get("canyon") or {}
+        if not canyon.get("enabled", False) or self.street is None:
+            return wind
+        along_gain = float(canyon.get("along_gain", 1.0))
+        cross_gain = float(canyon.get("cross_gain", 1.0))
+        if canyon.get("open_sky_blend", True):
+            along_gain += (1.0 - along_gain) * self.openness
+            cross_gain += (1.0 - cross_gain) * self.openness
+        along = float(np.dot(wind, self.street)) * self.street
+        cross = wind - along
+        return along_gain * along + cross_gain * cross
 
     def force(self, sim_time: float, vehicle_velocity_enu: np.ndarray,
               attitude_enu_flu_xyzw: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -322,6 +494,70 @@ class WindField:
         force_body = 0.5 * rho * area * cd * relative_body * np.abs(relative_body)
         force_enu = rotation.apply(force_body)
         return wind, force_enu, force_body
+
+
+class ViewportFollower:
+    """Keep the Isaac GUI camera on the UAV, and out of the buildings.
+
+    A fixed world-frame offset is what an open field allows. A nineteen-metre
+    street does not: an offset long enough to frame a six-metre lorry reaches
+    past the facade, and a camera inside a facade renders a black screen with
+    nothing on it but the unlit debug overlay -- which looks exactly like a
+    broken simulator and is not one.
+
+    So the offset is expressed **along the street** by default: back down the
+    road behind the lorry and up, which is the natural view of a road chase and
+    is the one direction a canyon leaves open. The result is then pulled toward
+    the vehicle until it is clear of every building, so no configuration and no
+    corner can bury it.
+    """
+
+    def __init__(self, config: dict):
+        view = config.get("viewport_follow", {}) or {}
+        self.enabled = bool(view.get("enabled", True)) and not ARGS.headless
+        self.frame = str(view.get("frame", "street")).lower()
+        if self.frame not in ("street", "world"):
+            raise ValueError("isaac.viewport_follow.frame must be 'street' or 'world'")
+        # street: [along the road (negative is behind), across, up].
+        # world:  plain ENU, the open-field behaviour.
+        self.offset = np.asarray(
+            view.get("offset_m", view.get("offset_enu_m", [-14.0, 0.0, 7.0])), dtype=float)
+        self.look_at_offset = np.asarray(view.get("look_at_offset_enu_m", [0.0, 0.0, 0.0]), dtype=float)
+        self.smoothing = float(np.clip(view.get("smoothing", 0.18), 0.01, 1.0))
+        self.eye: np.ndarray | None = None
+        self._warned = False
+
+    def update(self, vehicle_position: np.ndarray, street_heading_rad: float = 0.0,
+               layout=None) -> None:
+        if not self.enabled:
+            return
+        position = np.asarray(vehicle_position, dtype=float).reshape(3)
+        desired_eye = position + self._offset_enu(street_heading_rad)
+        if self.eye is None:
+            self.eye = desired_eye
+        else:
+            self.eye += self.smoothing * (desired_eye - self.eye)
+        target = position + self.look_at_offset
+        # The offset can still point into a corner building on the outside of a
+        # turn, so the layout gets the last word on where the camera may sit.
+        eye = (self.eye if layout is None
+               else layout.clear_of_buildings(self.eye, target))
+        try:
+            set_camera_view(eye=eye.tolist(), target=target.tolist())
+        except Exception as exc:  # pragma: no cover - Isaac GUI/runtime dependent
+            if not self._warned:
+                print(f"Isaac viewport follow disabled: {exc}", file=sys.stderr, flush=True)
+                self._warned = True
+            self.enabled = False
+
+    def _offset_enu(self, street_heading_rad: float) -> np.ndarray:
+        """The configured offset in world ENU."""
+        if self.frame == "world":
+            return self.offset
+        along = np.array([math.cos(street_heading_rad), math.sin(street_heading_rad), 0.0])
+        across = np.array([-along[1], along[0], 0.0])
+        return self.offset[0] * along + self.offset[1] * across + np.array(
+            [0.0, 0.0, self.offset[2]])
 
 
 class LandingWorld:
@@ -339,6 +575,16 @@ class LandingWorld:
         if environment not in SIMULATION_ENVIRONMENTS:
             raise KeyError(f"unknown Pegasus environment: {environment}")
         self.pg.load_environment(SIMULATION_ENVIRONMENTS[environment])
+
+        # The city, and the sky it hides. Both the stage and the GNSS model
+        # read the same layout object, so an outage always has a building in
+        # the viewport to blame it on.
+        self.urban = UrbanLayout(UrbanConfig.from_mapping(CONFIG))
+        UrbanScene(self.urban).spawn(self.world)
+        gnss_cfg = GnssConfig.from_mapping(CONFIG)
+        self.gnss = UrbanGnss(gnss_cfg, self.urban if self.urban.cfg.enabled else None)
+        self.gnss_enabled = bool(gnss_cfg.enabled)
+        self.gnss_time = 0.0
 
         px4_dir = Path(isaac_cfg["px4_dir"])
         if not px4_dir.is_absolute():
@@ -366,11 +612,17 @@ class LandingWorld:
                 "sub_control": False,
             },
         )
+        # The pad rides on this, so it has to exist before the vehicle is
+        # placed: the vehicle starts parked on the deck, not on the ground.
+        self.deck = LandingDeck(CONFIG)
+        self.deck.spawn(self.world)
+
         vehicle_cfg = MultirotorConfig()
         # Replace Pegasus' still-air linear drag with the wind-relative model below.
         vehicle_cfg.drag = LinearDrag([0.0, 0.0, 0.0])
         vehicle_cfg.backends = [self.px4_backend, self.ros_backend]
-        spawn = [float(x) for x in isaac_cfg["spawn_position_enu_m"]]
+        clearance = [float(x) for x in isaac_cfg["spawn_position_enu_m"]]
+        spawn = self.deck.world_from_pad(clearance).tolist()
         self.vehicle = Multirotor(
             "/World/quadrotor",
             ROBOTS[isaac_cfg["robot_asset"]],
@@ -385,11 +637,17 @@ class LandingWorld:
         self.pad = None
         self.camera = None
         if self.vision_enabled:
-            self.pad = LandingPadMarkers(vision_cfg, WORKSPACE)
+            # Parented to the deck: the tags move with the rover for free.
+            self.pad = LandingPadMarkers(vision_cfg, WORKSPACE, LandingDeck.PRIM)
             self.pad.spawn(self.world)
             self.camera = DownwardCamera(
                 vision_cfg, self.pad.board, self.pad.dictionary)
             self.camera.attach(self.vehicle.prim_path)
+
+        battery_cfg = CONFIG.get("battery", {}) or {}
+        self.battery_enabled = bool(battery_cfg.get("enabled", True))
+        self.battery_hover_range = tuple(
+            float(v) for v in battery_cfg.get("episode_hover_seconds_range", (6.0, 45.0)))
 
         ns = f"/{isaac_cfg['namespace']}{int(isaac_cfg['vehicle_id'])}"
         node = self.ros_backend.node
@@ -398,18 +656,46 @@ class LandingWorld:
         self.marker_pub = node.create_publisher(Float32, ns + "/perception/marker_quality", 10)
         self.pad_pose_pub = node.create_publisher(PoseStamped, ns + "/perception/uav_pose_in_pad", 10)
         self.reset_ack_pub = node.create_publisher(String, "/landing_sim/reset_ack", 10)
+        # The deck broadcasts its own state, the way a cooperative ground
+        # vehicle would. The drone's own estimate of the pad still comes from
+        # its camera; this is what lets the gateway fall back to the PX4
+        # estimate when the tags are out of frame.
+        # What the lorry broadcasts: its own receiver's answer, canyon errors
+        # and all. This is the only deck pose any consumer on the drone side is
+        # allowed to read.
+        self.deck_pub = node.create_publisher(Odometry, "/landing_pad/state/odom", 10)
+        # The simulator's truth, for scoring the episode afterwards. Nothing on
+        # the control path subscribes to it; see docs/ARCHITECTURE.md, "GNSS".
+        self.deck_truth_pub = node.create_publisher(
+            Odometry, "/landing_pad/state/odom_truth", 10)
+        self.gnss_pub = node.create_publisher(String, "/landing_uav0/gnss/status", 10)
         node.create_subscription(String, "/landing_sim/reset", self._on_reset_request, 10)
+
+        # A live 3D view of the episode inside the simulator window: the two
+        # trails, the vector still to be closed and the success tolerance. Off
+        # in a headless run, where nothing would read it.
+        self.overlay = LiveOverlay(
+            node, enabled=not ARGS.headless,
+            success_radius_m=float(CONFIG["landing"]["success_xy_m"]))
+        self.viewport_follower = ViewportFollower(CONFIG["isaac"])
 
         self.wind = WindField(CONFIG["wind"])
         self.pending_reset: dict | None = None
         self.last_wind = np.zeros(3)
         self.last_force = np.zeros(3)
         self.world.add_physics_callback("/landing_wind", self._apply_wind)
+        # Stepped with physics, not with rendering: PhysX derives the kinematic
+        # deck's velocity from consecutive poses, so a pose written once per
+        # rendered frame would give it a stale, chunky velocity.
+        self.world.add_physics_callback("/landing_deck", self._advance_deck)
         self.world.reset()
         if self.camera is not None:
             self.camera.start()
             self.camera.aim_at_nadir(self.vehicle)
         self.wind.reset(int(CONFIG["wind"].get("seed", 49)), self.world.current_time)
+        self.deck.reset(int(CONFIG["wind"].get("seed", 49)), self.world.current_time)
+        self.gnss.reset(int((CONFIG.get("gnss") or {}).get("seed", 17)))
+        self.gnss_time = float(self.world.current_time)
         self.stop_sim = False
 
     def _on_reset_request(self, msg: String) -> None:
@@ -420,8 +706,17 @@ class LandingWorld:
             scale = float(req.get("wind_scale", 1.0))
             if not math.isfinite(scale) or not 0.0 <= scale <= 4.0:
                 raise ValueError("wind_scale outside [0,4]")
+            pad_scale = float(req.get("pad_scale", 1.0))
+            if not math.isfinite(pad_scale) or not 0.0 <= pad_scale <= 4.0:
+                raise ValueError("pad_scale outside [0,4]")
+            # Scales the error mechanisms, not the buildings: 0.0 is the
+            # open-sky control condition with the same city still standing.
+            gnss_scale = float(req.get("gnss_scale", 1.0))
+            if not math.isfinite(gnss_scale) or not 0.0 <= gnss_scale <= 4.0:
+                raise ValueError("gnss_scale outside [0,4]")
             self.pending_reset = {"seq": int(req["seq"]), "seed": int(req.get("seed", 0)),
-                                  "wind_scale": scale}
+                                  "wind_scale": scale, "pad_scale": pad_scale,
+                                  "gnss_scale": gnss_scale}
         except (ValueError, TypeError, KeyError, json.JSONDecodeError) as exc:
             carb.log_warn(f"Ignored malformed reset request: {exc}")
 
@@ -438,41 +733,102 @@ class LandingWorld:
         """
         req, self.pending_reset = self.pending_reset, None
         rng = np.random.default_rng(req["seed"])
-        position = np.array([1.2 * rng.normal(), 1.2 * rng.normal(), 3.4 + 1.4 * rng.random()])
+        # Unchanged distribution, new frame: the entry pose is now an offset
+        # from the deck rather than an absolute point, because the deck moves.
+        # Wider and higher than the rover experiment's: the deck is a 6 m box
+        # body rather than a 1.3 m tray, and the entry has to clear it.
+        offset = np.array([1.8 * rng.normal(), 1.4 * rng.normal(), 4.0 + 1.8 * rng.random()])
+        # A Gaussian tail can put the entry point inside a facade -- about one
+        # seed in three thousand on the outer lane -- and PX4 flies into it,
+        # never reaches the pose and times out the reset. Pulling the offset
+        # back toward the deck keeps the drawn direction and the seeded
+        # distribution everywhere it was already legal.
+        deck_world = self.deck.world_from_pad(np.zeros(3))
+        offset = self.urban.clear_of_buildings(
+            deck_world + offset, deck_world) - deck_world
         rpy_deg = np.array([4.0 * rng.normal(), 4.0 * rng.normal(), 12.0 * rng.normal()])
-        recovered = self._recover_if_tipped_over()
+        # Drawn from the same generator as the entry pose so the whole initial
+        # condition -- geometry, wind, deck motion and energy -- is one seed.
+        hover_seconds = float(rng.uniform(*self.battery_hover_range))
+        reseated = self._seat_on_deck()
         for backend in (self.px4_backend, self.ros_backend):
             backend.reset()
         self.wind.reset(req["seed"], self.world.current_time, req["wind_scale"])
+        deck = self.deck.reset(req["seed"], self.world.current_time,
+                               req.get("pad_scale", 1.0))
+        self.gnss.reset(req["seed"], req.get("gnss_scale", 1.0))
+        self.gnss_time = float(self.world.current_time)
+        self._update_environment_sensors(0.0)
+        self._publish_deck()
         ack = String()
         ack.data = json.dumps({"v": int(CONFIG["system"]["protocol_version"]),
                                "seq": req["seq"], "seed": req["seed"],
                                "wind_scale": req["wind_scale"],
-                               "entry_position_enu_m": position.tolist(),
+                               "pad_scale": req.get("pad_scale", 1.0),
+                               "gnss_scale": req.get("gnss_scale", 1.0),
+                               "gnss": {
+                                   "enabled": self.gnss_enabled,
+                                   "satellites": int(self.gnss.constellation.size),
+                                   "uav": self.gnss.uav.last.to_dict(),
+                                   "deck": self.gnss.deck.last.to_dict()},
+                               "entry_offset_pad_m": offset.tolist(),
+                               "entry_position_enu_m":
+                                   self.deck.world_from_pad(offset).tolist(),
                                "entry_rpy_deg": rpy_deg.tolist(),
                                "entry_yaw_enu_rad": math.radians(float(rpy_deg[2])),
-                               "recovered_from_tipover": bool(recovered)})
+                               "battery_hover_seconds":
+                                   (hover_seconds if self.battery_enabled else None),
+                               "pad": deck,
+                               "reseated_on_deck": bool(reseated)})
         self.reset_ack_pub.publish(ack)
+        self.overlay.reset()
         carb.log_info(f"Landing episode reset: seq={req['seq']} seed={req['seed']} "
-                      f"entry={position.tolist()} recovered={recovered}")
+                      f"entry_offset={offset.tolist()} pad={deck['mode']}@"
+                      f"{deck['speed_m_s']:.2f} m/s battery={hover_seconds:.1f} s "
+                      f"gnss={self.gnss.uav.last.satellites_tracked} sats "
+                      f"({self.gnss.uav.last.satellites_nlos} NLOS, "
+                      f"q={self.gnss.uav.last.quality:.2f}) reseated={reseated}")
 
-    def _recover_if_tipped_over(self) -> bool:
-        """Re-place the vehicle on the pad only when it cannot take off again.
+    def _seat_on_deck(self) -> bool:
+        """Put a grounded vehicle back on the lorry's roof before the next episode.
 
-        An upright vehicle is left exactly where the previous episode ended so
-        that PX4's estimator is never stepped; a vehicle lying on its side can
-        never fly the entry pose, so there the estimator transient is the lesser
-        evil and the pad is restored.
+        An *airborne* vehicle is left exactly where the previous episode ended,
+        so that PX4's estimator is never stepped mid-flight -- that is the rule
+        the whole reset design is built on and it does not change.
+
+        A grounded one is re-seated. It has usually slid: the deck is redrawn
+        with a new cruise speed at every reset, and a kinematic body whose speed
+        steps in one physics tick shears whatever is resting on it. It may also
+        have ended the last episode beside the lorry rather than on it. Either
+        way the correction is sub-metre, because the deck itself no longer
+        teleports between episodes (``pad.route_start``), so the estimator step
+        is far smaller than the GNSS errors this environment models anyway.
         """
-        roll, pitch, _ = Rotation.from_quat(self.vehicle.state.attitude).as_euler("XYZ")
-        if math.hypot(roll, pitch) <= math.radians(float(CONFIG["landing"]["crash_tilt_deg"])):
+        state = self.vehicle.state
+        roll, pitch, _ = Rotation.from_quat(state.attitude).as_euler("XYZ")
+        tipped = math.hypot(roll, pitch) > math.radians(
+            float(CONFIG["landing"]["crash_tilt_deg"]))
+        # Anything within a metre of the roof is on the roof or on the road
+        # beside it; either way it is not flying and the next episode starts
+        # from the deck.
+        grounded = float(state.position[2]) <= self.deck.surface_z + 1.0
+        if not (tipped or grounded):
             return False
-        spawn = np.array([float(x) for x in CONFIG["isaac"]["spawn_position_enu_m"]])
+        clearance = np.array([float(x) for x in CONFIG["isaac"]["spawn_position_enu_m"]])
+        spawn = self.deck.world_from_pad(clearance)
+        moved = float(np.linalg.norm(np.asarray(state.position, dtype=float) - spawn))
         self.vehicle.set_world_pose(position=spawn, orientation=np.array([1.0, 0.0, 0.0, 0.0]))
         self.vehicle.set_linear_velocity(np.zeros(3))
         self.vehicle.set_angular_velocity(np.zeros(3))
-        carb.log_warn("Vehicle had tipped over; restored to the pad before the next episode.")
+        if tipped:
+            carb.log_warn(f"Vehicle had tipped over; re-seated on the deck "
+                          f"({moved:.2f} m).")
+        elif moved > 0.5:
+            carb.log_info(f"Vehicle re-seated on the deck ({moved:.2f} m).")
         return True
+
+    def _advance_deck(self, dt: float) -> None:
+        self.deck.advance(self.world.current_time, dt)
 
     def _apply_wind(self, dt: float) -> None:
         state = self.vehicle.state
@@ -482,7 +838,51 @@ class LandingWorld:
         self.vehicle.apply_force(force_body.tolist(), body_part="/body")
         self.last_wind, self.last_force = wind, force_enu
 
+    def _update_environment_sensors(self, dt: float) -> None:
+        """Both receivers' fixes and the local wind geometry, once per frame.
+
+        Not at the physics rate: a fix is an observation, and re-solving it two
+        hundred and fifty times a second would only add cost and a whiter noise
+        than a real receiver's. The wind is updated on the same tick because it
+        is the same geometry -- the facades that hide the satellites are the
+        ones channeling the flow, and both relax at the intersections.
+        """
+        if self.gnss_enabled:
+            self.gnss.update(self.vehicle.state.position, self.deck.position, dt)
+        if self.wind.config.get("canyon", {}).get("enabled", False):
+            self.wind.set_street_axis(self.deck.yaw,
+                                      self.urban.openness(self.deck.position))
+
+    def _publish_deck(self) -> None:
+        stamp = self.ros_backend.node.get_clock().now().to_msg()
+        fix = self.gnss.deck.last
+        self.deck_pub.publish(self.deck.odometry(
+            stamp, fix.error_enu_m, fix.velocity_error_enu_m_s, fix.sigma_xy_m))
+        self.deck_truth_pub.publish(self.deck.odometry(stamp))
+
+    def _publish_gnss(self) -> None:
+        """The drone's own receiver, as a receiver would report it.
+
+        ``error_enu_m`` rides along because the gateway is what applies it to
+        the PX4 estimate -- Pegasus' GPS sensor is not part of this workspace,
+        so the error is injected downstream of the EKF rather than into it.
+        The field is named for what it is so that no consumer can mistake it
+        for something a receiver knows.
+        """
+        if not self.gnss_enabled:
+            return
+        msg = String()
+        msg.data = json.dumps({"v": int(CONFIG["system"]["protocol_version"]),
+                               "uav": self.gnss.uav.last.to_dict(),
+                               "deck": self.gnss.deck.last.to_dict()})
+        self.gnss_pub.publish(msg)
+
     def _publish_environment(self) -> None:
+        now = float(self.world.current_time)
+        self._update_environment_sensors(max(now - self.gnss_time, 0.0))
+        self.gnss_time = now
+        self._publish_gnss()
+        self._publish_deck()
         stamp = self.ros_backend.node.get_clock().now().to_msg()
         for publisher, vector in ((self.wind_pub, self.last_wind), (self.force_pub, self.last_force)):
             msg = Vector3Stamped()
@@ -496,14 +896,18 @@ class LandingWorld:
             self._publish_marker_proxy()
 
     def _publish_marker_proxy(self) -> None:
-        """Analytic stand-in used when the camera is switched off."""
-        pos = self.vehicle.state.position
+        """Analytic stand-in used when the camera is switched off.
+
+        Measured against the deck, not the world origin, so switching the
+        camera off does not silently change what "over the pad" means.
+        """
+        rel = self.deck.pad_from_world(self.vehicle.state.position)
         rotation = Rotation.from_quat(self.vehicle.state.attitude)
         roll, pitch, _ = rotation.as_euler("XYZ")
         vision = CONFIG["vision"]
-        quality = math.exp(-((max(pos[2], 0.0) / float(vision["max_range_m"])) ** 2))
+        quality = math.exp(-((max(rel[2], 0.0) / float(vision["max_range_m"])) ** 2))
         quality *= math.exp(-((math.hypot(roll, pitch) / math.radians(float(vision["tilt_scale_deg"]))) ** 2))
-        quality *= math.exp(-((np.linalg.norm(pos[:2]) / float(vision["xy_scale_m"])) ** 2))
+        quality *= math.exp(-((np.linalg.norm(rel[:2]) / float(vision["xy_scale_m"])) ** 2))
         marker = Float32()
         marker.data = float(np.clip(quality, 0.0, 1.0))
         self.marker_pub.publish(marker)
@@ -525,17 +929,30 @@ class LandingWorld:
         marker.data = float(observation.quality)
         self.marker_pub.publish(marker)
 
+        # The solve comes back in the marker board's own frame, which yaws with
+        # the deck. Publish it in pad ENU instead -- ENU axes translated to the
+        # deck origin, deliberately not rotated with it -- so the axes stay
+        # gravity-aligned, the gateway's PX4 fallback (a plain subtraction of
+        # the deck pose) means the same thing, and no Coriolis term appears in
+        # the relative velocity. The deck heading used for the rotation is the
+        # one the rover broadcasts; a drone could equally recover it from its
+        # own yaw and the yaw this solve already measures.
+        deck_yaw = Rotation.from_euler("z", self.deck.yaw)
+        position = deck_yaw.apply(np.asarray(observation.position_pad_enu, dtype=float))
+        q = np.asarray(observation.quaternion_pad_flu_wxyz, dtype=float)
+        attitude = deck_yaw * Rotation.from_quat([q[1], q[2], q[3], q[0]])
+        qx, qy, qz, qw = attitude.as_quat()
+
         pose = PoseStamped()
         pose.header.stamp = stamp
         pose.header.frame_id = "landing_pad"
-        pose.pose.position.x = float(observation.position_pad_enu[0])
-        pose.pose.position.y = float(observation.position_pad_enu[1])
-        pose.pose.position.z = float(observation.position_pad_enu[2])
-        w, x, y, z = (float(v) for v in observation.quaternion_pad_flu_wxyz)
-        pose.pose.orientation.w = w
-        pose.pose.orientation.x = x
-        pose.pose.orientation.y = y
-        pose.pose.orientation.z = z
+        pose.pose.position.x = float(position[0])
+        pose.pose.position.y = float(position[1])
+        pose.pose.position.z = float(position[2])
+        pose.pose.orientation.w = float(qw)
+        pose.pose.orientation.x = float(qx)
+        pose.pose.orientation.y = float(qy)
+        pose.pose.orientation.z = float(qz)
         self.pad_pose_pub.publish(pose)
 
     def run(self):
@@ -558,6 +975,11 @@ class LandingWorld:
             self.world.step(render=render)
             if frame_boundary:
                 self._publish_environment()
+                if render:
+                    self.overlay.update(self.vehicle.state.position,
+                                        self.deck.world_from_pad(np.zeros(3)))
+                    self.viewport_follower.update(
+                        self.vehicle.state.position, self.deck.yaw, self.urban)
         self.timeline.stop()
         simulation_app.close()
 

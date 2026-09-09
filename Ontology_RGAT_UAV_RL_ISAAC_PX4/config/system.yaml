@@ -35,9 +35,15 @@ isaac:
   namespace: landing_uav
   physics_dt: 0.004
   rendering_dt: 0.02
-  environment: Curved Gridroom
+  # The city is built into the stage from config below rather than loaded as a
+  # canned asset: the GNSS model has to occlude satellites with the *same*
+  # boxes the camera renders, and no shipped Pegasus environment comes with a
+  # machine-readable skyline. Flat Plane is therefore the ground and the light,
+  # and isaac_sim/urban_scene.py is the city.
+  environment: Flat Plane
   robot_asset: Iris
-  spawn_position_enu_m: [0.0, 0.0, 0.07]
+  # Clearance above the lorry roof, not above the road.
+  spawn_position_enu_m: [0.0, 0.0, 0.09]
   px4_autolaunch: true
   px4_dir: external/PX4-Autopilot
   px4_vehicle_model: gazebo-classic_iris
@@ -45,30 +51,222 @@ isaac:
   mavlink_connection_ip: localhost
   mavlink_connection_baseport: 4560
   lockstep: true
+  # GUI-only view: keep the Isaac viewport centered on the drone. This does
+  # not affect the downward landing camera or any learner sensor input.
+  viewport_follow:
+    enabled: true
+    # 'street' expresses the offset as [along the road, across, up] in the
+    # lorry's heading frame, so the camera sits back down the carriageway --
+    # the one direction a canyon leaves open. A world-frame offset long enough
+    # to frame a 6 m lorry reaches past the facade of a 19 m street, and a
+    # camera inside a facade renders a black screen. 'world' restores the plain
+    # ENU offset for an open-field configuration.
+    frame: street
+    offset_m: [-15.0, 0.0, 7.0]
+    look_at_offset_enu_m: [0.0, 0.0, 0.0]
+    smoothing: 0.18
 
 landing:
+  # Only crash_tilt_deg is read here (Isaac, to decide a tip-over). The episode
+  # criteria and arena limits are enforced from the learner's cfg.sim/cfg.criteria.
   ground_z_m: 0.08
-  max_time_s: 14.0
-  world_xy_limit_m: 12.0
-  max_altitude_m: 12.0
+  # A lorry at urban speed covers 100 m in an episode, so the vehicle needs
+  # time to match velocity before it can afford to descend.
+  max_time_s: 20.0
+  # Pad-relative, both of them: falling this far behind the lorry is losing the
+  # target, and this is how far above its roof the vehicle may climb. Neither
+  # is a world-frame limit any more -- the deck drives a lap of the block, so a
+  # world-frame box would end every episode at the first corner.
+  world_xy_limit_m: 30.0
+  max_altitude_m: 18.0
   crash_tilt_deg: 75.0
-  success_xy_m: 0.28
+  # The roof of a box lorry is a wider target than the old rover deck was.
+  success_xy_m: 0.35
   success_vz_m_s: 0.55
   success_tilt_deg: 10.0
   success_rate_deg_s: 45.0
+  # Touching down on a moving deck also requires matching its horizontal
+  # velocity; the fixed-pad experiment had no such criterion because the pad
+  # never moved.
+  success_rel_speed_xy_m_s: 0.45
 
 wind:
   enabled: true
   air_density_kg_m3: 1.225
   drag_area_m2: [0.055, 0.055, 0.085]
   drag_coefficient: [1.0, 1.0, 1.2]
-  mean_enu_m_s: [1.3, 0.4, 0.0]
-  turbulence_m_s: 0.55
+  # The gradient wind above the roofs. What reaches the street is the channeled
+  # remainder; see `canyon` below.
+  mean_enu_m_s: [2.6, 1.1, 0.0]
+  # Higher than the open-field value it replaces: a street canyon is a shear
+  # layer with a recirculating vortex under it, not smooth flow.
+  turbulence_m_s: 1.05
   seed: 49
   gusts:
-    - {t0_s: 4.0, sigma_s: 0.8, vector_enu_m_s: [2.1, -0.9, 0.5]}
-    - {t0_s: 7.2, sigma_s: 0.55, vector_enu_m_s: [-1.4, 1.8, -0.7]}
-    - {t0_s: 10.0, sigma_s: 0.45, vector_enu_m_s: [0.8, -1.1, 1.0]}
+    - {t0_s: 4.0, sigma_s: 0.8, vector_enu_m_s: [2.4, -1.2, 1.1]}
+    - {t0_s: 7.2, sigma_s: 0.55, vector_enu_m_s: [-1.8, 2.1, -1.4]}
+    - {t0_s: 10.0, sigma_s: 0.45, vector_enu_m_s: [1.2, -1.6, 1.6]}
+    - {t0_s: 14.5, sigma_s: 0.7, vector_enu_m_s: [-2.2, -0.9, 1.2]}
+  canyon:
+    # Wind in a street canyon does not blow across the street: the facades
+    # channel it along the carriageway and leave a weaker, noisier cross
+    # component. The street axis is taken from the deck's own heading, so the
+    # channeling turns with the lorry when it turns a corner -- which is when
+    # the drone gets hit with a crosswind that was a tailwind a second before.
+    enabled: true
+    along_gain: 1.25
+    cross_gain: 0.35
+    # Crossing an intersection lets the gradient wind back in.
+    open_sky_blend: true
+
+pad:
+  # The landing pad is painted on the roof of a box lorry driving a lap of the
+  # city block. 'static' reproduces the original fixed-pad experiment exactly,
+  # so it stays the control condition rather than a separate code path.
+  motion: road               # static | constant | circular | lissajous | road
+  # Roof of a 6 m box body: length along the lorry's own +X, width across.
+  deck_size_m: [6.20, 2.45]
+  # Top of the box, above the road surface.
+  deck_height_m: 3.20
+  start_position_enu_m: [0.0, 0.0, 0.0]
+  # Seeded per episode. 7-29 km/h: congested-to-flowing urban traffic, and the
+  # top of the range is already fast enough that PX4's own position controller
+  # only just holds the pad-relative entry pose behind it.
+  speed_range_m_s: [2.0, 8.0]
+  # Traffic. Every stop_interval_s the lorry meets a light or the queue ahead
+  # of it and its speed dips by a drawn fraction of cruise; 1.0 is a full stop.
+  stop_interval_s: 11.0
+  stop_sigma_s: 1.7
+  stop_depth_range: [0.35, 1.0]
+  # Lane keeping: a slow wander plus at most one lane change per episode.
+  lane_wander_m: 0.18
+  lane_wander_hz: 0.09
+  # Right-hand traffic and a counter-clockwise lap, so the lorry keeps to the
+  # right of the route centreline. The lanes it may use are counted out from
+  # urban.road_half_width_m and urban.lane_width_m, and a lane change moves
+  # between them -- never into the oncoming lanes. Uncomment lane_offset_m to
+  # pin it to one lane, or the route keys to drive a road other than the one
+  # the city was built around.
+  lane_change_probability: 0.5
+  # 'continue' leaves the lorry where it is between episodes and reseeds only
+  # how it drives from there. 'seeded' draws a fresh point on the lap, which
+  # makes the whole initial condition a function of the seed -- and teleports
+  # the deck up to half a lap away from the vehicle parked on its roof, which
+  # then has to chase it across the city before the episode can start.
+  route_start: continue
+  # lane_offset_m: -1.65
+  # route_size_m: [90.0, 60.0]
+  # route_corner_radius_m: 12.0
+  # The lorry yaws to follow the road, which rotates the marker board under the
+  # descending vehicle -- hardest at the corners, where it also turns the wind.
+  heading_follows_velocity: true
+  yaw_rate_limit_deg_s: 60.0
+  # Only the open-field profiles are held inside this; the road route is
+  # bounded by its own geometry.
+  arena_radius_m: 8.0
+
+urban:
+  # The city block. One consumer draws it (isaac_sim/urban_scene.py, into the
+  # stage) and one occludes satellites with it (isaac_sim/gnss.py), so an
+  # outage always has a building you can see in the viewport.
+  enabled: true
+  seed: 7
+  # The route rectangle the lorry laps, i.e. the street centrelines.
+  block_size_m: [90.0, 60.0]
+  corner_radius_m: 12.0
+  # Cross-section: an 14 m carriageway with 2.5 m footways, which is a real
+  # arterial street and just wide enough to fly a landing in.
+  road_half_width_m: 7.0
+  sidewalk_m: 2.5
+  lane_width_m: 3.3
+  # 3 to 10 storeys. With a 19 m street this is H/W between 0.6 and 1.9, the
+  # range urban-canyon GNSS studies are done in.
+  height_range_m: [12.0, 36.0]
+  facade_depth_m: 14.0
+  facade_segment_m: 18.0
+  # The cross streets. These are where the sky comes back, so a lap of the
+  # block is a sequence of GNSS outages and recoveries rather than one number.
+  cross_street_gap_m: 16.0
+  mid_block_gap: true
+  outer_rows: 1
+  row_spacing_m: 4.0
+
+gnss:
+  # Satellite visibility, reflected signals and what the receiver can tell
+  # about the difference. See isaac_sim/gnss.py for the model and
+  # docs/REFERENCES.md for where the numbers come from.
+  enabled: true
+  seed: 17
+  # One epoch of a GPS+Galileo receiver at mid latitude.
+  n_satellites: 12
+  elevation_mask_deg: 7.0
+  # A receiver keeps far more blocked signals through reflections than it
+  # drops; this is the fraction it keeps. Raising it makes the fix *worse*,
+  # because a tracked reflection is a biased range and a dropped one is not.
+  nlos_tracking_probability: 0.55
+  max_excess_path_m: 45.0
+  # Diffuse multipath at zenith, and how long it stays correlated.
+  multipath_sigma_m: 0.5
+  multipath_tau_s: 6.0
+  thermal_sigma_m: 0.6
+  # Carrier-to-noise ratio, dB-Hz. A reflected signal is several dB weaker
+  # than its elevation says it should be, which is the receiver's one direct
+  # handle on NLOS and the reason a fix made entirely of reflections can be
+  # recognised at all: their biases agree with each other, so consistency
+  # checks alone would call it a good fix.
+  cn0_zenith_db: 48.0
+  cn0_elevation_db: 12.0
+  cn0_sigma_db: 2.0
+  # Mean of an exponential draw, so a few reflections stay nearly as strong as
+  # the direct path and slip past the detector carrying their full bias.
+  nlos_cn0_penalty_db: 9.0
+  cn0_detection_margin_db: 4.0
+  # How much of the integrity a fully suspect signal set costs.
+  cn0_weight: 0.85
+  # A multirotor holds altitude on its barometer, so most of the (large)
+  # vertical GNSS error is rejected and the urban failure mode is horizontal.
+  vertical_blend: 0.15
+  velocity_error_scale: 0.06
+  # Integrity shaping: what the reported quality is worth at a given geometry
+  # and formal accuracy. sigma_floor_m is a good open-sky fix.
+  hdop_scale: 2.5
+  sigma_floor_m: 1.5
+  sigma_scale_m: 10.0
+  # Coasting rate once there are fewer than four satellites left.
+  outage_drift_m_s: 0.8
+
+battery:
+  enabled: true
+  # Pack: a 3S 3500 mAh LiPo, the class of pack an Iris-sized airframe carries.
+  capacity_mah: 3500
+  nominal_voltage_v: 11.1
+  # Momentum-theory hover power model, integrated from PX4's own normalised
+  # thrust setpoint. vehicle_mass_kg is Pegasus' Iris, not the MATLAB
+  # cfg.drone.mass; this model only has to price thrust, not fly the vehicle.
+  vehicle_mass_kg: 1.5
+  rotor_count: 4
+  rotor_radius_m: 0.13
+  air_density_kg_m3: 1.225
+  # Rotor figure of merit times motor/ESC efficiency. 0.45 puts hover at about
+  # 185 W, i.e. roughly 12 min on a full pack, which is the right ballpark.
+  hover_efficiency: 0.45
+  avionics_power_w: 12.0
+  # A full pack cannot be meaningfully discharged inside a 14 s episode, so the
+  # experiment seeds the *starting reserve* instead, expressed as the hover time
+  # it buys. Without this the reserve is a constant and the policy is right to
+  # ignore it. Isaac draws it from the episode seed and returns it in the reset
+  # acknowledgement, so it is reproducible with the entry pose.
+  episode_hover_seconds_range: [9.0, 55.0]
+  # Energy the vehicle should still hold when it touches down; the ontology's
+  # margin is measured against this, not against zero.
+  landing_reserve_s: 2.5
+  # Below this fraction of the episode's starting energy the episode ends as
+  # battery_depleted.
+  depleted_fraction: 0.0
+  # Prefer PX4's own battery_status when it is fresh (hardware). SITL's
+  # simulated battery is the documented cause of the stale-arming failure and
+  # is not a usable experimental variable, so the model owns SITL.
+  prefer_px4_telemetry_on_hardware: true
 
 vision:
   # aruco: a real downward camera detects the pad markers.
@@ -87,15 +285,18 @@ vision:
     clipping_range_m: [0.02, 60.0]
   # One small tag at the centre survives to touchdown; the large ring is what
   # is resolvable from the entry altitude. See isaac_sim/marker_vision.py.
+  # Laid out for the roof of the lorry: the ring is spread along the box, which
+  # is what makes it resolvable from the entry altitude, and the small centre
+  # tag is the one that survives to touchdown.
   board:
-    - {id: 10, side_m: 0.10, center_xy_m: [0.00, 0.00]}
-    - {id: 11, side_m: 0.45, center_xy_m: [-0.45, 0.45]}
-    - {id: 12, side_m: 0.45, center_xy_m: [0.45, 0.45]}
-    - {id: 13, side_m: 0.45, center_xy_m: [0.45, -0.45]}
-    - {id: 14, side_m: 0.45, center_xy_m: [-0.45, -0.45]}
+    - {id: 10, side_m: 0.18, center_xy_m: [0.00, 0.00]}
+    - {id: 11, side_m: 0.62, center_xy_m: [-1.60, 0.75]}
+    - {id: 12, side_m: 0.62, center_xy_m: [1.60, 0.75]}
+    - {id: 13, side_m: 0.62, center_xy_m: [1.60, -0.75]}
+    - {id: 14, side_m: 0.62, center_xy_m: [-1.60, -0.75]}
   quality_reprojection_px: 3.0
   quality_full_scale_px: 120.0
   # Only used by pose_proxy.
-  max_range_m: 7.0
+  max_range_m: 9.0
   tilt_scale_deg: 32.0
   xy_scale_m: 2.0

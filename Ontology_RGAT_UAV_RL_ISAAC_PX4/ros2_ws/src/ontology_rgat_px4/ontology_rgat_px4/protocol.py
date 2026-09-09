@@ -64,9 +64,18 @@ def validate_action(msg: dict[str, Any]) -> tuple[float, float, float, float]:
 
 
 # Guard rails for the pre-episode climb. The gateway must never be talked into
-# flying the vehicle outside the landing arena or holding position forever.
-GOTO_MAX_RADIUS_M = 20.0
-GOTO_MAX_ALTITUDE_M = 15.0
+# flying the vehicle outside the city or holding position forever.
+# The deck drives a lap of a city block rather than circling a small arena, so
+# a world-frame request has to be allowed to reach the far side of it; the
+# gateway clamps the derived target as well, against the block it was told
+# about rather than against this constant.
+GOTO_MAX_RADIUS_M = 140.0
+GOTO_MAX_ALTITUDE_M = 25.0
+# A pad-frame request is an offset from a deck that is itself moving, so it gets
+# a tighter budget than an absolute point; the gateway additionally clamps the
+# world target it derives from it.
+GOTO_MAX_PAD_RADIUS_M = 10.0
+GOTO_FRAMES = ("world", "pad")
 # A freshly booted PX4 refuses to arm for roughly 40 s, and the hold has to
 # outlast that plus the climb.
 GOTO_MAX_HOLD_S = 120.0
@@ -77,6 +86,11 @@ class GotoRequest:
     position_enu: tuple[float, float, float]
     yaw_enu_rad: float
     hold_s: float
+    frame: str = "world"
+
+    @property
+    def is_pad_relative(self) -> bool:
+        return self.frame == "pad"
 
 
 def validate_goto(msg: dict[str, Any]) -> GotoRequest:
@@ -84,12 +98,18 @@ def validate_goto(msg: dict[str, Any]) -> GotoRequest:
 
     The climb is flown by PX4's position controller, so the only thing the
     protocol has to guarantee is that the requested point is inside the arena.
+    With a moving pad the request is an offset in the pad frame and the gateway
+    re-streams it against the live deck pose, so the offset is what is bounded.
     """
+    frame = str(msg.get("frame", "world")).lower()
+    if frame not in GOTO_FRAMES:
+        raise ProtocolError(f"goto frame must be one of {GOTO_FRAMES}")
     position = finite_vector(msg.get("position", ()), 3, "position")
-    if math.hypot(position[0], position[1]) > GOTO_MAX_RADIUS_M:
+    radius = GOTO_MAX_PAD_RADIUS_M if frame == "pad" else GOTO_MAX_RADIUS_M
+    if math.hypot(position[0], position[1]) > radius:
         raise ProtocolError("goto position outside the permitted arena radius")
     if not 0.0 < position[2] <= GOTO_MAX_ALTITUDE_M:
-        raise ProtocolError("goto altitude must be above ground and inside the arena")
+        raise ProtocolError("goto altitude must be above the pad and inside the arena")
     yaw = msg.get("yaw", 0.0)
     try:
         yaw = float(yaw)
@@ -104,7 +124,77 @@ def validate_goto(msg: dict[str, Any]) -> GotoRequest:
         raise ProtocolError("hold_s must be numeric") from exc
     if not math.isfinite(hold_s) or not 0.0 < hold_s <= GOTO_MAX_HOLD_S:
         raise ProtocolError(f"hold_s must be in (0, {GOTO_MAX_HOLD_S}]")
-    return GotoRequest(position, yaw, hold_s)
+    return GotoRequest(position, yaw, hold_s, frame)
+
+
+def static_pad_state() -> dict[str, Any]:
+    """A pad that never moves, which is what the fixed-pad experiment is."""
+    return {
+        "valid": True,
+        "source": "static",
+        "position": [0.0, 0.0, 0.0],
+        "velocity": [0.0, 0.0, 0.0],
+        "yaw": 0.0,
+        "yaw_rate": 0.0,
+        "speed": 0.0,
+        "sigma_xy_m": 0.0,
+    }
+
+
+def open_sky_gnss_state() -> dict[str, Any]:
+    """What a link that models no GNSS degradation must report.
+
+    Every field is an observable a receiver publishes, and every number is
+    finite: a consumer that is handed no GNSS information has to behave like
+    the open-sky control condition, not read an absent field as a total
+    outage. Note what is deliberately absent -- the true position error, the
+    true NLOS count and the true sky view. None of those is something a
+    receiver knows, so none of them crosses this wire.
+    """
+    return {
+        "enabled": False,
+        "source": "unavailable",
+        "valid": True,
+        "fix_type": 3,
+        "satellites_tracked": 12,
+        "nlos_detected_fraction": 0.0,
+        "cn0_mean_db": 45.0,
+        "hdop": 1.0,
+        "vdop": 1.6,
+        "residual_rms_m": 0.0,
+        "sigma_xy_m": 0.0,
+        "quality": 1.0,
+        # The lorry publishes its own integrity too: the pose it broadcasts is
+        # only as good as its receiver, and that receiver is in the same street.
+        "deck_quality": 1.0,
+        "deck_sigma_xy_m": 0.0,
+    }
+
+
+def unavailable_battery_state() -> dict[str, Any]:
+    """Battery fields for a link that cannot report energy at all.
+
+    Every number is finite because the wire format refuses NaN and Infinity on
+    purpose. ``enabled: false`` is the only field a consumer may act on: it means
+    these are not measurements, so the reserve must not be read as "full" and an
+    episode must never be terminated on it.
+    """
+    return {
+        "enabled": False,
+        "source": "unavailable",
+        "remaining_j": 0.0,
+        "initial_j": 0.0,
+        "capacity_j": 0.0,
+        "energy_used_j": 0.0,
+        "power_w": 0.0,
+        "hover_power_w": 0.0,
+        "hover_seconds_remaining": 0.0,
+        "reserve": 1.0,
+        "landing_reserve_s": 0.0,
+        "state_of_charge": 1.0,
+        "voltage_v": 0.0,
+        "depleted": False,
+    }
 
 
 @dataclass
@@ -113,19 +203,32 @@ class VehicleSample:
     # PX4's own clock. Under lockstep SITL this is simulated time, which is the
     # only clock an episode may be paced by.
     px4_time_us: int = 0
+    # Pad-relative, because the pad is the target and it moves. The world pose
+    # PX4 estimates is carried alongside for telemetry only.
     position_enu: tuple[float, float, float] = (0.0, 0.0, 0.0)
     velocity_enu: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    position_world_enu: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    velocity_world_enu: tuple[float, float, float] = (0.0, 0.0, 0.0)
     quaternion_enu_flu_wxyz: tuple[float, float, float, float] = (1.0, 0.0, 0.0, 0.0)
     angular_velocity_flu: tuple[float, float, float] = (0.0, 0.0, 0.0)
     acceleration_enu: tuple[float, float, float] = (0.0, 0.0, 0.0)
     wind_enu: tuple[float, float, float] = (0.0, 0.0, 0.0)
     aero_force_enu: tuple[float, float, float] = (0.0, 0.0, 0.0)
     marker_quality: float = 0.0
+    # Pad-relative position and velocity as the simulator knows them, for
+    # scoring the episode only. Under GNSS degradation the pad-relative state
+    # the policy flies on is wrong by metres, so grading the landing on it
+    # would grade the receiver's mistake instead of the landing.
+    truth_position_enu: tuple[float, float, float] | None = None
+    truth_velocity_enu: tuple[float, float, float] | None = None
     armed: bool = False
     nav_state: int = 0
     landed: bool = True
     estimator_valid: bool = False
     source: str = "px4"
+    pad: dict[str, Any] = field(default_factory=static_pad_state)
+    battery: dict[str, Any] = field(default_factory=unavailable_battery_state)
+    gnss: dict[str, Any] = field(default_factory=open_sky_gnss_state)
     extra: dict[str, Any] = field(default_factory=dict)
 
     def to_message(self, version: int, seq: int, ack_seq: int) -> dict[str, Any]:
@@ -138,8 +241,23 @@ class VehicleSample:
             "sample_time_ns": self.timestamp_ns,
             "px4_time_us": self.px4_time_us,
             "frame": "ENU_FLU",
+            # The target moves, so the contract is explicit about which frame
+            # position/velocity are expressed in rather than leaving it implied.
+            "position_frame": "pad",
             "position": list(self.position_enu),
             "velocity": list(self.velocity_enu),
+            "world": {
+                "position": list(self.position_world_enu),
+                "velocity": list(self.velocity_world_enu),
+            },
+            "pad": dict(self.pad),
+            "battery": dict(self.battery),
+            "gnss": dict(self.gnss),
+            "truth": {
+                "valid": self.truth_position_enu is not None,
+                "position": list(self.truth_position_enu or self.position_enu),
+                "velocity": list(self.truth_velocity_enu or self.velocity_enu),
+            },
             "quaternion_wxyz": list(self.quaternion_enu_flu_wxyz),
             "angular_velocity": list(self.angular_velocity_flu),
             "acceleration": list(self.acceleration_enu),

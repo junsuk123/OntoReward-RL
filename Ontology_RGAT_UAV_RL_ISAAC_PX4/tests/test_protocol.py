@@ -51,11 +51,11 @@ def test_goto_is_a_versioned_command():
 @pytest.mark.parametrize("position", (
     [0.0, 0.0, 0.0],        # on the ground
     [0.0, 0.0, -1.0],       # below the ground
-    [0.0, 0.0, 99.0],       # above the arena
-    [30.0, 0.0, 4.0],       # outside the arena radius
+    [0.0, 0.0, 99.0],       # above the city
+    [200.0, 0.0, 4.0],      # beyond the block the deck laps
     [float("inf"), 0.0, 4.0],
 ))
-def test_goto_refuses_positions_outside_the_arena(position):
+def test_goto_refuses_positions_outside_the_city(position):
     with pytest.raises(ProtocolError):
         validate_goto({"position": position})
 

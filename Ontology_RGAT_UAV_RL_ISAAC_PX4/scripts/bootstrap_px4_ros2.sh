@@ -42,13 +42,32 @@ python3 -m pip install --user \
   --constraint "$workspace_root/requirements-px4-constraints.txt" \
   --requirement "$workspace_root/external/PX4-Autopilot/Tools/setup/requirements.txt"
 
-# PX4 v1.14 does not publish vehicle_land_detected or vehicle_command_ack over
-# uXRCE-DDS. Without the land detector the gateway cannot tell a hovering
-# vehicle from a landed one, so touchdown is never detected.
-if ! grep -q 'vehicle_land_detected' \
-  "$workspace_root/external/PX4-Autopilot/src/modules/uxrce_dds_client/dds_topics.yaml"; then
+# PX4 v1.14 publishes neither vehicle_land_detected, vehicle_command_ack,
+# vehicle_thrust_setpoint nor battery_status over uXRCE-DDS. Without the land
+# detector the gateway cannot tell a hovering vehicle from a landed one, so
+# touchdown is never detected; without the thrust setpoint it cannot price the
+# energy a landing costs.
+#
+# The guard names the newest topic and restores the file before patching, so a
+# tree carrying an earlier version of this patch is brought up to date instead
+# of being skipped because an older topic is already present.
+dds_topics=src/modules/uxrce_dds_client/dds_topics.yaml
+if ! grep -q 'battery_status' \
+  "$workspace_root/external/PX4-Autopilot/$dds_topics"; then
+  git -C "$workspace_root/external/PX4-Autopilot" checkout -- "$dds_topics"
   git -C "$workspace_root/external/PX4-Autopilot" apply \
     "$workspace_root/patches/px4-v1.14-publish-land-detected.patch"
+fi
+
+# The client's topic table is generated from that yaml at build time, so a
+# binary older than the yaml silently publishes the old topic set. Checking the
+# timestamps rather than only the patch branch also catches a yaml edited or
+# patched by hand, which is otherwise indistinguishable from an up-to-date tree.
+px4_binary="$workspace_root/external/PX4-Autopilot/build/px4_sitl_default/bin/px4"
+if [[ -x "$px4_binary" \
+  && "$workspace_root/external/PX4-Autopilot/$dds_topics" -nt "$px4_binary" ]]; then
+  printf '%s is newer than the built px4; forcing a rebuild.\n' "$dds_topics"
+  rm -rf "$workspace_root/external/PX4-Autopilot/build/px4_sitl_default"
 fi
 
 if [[ ! -d "$workspace_root/ros2_ws/src/px4_msgs/.git" ]]; then
@@ -78,9 +97,10 @@ cmake -S "$workspace_root/external/Micro-XRCE-DDS-Agent" \
 cmake --build "$workspace_root/external/Micro-XRCE-DDS-Agent/build" --parallel
 cmake --install "$workspace_root/external/Micro-XRCE-DDS-Agent/build"
 
-if [[ ! -x "$workspace_root/external/PX4-Autopilot/build/px4_sitl_default/bin/px4" ]]; then
-  make -C "$workspace_root/external/PX4-Autopilot" px4_sitl_default
-fi
+# Always ask Ninja for an incremental build. The DDS bridge is generated from
+# dds_topics.yaml; checking only for an existing px4 binary leaves that generated
+# table stale after this workspace adds or changes a published topic.
+make -C "$workspace_root/external/PX4-Autopilot" px4_sitl_default
 
 # Humble's rosidl dependency parser corrupts non-ASCII source/build paths.
 # Mirror only the ROS packages into a stable ASCII-only runtime workspace.

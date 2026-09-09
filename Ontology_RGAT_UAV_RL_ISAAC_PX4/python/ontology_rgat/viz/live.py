@@ -1,0 +1,406 @@
+"""Live training telemetry: one store, three consumers.
+
+The retired MATLAB monitors each owned a figure window, which is why an
+unattended run was invisible from outside MATLAB and a headless one was
+invisible entirely. Here the *data* is the shared thing:
+
+* :class:`LiveStore` holds it, thread-safe, bounded.
+* :mod:`ontology_rgat.viz.dashboard` serves it over HTTP for a browser.
+* the monitors below export a PNG and a CSV to ``results/live`` every few
+  episodes or epochs, which is what makes progress inspectable over SSH with
+  nothing running locally.
+
+The PNG export uses the Agg backend on purpose: a training run must never
+depend on a display being attached, and must never try to open a window on a
+machine that has none.
+"""
+from __future__ import annotations
+
+import csv
+import threading
+import time
+from collections import deque
+from pathlib import Path
+from typing import Any, Iterable, Sequence
+
+import numpy as np
+
+__all__ = ["LiveStore", "DatasetMonitor", "RGATMonitor", "PPOMonitor",
+           "EpisodeMonitor", "STORE"]
+
+
+class LiveStore:
+    """Bounded, thread-safe series store shared by every live consumer."""
+
+    def __init__(self, history: int = 4000):
+        self._lock = threading.Lock()
+        self._history = int(history)
+        self._series: dict[str, deque] = {}
+        self._scalars: dict[str, Any] = {}
+        # The ontology snapshot is a whole object rather than a time series:
+        # only the latest one is ever drawn, and keeping a history of them
+        # would be several megabytes of graph nobody looks at.
+        self._graph: dict[str, Any] | None = None
+        self._stage = {"name": "idle", "detail": "", "started": time.time()}
+        self.revision = 0
+
+    # ------------------------------------------------------------- writing
+    def append(self, series: str, point: dict[str, Any]) -> None:
+        with self._lock:
+            bucket = self._series.get(series)
+            if bucket is None:
+                bucket = self._series[series] = deque(maxlen=self._history)
+            bucket.append(point)
+            self.revision += 1
+
+    def replace(self, series: str, points: Iterable[dict[str, Any]]) -> None:
+        with self._lock:
+            self._series[series] = deque(points, maxlen=self._history)
+            self.revision += 1
+
+    def set(self, **scalars: Any) -> None:
+        with self._lock:
+            self._scalars.update(scalars)
+            self.revision += 1
+
+    def graph(self, payload: dict[str, Any] | None) -> None:
+        """Replace the ontology graph snapshot the 3D view draws."""
+        with self._lock:
+            self._graph = payload
+            self.revision += 1
+
+    def stage(self, name: str, detail: str = "") -> None:
+        with self._lock:
+            self._stage = {"name": name, "detail": detail, "started": time.time()}
+            self.revision += 1
+
+    # ------------------------------------------------------------- reading
+    def snapshot(self) -> dict[str, Any]:
+        with self._lock:
+            return {
+                "revision": self.revision,
+                "stage": dict(self._stage),
+                "scalars": dict(self._scalars),
+                "series": {k: list(v) for k, v in self._series.items()},
+                "graph": self._graph,
+                "time": time.time(),
+            }
+
+    def series(self, name: str) -> list[dict[str, Any]]:
+        with self._lock:
+            return list(self._series.get(name, ()))
+
+
+STORE = LiveStore()
+
+
+# ------------------------------------------------------------------ helpers
+def _figure(nrows: int, ncols: int, size: tuple[float, float]):
+    import matplotlib
+    matplotlib.use("Agg", force=False)
+    import matplotlib.pyplot as plt
+    fig, axes = plt.subplots(nrows, ncols, figsize=size, constrained_layout=True)
+    return fig, np.atleast_1d(np.asarray(axes)).ravel()
+
+
+def _moving_mean(values: Sequence[float], window: int) -> np.ndarray:
+    v = np.asarray(values, dtype=float)
+    if v.size == 0:
+        return v
+    w = max(1, min(int(window), v.size))
+    kernel = np.ones(w) / w
+    padded = np.concatenate([np.full(w - 1, v[0]), v])
+    return np.convolve(padded, kernel, mode="valid")
+
+
+def write_csv(path: Path, rows: Sequence[dict[str, Any]]) -> None:
+    if not rows:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fields: list[str] = []
+    for row in rows:
+        for key in row:
+            if key not in fields:
+                fields.append(key)
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fields)
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+class _Monitor:
+    """Shared plumbing: throttled PNG/CSV export plus the live store."""
+
+    series_name = "series"
+    figure_name = "monitor"
+
+    def __init__(self, cfg, store: LiveStore | None = None):
+        self.cfg = cfg
+        self.store = store or STORE
+        self.live_dir = Path(cfg.paths.live)
+        self.every = max(1, int(cfg.viz.live_every))
+        self.export = bool(cfg.viz.live_export)
+
+    def _maybe_export(self, index: int, force: bool = False) -> None:
+        if not self.export or (index % self.every and not force):
+            return
+        rows = self.store.series(self.series_name)
+        write_csv(self.live_dir / f"{self.figure_name}.csv", rows)
+        try:
+            self.render(rows, self.live_dir / f"{self.figure_name}.png")
+        except Exception as exc:                       # pragma: no cover - plotting
+            print(f"WARNING: live snapshot failed for {self.figure_name}: {exc}")
+
+    def render(self, rows: Sequence[dict[str, Any]], path: Path) -> None:
+        raise NotImplementedError
+
+
+class DatasetMonitor(_Monitor):
+    """Expert rollout collection.
+
+    The success rate is the panel that matters: a flat zero here means the
+    potential's target has no positive examples to learn from, which no amount
+    of R-GAT training afterwards can fix.
+    """
+
+    series_name = "dataset"
+    figure_name = "rgat_dataset"
+
+    def update(self, episode: int, success: float, noise: float, samples: int) -> None:
+        self.store.append(self.series_name, {
+            "episode": episode, "success": float(success),
+            "noise_std": float(noise), "samples": int(samples)})
+        self.store.set(dataset_episode=episode)
+        self._maybe_export(episode)
+
+    def finish(self) -> None:
+        self._maybe_export(0, force=True)
+
+    def render(self, rows, path):
+        import matplotlib.pyplot as plt
+        if not rows:
+            return
+        episodes = [r["episode"] for r in rows]
+        success = [r["success"] for r in rows]
+        fig, ax = _figure(1, 3, (12.0, 3.6))
+        ax[0].plot(episodes, _moving_mean(success, max(1, len(rows) // 4)),
+                   color="#0d8c4d", lw=1.8)
+        ax[0].set(xlabel="Episode", ylabel="Success rate", ylim=(0, 1),
+                  title="Expert moving success rate")
+        ax[1].plot(episodes, np.cumsum(success), color="#1a59bf", lw=1.8,
+                   label="successful episodes")
+        ax[1].plot(episodes, [r["samples"] for r in rows], color="#d96619", lw=1.2,
+                   label="samples/episode")
+        ax[1].set(xlabel="Episode", ylabel="Count", title="Collection progress")
+        ax[1].legend(frameon=False, fontsize=8)
+        ax[2].scatter([r["noise_std"] for r in rows], success, s=22, alpha=0.6)
+        ax[2].set(xlabel="action noise sigma", ylabel="success", ylim=(-0.1, 1.1),
+                  title="Outcome vs perturbation")
+        for a in ax:
+            a.grid(alpha=0.3)
+        fig.savefig(path, dpi=140)
+        plt.close(fig)
+
+
+class RGATMonitor(_Monitor):
+    """Potential regression loss and the validation fit it implies."""
+
+    series_name = "rgat"
+    figure_name = "rgat_training"
+
+    def __init__(self, cfg, store: LiveStore | None = None, graph=None):
+        super().__init__(cfg, store)
+        self._scatter: tuple[np.ndarray, np.ndarray] = (np.zeros(0), np.zeros(0))
+        # The template captured from the first rollout, so the 3D view can show
+        # what the potential is attending to on a graph it actually saw.
+        self.graph = graph
+        from .graph3d import GraphPublisher   # local: graph3d imports this module
+        self.graph_pub = GraphPublisher(cfg, self.store)
+
+    def update(self, epoch: int, history, y_true: np.ndarray, y_pred: np.ndarray,
+               model=None) -> None:
+        self.store.append(self.series_name, {
+            "epoch": epoch,
+            "train_mse": float(history["train_loss"][-1]),
+            "val_mse": float(history["val_loss"][-1]),
+            "epoch_seconds": float(history["epoch_seconds"][-1])})
+        self.store.set(rgat_epoch=epoch, rgat_device=history.get("device", "?"),
+                       rgat_val_scatter=[
+                           [float(a), float(b)] for a, b in
+                           zip(y_true[:600].tolist(), y_pred[:600].tolist())])
+        self._scatter = (np.asarray(y_true), np.asarray(y_pred))
+        last = epoch == int(self.cfg.rgat.epochs)
+        if model is not None and self.graph is not None:
+            # Every ``live_every`` epochs and always on the last one: the
+            # attention early in training is nearly uniform, and watching it
+            # concentrate is the point of showing it at all.
+            self.graph_pub.potential = model
+            self.graph_pub.publish(
+                self.graph, source=f"R-GAT epoch {epoch}",
+                force=last or not (epoch % self.every))
+        self._maybe_export(epoch, force=last)
+
+    def render(self, rows, path):
+        import matplotlib.pyplot as plt
+        if not rows:
+            return
+        fig, ax = _figure(1, 2, (9.6, 4.0))
+        epochs = [r["epoch"] for r in rows]
+        ax[0].plot(epochs, [r["train_mse"] for r in rows], lw=1.6, label="train")
+        ax[0].plot(epochs, [r["val_mse"] for r in rows], lw=1.6, label="validation")
+        ax[0].set(xlabel="Epoch", ylabel="MSE", title="Potential regression loss")
+        ax[0].legend(frameon=False)
+        y_true, y_pred = self._scatter
+        if y_true.size:
+            ax[1].scatter(y_true, y_pred, s=10, alpha=0.35)
+        ax[1].plot([-1, 1], [-1, 1], "k--", lw=1)
+        ax[1].set(xlabel="target potential", ylabel="predicted potential",
+                  xlim=(-1.05, 1.05), title="Validation fit")
+        for a in ax:
+            a.grid(alpha=0.3)
+        fig.savefig(path, dpi=140)
+        plt.close(fig)
+
+
+class PPOMonitor(_Monitor):
+    """Return, outcome mix, losses and exploration for one PPO arm.
+
+    The terminal-outcome panel is the one that matters most: a policy that
+    learns to hover out the clock shows up as a rising ``timeout`` fraction with
+    a flat success rate, which a return curve alone hides.
+    """
+
+    STATUSES = ("success", "unsafe_touchdown", "flight_failure", "timeout",
+                "battery_depleted", "ground_mislanding")
+
+    def __init__(self, cfg, name: str, store: LiveStore | None = None):
+        super().__init__(cfg, store)
+        self.name = name
+        self.series_name = f"ppo_{name}"
+        self.figure_name = f"ppo_{name}"
+
+    def update(self, history) -> None:
+        i = len(history["episode"]) - 1
+        self.store.append(self.series_name, {
+            "episode": history["episode"][i], "iteration": history["iteration"][i],
+            "return": history["ret"][i], "success": history["success"][i],
+            "steps": history["length"][i], "status": history["status"][i],
+            "actor_loss": history["actor_loss"][i],
+            "critic_loss": history["critic_loss"][i],
+            "policy_std": history["policy_std"][i]})
+        self.store.set(**{f"ppo_{self.name}_episode": history["episode"][i]})
+        self._maybe_export(int(history["episode"][i]))
+
+    def refresh(self, history) -> None:
+        """Rewrite the whole series after an update fills in the losses."""
+        self.store.replace(self.series_name, [{
+            "episode": history["episode"][i], "iteration": history["iteration"][i],
+            "return": history["ret"][i], "success": history["success"][i],
+            "steps": history["length"][i], "status": history["status"][i],
+            "actor_loss": history["actor_loss"][i],
+            "critic_loss": history["critic_loss"][i],
+            "policy_std": history["policy_std"][i]}
+            for i in range(len(history["episode"]))])
+        self._maybe_export(0, force=True)
+
+    def render(self, rows, path):
+        import matplotlib.pyplot as plt
+        if not rows:
+            return
+        fig, ax = _figure(2, 3, (13.0, 7.0))
+        episodes = [r["episode"] for r in rows]
+        window = max(1, min(50, len(rows) // 5))
+        returns = [r["return"] for r in rows]
+        ax[0].plot(episodes, returns, color="#b8c9e6", lw=0.8)
+        ax[0].plot(episodes, _moving_mean(returns, window), color="#1a59bf", lw=1.8)
+        ax[0].set(xlabel="Episode", ylabel="Return", title="Episode return")
+        ax[1].plot(episodes, _moving_mean([r["success"] for r in rows], window),
+                   color="#0d8c4d", lw=1.8)
+        ax[1].set(xlabel="Episode", ylabel="Success rate", ylim=(0, 1),
+                  title="Moving success rate")
+        steps = [r["steps"] for r in rows]
+        ax[2].plot(episodes, steps, color="#f2d6b8", lw=0.8)
+        ax[2].plot(episodes, _moving_mean(steps, window), color="#d96619", lw=1.8)
+        ax[2].set(xlabel="Episode", ylabel="Steps", title="Episode length")
+        ax[3].plot(episodes, [r["actor_loss"] for r in rows], lw=1.4, label="actor")
+        twin = ax[3].twinx()
+        twin.plot(episodes, [r["critic_loss"] for r in rows], lw=1.4,
+                  color="#d96619", label="critic")
+        ax[3].set(xlabel="Episode", ylabel="Actor loss", title="PPO losses")
+        twin.set_ylabel("Critic loss")
+        ax[4].plot(episodes, [r["policy_std"] for r in rows], color="#7333a6", lw=1.8)
+        ax[4].set(xlabel="Episode", ylabel="exp(logStd)", title="Exploration std")
+        statuses = [r["status"] for r in rows]
+        for status in self.STATUSES:
+            fraction = _moving_mean([float(s == status) for s in statuses], window)
+            ax[5].plot(episodes, fraction, lw=1.4, label=status.replace("_", " "))
+        ax[5].set(xlabel="Episode", ylabel="Fraction", ylim=(0, 1),
+                  title="Terminal outcome mix")
+        ax[5].legend(frameon=False, fontsize=7)
+        for a in ax:
+            a.grid(alpha=0.3)
+        fig.suptitle(f"PPO - {self.name}")
+        fig.savefig(path, dpi=140)
+        plt.close(fig)
+
+
+class EpisodeMonitor:
+    """Per-step episode telemetry, fanned out to RViz 2 and the dashboard.
+
+    This replaces the retired ``viz.RealtimeMonitor`` figure. The 3D view it
+    drew is now RViz 2's job -- it is a better 3D viewer than a MATLAB axes and
+    it already has the deck, the markers and the TF tree from the simulator --
+    so what stays here is the plumbing that fans one control step out to
+    whoever is watching.
+    """
+
+    def __init__(self, cfg, rviz=None, store: LiveStore | None = None,
+                 label: str = "episode", potential=None):
+        self.cfg = cfg
+        self.rviz = rviz
+        self.store = store or STORE
+        self.label = label
+        from .graph3d import GraphPublisher   # local: graph3d imports this module
+        self.graph_pub = GraphPublisher(cfg, self.store, potential=potential)
+
+    @property
+    def potential(self):
+        """The model whose attention the 3D graph view draws, if any."""
+        return self.graph_pub.potential
+
+    @potential.setter
+    def potential(self, model) -> None:
+        self.graph_pub.potential = model
+
+    def __call__(self, log, k: int, cur, info: dict[str, Any]) -> None:
+        self.store.append("episode", {
+            "step": k, "t": float(log.t[-1]), "status": info["status"],
+            "z": float(log.x[-1][2]),
+            "xy_error": float(np.linalg.norm(log.x[-1][0:2])),
+            "reward": float(log.r[-1]), "tilt_deg": float(np.degrees(log.tilt[-1])),
+            "aero_n": float(log.aero_mag[-1]),
+            "pad_speed": float(log.pad_speed[-1]),
+            "closing_speed": float(log.closing_speed[-1]),
+            "marker_quality": float(log.marker_quality[-1]),
+            "gnss_quality": float(log.gnss_quality[-1]),
+            "gnss_sigma_xy": float(log.gnss_sigma_xy[-1]),
+            "nav_confidence": float(log.nav_confidence[-1]),
+            # What the canyon is costing the pose being flown on, right now.
+            "estimate_error_m": float(log.estimate_error_m[-1]),
+            "hover_seconds_left": float(log.hover_seconds_left[-1]),
+            "battery_power_w": float(log.battery_power_w[-1]),
+            "phi": float(log.phi[-1]) if np.isfinite(log.phi[-1]) else None})
+        self.store.set(episode_label=self.label, episode_status=info["status"])
+        phi = float(log.phi[-1]) if np.isfinite(log.phi[-1]) else None
+        self.graph_pub.publish(cur.graph, cur.sem.node_values, phi=phi,
+                               source=f"{self.label} t={log.t[-1]:.1f}s")
+        if self.rviz is not None:
+            self.rviz.publish_step(log, cur, info)
+
+    def reset(self, label: str | None = None) -> None:
+        if label:
+            self.label = label
+        self.store.replace("episode", [])
+        self.graph_pub.clear()
+        if self.rviz is not None:
+            self.rviz.clear_trails()

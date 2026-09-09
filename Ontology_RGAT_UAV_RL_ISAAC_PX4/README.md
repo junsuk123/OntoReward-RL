@@ -15,13 +15,79 @@ MATLAB ontology/R-GAT/PPO
                                   |  Simulator MAVLink (SITL only)
                                   v
                          Isaac Sim 5.1 + Pegasus 5.1
-                         physics, sensors, contact, wind
+                    physics, sensors, contact, city, wind, GNSS
 ```
 
 The controller sees PX4 estimator data and, where the pad is in view, the pose
 its own camera recovers from the markers. Isaac ground truth is used only for
 experiment telemetry and reset acknowledgement. ENU/FLU is the workspace
 convention; conversion to PX4 NED/FRD happens only in the gateway.
+
+## The environment: a lorry on a city street
+
+The pad is painted on the roof of a box lorry driving a lap of a city block, in
+lane, through stop-and-go traffic at 2-8 m/s. The block is built into the
+Isaac stage procedurally (`isaac_sim/urban_scene.py`) rather than loaded as a
+canned environment, because the *same* geometry has to serve two consumers: the
+camera that renders it and the GNSS model that occludes satellites with it. A
+skyline drawn from one set of boxes and a satellite mask computed from another
+would give an urban-canyon experiment whose outages have nothing to do with the
+visible city.
+
+The route (`isaac_sim/pad_motion.py`, mode `road`) is a rounded rectangle
+parameterised by arc length, so position, tangent and curvature are closed form
+all the way round and the deck twist the policy feeds forward is differentiated
+analytically rather than sampled. Traffic is a Gaussian dip in the speed at each
+light -- deep enough to be a full stop when the draw says so -- whose integral is
+an error function, so the distance covered is closed form too. `pad.motion:
+static` is unchanged and remains the fixed-pad control condition.
+
+Driving the lap takes the deck through four street canyons at two orientations
+and four open intersections, which is what makes satellite visibility, wind
+direction and marker visibility all change *during* an episode instead of being
+one number per run.
+
+## GNSS in a street canyon
+
+`isaac_sim/gnss.py` models what the facades do to the fix:
+
+- a satellite whose line of sight crosses a building is not received directly;
+- most blocked satellites are still tracked, through a reflection off the
+  facade opposite, whose path is longer -- so the pseudorange carries a strictly
+  positive excess delay of about `2 d cos(el)`. Positive-only bias is what makes
+  urban GNSS error a *bias* rather than noise, and why it points across the
+  street;
+- the survivors are strung out along the street, so the geometry degrades as
+  well as the count;
+- the position is then solved by weighted least squares from those per-satellite
+  errors, exactly as a receiver solves it, and its own covariance is inflated by
+  the post-fit residuals.
+
+Typical numbers at mid-block with the shipped configuration: 3-5 satellites
+NLOS out of 12, reported 1-sigma 7-16 m, horizontal error 3-20 m. At an
+intersection it recovers; above the roofline it is open sky.
+
+Both the drone and the lorry carry a receiver and share the constellation, so
+the satellites they lose are correlated and their errors are partly
+common-mode -- which is why the *relative* fix stays better than either absolute
+one, and why the drone can chase a lorry it cannot absolutely locate. It is
+still metres out, on a roof 2.45 m wide, which is what makes the markers
+load-bearing rather than a convenience.
+
+What the policy is shown is only what a receiver publishes: satellite count,
+DOP, its own inflated covariance, mean C/N0 and the fraction of signals its
+C/N0 test flags as probably reflected. The true error, the true NLOS count and
+the true sky view are the simulator's and never cross into the learner --
+`tests/test_urban_gnss.py` enforces that boundary. The C/N0 detector matters:
+when every satellite is reflected off a facade the same distance away their
+biases agree with one another, so no consistency check sees anything wrong, and
+signal strength is the only evidence left. It is not an oracle either, because
+a few reflections come in nearly as strong as the direct path.
+
+PX4's own EKF is not corrupted -- Pegasus' GPS sensor is not part of this
+workspace -- so the modelled error is injected downstream of the estimator, in
+the gateway, on the estimate handed to the policy. `docs/ARCHITECTURE.md`,
+"GNSS", says exactly where.
 
 ## Marker-based landing
 
@@ -33,10 +99,16 @@ what lets the ontology reason about degraded perception instead of being handed
 a function of ground truth.
 
 The pad uses two marker scales because one cannot cover a landing: a tag big
-enough to resolve from the 4.6 m entry altitude overflows the frame below about
-0.4 m, and a tag small enough to survive touchdown is a few pixels from
-altitude. `config/system.yaml` therefore places four 0.45 m tags around one
-0.10 m tag, and the solver uses whichever are visible.
+enough to resolve from the entry altitude overflows the frame near touchdown,
+and a tag small enough to survive touchdown is a few pixels from altitude.
+`config/system.yaml` therefore spreads four 0.62 m tags along the lorry's roof
+around one 0.18 m tag, and the solver uses whichever are visible.
+
+In the canyon this is not a redundancy but the primary sensor: the fallback
+pad-relative pose is the difference of two GNSS fixes and is metres wrong, so
+when the markers leave the frame the landing has nothing accurate left. The
+`GnssIntegrity` ontology node exists so the policy can tell the two situations
+apart -- they look identical in the pose alone.
 
 ```bash
 # Dump annotated camera frames while the simulator runs.
@@ -46,6 +118,36 @@ ONTOLOGY_RGAT_VISION_DEBUG_DIR=/tmp/frames ./scripts/run_isaac.sh
 Set `vision.mode: pose_proxy` to switch the camera off and fall back to the
 analytic marker-quality stand-in; rendering the camera costs simulation speed
 even headless, because PX4 is lockstepped to the simulator.
+
+## Sensor and ground-truth boundary
+
+The policy, ontology, rewards, R-GAT dataset and PPO training consume the
+gateway's sensor/estimator contract: PX4 odometry, camera marker quality, the
+lorry's own V2V broadcast, the receiver's own report of its fix, and pad
+telemetry. The learner never reads the `ground_truth` namespace. This keeps a
+simulated experiment from silently turning privileged information into a
+control feature.
+
+The episode outcome is the one exception, and it has to be: under a canyon fix
+the pad-relative pose the policy flies on can be metres from the truth, so
+grading the landing on it would score the receiver's mistake instead of the
+landing. The gateway therefore publishes a `truth` block -- the simulator's own
+pad-relative geometry -- and `env.truth_state` uses it for the terminal test and
+the touchdown metrics, and for nothing else. A link that carries no `truth`
+block falls back to the sensor, which is what the fixed-pad experiment always
+did.
+
+An episode is successful only after the vehicle has been airborne, PX4's land
+detector confirms touchdown, and the pad sensor stream is valid. Ground contact
+without those checks is recorded as an unsuccessful touchdown; battery
+depletion, attitude/flight-limit violations and timeouts are separate terminal
+outcomes. The vehicle is commanded to stop and its landed/disarmed state is
+confirmed before the next reset is accepted.
+
+`run_pipeline.py` starts the live dashboard, the Isaac in-window overlay and,
+when a graphical ROS 2 session is available, RViz 2. Training progress is
+also exported to `results/live/*.csv` and `results/live/*.png`; the dashboard
+is served at `http://127.0.0.1:8770/`.
 
 Each episode starts in the air. Isaac draws the entry pose from the same
 distribution as the original simulator but does **not** teleport the vehicle:
@@ -236,7 +338,7 @@ Tests not requiring Isaac/PX4/ROS:
 ```bash
 python3 -m pytest -q tests
 ./scripts/check_workspace.sh
-./scripts/check_matlab_protocol.sh
+./scripts/check_learner_protocol.sh
 # after bootstrap/build
 ./scripts/check_ros2_loopback.sh
 ```
@@ -257,6 +359,20 @@ python3 tools/calibrate_hover_thrust.py
   NumPy's generator and the original simulator uses MATLAB's Mersenne Twister,
   so the same seed gives the same *distribution* but not the same episode.
   Compare distributions, not paired seeds.
+- Results are not comparable with the fixed-pad runs, and not only because the
+  deck moves: the success radius, the episode length, the arena limits and the
+  ontology schema all changed with the environment. A potential trained against
+  the 13-node schema will not load, by design.
+- The GNSS error is injected downstream of PX4's estimator rather than into it.
+  Corrupting the EKF properly means patching Pegasus' GPS sensor to bias the
+  `HIL_GPS` it sends, which would also let the estimator's own rejection and
+  reversion logic respond to the canyon. That is the honest next step and it is
+  not done here; the consequence is that PX4's internal position estimate stays
+  clean while the policy's does not.
+- Satellites are frozen for the duration of an episode. Over fifteen seconds a
+  MEO satellite moves well under a degree, so this is not a meaningful
+  approximation at episode scale -- but it does mean an outage never clears by
+  itself, only by the vehicle moving.
 - `metrics.energyJ` is `NaN`. PX4 reports no shaft power, and the in-process
   rotor model that produced it is gone.
 - PX4 SITL stops accepting arm commands after long unattended sessions

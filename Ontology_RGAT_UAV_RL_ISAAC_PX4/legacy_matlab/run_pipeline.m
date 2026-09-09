@@ -15,8 +15,9 @@ function out = run_pipeline(varargin)
 %   run_pipeline('SmokeTestOnly',true)  bring the stack up, fly one episode,
 %                                       tear it down; no training
 %
-%   Quick mode flies roughly 400 episodes and full mode roughly 7000. PX4 runs
-%   in real time, so budget hours for quick and days for full. If the simulator
+%   Quick mode flies roughly 520 episodes and full mode roughly 8200 after the
+%   moving-deck and battery sweeps. PX4 runs in real time, so budget hours for
+%   quick and days for full. If the simulator
 %   stops accepting arm commands mid-run, run_pipeline cycles it and continues
 %   (cfg.external.resetRecoveries).
 %

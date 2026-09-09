@@ -8,6 +8,7 @@ from typing import Any
 
 import numpy as np
 
+from .battery import BatteryModel
 from .config import GatewayConfig, load_gateway_config
 from .frames import (
     enu_to_ned,
@@ -24,6 +25,8 @@ from .protocol import (
     ProtocolError,
     VehicleSample,
     now_ns,
+    open_sky_gnss_state,
+    static_pad_state,
     validate_action,
     validate_goto,
 )
@@ -44,13 +47,15 @@ def _load_ros_types():
         import rclpy as imported_rclpy
         rclpy = imported_rclpy
     from geometry_msgs.msg import PoseStamped, Vector3Stamped
+    from nav_msgs.msg import Odometry
     from rclpy.node import Node
-    from px4_msgs.msg import OffboardControlMode, TrajectorySetpoint
+    from px4_msgs.msg import BatteryStatus, OffboardControlMode, TrajectorySetpoint
     from px4_msgs.msg import VehicleAttitudeSetpoint, VehicleCommand, VehicleCommandAck
     from px4_msgs.msg import VehicleLandDetected, VehicleLocalPosition
     from px4_msgs.msg import VehicleOdometry, VehicleStatus, VehicleThrustSetpoint
     from std_msgs.msg import Float32, String
-    return (Node, PoseStamped, Vector3Stamped, OffboardControlMode, TrajectorySetpoint,
+    return (Node, PoseStamped, Vector3Stamped, Odometry, BatteryStatus,
+            OffboardControlMode, TrajectorySetpoint,
             VehicleAttitudeSetpoint, VehicleCommand, VehicleCommandAck, VehicleLandDetected,
             VehicleLocalPosition, VehicleOdometry, VehicleStatus, VehicleThrustSetpoint,
             Float32, String)
@@ -83,7 +88,8 @@ def _make_qos(rclpy_module):
 
 
 def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
-    (Node, PoseStamped, Vector3Stamped, OffboardControlMode, TrajectorySetpoint,
+    (Node, PoseStamped, Vector3Stamped, Odometry, BatteryStatus,
+     OffboardControlMode, TrajectorySetpoint,
      VehicleAttitudeSetpoint, VehicleCommand, VehicleCommandAck, VehicleLandDetected,
      VehicleLocalPosition, VehicleOdometry, VehicleStatus, VehicleThrustSetpoint,
      Float32, String) = types
@@ -107,10 +113,38 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             self.pending_reset_seq = -1
             self.pad_position_enu: np.ndarray | None = None
             self.pad_pose_time_ns = 0
+            # The deck the pad rides on. A static pad is the same code path with
+            # a zero twist, so there is no second branch to keep in step.
+            self.deck_position_enu = np.zeros(3)
+            self.deck_velocity_enu = np.zeros(3)
+            self.deck_yaw = 0.0
+            self.deck_yaw_rate = 0.0
+            self.deck_time_ns = 0
+            self.deck_sigma_xy_m = 0.0
+            self.warned_missing_deck = False
+            # The simulator's own deck pose, for scoring the episode only. It
+            # never reaches the policy: see docs/ARCHITECTURE.md, "GNSS".
+            self.deck_truth_position_enu: np.ndarray | None = None
+            self.deck_truth_velocity_enu = np.zeros(3)
+            # The drone's receiver. `gnss_offset` is the error the simulator is
+            # injecting into the estimate this gateway hands the policy --
+            # Pegasus' GPS sensor is not in this workspace, so PX4's own EKF
+            # runs clean and the canyon error is applied here instead.
+            self.gnss = open_sky_gnss_state()
+            self.gnss_offset = np.zeros(3)
+            self.gnss_velocity_offset = np.zeros(3)
+            self.gnss_time_ns = 0
+            self.warned_missing_gnss = False
             # Pre-episode climb flown by PX4's own position controller.
             self.goto_target_enu: np.ndarray | None = None
+            self.goto_pad_relative = False
             self.goto_yaw_enu = 0.0
             self.goto_deadline_ns = 0
+            self.battery = BatteryModel(cfg.battery)
+            self.battery_armed = False
+            self.pending_battery_hover_s: float | None = None
+            self.battery_time_us = 0
+            self.px4_battery_time_ns = 0
             self.estimator_health_ns = 0
             self.estimator_healthy = False
             self.land_detected_ns = 0
@@ -152,6 +186,19 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                                      self._on_marker_quality, sensor_qos)
             self.create_subscription(PoseStamped, "/landing_uav0/perception/uav_pose_in_pad",
                                      self._on_pad_pose, sensor_qos)
+            # The deck broadcasts its own state, the way a cooperative ground
+            # vehicle would over a V2V link. The drone's own estimate of where
+            # the pad is still comes from the camera.
+            self.create_subscription(Odometry, "/landing_pad/state/odom",
+                                     self._on_deck_odom, sensor_qos)
+            self.create_subscription(Odometry, "/landing_pad/state/odom_truth",
+                                     self._on_deck_truth, sensor_qos)
+            # The drone's own receiver, as a receiver reports it, plus the error
+            # the simulator wants injected downstream of PX4's estimator.
+            self.create_subscription(String, "/landing_uav0/gnss/status",
+                                     self._on_gnss_status, sensor_qos)
+            self.create_subscription(BatteryStatus, _topic(cfg, "out", "battery_status"),
+                                     self._on_battery_status, qos)
             self.create_subscription(String, "/landing_sim/reset_ack", self._on_reset_ack, 10)
 
             self.udp = DatagramServer(cfg.bind_host, cfg.gateway_port,
@@ -161,7 +208,10 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             self.get_logger().info(
                 f"gateway target={cfg.target}, UDP={cfg.bind_host}:{cfg.gateway_port}, "
                 f"PX4 namespace={cfg.namespace}, arm_allowed={safety.may_arm()}, "
-                f"offboard_allowed={safety.may_enable_offboard()}"
+                f"offboard_allowed={safety.may_enable_offboard()}, "
+                f"pad_motion={cfg.pad_motion}, gnss={'on' if cfg.gnss_enabled else 'off'}, "
+                f"battery={'on' if cfg.battery.enabled else 'off'} "
+                f"(hover {self.battery.hover_power_w:.0f} W)"
             )
 
         def destroy_node(self):
@@ -182,13 +232,29 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                 self.last_action_ns = now_ns()
                 self.last_command_seq = seq
                 self.pending_state_ack = seq
-                # The first policy action ends the pre-episode position hold.
+                # The first policy action ends the pre-episode position hold and
+                # starts the energy budget: the seeded reserve is the reserve at
+                # handover, so the climb PX4 flew to get here is not charged to
+                # the policy.
                 self.goto_target_enu = None
+                if not self.battery_armed:
+                    self._arm_battery()
             elif kind == "reset":
                 self.safety.require_reset()
                 wind_scale = float(msg.get("wind_scale", 1.0))
                 if not math.isfinite(wind_scale) or not 0.0 <= wind_scale <= 4.0:
                     raise ProtocolError("wind_scale must be finite and in [0,4]")
+                # Scales the deck speed Isaac draws for the episode, so a sweep
+                # can ask "how fast a rover can this policy still land on".
+                pad_scale = float(msg.get("pad_scale", 1.0))
+                if not math.isfinite(pad_scale) or not 0.0 <= pad_scale <= 4.0:
+                    raise ProtocolError("pad_scale must be finite and in [0,4]")
+                # Scales the canyon's error mechanisms without moving a
+                # building, so a sweep can ask how much GNSS degradation a
+                # policy survives; 0.0 is the open-sky control condition.
+                gnss_scale = float(msg.get("gnss_scale", 1.0))
+                if not math.isfinite(gnss_scale) or not 0.0 <= gnss_scale <= 4.0:
+                    raise ProtocolError("gnss_scale must be finite and in [0,4]")
                 self.last_command_seq = seq
                 self.pending_reset_seq = seq
                 if self.sample.landed:
@@ -204,7 +270,9 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                 req = String()
                 req.data = json.dumps({"v": cfg.protocol_version, "seq": seq,
                                        "seed": int(msg.get("seed", 0)),
-                                       "wind_scale": wind_scale})
+                                       "wind_scale": wind_scale,
+                                       "pad_scale": pad_scale,
+                                       "gnss_scale": gnss_scale})
                 self.reset_pub.publish(req)
                 self.action = (0.0, 0.0, 0.0, 0.0)
                 self.last_action_ns = 0
@@ -212,11 +280,18 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                 self.offboard_requested = False
                 self.last_mode_request_tick = -self.mode_request_period
                 self.goto_target_enu = None
+                self.goto_pad_relative = False
+                self.battery_armed = False
+                self.pending_battery_hover_s = None
             elif kind == "goto":
                 self.safety.require_autonomous_climb()
                 request = validate_goto(msg)
+                if request.is_pad_relative and not self._deck_is_fresh(now_ns()):
+                    raise ProtocolError(
+                        "pad-relative goto needs a fresh /landing_pad/state/odom")
                 self.last_command_seq = seq
                 self.goto_target_enu = np.asarray(request.position_enu, dtype=float)
+                self.goto_pad_relative = request.is_pad_relative
                 self.goto_yaw_enu = request.yaw_enu_rad
                 self.goto_deadline_ns = now_ns() + int(request.hold_s * 1e9)
                 # An action deadman must not cancel the climb that precedes it.
@@ -224,6 +299,7 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                 self.last_action_ns = 0
                 self._send_ack(seq, "goto_started",
                                {"position": list(request.position_enu),
+                                "frame": request.frame,
                                 "yaw": request.yaw_enu_rad,
                                 "hold_s": request.hold_s})
             elif kind == "arm":
@@ -265,6 +341,7 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
 
         def _control_tick(self) -> None:
             stamp = now_ns()
+            self._integrate_battery()
             if self.goto_target_enu is not None and stamp >= self.goto_deadline_ns:
                 self.goto_target_enu = None
                 self.get_logger().warning("goto hold expired; releasing the setpoint stream")
@@ -308,7 +385,7 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             # PX4 flies the episode entry pose itself: no teleport, so the
             # estimator never sees a jump it cannot explain.
             self._publish_offboard_mode(position=True)
-            target_ned = enu_to_ned(self.goto_target_enu)
+            target_ned = enu_to_ned(self._goto_world_target())
             sp = TrajectorySetpoint()
             sp.timestamp = self._timestamp_us()
             sp.position = [float(x) for x in target_ned]
@@ -376,26 +453,58 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             self.sample.timestamp_ns = stamp
             self.sample.px4_time_us = int(msg.timestamp)
             pad_pose_fresh = (stamp - self.pad_pose_time_ns) * 1e-9 <= cfg.state_timeout_s
+            deck_fresh = self._deck_is_fresh(stamp)
             # Hardware always flies on the pad-relative pose. In SITL it is a
             # choice: with the camera enabled the policy lands on the marker it
             # can actually see, and falls back to the PX4 estimate the moment
             # the pad leaves the frame.
             use_pad_pose = pad_pose_fresh and (
                 cfg.target == "hardware" or cfg.marker_pose_drives_policy)
-            policy_position = self.pad_position_enu if use_pad_pose else position
+            # Everything the policy sees is relative to the deck, because the
+            # deck is the target and it moves. The camera already solves in the
+            # pad frame; the PX4 fallback is the deck pose subtracted from the
+            # world estimate. Both express the pad frame as ENU axes translated
+            # to the deck origin -- deliberately not rotated with the deck, so
+            # the axes stay gravity-aligned and no Coriolis term appears in the
+            # relative velocity.
+            # The estimate the policy is handed, with the canyon's GNSS error
+            # in it. The marker solve is a direct optical measurement of the
+            # pad-relative pose and is unaffected; the PX4 fallback is a
+            # difference of two GNSS-derived positions, so it carries the
+            # drone's error and the lorry's broadcast error both -- and those
+            # are partly common-mode, which is why the fallback degrades less
+            # than either absolute position does.
+            estimated_position = position + self.gnss_offset
+            estimated_velocity = velocity + self.gnss_velocity_offset
+            policy_position = (self.pad_position_enu if use_pad_pose
+                               else estimated_position - self.deck_position_enu)
+            # Velocity always comes from the flight stack's estimator, whatever
+            # is providing position: the marker solve is not differentiated
+            # here, so there is no optical velocity to prefer.
+            policy_velocity = estimated_velocity - self.deck_velocity_enu
             self.sample.position_enu = tuple(float(x) for x in policy_position)
-            self.sample.velocity_enu = tuple(float(x) for x in velocity)
+            self.sample.velocity_enu = tuple(float(x) for x in policy_velocity)
+            self.sample.position_world_enu = tuple(float(x) for x in estimated_position)
+            self.sample.velocity_world_enu = tuple(float(x) for x in estimated_velocity)
+            self._set_truth(position, velocity)
             self.sample.quaternion_enu_flu_wxyz = tuple(float(x) for x in q_enu)
             self.sample.angular_velocity_flu = tuple(float(x) for x in omega)
             self.sample.acceleration_enu = tuple(float(x) for x in accel)
+            self.sample.pad = self._pad_state(deck_fresh)
+            self.sample.battery = self.battery.sample()
+            self.sample.gnss = self._gnss_state(stamp)
             navigation_valid = bool(np.isfinite(position).all() and np.isfinite(q_enu).all())
             self.sample.estimator_valid = (
                 navigation_valid
                 and self._estimator_is_healthy(stamp)
                 and (cfg.target == "sitl" or pad_pose_fresh)
+                # A moving deck whose pose has gone quiet makes every
+                # pad-relative number a guess, so say the state is invalid
+                # instead of reporting a stale target as if it were live.
+                and (cfg.pad_is_static or deck_fresh)
             )
             self.sample.extra["position_source"] = (
-                "uav_pose_in_pad" if use_pad_pose else "px4_local")
+                "uav_pose_in_pad" if use_pad_pose else "px4_local_minus_deck_gnss")
             self.sample.extra["control_source"] = (
                 "action" if self.last_action_ns
                 else "goto" if self.goto_target_enu is not None
@@ -476,6 +585,239 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                 self.pad_position_enu = position
                 self.pad_pose_time_ns = now_ns()
 
+        def _on_deck_odom(self, msg) -> None:
+            """What the lorry broadcasts about itself over its V2V link.
+
+            Its own receiver is in the same canyon, so this pose carries the
+            lorry's GNSS error and its covariance says how big the lorry thinks
+            that error is. It is the only deck pose the policy may see.
+            """
+            p = msg.pose.pose.position
+            v = msg.twist.twist.linear
+            w = msg.twist.twist.angular
+            position = np.array([p.x, p.y, p.z], dtype=float)
+            velocity = np.array([v.x, v.y, v.z], dtype=float)
+            if not (np.isfinite(position).all() and np.isfinite(velocity).all()):
+                return
+            o = msg.pose.pose.orientation
+            self.deck_position_enu = position
+            self.deck_velocity_enu = velocity
+            self.deck_yaw = float(yaw_from_quat_wxyz((o.w, o.x, o.y, o.z)))
+            self.deck_yaw_rate = float(w.z)
+            covariance = getattr(msg.pose, "covariance", None)
+            if covariance is not None and len(covariance) >= 8:
+                variance = float(covariance[0]) + float(covariance[7])
+                self.deck_sigma_xy_m = math.sqrt(variance) if variance > 0.0 else 0.0
+            self.deck_time_ns = now_ns()
+
+        def _on_deck_truth(self, msg) -> None:
+            """The simulator's own deck pose. Scoring only, never control."""
+            p = msg.pose.pose.position
+            v = msg.twist.twist.linear
+            position = np.array([p.x, p.y, p.z], dtype=float)
+            velocity = np.array([v.x, v.y, v.z], dtype=float)
+            if np.isfinite(position).all() and np.isfinite(velocity).all():
+                self.deck_truth_position_enu = position
+                self.deck_truth_velocity_enu = velocity
+
+        def _on_gnss_status(self, msg) -> None:
+            """The drone's receiver, and the error to inject downstream of it.
+
+            The observables are forwarded to the policy; the error vector is
+            applied to PX4's estimate here and never leaves the gateway, since
+            no receiver knows its own error and no consumer may act as if it
+            did.
+            """
+            try:
+                payload = json.loads(msg.data)
+                uav = payload["uav"]
+                deck = payload.get("deck") or {}
+            except (ValueError, KeyError, TypeError, json.JSONDecodeError):
+                self.get_logger().warning("ignored malformed GNSS status")
+                return
+            truth = uav.get("truth") or {}
+            offset = np.asarray(truth.get("error_enu_m", (0.0, 0.0, 0.0)), dtype=float)
+            if offset.shape != (3,) or not np.isfinite(offset).all():
+                return
+            velocity_offset = np.asarray(
+                truth.get("velocity_error_enu_m_s", (0.0, 0.0, 0.0)), dtype=float)
+            if velocity_offset.shape != (3,) or not np.isfinite(velocity_offset).all():
+                velocity_offset = np.zeros(3)
+            self.gnss_offset = offset
+            self.gnss_velocity_offset = velocity_offset
+            self.gnss = {
+                "enabled": True,
+                "source": "isaac",
+                "valid": bool(uav.get("valid", True)),
+                "fix_type": int(uav.get("fix_type", 3)),
+                "satellites_tracked": int(uav.get("satellites_tracked", 0)),
+                # The receiver's own C/N0 test, not the simulator's count: a
+                # detector with false alarms and misses is what a real vehicle
+                # has, and it is what the ontology has to reason on.
+                "nlos_detected_fraction": float(uav.get("nlos_detected_fraction", 0.0)),
+                "cn0_mean_db": float(uav.get("cn0_mean_db", 0.0)),
+                "hdop": float(uav.get("hdop", 99.9)),
+                "vdop": float(uav.get("vdop", 99.9)),
+                "residual_rms_m": float(uav.get("residual_rms_m", 0.0)),
+                "sigma_xy_m": float(uav.get("sigma_xy_m", 0.0)),
+                "quality": float(uav.get("quality", 1.0)),
+                # The lorry publishes its own integrity too, because the pose
+                # it broadcasts is only as good as its receiver.
+                "deck_quality": float(deck.get("quality", 1.0)),
+                "deck_sigma_xy_m": float(deck.get("sigma_xy_m", 0.0)),
+            }
+            self.gnss_time_ns = now_ns()
+
+        def _on_battery_status(self, msg) -> None:
+            """PX4's own pack state. Authoritative on hardware, ignored in SITL.
+
+            SITL's simulated battery is the documented cause of the stale
+            arming failure and cannot be seeded per episode, so the model owns
+            SITL and this is telemetry there.
+            """
+            remaining = float(getattr(msg, "remaining", float("nan")))
+            voltage = float(getattr(msg, "voltage_v", 0.0))
+            self.px4_battery_time_ns = now_ns()
+            self.sample.extra["px4_battery"] = [remaining, voltage]
+            if (cfg.target == "hardware" and cfg.battery.enabled
+                    and cfg.battery.prefer_px4_telemetry_on_hardware
+                    and math.isfinite(remaining)):
+                self.battery.adopt_px4(remaining, voltage)
+
+        def _deck_is_fresh(self, stamp: int) -> bool:
+            if cfg.pad_is_static:
+                return True
+            if self.deck_time_ns == 0:
+                if not self.warned_missing_deck:
+                    self.warned_missing_deck = True
+                    self.get_logger().error(
+                        "pad.motion is %r but no /landing_pad/state/odom has arrived; "
+                        "every pad-relative number would be measured against a "
+                        "stationary deck" % cfg.pad_motion)
+                return False
+            return (stamp - self.deck_time_ns) * 1e-9 <= cfg.state_timeout_s
+
+        def _pad_state(self, fresh: bool) -> dict[str, Any]:
+            if cfg.pad_is_static and self.deck_time_ns == 0:
+                return static_pad_state()
+            return {
+                "valid": bool(fresh),
+                "source": "v2v" if fresh else "stale",
+                "position": [float(x) for x in self.deck_position_enu],
+                "velocity": [float(x) for x in self.deck_velocity_enu],
+                "yaw": float(self.deck_yaw),
+                "yaw_rate": float(self.deck_yaw_rate),
+                "speed": float(np.linalg.norm(self.deck_velocity_enu[:2])),
+                # How well the lorry says it knows where it is. A consumer that
+                # ignores this is treating a canyon fix as a survey mark.
+                "sigma_xy_m": float(self.deck_sigma_xy_m),
+            }
+
+        def _gnss_state(self, stamp: int) -> dict[str, Any]:
+            """The receiver's own report, or the open-sky default.
+
+            A configured-on GNSS model whose topic has gone quiet is reported
+            as stale rather than as a good fix: silently substituting open sky
+            would make a degraded run look like the control condition.
+            """
+            if not cfg.gnss_enabled:
+                return open_sky_gnss_state()
+            if self.gnss_time_ns == 0:
+                if not self.warned_missing_gnss:
+                    self.warned_missing_gnss = True
+                    self.get_logger().error(
+                        "gnss.enabled is true but no /landing_uav0/gnss/status has "
+                        "arrived; the policy is being told it has open sky")
+                return open_sky_gnss_state()
+            state = dict(self.gnss)
+            if (stamp - self.gnss_time_ns) * 1e-9 > cfg.state_timeout_s:
+                state["source"] = "stale"
+            return state
+
+        def _set_truth(self, position: np.ndarray, velocity: np.ndarray) -> None:
+            """Pad-relative state as the simulator knows it, for scoring only.
+
+            PX4's estimator is not corrupted by the GNSS model, so its world
+            pose is the truth up to the EKF's own error; subtracting the
+            simulator's deck pose therefore gives the relative state the
+            episode should be graded on. Absent the truth topic there is no
+            such thing, and the field says so rather than guessing.
+            """
+            if self.deck_truth_position_enu is None:
+                self.sample.truth_position_enu = None
+                self.sample.truth_velocity_enu = None
+                return
+            self.sample.truth_position_enu = tuple(
+                float(x) for x in position - self.deck_truth_position_enu)
+            self.sample.truth_velocity_enu = tuple(
+                float(x) for x in velocity - self.deck_truth_velocity_enu)
+
+        def _goto_world_target(self) -> np.ndarray:
+            """Where PX4 is told to fly, in world ENU.
+
+            A pad-relative climb is re-aimed at the live deck on every control
+            tick, so PX4 chases a moving entry point instead of holding a stale
+            one. The result is clamped to the arena the drone is allowed in:
+            the protocol bounds the offset, and this bounds where the offset
+            plus a moving deck can put the vehicle.
+            """
+            target = np.asarray(self.goto_target_enu, dtype=float).copy()
+            if self.goto_pad_relative:
+                # The offset is bounded against the pad-relative arena, because
+                # that is the frame it is expressed in. Clamping the sum against
+                # the world origin instead would drag the vehicle back to the
+                # middle of the block every time the lorry drove away from it.
+                offset = float(math.hypot(target[0], target[1]))
+                if offset > cfg.world_xy_limit_m > 0.0:
+                    target[:2] *= cfg.world_xy_limit_m / offset
+                target[2] = float(min(max(target[2], 0.2), cfg.max_altitude_m))
+                target = target + self.deck_position_enu
+            # And the result is bounded against the city, so no combination of
+            # a legal offset and a moving deck can put the vehicle outside it.
+            radial = float(math.hypot(target[0], target[1]))
+            if radial > cfg.world_radius_m > 0.0:
+                target[:2] *= cfg.world_radius_m / radial
+            ceiling = cfg.max_altitude_m + (
+                self.deck_position_enu[2] if self.goto_pad_relative else 0.0)
+            target[2] = float(min(max(target[2], 0.2), max(ceiling, 0.2)))
+            return target
+
+        def _arm_battery(self) -> None:
+            """Start the episode's energy budget at policy handover."""
+            self.battery.reset(self.pending_battery_hover_s)
+            self.battery_armed = True
+            self.battery_time_us = int(self.sample.px4_time_us)
+            self.sample.battery = self.battery.sample()
+
+        def _integrate_battery(self) -> None:
+            """Charge elapsed *simulated* seconds against the pack.
+
+            Wall time is the wrong clock: PX4 and Isaac run in lockstep, so a
+            slow frame would otherwise bill the policy for the simulator's
+            stall. PX4's own timestamp is the simulator's clock.
+            """
+            if not cfg.battery.enabled:
+                return
+            now_us = int(self.sample.px4_time_us)
+            if now_us <= 0:
+                return
+            if self.battery_time_us <= 0:
+                self.battery_time_us = now_us
+                return
+            dt = (now_us - self.battery_time_us) * 1e-6
+            self.battery_time_us = now_us
+            # Guard a clock reset and a long stall; the pacing loop already
+            # refuses to fake progress, so a huge step is not ours to charge.
+            if not 0.0 < dt < 10.0 / cfg.control_hz:
+                return
+            if self.battery.source == "px4":
+                return
+            thrust = self.sample.extra.get("px4_thrust")
+            if thrust is None:
+                # No patched thrust feedback: price the collective we commanded.
+                thrust = cfg.hover_thrust * (1.0 + cfg.collective_span * self.action[0])
+            self.battery.integrate(float(thrust), cfg.hover_thrust, dt)
+
         def _on_reset_ack(self, msg) -> None:
             try:
                 payload = json.loads(msg.data)
@@ -485,6 +827,16 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                 return
             if seq == self.pending_reset_seq:
                 self.pending_reset_seq = -1
+                # Isaac draws the episode's starting reserve from the same seed
+                # as the entry pose, so energy is reproducible with the rest of
+                # the initial condition rather than being a second RNG.
+                hover_s = payload.get("battery_hover_seconds")
+                if hover_s is not None and math.isfinite(float(hover_s)):
+                    self.pending_battery_hover_s = float(hover_s)
+                self.battery.reset(self.pending_battery_hover_s)
+                self.battery_armed = False
+                self.battery_time_us = 0
+                self.sample.battery = self.battery.sample()
                 self._send_ack(seq, "reset_complete", payload)
 
         def _send_ack(self, ack_seq: int, status: str, detail: Any = None) -> None:
@@ -499,6 +851,12 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             if ((stamp - self.sample.timestamp_ns) * 1e-9 > cfg.state_timeout_s):
                 self.sample.estimator_valid = False
             self._refresh_land_detector(stamp)
+            # Pad and battery are refreshed here as well as on odometry, so a
+            # state query that arrives before the first PX4 sample still gets
+            # the truth about the deck and the pack instead of a default.
+            self.sample.pad = self._pad_state(self._deck_is_fresh(stamp))
+            self.sample.battery = self.battery.sample()
+            self.sample.gnss = self._gnss_state(stamp)
             self.udp.send(self.sample.to_message(cfg.protocol_version, self.tx_seq, ack_seq))
 
         def _refresh_land_detector(self, stamp: int) -> None:
@@ -523,6 +881,11 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                 self.sample.extra["land_detector"] = "stale"
             else:
                 self.sample.extra["land_detector"] = "live"
+            # PX4 decides "landed" from world-frame motion. A vehicle sitting on
+            # a driving deck is moving, so the detector under-reports touchdown
+            # and the client must fall back to pad-relative altitude and closing
+            # speed. Say so rather than letting it look authoritative.
+            self.sample.extra["land_detector_authoritative"] = bool(cfg.pad_is_static)
 
     return NodeImpl()
 

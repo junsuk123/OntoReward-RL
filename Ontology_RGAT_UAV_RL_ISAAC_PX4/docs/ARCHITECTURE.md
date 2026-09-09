@@ -2,31 +2,214 @@
 
 ## What was replaced
 
-The original `+dynamics`, `+aero`, `+prop`, `+wind`, `+sensor`, and numerical
-integration path is no longer called by the external workspace. Its public
-episode contract is retained through replacement `matlab/src/+sim` functions:
+Two migrations happened, and they are separate. The first moved the *simulator*
+out of process; the second moved the *learner* out of MATLAB.
+
+### The simulator: MATLAB rigid body -> Isaac Sim + PX4
+
+The original `+dynamics`, `+aero`, `+prop`, `+wind` and `+sensor` path, and the
+numerical integration it drove, are gone. The episode contract survives in
+`python/ontology_rgat/env.py`:
 
 | Old behavior | External replacement |
 |---|---|
-| `resetState` creates a MATLAB state | reset transaction to Isaac, then a PX4-flown climb to the entry pose |
+| `resetState` creates an in-process state | reset transaction to Isaac, then a PX4-flown climb to the entry pose |
 | `getCurrent` synthesizes sensors | latest PX4 estimator sample |
-| `step` runs RK4 and rotor model | sends PX4 offboard attitude/thrust setpoint and waits one sample |
-| panel wind/aero diagnostics | Isaac force callback and ROS 2 environment telemetry |
+| `step` runs RK4 and a rotor model | sends a PX4 offboard attitude/thrust setpoint and waits one control period of *simulated* time |
+| panel wind/aero diagnostics | Isaac physics-callback drag force and ROS 2 environment telemetry |
 | analytic marker-visibility proxy | ArUco tags on the pad seen by a downward camera |
 | ground clamp/terminal check | PX4 `vehicle_land_detected` plus shared landing criteria |
+| synthetic sensor noise (`cfg.sensor.*`) | dropped; PX4's EKF already fuses noisy simulated sensors |
 
-The ontology graph, R-GAT inference, rewards, policy networks, evaluation tables,
-and plotting functions remain sourced read-only from the original project.
-`training.generateRGATDataset` is overlaid only to capture its graph template
-from the active rollout; the original helper reset would otherwise create a
-second armed external environment and collide on the UDP endpoint.
-`evaluation.windSweep` is overlaid so each reset forwards the requested wind
-scale to Isaac instead of changing the now-unused MATLAB wind structure.
-`evaluation.makePlots` uses logged Isaac forces directly; it never reconstructs
-panel loads with the retired MATLAB aerodynamic model.
-The behavior-policy expert is also overlaid to remove the old analytical
-ground-effect feed-forward term; PX4 closes the attitude loop and Isaac supplies
-the actual thrust/contact response.
+`terminal_status` takes a `has_been_airborne` flag. With a real flight stack the
+vehicle is genuinely on the pad when control is handed over, and the old ground
+test would have called that a touchdown on step one.
+
+The behaviour-policy expert dropped the analytical ground-effect feed-forward
+term: PX4 closes the attitude loop and Isaac supplies the actual thrust and
+contact response, so a hand-rolled correction on top would fight both.
+
+### The learner: MATLAB -> Python
+
+The MATLAB workspace and its read-only parent are no longer on any execution
+path. `python/ontology_rgat/` is the whole experiment, and
+[`legacy_matlab/README.md`](../legacy_matlab/README.md) carries the file-by-file
+map. Four things are worth stating as design decisions rather than transcription:
+
+- **R-GAT is PyTorch, batched over graphs.** The layer follows Busbridge et al.
+  2019 as implemented by `babylonhealth/rgat`, which is TensorFlow 1.x and
+  cannot be installed on this baseline; see `NOTICE`. The port is a strict
+  generalisation of the MATLAB layer -- ARGAT and WIRGAT, additive and
+  multiplicative attention, multi-head aggregation, basis-decomposed kernels --
+  with the MATLAB configuration as its default, so numbers stay comparable.
+- **The graph template is captured from the first real rollout.** The original
+  dataset helper reset a second environment just to obtain one; here that would
+  create a second armed environment and collide on the UDP endpoint.
+- **Nothing reconstructs panel aerodynamics.** The evaluation plots Isaac's
+  logged resultant force. The retired monitors used to spread that force over
+  legacy panel slots to keep a drawing contract alive; the contract is gone with
+  the drawing.
+- **The views are ROS 2 and Python.** RViz 2 for the live 3D view, an Isaac
+  in-window overlay, a self-contained web dashboard for unattended progress, and
+  matplotlib for the publication figures. See `python/ontology_rgat/viz/`.
+
+### The city
+
+`isaac_sim/urban_scene.py` owns one `UrbanLayout`: a block encircled by four
+streets, the block itself plus the facades on the far side of each street, cut
+by cross streets at the corners and mid-block. `UrbanScene.spawn` builds those
+boxes into the stage (collidable, so a policy that flies into a facade hits it)
+and `blocked_batch` tests lines of sight against the same boxes for the GNSS
+model. One layout, two consumers, by construction: an outage always has a
+building in the viewport to blame it on.
+
+The boxes are axis-aligned, which is what makes the occlusion test exact rather
+than sampled — within the horizontal span where a climbing ray crosses a box,
+its lowest point is at the entry, so one test settles it. A whole constellation
+against the whole city is ~30 µs, so it runs at the publication rate.
+
+`Flat Plane` is the Pegasus environment: it supplies the ground plane and the
+lighting, and nothing else. No shipped environment comes with a machine-readable
+skyline, and one that did would still not be the one the GNSS model masks with.
+
+### Moving deck
+
+`LandingDeck` is a kinematic rigid body with a box collider — the roof of a
+6.2 × 2.45 m box lorry, 3.2 m above the road. `PadTrajectory` provides analytic
+position/velocity for `static`, bounded straight-line, `circular`, `lissajous`
+and `road` motion. `road` is what the urban experiment runs:
+
+- the route is a rounded rectangle **parameterised by arc length**, so point,
+  unit tangent and curvature are closed form at every `s`, including through the
+  corners. A curve offset by a constant lane offset `e` advances at `(1 - κe)`
+  times the centreline rate, which is the whole of the velocity expression;
+- traffic is a Gaussian dip in the speed at each light, of a drawn depth, where
+  1.0 is a full stop. Its integral is an error function, so the distance covered
+  is closed form too and the deck is never numerically integrated;
+- the driver keeps lane with a slow wander and at most one `tanh` lane change,
+  both differentiable, so the lateral velocity they add is a bump and not an
+  impulse.
+
+The 2–8 m/s speed is drawn from the episode seed, then multiplied by
+`pad_scale`; scale zero parks the lorry — including its lane wander — and is the
+static control condition with the same seed. The route rectangle defaults to the
+`urban.block_size_m` the city was built around, so the lorry cannot drive
+through a building, and the lanes it may use are counted out from the
+carriageway width — a lane change moves between them and never into oncoming
+traffic.
+
+Two placement rules follow from the city being solid, and each was a defect
+first. The deck's position at construction comes from `PadTrajectory.pose(0)`
+and not from `pad.start_position_enu_m`: for the road profile those are
+different points, because the route is centred on the block and its origin is
+therefore the middle of a building — which is where the deck, and the vehicle
+that spawns on its roof, used to be put. And `pad.route_start: continue` leaves
+the lorry where it is across a reset, reseeding only how it drives from there,
+so the deck pose is continuous to within a millimetre; `seeded` draws a fresh
+point on the lap instead and teleports the deck a mean of 55 m out from under
+whatever is parked on it. See `docs/OPERATIONS.md` for what `continue` costs in
+reproducibility. The deck pose is written at the 250 Hz physics rate so PhysX
+sees a moving collider rather than a teleported static surface. It is
+deliberately a trajectory source, not a lorry drivetrain model.
+
+The marker quads are children of `/World/landing_rover`, so pose, heading, and
+collision geometry move together.
+
+### GNSS
+
+`isaac_sim/gnss.py`. A `Constellation` of twelve satellites is drawn per episode
+uniformly in `sin(el)` above a 7° mask — the distribution that is uniform over
+the hemisphere; drawing elevation uniformly would over-populate the zenith and
+make every canyon look better than it is. It is frozen for the episode, because
+a MEO satellite moves well under a degree in fifteen seconds.
+
+Per receiver, per update:
+
+1. `UrbanLayout.blocked_batch` decides which lines of sight cross a facade.
+2. A blocked satellite is still tracked with probability
+   `nlos_tracking_probability`, through a reflection. Which ones survive is a
+   property of the facades, so the draw lives on the constellation and is
+   **shared** between the two receivers.
+3. A tracked reflection carries a strictly positive excess delay `2 d cos(el)`,
+   capped; a direct signal carries elevation-weighted diffuse multipath (a
+   first-order Gauss–Markov process, so it wanders rather than flickers) and
+   thermal noise.
+4. Weighted least squares over `[-u, 1]` rows gives the position and clock
+   error, the classical DOP comes from the unweighted normal matrix, and the
+   post-fit residuals give an a-posteriori variance factor that inflates the
+   receiver's own reported covariance.
+5. Carrier-to-noise ratio is computed per satellite: it falls toward the horizon
+   and a reflection costs an exponentially-drawn number of dB on top. A signal
+   more than `cn0_detection_margin_db` below its elevation's expectation is
+   flagged suspect. This is the receiver's only handle on NLOS when every
+   satellite is reflected off facades the same distance away — their biases then
+   agree with each other and no consistency check sees anything wrong.
+
+The reported integrity is built from satellite count, DOP, the inflated
+covariance and the suspect fraction, all observables. Fewer than four satellites
+is an outage: the estimate coasts and drifts, `valid` goes false and integrity
+goes to zero.
+
+`gnss_scale` on the reset request multiplies the error mechanisms and moves no
+building, so scale 0 is open sky **in the same city** — the facades still hide
+the markers and still channel the wind. That is what isolates the fix from the
+geometry in `evaluation.sweeps.gnss_sweep`.
+
+**Where the error is applied.** PX4's EKF is not corrupted: Pegasus' GPS sensor
+is not part of this workspace, so the modelled error cannot be applied upstream
+of the estimator. Isaac publishes it on `/landing_uav0/gnss/status` under a
+`truth` key, and the gateway adds it to PX4's world estimate before differencing
+against the deck. The consequence to keep in mind is that PX4's own internal
+position stays clean, so its estimator never *responds* to the canyon the way a
+real one would (innovation rejection, GPS-loss reversion). Biasing the `HIL_GPS`
+Pegasus sends is the honest next step and is not done here.
+
+**Two receivers.** The lorry has one too. What it broadcasts on
+`/landing_pad/state/odom` is its own fix — errors and all — with its reported
+accuracy in the pose covariance; the simulator's truth goes to
+`/landing_pad/state/odom_truth`, which only the scoring path reads. Because the
+two receivers share a constellation their errors are partly common-mode, so the
+relative fix stays better than either absolute one. It is still metres out on a
+2.45 m roof, which is the point.
+
+A moving deck with a stale broadcast makes `estimator_valid=false`; a degraded
+one does not, because a bad fix is a state to reason about and not a link fault.
+
+### Energy and learning contract
+
+### Energy and learning contract
+
+SITL uses `BatteryModel`: momentum-theory induced power plus avionics draw,
+integrated on PX4 simulated time from `/fmu/out/vehicle_thrust_setpoint`. The
+model starts at policy handover with the 9–55 hover-second reserve Isaac drew
+from the episode seed, so the climb is not charged to the policy. Hardware can
+adopt PX4 `battery_status`. Every state carries finite energy fields, and an
+empty modeled pack ends the episode as `battery_depleted`.
+
+The learning contract is now 23 observations and 14 ontology nodes. `PadMotion`
+degrades alignment, visual stability, touchdown safety and `SafeLanding`;
+`BatteryReserve` supports touchdown safety and contributes to `SafeLanding`;
+`GnssIntegrity` supports exactly what `MarkerQuality` supports — the alignment
+solved from the pad-relative pose and the touchdown flown on it — and
+contributes to `SafeLanding`. It is the *substitutability* of those two that the
+relation weights have to learn: with the markers in frame the fix hardly
+matters, and the moment they leave it the fix is all there is. `TouchdownSafety`
+is therefore built on the noisy-OR of the two rather than on visual stability
+alone.
+
+Pad velocity, relative closing speed, normalized reserve, descent-energy margin,
+GNSS integrity, the suspect-signal fraction and the reported horizontal
+1-sigma are observable. The true error, the true NLOS count and the true sky
+view are not, and `tests/test_urban_gnss.py` enforces it.
+
+**Scoring.** Under a canyon fix the pad-relative pose the policy flies on is
+metres from the truth, so the terminal test and the touchdown metrics run on
+`env.truth_state` — the gateway's `truth` block, which is the simulator's own
+pad-relative geometry — and nothing else does. A link with no `truth` block
+falls back to the sensor, as the fixed-pad experiment always did. R-GAT forward/gradient computation is batched and
+vectorized; GPU selection is explicit through `cfg.gpu.*`, with a conservative
+RTX 4060 crossover of batch 1024. Models are gathered back to CPU double before
+saving or real-time inference.
 
 ## Interfaces
 
@@ -34,7 +217,26 @@ the actual thrust/contact response.
 
 Pegasus uses PX4's Simulator MAVLink API: simulated IMU/GPS/ground truth flow to
 PX4 and `HIL_ACTUATOR_CONTROLS` flows back to Isaac rotor dynamics. It is not the
-same socket as the companion/offboard link.
+same socket as the companion/offboard link. `isaac.lockstep` is on, so PX4 and
+Isaac advance together and simulation speed is flight-stack speed.
+
+### Wind and drag
+
+Pegasus' own still-air `LinearDrag` is replaced with zeros and a wind-relative
+quadratic drag is applied in an Isaac physics callback instead
+(`WindField.force` in `isaac_sim/landing_world.py`). The field is a seeded mean
+plus a six-mode turbulence sum plus configured Gaussian gusts, all scaled by the
+per-episode `wind_scale` the reset request carries. The force is applied in the
+body frame and republished in ENU so the same numbers the physics saw reach the
+ontology and the plots.
+
+`wind.canyon` adds the one thing a street does to wind that open ground does
+not: the facades channel the mean flow along the carriageway and block most of
+the cross-street component. The street axis is the deck's own heading and the
+blend back to the gradient wind is the deck's sky view, so the channeling turns
+when the lorry turns a corner and relaxes at the intersections — which is
+exactly where the GNSS recovers. Only the mean is channeled; the turbulence is
+what is left after the facades have finished with it.
 
 ### Companion link
 
@@ -50,22 +252,82 @@ and consumes:
 - `/fmu/out/vehicle_odometry`
 - `/fmu/out/vehicle_local_position` (EKF validity flags)
 - `/fmu/out/vehicle_status`
+- `/fmu/out/battery_status` (hardware state of charge)
 - `/fmu/out/vehicle_land_detected`
 - `/fmu/out/vehicle_command_ack` (rejected commands are logged, not swallowed)
 - `/fmu/out/vehicle_thrust_setpoint` (hover-thrust calibration)
 
-The last four require `patches/px4-v1.14-publish-land-detected.patch`; stock PX4
-v1.14 keeps them off the uXRCE-DDS bridge.
+The last four are the ones `patches/px4-v1.14-publish-land-detected.patch` adds;
+stock PX4 v1.14 keeps them off the uXRCE-DDS bridge. `vehicle_odometry`,
+`vehicle_local_position` and `vehicle_status` are already in stock
+`dds_topics.yaml`.
 
 Exactly one control source drives `_control_tick` at a time. A `goto` streams
 position setpoints until the first `action` arrives, which switches the gateway
-to attitude control for the rest of the episode.
+to attitude control for the rest of the episode. `state.extra.control_source`
+reports which of `goto`, `action` or `idle` is live.
+
+Requesting `OFFBOARD` is retried, not latched: PX4 accepts the mode switch only
+after it has seen a steady setpoint stream and rejects it outright in some
+pre-arm states, so `VEHICLE_CMD_DO_SET_MODE` is re-sent every `control_hz/2`
+ticks until `vehicle_status.nav_state` actually reads `OFFBOARD` (14).
+
+`estimator_valid` is PX4's answer, not an inference from finite numbers: it
+requires `vehicle_local_position`'s `xy_valid`, `z_valid`, `v_xy_valid` and
+  `v_z_valid` to all be set and fresh within `system.state_timeout_s`.
+`heading_good_for_control` is deliberately excluded — it is normally false on a
+stationary disarmed vehicle, which is the state every episode starts from — and
+is reported in `extra` instead. On `target=hardware`, `estimator_valid` also
+requires a fresh visual pad pose; every non-static target additionally requires
+fresh `/landing_pad/state/odom` so its relative velocity is defined.
+
+### Episode reset link
+
+Reset is a two-topic transaction between the gateway and Isaac, carried as JSON
+in `std_msgs/String`:
+
+- gateway → Isaac on `/landing_sim/reset`:
+  `{v, seq, seed, wind_scale, pad_scale, gnss_scale}`
+- Isaac → gateway on `/landing_sim/reset_ack`: the request echoed plus
+  `entry_offset_pad_m`, the instantaneous `entry_position_enu_m`,
+  `entry_rpy_deg`, `entry_yaw_enu_rad`, `battery_hover_seconds`, deck state, the
+  episode's opening GNSS fixes, and `reseated_on_deck`
+
+The gateway forwards the acknowledgement to the learner as the `detail` of a
+`reset_complete` ack, and `bridge.PX4Bridge` sends `entry_offset_pad_m` with a
+pad-frame `goto`. The gateway recomputes the world target from the live deck on
+every control tick. A reset whose ack carries no offset is an error, not a
+default: it means Isaac is running an older `landing_world.py`.
+
+### Environment and perception telemetry
+
+Isaac publishes, under `/landing_uav0` (`isaac.namespace` + `vehicle_id`):
+
+- `/environment/wind`, `/environment/aero_force` (`geometry_msgs/Vector3Stamped`, ENU)
+- `/perception/marker_quality` (`std_msgs/Float32`, `[0,1]`)
+- `/perception/uav_pose_in_pad` (`geometry_msgs/PoseStamped`, pad-frame ENU)
+- `/gnss/status` (`std_msgs/String`, JSON): both receivers' fixes. Observables at
+  the top level, the simulator's truth under `truth` — the gateway forwards the
+  first and keeps the second. A custom message would be tidier and would need a
+  message package; the reset link already works this way.
+- `/state/*` and TF, from Pegasus' `ROS2Backend` (`pub_state`, `pub_tf`)
+
+The lorry publishes independently of the UAV namespace:
+`/landing_pad/state/odom` is what it broadcasts about itself, with its own GNSS
+error in the pose and its reported accuracy in the covariance;
+`/landing_pad/state/odom_truth` is the simulator's, and only the gateway's
+scoring path subscribes to it.
+
+Ground truth on `/state/*` is used for experiment telemetry and readiness checks
+only. It never reaches the policy.
 
 ### Marker vision
 
 `isaac_sim/marker_vision.py` holds the pad geometry and the pose solve, and
-imports no Isaac, so the frame conventions are testable without a simulator.
-Three details are load-bearing and each was a real defect first:
+imports no Isaac, so the frame conventions are testable without a simulator
+(`tests/test_marker_vision.py` renders a synthetic pad view and round-trips the
+pose across the whole approach). Three details are load-bearing and each was a
+real defect first:
 
 - Coplanar points are two-fold ambiguous and a level downward camera over a flat
   pad sits on that degeneracy, so candidate poses are scored here and the branch
@@ -73,21 +335,75 @@ Three details are load-bearing and each was a real defect first:
 - The camera's optical frame is measured from the stage rather than assumed;
   Isaac's `camera_axes` conventions differ between `set_local_pose` and
   `get_world_pose`, and the mismatch aims the camera sideways while every
-  readback still looks correct.
+  readback still looks correct. The intrinsics are likewise read back with
+  `get_intrinsics_matrix()` after the aperture is set, so a lens setting that
+  did not take cannot silently bias every pose the policy flies on.
 - `OmniPBR` enables world-space UV projection in its constructor, which ignores
   the quad's own UVs and crops away the marker's black border and quiet zone.
   A tag without them is not detectable.
 
+`marker_quality` is the detector's own confidence — sharpness from reprojection
+error, scale from the largest tag's pixel side, and a small penalty for a
+single-tag pose — so the ontology consumes perception health rather than a
+function of ground truth. A miss publishes `0.0` and no pose, which is what
+makes the gateway fall back to the PX4 estimate.
+
 The optional MAVLink gateway consumes `LOCAL_POSITION_NED`,
-`ATTITUDE_QUATERNION`, and `HIGHRES_IMU`, and sends `SET_ATTITUDE_TARGET`.
+`ATTITUDE_QUATERNION`, `HIGHRES_IMU`, `HEARTBEAT` and `EXTENDED_SYS_STATE`, and
+sends `SET_ATTITUDE_TARGET`. It has no reset and no perception input.
 
-### MATLAB link
+### Learner link
 
-MATLAB and the gateway exchange one JSON object per UDP datagram. Each object has
-`v`, `type`, `seq`, and `time_ns`. Commands are idempotent by sequence number.
-State replies include the acknowledged command sequence. Packets with the wrong
-version, non-finite values, stale timestamps, or out-of-range actions are
-rejected.
+The learner and the gateway exchange one JSON object per UDP datagram. Each object has
+`v`, `type`, `seq`, and `time_ns`. Commands are idempotent by sequence number: a
+`seq` that is not newer than the last one is answered `duplicate` and otherwise
+ignored. Packets with the wrong version, non-finite values, stale timestamps, or
+out-of-range actions are rejected with an `error` reply.
+
+Commands are `hello`, `state`, `action`, `goto`, `arm`, `disarm`, `reset`,
+`enable_offboard`, `disable_offboard`. `hello` opens a session and restarts the
+command sequence at one. Replies are `state`, `ack` or `error`. The gateway
+replies to the address the datagram came from, so `network.matlab_host` and
+`network.matlab_port` are recorded for documentation and are not what the reply
+is addressed to. Those two keys keep their names because the wire schema does;
+the client is `python/ontology_rgat/bridge.py`.
+
+A `state` reply carries `sample_time_ns`, `px4_time_us`, `frame` (always
+`ENU_FLU`), `position_frame` (always `pad`), pad-relative `position`/`velocity`,
+world telemetry under `world`, deck pose/twist and reported accuracy under
+`pad`, the full finite energy record under `battery`, the receiver's own report
+under `gnss`, the simulator's pad-relative geometry under `truth` (scoring
+only), `quaternion_wxyz`, `angular_velocity`,
+`acceleration`, `wind`, `aero_force`, `marker_quality`, `armed`, `nav_state`,
+`landed`, `estimator_valid`, `source`, the acknowledged command sequence, and an
+`extra` object:
+
+| `extra` key | Meaning |
+|---|---|
+| `position_source` | `uav_pose_in_pad` or `px4_local_minus_deck_gnss` — which pose the policy is flying |
+| `control_source` | `action`, `goto` or `idle` |
+| `offboard_active` | PX4 is actually in `OFFBOARD`, not merely asked |
+| `control_mapping` | `hover_thrust`, `collective_span`, `max_roll_pitch_rad`, `max_yaw_rate_rad_s` |
+| `land_detector` | `live`, `stale` or `missing` (PX4 built without the patch) |
+| `px4_thrust` | PX4's own normalised body thrust, for hover calibration |
+| `px4_battery` | latest `[remaining_fraction, voltage]` received from PX4 |
+| `last_command` | `[command, result]` from the most recent `vehicle_command_ack` |
+| `heading_good_for_control` | PX4's flag, reported but not part of `estimator_valid` |
+
+`bridge.PX4Bridge` compares `control_mapping` against `cfg.rl.collectiveSpan`,
+`cfg.rl.maxRollPitch` and `cfg.rl.maxYawRate` during `hello` and refuses to run
+against a gateway that scales actions differently. A silently rescaled action is
+an invalid experiment, not a degraded one.
+
+`goto` is guard-railed in `protocol.py` independently of the client: a 140 m
+world-frame or 10 m pad-offset radius, 25 m ceiling, positive altitude, and a
+hold of at most 120 s. The world-frame radius has to reach the far side of the
+block the lorry laps. A pad-frame request also requires a fresh deck stream, and
+the gateway clamps in the frame the request was made in: the *offset* against
+the pad-relative arena, and only then the sum against the city radius it derives
+from `urban.block_size_m`. Clamping the sum against the world origin instead —
+which is what the fixed-pad gateway did — would drag the vehicle back to the
+middle of the block every time the lorry drove away from it.
 
 ## Coordinates
 
@@ -101,12 +417,62 @@ w_flu = [w_frd.x, -w_frd.y, -w_frd.z]
 ```
 
 Quaternion conversion is implemented using rotation matrices and covered by
-round-trip tests; no Euler-angle sign shortcuts are used.
+round-trip tests; no Euler-angle sign shortcuts are used. Body-frame odometry
+velocity is rotated to NED before conversion, because PX4 may publish either
+frame and says which in `velocity_frame`.
+
+The learning frame is **translated pad-ENU**, not a yaw-rotating body frame:
+
+```text
+p_policy = p_uav_world - p_deck_world
+v_policy = v_uav_world - v_deck_world
+```
+
+Its axes stay aligned with world ENU even while the lorry yaws. This makes the
+camera solution and PX4 fallback identical without introducing rotating-frame
+Coriolis terms. The deck yaw/yaw rate are retained as telemetry.
 
 ## Timing
 
-The gateway owns the 50 Hz offboard stream and monotonic timestamps. MATLAB may
-pause briefly without malformed setpoints being repeated forever: after the
-action timeout the gateway stops publishing setpoints so PX4's configured
-offboard-loss failsafe takes control. Isaac runs physics at 250 Hz and rendering
-at 50 Hz.
+The gateway owns the 50 Hz offboard stream and monotonic timestamps. Isaac runs
+physics at 250 Hz (`isaac.physics_dt` 0.004) and renders once per
+`isaac.rendering_dt` (0.02); rendering every physics step would drop the frame
+rate to the physics rate and, because PX4 is lockstepped, slow the flight stack
+itself. Environment telemetry is published on render boundaries.
+
+The episode clock is PX4's simulated clock, never wall time. The gateway answers
+a `state` or `action` request as soon as PX4 publishes odometry, which is several
+times faster than the control rate, so `bridge.PX4Bridge.paceToControlPeriod`
+re-polls until `px4_time_us` has advanced one `cfg.sim.dt`, and measures the next
+period from the previous deadline so sampling jitter cannot accumulate. `sim.step`
+then advances `env.t` by the simulated time that actually elapsed rather than by
+the nominal period. Without this the policy ran far faster than `cfg.sim.dt`
+while the clock still charged `cfg.sim.dt` per step, and episodes ran out of
+steps before they could land. If simulated time fails to advance within
+`cfg.external.timeout` of wall time, the bridge reports a stalled simulator
+instead of hanging.
+
+The learner may pause briefly without malformed setpoints being repeated forever:
+after `system.action_timeout_s` (250 ms) the gateway stops publishing setpoints
+so PX4's configured offboard-loss failsafe takes control. A pending `goto` is
+not cancelled by that deadman — the climb precedes the first action — but does
+expire at its own `hold_s`.
+
+## Configuration that is deliberately inert
+
+`config/system.yaml` is shared by three processes and not every key is read by
+all of them. These are recorded for provenance and changing them has no effect:
+
+- `landing.success_*` and `landing.ground_z_m`: episode criteria are enforced
+  from the learner's `cfg.sim.*`/`cfg.criteria.*`. `max_time_s` sets the modeled
+  battery reserve normalization, arena/altitude limits guard pad-frame `goto`,
+  and `crash_tilt_deg` controls tip-over recovery. `landing.success_xy_m` is
+  additionally read by the Isaac overlay, to draw the tolerance ring.
+  `tests/test_learner_contract.py` asserts that the duplicated criteria still
+  agree with `cfg.criteria`, so "inert" does not drift into "contradictory".
+- `px4.estimator_warmup_s`: the warmup that is actually applied is
+  `cfg.external.estimator_warmup` in `python/ontology_rgat/config.py`.
+- `network.matlab_host`, `network.matlab_port`: the gateway replies to the
+  datagram's source address.
+- `vision.max_range_m`, `vision.tilt_scale_deg`, `vision.xy_scale_m`: only the
+  `pose_proxy` stand-in uses these.

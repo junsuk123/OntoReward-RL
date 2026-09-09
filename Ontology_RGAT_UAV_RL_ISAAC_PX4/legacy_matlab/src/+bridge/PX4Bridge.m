@@ -53,7 +53,8 @@ classdef PX4Bridge < handle
 
         function state=reset(obj,seed)
             ack=obj.transact('reset',struct('seed',double(seed), ...
-                'wind_scale',double(obj.Config.windScale)),{'ack'});
+                'wind_scale',double(obj.Config.windScale), ...
+                'pad_scale',double(obj.Config.padScale)),{'ack'});
             pause(obj.Config.resetSettle);
             state=obj.waitValidState();
             if ~obj.Config.autoArm
@@ -61,10 +62,14 @@ classdef PX4Bridge < handle
             end
             % The entry pose is flown by PX4, never teleported: Pegasus cannot
             % reset the PX4 estimator, so a jump would leave the policy reading
-            % a diverged EKF for the whole episode.
+            % a diverged EKF for the whole episode. It is an offset in the pad
+            % frame, and the gateway re-aims it at the live deck every control
+            % tick, so PX4 chases a moving entry point instead of holding a
+            % point the rover has already driven away from.
             entry=obj.entryPose(ack);
             obj.transact('goto',struct('position',entry.position.', ...
-                'yaw',entry.yaw,'hold_s',obj.Config.entryTimeout),{'ack'});
+                'yaw',entry.yaw,'frame',entry.frame, ...
+                'hold_s',obj.Config.entryTimeout),{'ack'});
             % Let the setpoint stream establish offboard before arming.
             pause(obj.Config.prestreamCount/obj.Config.controlHz);
             state=obj.waitAtEntry(entry.position);
@@ -73,14 +78,29 @@ classdef PX4Bridge < handle
         end
 
         function entry=entryPose(obj,ack)
-            if ~isfield(ack,'detail') || ~isstruct(ack.detail) || ...
-                    ~isfield(ack.detail,'entry_position_enu_m')
+            %ENTRYPOSE The seeded entry point, as an offset from the deck.
+            frame=obj.Config.entryFrame;
+            if ~isfield(ack,'detail') || ~isstruct(ack.detail)
                 error(['Reset acknowledgement carries no entry pose. Restart ' ...
                     'Isaac with the current landing_world.py.']);
             end
-            entry=struct('position',double(ack.detail.entry_position_enu_m(:)),'yaw',0);
-            if isfield(ack.detail,'entry_yaw_enu_rad')
-                entry.yaw=double(ack.detail.entry_yaw_enu_rad);
+            detail=ack.detail;
+            if strcmpi(frame,'pad')
+                if ~isfield(detail,'entry_offset_pad_m')
+                    error(['Reset acknowledgement carries no pad-relative entry ' ...
+                        'offset. Isaac is running a landing_world.py from before ' ...
+                        'the pad was put on a rover; restart it.']);
+                end
+                position=double(detail.entry_offset_pad_m(:));
+            else
+                if ~isfield(detail,'entry_position_enu_m')
+                    error('Reset acknowledgement carries no entry position.');
+                end
+                position=double(detail.entry_position_enu_m(:));
+            end
+            entry=struct('position',position,'yaw',0,'frame',lower(char(frame)));
+            if isfield(detail,'entry_yaw_enu_rad')
+                entry.yaw=double(detail.entry_yaw_enu_rad);
             end
             if numel(entry.position)~=3 || any(~isfinite(entry.position))
                 error('Reset acknowledgement carries a malformed entry position.');
@@ -258,11 +278,24 @@ classdef PX4Bridge < handle
 
         function state=validateState(~,state)
             required={'position','velocity','quaternion_wxyz','angular_velocity', ...
-                'acceleration','wind','aero_force','marker_quality','estimator_valid'};
+                'acceleration','wind','aero_force','marker_quality','estimator_valid', ...
+                'pad','battery'};
             for k=1:numel(required)
                 if ~isfield(state,required{k})
-                    error('Gateway state is missing field %s.',required{k});
+                    error(['Gateway state is missing field %s. A gateway from ' ...
+                        'before the moving pad and the energy budget cannot be ' ...
+                        'used with this adapter.'],required{k});
                 end
+            end
+            % The target moves, so a gateway that still reports world-frame
+            % position would silently be asking the policy to land on the origin.
+            if isfield(state,'position_frame') && ~strcmp(state.position_frame,'pad')
+                error('Gateway reports %s-frame position; this adapter needs pad-frame.', ...
+                    state.position_frame);
+            end
+            if ~isfield(state,'position_frame')
+                error(['Gateway does not declare its position frame. Restart it ' ...
+                    'from the current ros2_gateway.py.']);
             end
             numericFields={'position','velocity','quaternion_wxyz','angular_velocity', ...
                 'acceleration','wind','aero_force','marker_quality'};

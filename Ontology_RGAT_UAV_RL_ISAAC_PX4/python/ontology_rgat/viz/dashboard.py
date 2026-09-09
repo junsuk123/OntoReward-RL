@@ -55,7 +55,7 @@ canvas{width:100%;height:150px;display:block}
 .legend i{display:inline-block;width:10px;height:3px;vertical-align:middle;margin-right:4px}
 .wide{grid-column:1/-1}
 .g3d{position:relative}
-.g3d canvas{height:440px;cursor:grab;touch-action:none}
+.g3d canvas{height:420px;cursor:grab;touch-action:none}
 .g3d canvas.drag{cursor:grabbing}
 .bar{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:6px;
 font-size:11px;color:var(--muted)}
@@ -71,6 +71,7 @@ font-size:11px;color:var(--muted);margin-top:10px}
 .relbar .track{background:var(--line);border-radius:3px;height:6px;overflow:hidden}
 .relbar .track i{display:block;height:6px;border-radius:3px}
 .relbar b{font-variant-numeric:tabular-nums;font-weight:600;color:var(--ink)}
+.relbar em{font-style:normal;opacity:.75}
 .note{font-size:11px;color:var(--muted);margin-top:8px}
 </style></head><body>
 <header><h1>Ontology-RGAT &middot; Isaac Sim + PX4</h1>
@@ -212,7 +213,7 @@ function tiles(state){
 // the depth cue, the attention width and the hover isolation share one pass.
 const REL_COLORS=['#c0392b','#0d8c4d','#1a59bf','#8a8f98'];
 const G={yaw:-0.55,pitch:0.30,zoom:1,auto:true,floor:0,hover:-1,drag:null,
-         data:null,dirty:true,pts:[]};
+         data:null,dirty:true,pts:[],fit:0};
 const clamp01=v=>Math.max(0,Math.min(1,v));
 function riskColor(v){const t=clamp01(v);
   return [Math.round(255*(0.20+0.72*t)),Math.round(255*(0.70-0.50*t)),
@@ -229,8 +230,8 @@ function project(p,w,h){
   const x=p[0]*cy-p[1]*sy, y=p[0]*sy+p[1]*cy;
   const cp=Math.cos(G.pitch),sp=Math.sin(G.pitch);
   const y2=y*cp-p[2]*sp, z2=y*sp+p[2]*cp;
-  const d=y2+DIST, f=Math.min(w,h)*2.0/Math.max(d,0.4)*G.zoom;
-  return {x:w/2+x*f, y:h/2-z2*f, d:d, f:f};
+  const d=y2+DIST, f=Math.min(w,h)*2.0/Math.max(d,0.4);
+  return {x:x*f, y:-z2*f, d:d, f:f};
 }
 // Nearer is brighter: without this the ring behind the graph reads as the
 // ring in front of it and the rotation stops telling you anything.
@@ -250,7 +251,22 @@ function graphDraw(){
   if(!data||!data.nodes||!data.nodes.length){
     g.fillStyle=muted;g.font='12px sans-serif';
     g.fillText('no graph published yet',12,h/2);return;}
-  const P=data.nodes.map(n=>project(n.pos,w,h));
+  // Fit the rotated cloud to the card rather than trusting a fixed scale: the
+  // graph is much wider than it is tall, so a scale that suits it end-on
+  // wastes most of the canvas edge-on. Low-passed, or the spin would pump.
+  const raw=data.nodes.map(n=>project(n.pos,w,h));
+  let bx0=Infinity,bx1=-Infinity,by0=Infinity,by1=-Infinity;
+  for(const q of raw){bx0=Math.min(bx0,q.x);bx1=Math.max(bx1,q.x);
+    by0=Math.min(by0,q.y);by1=Math.max(by1,q.y);}
+  const inset=56;   // the labels sit above the nodes and need the room
+  const target=Math.min((w-2*inset)/Math.max(bx1-bx0,1),
+                        (h-2*inset)/Math.max(by1-by0,1));
+  G.fit=G.fit?G.fit*0.86+target*0.14:target;
+  const k=G.fit*G.zoom;
+  const ox=w/2-(bx0+bx1)/2*k, oy=h/2-(by0+by1)/2*k;
+  const P=raw.map(q=>({x:q.x*k+ox, y:q.y*k+oy, d:q.d, f:q.f*k}));
+  const radius=(n,q)=>Math.max(
+    (n.role==='goal'?0.105:0.050+0.048*clamp01(n.value))*q.f, 6);
   let peak=0;
   for(const e of data.edges)if(e.s!==e.d&&e.a!==undefined)peak=Math.max(peak,e.a);
   const strength=e=>(e.a===undefined||peak<=0)?0.34:e.a/peak;
@@ -279,9 +295,8 @@ function graphDraw(){
       g.closePath();g.fill();}});
   }
   data.nodes.forEach((n,i)=>{
-    const p=P[i];
-    const r=(n.role==='goal'?0.105:0.050+0.048*clamp01(n.value))*p.f;
-    G.pts.push({x:p.x,y:p.y,r:Math.max(r,6),i:i});
+    const p=P[i],r=radius(n,p);
+    G.pts.push({x:p.x,y:p.y,r:r,i:i});
     const lit=G.hover<0||G.hover===i;
     items.push({d:p.d,draw:()=>{
       const rgb=nodeRGB(n),al=fade(p.d)*(lit?1:0.30);
@@ -294,20 +309,40 @@ function graphDraw(){
   });
   items.sort((a,b)=>b.d-a.d);
   for(const it of items)it.draw();
-  // Labels last and near-to-far, so the front of the graph stays readable.
-  const order=data.nodes.map((n,i)=>i).sort((a,b)=>P[b].d-P[a].d);
+  // Labels are placed near-to-far, so a node in front keeps the spot it wants
+  // and one behind is nudged clear of it, and then drawn far-to-near so the
+  // front of the graph still paints on top. Nothing is ever dropped: a label
+  // that finds no free slot is drawn faded rather than silently lost.
   g.textAlign='center';g.font='600 10.5px ui-sans-serif,system-ui,sans-serif';
-  for(const i of order){
+  const boxes=[],placed=[];
+  const near=data.nodes.map((n,i)=>i).sort((a,b)=>P[a].d-P[b].d);
+  for(const i of near){
     const n=data.nodes[i],p=P[i];
-    const al=fade(p.d)*(G.hover<0||G.hover===i?1:0.28);
-    const r=(n.role==='goal'?0.105:0.050+0.048*clamp01(n.value))*p.f;
     const text=n.role==='goal'?n.name:`${n.name} ${n.value.toFixed(2)}`;
-    const ty=p.y-Math.max(r,6)-5;
-    // A halo in the card colour: a label over the far side of the ring is
-    // otherwise unreadable against the edges crossing behind it.
-    g.lineWidth=3;g.lineJoin='round';
-    g.strokeStyle=rgba(hexRGB(card),al*0.85);g.strokeText(text,p.x,ty);
-    g.fillStyle=rgba(hexRGB(ink),al);g.fillText(text,p.x,ty);
+    const tw=g.measureText(text).width;
+    const x=Math.max(tw/2+4,Math.min(w-tw/2-4,p.x));
+    const base=p.y-radius(n,p)-6;
+    let spot=null;
+    for(const dy of [0,-17,17,-34,34,-51,51,-68,68]){
+      const b={x0:x-tw/2-3,x1:x+tw/2+3,y0:base+dy-11,y1:base+dy+4};
+      if(b.y0<2||b.y1>h-2)continue;
+      if(boxes.some(o=>o.x0<b.x1&&b.x0<o.x1&&o.y0<b.y1&&b.y0<o.y1))continue;
+      boxes.push(b);spot={x:x,y:base+dy,text:text,free:true};break;
+    }
+    placed[i]=spot||{x:x,y:base,text:text,free:false};
+  }
+  for(const i of near.slice().reverse()){
+    const p=P[i],L=placed[i];
+    // The depth cue belongs on the geometry: fading text as well leaves the
+    // back half of the graph labelled with something nobody can read. Text
+    // keeps a floor, and a halo in the card colour lifts it off the edges
+    // crossing behind it.
+    const al=Math.max(0.80,fade(p.d))*(G.hover<0||G.hover===i?1:0.25)
+      *(L.free?1:0.5);
+    g.lineWidth=3.5;g.lineJoin='round';
+    g.strokeStyle=rgba(hexRGB(card),Math.min(1,al*1.15));
+    g.strokeText(L.text,L.x,L.y);
+    g.fillStyle=rgba(hexRGB(ink),al);g.fillText(L.text,L.x,L.y);
   }
   g.textAlign='left';
 }
@@ -316,10 +351,14 @@ function graphLegend(){
   const data=G.data;
   if(!data||!data.relations){box.innerHTML='';return;}
   const peak=Math.max(1e-9,...data.relations.map(r=>r.mean||0));
+  // The self-relation usually carries the largest mean and never appears in
+  // the picture, so the bar has to say why it has no edges to point at.
+  const drawn=new Set(data.edges.filter(e=>e.s!==e.d).map(e=>e.r));
   box.innerHTML=data.relations.map((r,i)=>{
     const c=REL_COLORS[i%REL_COLORS.length];
     const m=r.mean;
-    return `<span style="color:${c}">&#9632; ${r.name}</span>`
+    const tag=drawn.has(i)?'':' <em>(self-loops, not drawn)</em>';
+    return `<span style="color:${c}">&#9632; ${r.name}${tag}</span>`
       +`<span class="track"><i style="width:${m===undefined?0:100*m/peak}%;`
       +`background:${c}"></i></span>`
       +`<b>${m===undefined?'&mdash;':m.toFixed(3)}</b>`;}).join('');

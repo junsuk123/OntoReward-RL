@@ -77,7 +77,7 @@ def test_payload_carries_the_semantic_values_not_the_padding(graph):
 
 
 def test_payload_carries_attention_when_a_model_is_given(graph):
-    torch = pytest.importorskip("torch")
+    pytest.importorskip("torch")
     cfg, sem, g = graph
     from ontology_rgat.rgat.model import build_potential
 

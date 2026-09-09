@@ -1,9 +1,0 @@
-{
-  "session": "20260828_115645_03_structural_occlusion_urban_day",
-  "images": 158,
-  "objects": 218,
-  "negatives": 20,
-  "scenario": "structural_occlusion",
-  "environment": "urban_day",
-  "episode_id": "20260828_115645_03_structural_occlusion_urban_day"
-}

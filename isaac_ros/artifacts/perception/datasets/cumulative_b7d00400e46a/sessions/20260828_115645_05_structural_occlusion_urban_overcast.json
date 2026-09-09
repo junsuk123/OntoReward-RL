@@ -1,9 +1,0 @@
-{
-  "session": "20260828_115645_05_structural_occlusion_urban_overcast",
-  "images": 132,
-  "objects": 180,
-  "negatives": 17,
-  "scenario": "structural_occlusion",
-  "environment": "urban_overcast",
-  "episode_id": "20260828_115645_05_structural_occlusion_urban_overcast"
-}

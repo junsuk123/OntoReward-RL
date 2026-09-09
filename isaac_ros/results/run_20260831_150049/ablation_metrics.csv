@@ -1,7 +1,0 @@
-method,metric,value
-B0_Fixed_ORB,relocalization_success_rate,0.6
-P_Ontology_Guided,relocalization_success_rate,0.6
-B1_Feature_Count,spearman_score_vs_inlier_ratio,0.6344207654650175
-B2_Terrain_Label,spearman_score_vs_inlier_ratio,0.5611233712393416
-B3_Fixed_Handcrafted_Feature_Weights,spearman_score_vs_inlier_ratio,0.7600258409555506
-Ablation_Same_Features_Without_Ontology,spearman_score_vs_inlier_ratio,0.7600258409555506

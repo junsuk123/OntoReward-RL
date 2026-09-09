@@ -1,9 +1,0 @@
-{
-  "session": "20260828_115645_01_mutual_occlusion_urban_dusk",
-  "images": 180,
-  "objects": 322,
-  "negatives": 3,
-  "scenario": "mutual_occlusion",
-  "environment": "urban_dusk",
-  "episode_id": "20260828_115645_01_mutual_occlusion_urban_dusk"
-}

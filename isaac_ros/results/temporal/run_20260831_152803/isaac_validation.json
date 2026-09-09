@@ -1,9 +1,0 @@
-{
-  "isaac_sim_version": "5.1.0.0",
-  "epoch_count": 6,
-  "camera_pose_count": 3,
-  "rgb_image_count": 18,
-  "usd_layer_count": 6,
-  "matching_query_count": 15,
-  "status": "complete"
-}

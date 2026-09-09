@@ -1,9 +1,0 @@
-{
-  "session": "20260828_115645_07_sensor_dropout_urban_night",
-  "images": 177,
-  "objects": 318,
-  "negatives": 3,
-  "scenario": "sensor_dropout",
-  "environment": "urban_night",
-  "episode_id": "20260828_115645_07_sensor_dropout_urban_night"
-}

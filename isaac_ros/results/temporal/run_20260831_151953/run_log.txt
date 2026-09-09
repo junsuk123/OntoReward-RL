@@ -1,3 +1,0 @@
-seed=73
-epochs=6
-query_images=15

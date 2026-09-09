@@ -1,6 +1,0 @@
-method,metric_value
-B0_Fixed_ORB,0.65
-P_Ontology_Guided,0.65
-B1_Feature_Count,0.6423243526086778
-B2_Terrain_Label,0.5509543245261456
-B3_Fixed_Handcrafted_Feature_Weights,0.7416300029121172

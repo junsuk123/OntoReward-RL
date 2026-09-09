@@ -1,6 +1,0 @@
-metric,value
-query_image_count,15
-correct_place_match_rate,0.3333333333333333
-false_match_rate,0.13333333333333333
-mean_inlier_ratio,0.33646389130364784
-environment_change_vs_inlier_pearson,-0.47644809608207817

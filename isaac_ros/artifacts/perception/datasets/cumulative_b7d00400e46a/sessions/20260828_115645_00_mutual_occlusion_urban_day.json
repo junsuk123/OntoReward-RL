@@ -1,9 +1,0 @@
-{
-  "session": "20260828_115645_00_mutual_occlusion_urban_day",
-  "images": 180,
-  "objects": 320,
-  "negatives": 3,
-  "scenario": "mutual_occlusion",
-  "environment": "urban_day",
-  "episode_id": "20260828_115645_00_mutual_occlusion_urban_day"
-}

@@ -1,4 +1,0 @@
-metric,value
-correct_place_match_rate,0.00625
-false_match_rate,0.25
-mean_inlier_ratio,0.1

@@ -1,0 +1,249 @@
+app:
+  headless: true
+  physics_dt: 0.0166666667
+  rendering_dt: 0.0166666667
+  duration_s: 25.0
+world:
+  ground_plane: false
+  dome_light_intensity: 1000.0
+  stage_units_in_meters: 1.0
+  environment_type: procedural_urban
+  environment_usd: null
+  environment_prim_path: /World/UrbanEnvironment
+  environment: urban_day
+  environment_seed: 424695
+  occluder_set: null
+drones:
+  enabled: true
+  root_prim: /World/Drones
+  friendly:
+    count: 1
+    model: iris
+    color:
+    - 0.04
+    - 0.28
+    - 1.0
+    label: Ally
+    cruise_altitude: 3.2
+    asset_scale: 1.35
+  enemy:
+    count: 1
+    model: quadcopter
+    color:
+    - 1.0
+    - 0.06
+    - 0.025
+    label: Enemy
+    cruise_altitude: 3.2
+    asset_scale: 1.5
+  takeoff_duration_s: 4.0
+  activity_half_length: 5.5
+  safety_radius: 1.4
+  max_speed: 2.2
+  motion_mode: crossing_shuttle
+  shuttle_leg_duration_s: 11.0
+  crossing_offset_limit: 3.5
+  crossing_time_jitter: 0.1
+  camera_depth_separation_m: 1.8
+  trajectory_seed: null
+cameras:
+  enabled: true
+  root_prim: /World/Sensors
+  front:
+    near_position:
+    - 12.0
+    - -1.5
+    - 4.0
+    view_direction:
+    - -1.0
+    - 0.0
+    - 0.0
+    baseline_direction:
+    - 0.0
+    - 1.0
+    - 0.0
+    separation_m: 3.0
+    image_rotation_clockwise_deg: 90.0
+    optics:
+      resolution:
+      - 1920
+      - 1080
+      focal_length_mm: 35.0
+      horizontal_aperture_mm: 36.0
+      clipping_range:
+      - 0.1
+      - 1000.0
+  satellite:
+    position:
+    - 0.0
+    - 0.0
+    - 20.0
+    target:
+    - 0.0
+    - 0.0
+    - 2.5
+    optics:
+      resolution:
+      - 2048
+      - 2048
+      focal_length_mm: 35.0
+      horizontal_aperture_mm: 36.0
+      clipping_range:
+      - 0.1
+      - 1000.0
+ugv:
+  model: nova_carter
+  prim_path: /World/Robots/UGV
+  name: ugv
+  spawn: null
+  controller:
+    name: social_force
+    params:
+      waypoints:
+      - - 2.0
+        - 0.0
+      - - 0.0
+        - 2.0
+      - - -2.0
+        - 0.0
+      - - 0.0
+        - -2.0
+      goal_tolerance: 0.6
+      linear_speed: 0.6
+      max_angular_speed: 1.2
+      heading_gain: 1.6
+      influence_radius: 2.5
+      repulsion_gain: 1.6
+      swirl_gain: 0.9
+      caution_radius: 1.5
+      stop_radius: 0.9
+      reverse_speed: 0.5
+      loop: true
+people:
+  root_prim: /World/Characters
+  command_file: people_commands.txt
+  navmesh: false
+  dynamic_avoidance: false
+  loop: inf
+  count: null
+  agents:
+  - asset: F_Business_02
+    start:
+    - 3.0
+    - 3.0
+    - 0.0
+    waypoints:
+    - - 3.0
+      - -3.0
+      - 0.0
+    - - 3.0
+      - 3.0
+      - 0.0
+  - asset: M_Medical_01
+    start:
+    - -3.0
+    - 3.0
+    - 0.0
+    waypoints:
+    - - -3.0
+      - -3.0
+      - 0.0
+    - - -3.0
+      - 3.0
+      - 0.0
+  - asset: male_adult_construction_01_new
+    start:
+    - 0.0
+    - 4.5
+    - 0.0
+    waypoints:
+    - - 4.5
+      - 4.5
+      - 0.0
+    - - 0.0
+      - 4.5
+      - 0.0
+scenarios:
+  enabled: false
+  active: null
+  seed: 424695
+  episode_id: '20260828_115631'
+  run_dir: /home/j/SynologyDrive/junsuk/학술대회/CICS2026/codes/isaac_ros/artifacts/scenarios/20260828_115631
+  dataset_root: artifacts/perception/raw
+  episode_duration_s: 25.0
+  event_start_s: 8.0
+  cooldown_s: 8.0
+  plan:
+  - scenario: mutual_occlusion
+    environment: urban_day
+  - scenario: mutual_occlusion
+    environment: urban_dusk
+  - scenario: mutual_occlusion
+    environment: coastal_flats
+  - scenario: structural_occlusion
+    environment: urban_day
+  - scenario: structural_occlusion
+    environment: industrial_yard
+  - scenario: structural_occlusion
+    environment: urban_overcast
+  - scenario: sensor_dropout
+    environment: urban_day
+  - scenario: sensor_dropout
+    environment: urban_night
+  - scenario: sensor_dropout
+    environment: desert_outpost
+  mutual_occlusion:
+    lane_pitch_m: null
+    formation_pitch_m: 0.7
+    leg_scale_range:
+    - 0.92
+    - 1.08
+    pair_teams: true
+  structural_occlusion:
+    occluder_set: null
+    lane_pitch_m: null
+    leg_scale_range:
+    - 0.8
+    - 1.2
+  sensor_dropout:
+    cameras:
+    - front_near
+    - front_far
+    dropout_count: 6
+    min_dropout_s: 0.4
+    max_dropout_s: 2.5
+    simultaneous: false
+    frame_drop_probability: 0.02
+telemetry:
+  report_every_s: 2.0
+ros2:
+  enabled: true
+  drive_from_cmd_vel: true
+  domain_id: null
+  node_namespace: ''
+  clock_topic: clock
+  cmd_vel_topic: cmd_vel
+  odom_topic: odom
+  tf_topic: tf
+  odom_frame: odom
+  base_frame: base_link
+  person_frame_prefix: person
+  max_linear_speed: 1.0
+  max_angular_speed: 2.0
+  publish_people_tf: true
+  map_frame: map
+  publish_swarm_tf: true
+  publish_swarm_cameras: true
+  swarm_image_scale: 0.5
+  sensors:
+    lidar_enabled: true
+    lidar_prim: chassis_link/sensors/front_RPLidar/RPLidar_S2E
+    lidar_topic: scan
+    lidar_frame: front_lidar
+    camera_enabled: true
+    camera_prim: chassis_link/sensors/front_hawk/left/camera_left
+    camera_topic: front/rgb
+    camera_info_topic: front/camera_info
+    camera_frame: front_camera
+    camera_width: 640
+    camera_height: 480

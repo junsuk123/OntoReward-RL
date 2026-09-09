@@ -1,0 +1,3013 @@
+[
+  {
+    "frame_id": "r00_road_normal",
+    "timestamp_s": 0.0,
+    "texture_entropy": 5.184747845782361,
+    "texture_variance": 419.78424281544153,
+    "edge_density": 0.017544216579861112,
+    "corner_density": 1.0,
+    "feature_count": 256,
+    "feature_distribution_uniformity": 0.9597185057838282,
+    "repetitiveness_score": 0.09375,
+    "brightness": 67.61572265625,
+    "blur_score": 1795.8842124054095,
+    "flow_mean": 5.831123352050781,
+    "flow_std": 0.012318117544054985,
+    "flow_valid_ratio": 1.0,
+    "flow_inlier_ratio": 1.0,
+    "flow_direction_consistency": 0.9999986886978149,
+    "altitude_m": 10.0,
+    "ground_speed_mps": 3.0,
+    "roll_rad": 0.0,
+    "pitch_rad": 0.0,
+    "yaw_rate_rad_s": 0.0,
+    "terrain_type_if_available": "road",
+    "dynamic_texture_suspected": false,
+    "low_texture_suspected": false,
+    "repetitive_pattern_suspected": false,
+    "normalized": {
+      "texture_entropy": 0.6480934807227952,
+      "corner_density": 1.0,
+      "feature_count": 0.28444444444444444,
+      "feature_distribution_uniformity": 0.9597185057838282,
+      "repetitiveness_score": 0.09375,
+      "brightness_quality": 0.5303193933823529,
+      "blur_quality": 1.0,
+      "flow_valid_ratio": 1.0,
+      "flow_inlier_ratio": 1.0,
+      "flow_direction_consistency": 0.9999986886978149
+    },
+    "visual_matchability": 1.0,
+    "matchability_class": "HighMatchability",
+    "reasoning_trace": [
+      {
+        "rule": "rich_texture",
+        "metric": "texture_entropy",
+        "value": 0.648093,
+        "condition": ">= 0.48",
+        "fired": true,
+        "contribution": 0.1,
+        "explanation": "Rich intensity structure supports distinctive features."
+      },
+      {
+        "rule": "many_features",
+        "metric": "feature_count",
+        "value": 0.284444,
+        "condition": ">= 0.25",
+        "fired": true,
+        "contribution": 0.09,
+        "explanation": "Sufficient ORB support is available."
+      },
+      {
+        "rule": "too_few_features",
+        "metric": "feature_count",
+        "value": 0.284444,
+        "condition": "<= 0.03",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Too few descriptors makes place matching underconstrained."
+      },
+      {
+        "rule": "low_texture",
+        "metric": "texture_entropy",
+        "value": 0.648093,
+        "condition": "<= 0.25",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Low intensity entropy provides little distinctive structure."
+      },
+      {
+        "rule": "distributed_features",
+        "metric": "feature_distribution_uniformity",
+        "value": 0.959719,
+        "condition": ">= 0.55",
+        "fired": true,
+        "contribution": 0.12,
+        "explanation": "Features cover the image and improve geometric observability."
+      },
+      {
+        "rule": "low_aliasing",
+        "metric": "repetitiveness_score",
+        "value": 0.09375,
+        "condition": "<= 0.35",
+        "fired": true,
+        "contribution": 0.1,
+        "explanation": "Low descriptor self-similarity reduces false-place risk."
+      },
+      {
+        "rule": "repetitive_aliasing",
+        "metric": "repetitiveness_score",
+        "value": 0.09375,
+        "condition": ">= 0.55",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Repeated descriptors increase perceptual aliasing risk."
+      },
+      {
+        "rule": "sharp_image",
+        "metric": "blur_quality",
+        "value": 1.0,
+        "condition": ">= 0.25",
+        "fired": true,
+        "contribution": 0.08,
+        "explanation": "Laplacian energy indicates usable image sharpness."
+      },
+      {
+        "rule": "exposure_quality",
+        "metric": "brightness_quality",
+        "value": 0.530319,
+        "condition": ">= 0.55",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Exposure is away from saturation and darkness."
+      },
+      {
+        "rule": "stable_tracks",
+        "metric": "flow_valid_ratio",
+        "value": 1.0,
+        "condition": ">= 0.65",
+        "fired": true,
+        "contribution": 0.06,
+        "explanation": "Most short-term features remain trackable."
+      },
+      {
+        "rule": "coherent_geometry",
+        "metric": "flow_inlier_ratio",
+        "value": 1.0,
+        "condition": ">= 0.7",
+        "fired": true,
+        "contribution": 0.12,
+        "explanation": "RANSAC-consistent flow supports temporal stability."
+      },
+      {
+        "rule": "inconsistent_flow",
+        "metric": "flow_inlier_ratio",
+        "value": 1.0,
+        "condition": "<= 0.3",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Inconsistent flow suggests dynamic or unstable texture."
+      }
+    ]
+  },
+  {
+    "frame_id": "r00_road_bright",
+    "timestamp_s": 0.1,
+    "texture_entropy": 5.184519757051583,
+    "texture_variance": 424.3019280946917,
+    "edge_density": 0.10340033637152778,
+    "corner_density": 1.0,
+    "feature_count": 337,
+    "feature_distribution_uniformity": 0.962607326001661,
+    "repetitiveness_score": 0.04154302670623145,
+    "brightness": 105.7200927734375,
+    "blur_score": 2564.9469806165143,
+    "flow_mean": 62.88486099243164,
+    "flow_std": 81.00027465820312,
+    "flow_valid_ratio": 0.4110429447852761,
+    "flow_inlier_ratio": 0.4626865671641791,
+    "flow_direction_consistency": 0.4532201588153839,
+    "altitude_m": 10.0,
+    "ground_speed_mps": 3.0,
+    "roll_rad": 0.0,
+    "pitch_rad": 0.0,
+    "yaw_rate_rad_s": 0.0,
+    "terrain_type_if_available": "road",
+    "dynamic_texture_suspected": false,
+    "low_texture_suspected": false,
+    "repetitive_pattern_suspected": false,
+    "normalized": {
+      "texture_entropy": 0.6480649696314479,
+      "corner_density": 1.0,
+      "feature_count": 0.37444444444444447,
+      "feature_distribution_uniformity": 0.962607326001661,
+      "repetitiveness_score": 0.04154302670623145,
+      "brightness_quality": 0.8291771982230391,
+      "blur_quality": 1.0,
+      "flow_valid_ratio": 0.4110429447852761,
+      "flow_inlier_ratio": 0.4626865671641791,
+      "flow_direction_consistency": 0.4532201588153839
+    },
+    "visual_matchability": 0.96,
+    "matchability_class": "HighMatchability",
+    "reasoning_trace": [
+      {
+        "rule": "rich_texture",
+        "metric": "texture_entropy",
+        "value": 0.648065,
+        "condition": ">= 0.48",
+        "fired": true,
+        "contribution": 0.1,
+        "explanation": "Rich intensity structure supports distinctive features."
+      },
+      {
+        "rule": "many_features",
+        "metric": "feature_count",
+        "value": 0.374444,
+        "condition": ">= 0.25",
+        "fired": true,
+        "contribution": 0.09,
+        "explanation": "Sufficient ORB support is available."
+      },
+      {
+        "rule": "too_few_features",
+        "metric": "feature_count",
+        "value": 0.374444,
+        "condition": "<= 0.03",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Too few descriptors makes place matching underconstrained."
+      },
+      {
+        "rule": "low_texture",
+        "metric": "texture_entropy",
+        "value": 0.648065,
+        "condition": "<= 0.25",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Low intensity entropy provides little distinctive structure."
+      },
+      {
+        "rule": "distributed_features",
+        "metric": "feature_distribution_uniformity",
+        "value": 0.962607,
+        "condition": ">= 0.55",
+        "fired": true,
+        "contribution": 0.12,
+        "explanation": "Features cover the image and improve geometric observability."
+      },
+      {
+        "rule": "low_aliasing",
+        "metric": "repetitiveness_score",
+        "value": 0.041543,
+        "condition": "<= 0.35",
+        "fired": true,
+        "contribution": 0.1,
+        "explanation": "Low descriptor self-similarity reduces false-place risk."
+      },
+      {
+        "rule": "repetitive_aliasing",
+        "metric": "repetitiveness_score",
+        "value": 0.041543,
+        "condition": ">= 0.55",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Repeated descriptors increase perceptual aliasing risk."
+      },
+      {
+        "rule": "sharp_image",
+        "metric": "blur_quality",
+        "value": 1.0,
+        "condition": ">= 0.25",
+        "fired": true,
+        "contribution": 0.08,
+        "explanation": "Laplacian energy indicates usable image sharpness."
+      },
+      {
+        "rule": "exposure_quality",
+        "metric": "brightness_quality",
+        "value": 0.829177,
+        "condition": ">= 0.55",
+        "fired": true,
+        "contribution": 0.05,
+        "explanation": "Exposure is away from saturation and darkness."
+      },
+      {
+        "rule": "stable_tracks",
+        "metric": "flow_valid_ratio",
+        "value": 0.411043,
+        "condition": ">= 0.65",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Most short-term features remain trackable."
+      },
+      {
+        "rule": "coherent_geometry",
+        "metric": "flow_inlier_ratio",
+        "value": 0.462687,
+        "condition": ">= 0.7",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "RANSAC-consistent flow supports temporal stability."
+      },
+      {
+        "rule": "inconsistent_flow",
+        "metric": "flow_inlier_ratio",
+        "value": 0.462687,
+        "condition": "<= 0.3",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Inconsistent flow suggests dynamic or unstable texture."
+      }
+    ]
+  },
+  {
+    "frame_id": "r00_road_dark",
+    "timestamp_s": 0.2,
+    "texture_entropy": 4.437011587323382,
+    "texture_variance": 151.5623383554688,
+    "edge_density": 0.008551703559027778,
+    "corner_density": 1.0,
+    "feature_count": 64,
+    "feature_distribution_uniformity": 0.23321470113013237,
+    "repetitiveness_score": 0.5625,
+    "brightness": 28.56799994574653,
+    "blur_score": 648.1033780396353,
+    "flow_mean": 110.70343017578125,
+    "flow_std": 88.2549057006836,
+    "flow_valid_ratio": 0.3067484662576687,
+    "flow_inlier_ratio": 0.12,
+    "flow_direction_consistency": 0.3090505301952362,
+    "altitude_m": 10.0,
+    "ground_speed_mps": 3.0,
+    "roll_rad": 0.0,
+    "pitch_rad": 0.0,
+    "yaw_rate_rad_s": 0.0,
+    "terrain_type_if_available": "road",
+    "dynamic_texture_suspected": false,
+    "low_texture_suspected": false,
+    "repetitive_pattern_suspected": true,
+    "normalized": {
+      "texture_entropy": 0.5546264484154227,
+      "corner_density": 1.0,
+      "feature_count": 0.07111111111111111,
+      "feature_distribution_uniformity": 0.23321470113013237,
+      "repetitiveness_score": 0.5625,
+      "brightness_quality": 0.22406274467252174,
+      "blur_quality": 1.0,
+      "flow_valid_ratio": 0.3067484662576687,
+      "flow_inlier_ratio": 0.12,
+      "flow_direction_consistency": 0.3090505301952362
+    },
+    "visual_matchability": 0.26,
+    "matchability_class": "LowMatchability",
+    "reasoning_trace": [
+      {
+        "rule": "rich_texture",
+        "metric": "texture_entropy",
+        "value": 0.554626,
+        "condition": ">= 0.48",
+        "fired": true,
+        "contribution": 0.1,
+        "explanation": "Rich intensity structure supports distinctive features."
+      },
+      {
+        "rule": "many_features",
+        "metric": "feature_count",
+        "value": 0.071111,
+        "condition": ">= 0.25",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Sufficient ORB support is available."
+      },
+      {
+        "rule": "too_few_features",
+        "metric": "feature_count",
+        "value": 0.071111,
+        "condition": "<= 0.03",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Too few descriptors makes place matching underconstrained."
+      },
+      {
+        "rule": "low_texture",
+        "metric": "texture_entropy",
+        "value": 0.554626,
+        "condition": "<= 0.25",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Low intensity entropy provides little distinctive structure."
+      },
+      {
+        "rule": "distributed_features",
+        "metric": "feature_distribution_uniformity",
+        "value": 0.233215,
+        "condition": ">= 0.55",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Features cover the image and improve geometric observability."
+      },
+      {
+        "rule": "low_aliasing",
+        "metric": "repetitiveness_score",
+        "value": 0.5625,
+        "condition": "<= 0.35",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Low descriptor self-similarity reduces false-place risk."
+      },
+      {
+        "rule": "repetitive_aliasing",
+        "metric": "repetitiveness_score",
+        "value": 0.5625,
+        "condition": ">= 0.55",
+        "fired": true,
+        "contribution": -0.18,
+        "explanation": "Repeated descriptors increase perceptual aliasing risk."
+      },
+      {
+        "rule": "sharp_image",
+        "metric": "blur_quality",
+        "value": 1.0,
+        "condition": ">= 0.25",
+        "fired": true,
+        "contribution": 0.08,
+        "explanation": "Laplacian energy indicates usable image sharpness."
+      },
+      {
+        "rule": "exposure_quality",
+        "metric": "brightness_quality",
+        "value": 0.224063,
+        "condition": ">= 0.55",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Exposure is away from saturation and darkness."
+      },
+      {
+        "rule": "stable_tracks",
+        "metric": "flow_valid_ratio",
+        "value": 0.306748,
+        "condition": ">= 0.65",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Most short-term features remain trackable."
+      },
+      {
+        "rule": "coherent_geometry",
+        "metric": "flow_inlier_ratio",
+        "value": 0.12,
+        "condition": ">= 0.7",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "RANSAC-consistent flow supports temporal stability."
+      },
+      {
+        "rule": "inconsistent_flow",
+        "metric": "flow_inlier_ratio",
+        "value": 0.12,
+        "condition": "<= 0.3",
+        "fired": true,
+        "contribution": -0.16,
+        "explanation": "Inconsistent flow suggests dynamic or unstable texture."
+      }
+    ]
+  },
+  {
+    "frame_id": "r00_road_blur",
+    "timestamp_s": 0.3,
+    "texture_entropy": 3.831152094332116,
+    "texture_variance": 116.08576000987748,
+    "edge_density": 0.0025770399305555555,
+    "corner_density": 1.0,
+    "feature_count": 109,
+    "feature_distribution_uniformity": 0.36568902031705647,
+    "repetitiveness_score": 0.8623853211009175,
+    "brightness": 67.60397677951389,
+    "blur_score": 43.53228721680281,
+    "flow_mean": 2.957993984222412,
+    "flow_std": 5.106074333190918,
+    "flow_valid_ratio": 1.0,
+    "flow_inlier_ratio": 0.6380368098159509,
+    "flow_direction_consistency": 0.03224875032901764,
+    "altitude_m": 10.0,
+    "ground_speed_mps": 3.0,
+    "roll_rad": 0.0,
+    "pitch_rad": 0.0,
+    "yaw_rate_rad_s": 0.0,
+    "terrain_type_if_available": "road",
+    "dynamic_texture_suspected": false,
+    "low_texture_suspected": false,
+    "repetitive_pattern_suspected": true,
+    "normalized": {
+      "texture_entropy": 0.4788940117915145,
+      "corner_density": 1.0,
+      "feature_count": 0.12111111111111111,
+      "feature_distribution_uniformity": 0.36568902031705647,
+      "repetitiveness_score": 0.8623853211009175,
+      "brightness_quality": 0.5302272688589325,
+      "blur_quality": 0.08706457443360562,
+      "flow_valid_ratio": 1.0,
+      "flow_inlier_ratio": 0.6380368098159509,
+      "flow_direction_consistency": 0.03224875032901764
+    },
+    "visual_matchability": 0.3,
+    "matchability_class": "LowMatchability",
+    "reasoning_trace": [
+      {
+        "rule": "rich_texture",
+        "metric": "texture_entropy",
+        "value": 0.478894,
+        "condition": ">= 0.48",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Rich intensity structure supports distinctive features."
+      },
+      {
+        "rule": "many_features",
+        "metric": "feature_count",
+        "value": 0.121111,
+        "condition": ">= 0.25",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Sufficient ORB support is available."
+      },
+      {
+        "rule": "too_few_features",
+        "metric": "feature_count",
+        "value": 0.121111,
+        "condition": "<= 0.03",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Too few descriptors makes place matching underconstrained."
+      },
+      {
+        "rule": "low_texture",
+        "metric": "texture_entropy",
+        "value": 0.478894,
+        "condition": "<= 0.25",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Low intensity entropy provides little distinctive structure."
+      },
+      {
+        "rule": "distributed_features",
+        "metric": "feature_distribution_uniformity",
+        "value": 0.365689,
+        "condition": ">= 0.55",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Features cover the image and improve geometric observability."
+      },
+      {
+        "rule": "low_aliasing",
+        "metric": "repetitiveness_score",
+        "value": 0.862385,
+        "condition": "<= 0.35",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Low descriptor self-similarity reduces false-place risk."
+      },
+      {
+        "rule": "repetitive_aliasing",
+        "metric": "repetitiveness_score",
+        "value": 0.862385,
+        "condition": ">= 0.55",
+        "fired": true,
+        "contribution": -0.18,
+        "explanation": "Repeated descriptors increase perceptual aliasing risk."
+      },
+      {
+        "rule": "sharp_image",
+        "metric": "blur_quality",
+        "value": 0.087065,
+        "condition": ">= 0.25",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Laplacian energy indicates usable image sharpness."
+      },
+      {
+        "rule": "exposure_quality",
+        "metric": "brightness_quality",
+        "value": 0.530227,
+        "condition": ">= 0.55",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Exposure is away from saturation and darkness."
+      },
+      {
+        "rule": "stable_tracks",
+        "metric": "flow_valid_ratio",
+        "value": 1.0,
+        "condition": ">= 0.65",
+        "fired": true,
+        "contribution": 0.06,
+        "explanation": "Most short-term features remain trackable."
+      },
+      {
+        "rule": "coherent_geometry",
+        "metric": "flow_inlier_ratio",
+        "value": 0.638037,
+        "condition": ">= 0.7",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "RANSAC-consistent flow supports temporal stability."
+      },
+      {
+        "rule": "inconsistent_flow",
+        "metric": "flow_inlier_ratio",
+        "value": 0.638037,
+        "condition": "<= 0.3",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Inconsistent flow suggests dynamic or unstable texture."
+      }
+    ]
+  },
+  {
+    "frame_id": "r00_road_yaw",
+    "timestamp_s": 0.4,
+    "texture_entropy": 4.718270530753127,
+    "texture_variance": 394.5400667749344,
+    "edge_density": 0.0128173828125,
+    "corner_density": 1.0,
+    "feature_count": 152,
+    "feature_distribution_uniformity": 0.7060852145391345,
+    "repetitiveness_score": 0.40131578947368424,
+    "brightness": 67.95334879557292,
+    "blur_score": 650.855345695797,
+    "flow_mean": 44.756099700927734,
+    "flow_std": 40.7439079284668,
+    "flow_valid_ratio": 0.9386503067484663,
+    "flow_inlier_ratio": 0.0392156862745098,
+    "flow_direction_consistency": 0.2123195081949234,
+    "altitude_m": 10.0,
+    "ground_speed_mps": 3.0,
+    "roll_rad": 0.0,
+    "pitch_rad": 0.0,
+    "yaw_rate_rad_s": 0.0,
+    "terrain_type_if_available": "road",
+    "dynamic_texture_suspected": true,
+    "low_texture_suspected": false,
+    "repetitive_pattern_suspected": false,
+    "normalized": {
+      "texture_entropy": 0.5897838163441409,
+      "corner_density": 1.0,
+      "feature_count": 0.1688888888888889,
+      "feature_distribution_uniformity": 0.7060852145391345,
+      "repetitiveness_score": 0.40131578947368424,
+      "brightness_quality": 0.5329674415339052,
+      "blur_quality": 1.0,
+      "flow_valid_ratio": 0.9386503067484663,
+      "flow_inlier_ratio": 0.0392156862745098,
+      "flow_direction_consistency": 0.2123195081949234
+    },
+    "visual_matchability": 0.62,
+    "matchability_class": "MediumMatchability",
+    "reasoning_trace": [
+      {
+        "rule": "rich_texture",
+        "metric": "texture_entropy",
+        "value": 0.589784,
+        "condition": ">= 0.48",
+        "fired": true,
+        "contribution": 0.1,
+        "explanation": "Rich intensity structure supports distinctive features."
+      },
+      {
+        "rule": "many_features",
+        "metric": "feature_count",
+        "value": 0.168889,
+        "condition": ">= 0.25",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Sufficient ORB support is available."
+      },
+      {
+        "rule": "too_few_features",
+        "metric": "feature_count",
+        "value": 0.168889,
+        "condition": "<= 0.03",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Too few descriptors makes place matching underconstrained."
+      },
+      {
+        "rule": "low_texture",
+        "metric": "texture_entropy",
+        "value": 0.589784,
+        "condition": "<= 0.25",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Low intensity entropy provides little distinctive structure."
+      },
+      {
+        "rule": "distributed_features",
+        "metric": "feature_distribution_uniformity",
+        "value": 0.706085,
+        "condition": ">= 0.55",
+        "fired": true,
+        "contribution": 0.12,
+        "explanation": "Features cover the image and improve geometric observability."
+      },
+      {
+        "rule": "low_aliasing",
+        "metric": "repetitiveness_score",
+        "value": 0.401316,
+        "condition": "<= 0.35",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Low descriptor self-similarity reduces false-place risk."
+      },
+      {
+        "rule": "repetitive_aliasing",
+        "metric": "repetitiveness_score",
+        "value": 0.401316,
+        "condition": ">= 0.55",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Repeated descriptors increase perceptual aliasing risk."
+      },
+      {
+        "rule": "sharp_image",
+        "metric": "blur_quality",
+        "value": 1.0,
+        "condition": ">= 0.25",
+        "fired": true,
+        "contribution": 0.08,
+        "explanation": "Laplacian energy indicates usable image sharpness."
+      },
+      {
+        "rule": "exposure_quality",
+        "metric": "brightness_quality",
+        "value": 0.532967,
+        "condition": ">= 0.55",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Exposure is away from saturation and darkness."
+      },
+      {
+        "rule": "stable_tracks",
+        "metric": "flow_valid_ratio",
+        "value": 0.93865,
+        "condition": ">= 0.65",
+        "fired": true,
+        "contribution": 0.06,
+        "explanation": "Most short-term features remain trackable."
+      },
+      {
+        "rule": "coherent_geometry",
+        "metric": "flow_inlier_ratio",
+        "value": 0.039216,
+        "condition": ">= 0.7",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "RANSAC-consistent flow supports temporal stability."
+      },
+      {
+        "rule": "inconsistent_flow",
+        "metric": "flow_inlier_ratio",
+        "value": 0.039216,
+        "condition": "<= 0.3",
+        "fired": true,
+        "contribution": -0.16,
+        "explanation": "Inconsistent flow suggests dynamic or unstable texture."
+      }
+    ]
+  },
+  {
+    "frame_id": "r00_grass_normal",
+    "timestamp_s": 0.5,
+    "texture_entropy": 0.7325560112735073,
+    "texture_variance": 11.312029614860627,
+    "edge_density": 0.0006781684027777778,
+    "corner_density": 1.0,
+    "feature_count": 27,
+    "feature_distribution_uniformity": 0.6319297539802743,
+    "repetitiveness_score": 0.07407407407407407,
+    "brightness": 80.08289930555556,
+    "blur_score": 149.90546988737253,
+    "flow_mean": 5.806542873382568,
+    "flow_std": 0.39725473523139954,
+    "flow_valid_ratio": 0.9966666666666667,
+    "flow_inlier_ratio": 0.9832775919732442,
+    "flow_direction_consistency": 0.9875073432922363,
+    "altitude_m": 10.0,
+    "ground_speed_mps": 3.0,
+    "roll_rad": 0.0,
+    "pitch_rad": 0.0,
+    "yaw_rate_rad_s": 0.0,
+    "terrain_type_if_available": "grass",
+    "dynamic_texture_suspected": false,
+    "low_texture_suspected": false,
+    "repetitive_pattern_suspected": false,
+    "normalized": {
+      "texture_entropy": 0.09156950140918842,
+      "corner_density": 1.0,
+      "feature_count": 0.03,
+      "feature_distribution_uniformity": 0.6319297539802743,
+      "repetitiveness_score": 0.07407407407407407,
+      "brightness_quality": 0.6281011710239652,
+      "blur_quality": 0.29981093977474504,
+      "flow_valid_ratio": 0.9966666666666667,
+      "flow_inlier_ratio": 0.9832775919732442,
+      "flow_direction_consistency": 0.9875073432922363
+    },
+    "visual_matchability": 0.55,
+    "matchability_class": "MediumMatchability",
+    "reasoning_trace": [
+      {
+        "rule": "rich_texture",
+        "metric": "texture_entropy",
+        "value": 0.09157,
+        "condition": ">= 0.48",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Rich intensity structure supports distinctive features."
+      },
+      {
+        "rule": "many_features",
+        "metric": "feature_count",
+        "value": 0.03,
+        "condition": ">= 0.25",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Sufficient ORB support is available."
+      },
+      {
+        "rule": "too_few_features",
+        "metric": "feature_count",
+        "value": 0.03,
+        "condition": "<= 0.03",
+        "fired": true,
+        "contribution": -0.25,
+        "explanation": "Too few descriptors makes place matching underconstrained."
+      },
+      {
+        "rule": "low_texture",
+        "metric": "texture_entropy",
+        "value": 0.09157,
+        "condition": "<= 0.25",
+        "fired": true,
+        "contribution": -0.15,
+        "explanation": "Low intensity entropy provides little distinctive structure."
+      },
+      {
+        "rule": "distributed_features",
+        "metric": "feature_distribution_uniformity",
+        "value": 0.63193,
+        "condition": ">= 0.55",
+        "fired": true,
+        "contribution": 0.12,
+        "explanation": "Features cover the image and improve geometric observability."
+      },
+      {
+        "rule": "low_aliasing",
+        "metric": "repetitiveness_score",
+        "value": 0.074074,
+        "condition": "<= 0.35",
+        "fired": true,
+        "contribution": 0.1,
+        "explanation": "Low descriptor self-similarity reduces false-place risk."
+      },
+      {
+        "rule": "repetitive_aliasing",
+        "metric": "repetitiveness_score",
+        "value": 0.074074,
+        "condition": ">= 0.55",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Repeated descriptors increase perceptual aliasing risk."
+      },
+      {
+        "rule": "sharp_image",
+        "metric": "blur_quality",
+        "value": 0.299811,
+        "condition": ">= 0.25",
+        "fired": true,
+        "contribution": 0.08,
+        "explanation": "Laplacian energy indicates usable image sharpness."
+      },
+      {
+        "rule": "exposure_quality",
+        "metric": "brightness_quality",
+        "value": 0.628101,
+        "condition": ">= 0.55",
+        "fired": true,
+        "contribution": 0.05,
+        "explanation": "Exposure is away from saturation and darkness."
+      },
+      {
+        "rule": "stable_tracks",
+        "metric": "flow_valid_ratio",
+        "value": 0.996667,
+        "condition": ">= 0.65",
+        "fired": true,
+        "contribution": 0.06,
+        "explanation": "Most short-term features remain trackable."
+      },
+      {
+        "rule": "coherent_geometry",
+        "metric": "flow_inlier_ratio",
+        "value": 0.983278,
+        "condition": ">= 0.7",
+        "fired": true,
+        "contribution": 0.12,
+        "explanation": "RANSAC-consistent flow supports temporal stability."
+      },
+      {
+        "rule": "inconsistent_flow",
+        "metric": "flow_inlier_ratio",
+        "value": 0.983278,
+        "condition": "<= 0.3",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Inconsistent flow suggests dynamic or unstable texture."
+      }
+    ]
+  },
+  {
+    "frame_id": "r00_grass_bright",
+    "timestamp_s": 0.6,
+    "texture_entropy": 0.7546966198854681,
+    "texture_variance": 17.7123219832594,
+    "edge_density": 0.0035807291666666665,
+    "corner_density": 1.0,
+    "feature_count": 129,
+    "feature_distribution_uniformity": 0.9451926321605626,
+    "repetitiveness_score": 0.015503875968992248,
+    "brightness": 122.10887315538194,
+    "blur_score": 234.53630527738986,
+    "flow_mean": 166.134521484375,
+    "flow_std": 102.16543579101562,
+    "flow_valid_ratio": 0.13333333333333333,
+    "flow_inlier_ratio": 0.075,
+    "flow_direction_consistency": 0.3137950599193573,
+    "altitude_m": 10.0,
+    "ground_speed_mps": 3.0,
+    "roll_rad": 0.0,
+    "pitch_rad": 0.0,
+    "yaw_rate_rad_s": 0.0,
+    "terrain_type_if_available": "grass",
+    "dynamic_texture_suspected": false,
+    "low_texture_suspected": false,
+    "repetitive_pattern_suspected": false,
+    "normalized": {
+      "texture_entropy": 0.09433707748568351,
+      "corner_density": 1.0,
+      "feature_count": 0.14333333333333334,
+      "feature_distribution_uniformity": 0.9451926321605626,
+      "repetitiveness_score": 0.015503875968992248,
+      "brightness_quality": 0.9577166521990741,
+      "blur_quality": 0.4690726105547797,
+      "flow_valid_ratio": 0.13333333333333333,
+      "flow_inlier_ratio": 0.075,
+      "flow_direction_consistency": 0.3137950599193573
+    },
+    "visual_matchability": 0.45999999999999996,
+    "matchability_class": "MediumMatchability",
+    "reasoning_trace": [
+      {
+        "rule": "rich_texture",
+        "metric": "texture_entropy",
+        "value": 0.094337,
+        "condition": ">= 0.48",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Rich intensity structure supports distinctive features."
+      },
+      {
+        "rule": "many_features",
+        "metric": "feature_count",
+        "value": 0.143333,
+        "condition": ">= 0.25",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Sufficient ORB support is available."
+      },
+      {
+        "rule": "too_few_features",
+        "metric": "feature_count",
+        "value": 0.143333,
+        "condition": "<= 0.03",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Too few descriptors makes place matching underconstrained."
+      },
+      {
+        "rule": "low_texture",
+        "metric": "texture_entropy",
+        "value": 0.094337,
+        "condition": "<= 0.25",
+        "fired": true,
+        "contribution": -0.15,
+        "explanation": "Low intensity entropy provides little distinctive structure."
+      },
+      {
+        "rule": "distributed_features",
+        "metric": "feature_distribution_uniformity",
+        "value": 0.945193,
+        "condition": ">= 0.55",
+        "fired": true,
+        "contribution": 0.12,
+        "explanation": "Features cover the image and improve geometric observability."
+      },
+      {
+        "rule": "low_aliasing",
+        "metric": "repetitiveness_score",
+        "value": 0.015504,
+        "condition": "<= 0.35",
+        "fired": true,
+        "contribution": 0.1,
+        "explanation": "Low descriptor self-similarity reduces false-place risk."
+      },
+      {
+        "rule": "repetitive_aliasing",
+        "metric": "repetitiveness_score",
+        "value": 0.015504,
+        "condition": ">= 0.55",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Repeated descriptors increase perceptual aliasing risk."
+      },
+      {
+        "rule": "sharp_image",
+        "metric": "blur_quality",
+        "value": 0.469073,
+        "condition": ">= 0.25",
+        "fired": true,
+        "contribution": 0.08,
+        "explanation": "Laplacian energy indicates usable image sharpness."
+      },
+      {
+        "rule": "exposure_quality",
+        "metric": "brightness_quality",
+        "value": 0.957717,
+        "condition": ">= 0.55",
+        "fired": true,
+        "contribution": 0.05,
+        "explanation": "Exposure is away from saturation and darkness."
+      },
+      {
+        "rule": "stable_tracks",
+        "metric": "flow_valid_ratio",
+        "value": 0.133333,
+        "condition": ">= 0.65",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Most short-term features remain trackable."
+      },
+      {
+        "rule": "coherent_geometry",
+        "metric": "flow_inlier_ratio",
+        "value": 0.075,
+        "condition": ">= 0.7",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "RANSAC-consistent flow supports temporal stability."
+      },
+      {
+        "rule": "inconsistent_flow",
+        "metric": "flow_inlier_ratio",
+        "value": 0.075,
+        "condition": "<= 0.3",
+        "fired": true,
+        "contribution": -0.16,
+        "explanation": "Inconsistent flow suggests dynamic or unstable texture."
+      }
+    ]
+  },
+  {
+    "frame_id": "r00_grass_dark",
+    "timestamp_s": 0.7,
+    "texture_entropy": 0.671851588269721,
+    "texture_variance": 4.084675200513484,
+    "edge_density": 0.0,
+    "corner_density": 1.0,
+    "feature_count": 0,
+    "feature_distribution_uniformity": 0.0,
+    "repetitiveness_score": 0.0,
+    "brightness": 36.05070665147569,
+    "blur_score": 54.0737551200537,
+    "flow_mean": 183.09547424316406,
+    "flow_std": 97.9931869506836,
+    "flow_valid_ratio": 0.07666666666666666,
+    "flow_inlier_ratio": 0.13043478260869565,
+    "flow_direction_consistency": 0.2755831778049469,
+    "altitude_m": 10.0,
+    "ground_speed_mps": 3.0,
+    "roll_rad": 0.0,
+    "pitch_rad": 0.0,
+    "yaw_rate_rad_s": 0.0,
+    "terrain_type_if_available": "grass",
+    "dynamic_texture_suspected": false,
+    "low_texture_suspected": false,
+    "repetitive_pattern_suspected": false,
+    "normalized": {
+      "texture_entropy": 0.08398144853371513,
+      "corner_density": 1.0,
+      "feature_count": 0.0,
+      "feature_distribution_uniformity": 0.0,
+      "repetitiveness_score": 0.0,
+      "brightness_quality": 0.2827506404037309,
+      "blur_quality": 0.1081475102401074,
+      "flow_valid_ratio": 0.07666666666666666,
+      "flow_inlier_ratio": 0.13043478260869565,
+      "flow_direction_consistency": 0.2755831778049469
+    },
+    "visual_matchability": 0.0,
+    "matchability_class": "LowMatchability",
+    "reasoning_trace": [
+      {
+        "rule": "rich_texture",
+        "metric": "texture_entropy",
+        "value": 0.083981,
+        "condition": ">= 0.48",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Rich intensity structure supports distinctive features."
+      },
+      {
+        "rule": "many_features",
+        "metric": "feature_count",
+        "value": 0.0,
+        "condition": ">= 0.25",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Sufficient ORB support is available."
+      },
+      {
+        "rule": "too_few_features",
+        "metric": "feature_count",
+        "value": 0.0,
+        "condition": "<= 0.03",
+        "fired": true,
+        "contribution": -0.25,
+        "explanation": "Too few descriptors makes place matching underconstrained."
+      },
+      {
+        "rule": "low_texture",
+        "metric": "texture_entropy",
+        "value": 0.083981,
+        "condition": "<= 0.25",
+        "fired": true,
+        "contribution": -0.15,
+        "explanation": "Low intensity entropy provides little distinctive structure."
+      },
+      {
+        "rule": "distributed_features",
+        "metric": "feature_distribution_uniformity",
+        "value": 0.0,
+        "condition": ">= 0.55",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Features cover the image and improve geometric observability."
+      },
+      {
+        "rule": "low_aliasing",
+        "metric": "repetitiveness_score",
+        "value": 0.0,
+        "condition": "<= 0.35",
+        "fired": true,
+        "contribution": 0.1,
+        "explanation": "Low descriptor self-similarity reduces false-place risk."
+      },
+      {
+        "rule": "repetitive_aliasing",
+        "metric": "repetitiveness_score",
+        "value": 0.0,
+        "condition": ">= 0.55",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Repeated descriptors increase perceptual aliasing risk."
+      },
+      {
+        "rule": "sharp_image",
+        "metric": "blur_quality",
+        "value": 0.108148,
+        "condition": ">= 0.25",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Laplacian energy indicates usable image sharpness."
+      },
+      {
+        "rule": "exposure_quality",
+        "metric": "brightness_quality",
+        "value": 0.282751,
+        "condition": ">= 0.55",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Exposure is away from saturation and darkness."
+      },
+      {
+        "rule": "stable_tracks",
+        "metric": "flow_valid_ratio",
+        "value": 0.076667,
+        "condition": ">= 0.65",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Most short-term features remain trackable."
+      },
+      {
+        "rule": "coherent_geometry",
+        "metric": "flow_inlier_ratio",
+        "value": 0.130435,
+        "condition": ">= 0.7",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "RANSAC-consistent flow supports temporal stability."
+      },
+      {
+        "rule": "inconsistent_flow",
+        "metric": "flow_inlier_ratio",
+        "value": 0.130435,
+        "condition": "<= 0.3",
+        "fired": true,
+        "contribution": -0.16,
+        "explanation": "Inconsistent flow suggests dynamic or unstable texture."
+      }
+    ]
+  },
+  {
+    "frame_id": "r00_grass_blur",
+    "timestamp_s": 0.8,
+    "texture_entropy": 1.8882545666208301,
+    "texture_variance": 0.9858147490447684,
+    "edge_density": 0.0,
+    "corner_density": 1.0,
+    "feature_count": 0,
+    "feature_distribution_uniformity": 0.0,
+    "repetitiveness_score": 0.0,
+    "brightness": 80.24466281467014,
+    "blur_score": 1.7286780609024894,
+    "flow_mean": 1.7271696329116821,
+    "flow_std": 1.4088551998138428,
+    "flow_valid_ratio": 0.9966666666666667,
+    "flow_inlier_ratio": 0.5284280936454849,
+    "flow_direction_consistency": 0.07122001051902771,
+    "altitude_m": 10.0,
+    "ground_speed_mps": 3.0,
+    "roll_rad": 0.0,
+    "pitch_rad": 0.0,
+    "yaw_rate_rad_s": 0.0,
+    "terrain_type_if_available": "grass",
+    "dynamic_texture_suspected": false,
+    "low_texture_suspected": false,
+    "repetitive_pattern_suspected": false,
+    "normalized": {
+      "texture_entropy": 0.23603182082760377,
+      "corner_density": 1.0,
+      "feature_count": 0.0,
+      "feature_distribution_uniformity": 0.0,
+      "repetitiveness_score": 0.0,
+      "brightness_quality": 0.6293699044287854,
+      "blur_quality": 0.003457356121804979,
+      "flow_valid_ratio": 0.9966666666666667,
+      "flow_inlier_ratio": 0.5284280936454849,
+      "flow_direction_consistency": 0.07122001051902771
+    },
+    "visual_matchability": 0.22999999999999998,
+    "matchability_class": "LowMatchability",
+    "reasoning_trace": [
+      {
+        "rule": "rich_texture",
+        "metric": "texture_entropy",
+        "value": 0.236032,
+        "condition": ">= 0.48",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Rich intensity structure supports distinctive features."
+      },
+      {
+        "rule": "many_features",
+        "metric": "feature_count",
+        "value": 0.0,
+        "condition": ">= 0.25",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Sufficient ORB support is available."
+      },
+      {
+        "rule": "too_few_features",
+        "metric": "feature_count",
+        "value": 0.0,
+        "condition": "<= 0.03",
+        "fired": true,
+        "contribution": -0.25,
+        "explanation": "Too few descriptors makes place matching underconstrained."
+      },
+      {
+        "rule": "low_texture",
+        "metric": "texture_entropy",
+        "value": 0.236032,
+        "condition": "<= 0.25",
+        "fired": true,
+        "contribution": -0.15,
+        "explanation": "Low intensity entropy provides little distinctive structure."
+      },
+      {
+        "rule": "distributed_features",
+        "metric": "feature_distribution_uniformity",
+        "value": 0.0,
+        "condition": ">= 0.55",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Features cover the image and improve geometric observability."
+      },
+      {
+        "rule": "low_aliasing",
+        "metric": "repetitiveness_score",
+        "value": 0.0,
+        "condition": "<= 0.35",
+        "fired": true,
+        "contribution": 0.1,
+        "explanation": "Low descriptor self-similarity reduces false-place risk."
+      },
+      {
+        "rule": "repetitive_aliasing",
+        "metric": "repetitiveness_score",
+        "value": 0.0,
+        "condition": ">= 0.55",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Repeated descriptors increase perceptual aliasing risk."
+      },
+      {
+        "rule": "sharp_image",
+        "metric": "blur_quality",
+        "value": 0.003457,
+        "condition": ">= 0.25",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Laplacian energy indicates usable image sharpness."
+      },
+      {
+        "rule": "exposure_quality",
+        "metric": "brightness_quality",
+        "value": 0.62937,
+        "condition": ">= 0.55",
+        "fired": true,
+        "contribution": 0.05,
+        "explanation": "Exposure is away from saturation and darkness."
+      },
+      {
+        "rule": "stable_tracks",
+        "metric": "flow_valid_ratio",
+        "value": 0.996667,
+        "condition": ">= 0.65",
+        "fired": true,
+        "contribution": 0.06,
+        "explanation": "Most short-term features remain trackable."
+      },
+      {
+        "rule": "coherent_geometry",
+        "metric": "flow_inlier_ratio",
+        "value": 0.528428,
+        "condition": ">= 0.7",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "RANSAC-consistent flow supports temporal stability."
+      },
+      {
+        "rule": "inconsistent_flow",
+        "metric": "flow_inlier_ratio",
+        "value": 0.528428,
+        "condition": "<= 0.3",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Inconsistent flow suggests dynamic or unstable texture."
+      }
+    ]
+  },
+  {
+    "frame_id": "r00_grass_yaw",
+    "timestamp_s": 0.9,
+    "texture_entropy": 1.2663017578749798,
+    "texture_variance": 6.579031607986967,
+    "edge_density": 0.0,
+    "corner_density": 1.0,
+    "feature_count": 38,
+    "feature_distribution_uniformity": 0.6218939187118526,
+    "repetitiveness_score": 0.0,
+    "brightness": 80.11705186631944,
+    "blur_score": 48.172227258299614,
+    "flow_mean": 9.644540786743164,
+    "flow_std": 5.213995456695557,
+    "flow_valid_ratio": 0.9866666666666667,
+    "flow_inlier_ratio": 0.06756756756756757,
+    "flow_direction_consistency": 0.08326438069343567,
+    "altitude_m": 10.0,
+    "ground_speed_mps": 3.0,
+    "roll_rad": 0.0,
+    "pitch_rad": 0.0,
+    "yaw_rate_rad_s": 0.0,
+    "terrain_type_if_available": "grass",
+    "dynamic_texture_suspected": true,
+    "low_texture_suspected": false,
+    "repetitive_pattern_suspected": false,
+    "normalized": {
+      "texture_entropy": 0.15828771973437247,
+      "corner_density": 1.0,
+      "feature_count": 0.042222222222222223,
+      "feature_distribution_uniformity": 0.6218939187118526,
+      "repetitiveness_score": 0.0,
+      "brightness_quality": 0.6283690342456427,
+      "blur_quality": 0.09634445451659923,
+      "flow_valid_ratio": 0.9866666666666667,
+      "flow_inlier_ratio": 0.06756756756756757,
+      "flow_direction_consistency": 0.08326438069343567
+    },
+    "visual_matchability": 0.44000000000000006,
+    "matchability_class": "MediumMatchability",
+    "reasoning_trace": [
+      {
+        "rule": "rich_texture",
+        "metric": "texture_entropy",
+        "value": 0.158288,
+        "condition": ">= 0.48",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Rich intensity structure supports distinctive features."
+      },
+      {
+        "rule": "many_features",
+        "metric": "feature_count",
+        "value": 0.042222,
+        "condition": ">= 0.25",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Sufficient ORB support is available."
+      },
+      {
+        "rule": "too_few_features",
+        "metric": "feature_count",
+        "value": 0.042222,
+        "condition": "<= 0.03",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Too few descriptors makes place matching underconstrained."
+      },
+      {
+        "rule": "low_texture",
+        "metric": "texture_entropy",
+        "value": 0.158288,
+        "condition": "<= 0.25",
+        "fired": true,
+        "contribution": -0.15,
+        "explanation": "Low intensity entropy provides little distinctive structure."
+      },
+      {
+        "rule": "distributed_features",
+        "metric": "feature_distribution_uniformity",
+        "value": 0.621894,
+        "condition": ">= 0.55",
+        "fired": true,
+        "contribution": 0.12,
+        "explanation": "Features cover the image and improve geometric observability."
+      },
+      {
+        "rule": "low_aliasing",
+        "metric": "repetitiveness_score",
+        "value": 0.0,
+        "condition": "<= 0.35",
+        "fired": true,
+        "contribution": 0.1,
+        "explanation": "Low descriptor self-similarity reduces false-place risk."
+      },
+      {
+        "rule": "repetitive_aliasing",
+        "metric": "repetitiveness_score",
+        "value": 0.0,
+        "condition": ">= 0.55",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Repeated descriptors increase perceptual aliasing risk."
+      },
+      {
+        "rule": "sharp_image",
+        "metric": "blur_quality",
+        "value": 0.096344,
+        "condition": ">= 0.25",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Laplacian energy indicates usable image sharpness."
+      },
+      {
+        "rule": "exposure_quality",
+        "metric": "brightness_quality",
+        "value": 0.628369,
+        "condition": ">= 0.55",
+        "fired": true,
+        "contribution": 0.05,
+        "explanation": "Exposure is away from saturation and darkness."
+      },
+      {
+        "rule": "stable_tracks",
+        "metric": "flow_valid_ratio",
+        "value": 0.986667,
+        "condition": ">= 0.65",
+        "fired": true,
+        "contribution": 0.06,
+        "explanation": "Most short-term features remain trackable."
+      },
+      {
+        "rule": "coherent_geometry",
+        "metric": "flow_inlier_ratio",
+        "value": 0.067568,
+        "condition": ">= 0.7",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "RANSAC-consistent flow supports temporal stability."
+      },
+      {
+        "rule": "inconsistent_flow",
+        "metric": "flow_inlier_ratio",
+        "value": 0.067568,
+        "condition": "<= 0.3",
+        "fired": true,
+        "contribution": -0.16,
+        "explanation": "Inconsistent flow suggests dynamic or unstable texture."
+      }
+    ]
+  },
+  {
+    "frame_id": "r00_urban_building_normal",
+    "timestamp_s": 1.0,
+    "texture_entropy": 4.589129475719109,
+    "texture_variance": 1177.971169096268,
+    "edge_density": 0.05000135633680555,
+    "corner_density": 1.0,
+    "feature_count": 691,
+    "feature_distribution_uniformity": 0.8967228753152625,
+    "repetitiveness_score": 0.7959479015918958,
+    "brightness": 118.06915961371527,
+    "blur_score": 859.4652506510416,
+    "flow_mean": 5.83097505569458,
+    "flow_std": 0.0003007078485097736,
+    "flow_valid_ratio": 1.0,
+    "flow_inlier_ratio": 1.0,
+    "flow_direction_consistency": 1.0,
+    "altitude_m": 10.0,
+    "ground_speed_mps": 3.0,
+    "roll_rad": 0.0,
+    "pitch_rad": 0.0,
+    "yaw_rate_rad_s": 0.0,
+    "terrain_type_if_available": "urban_building",
+    "dynamic_texture_suspected": false,
+    "low_texture_suspected": false,
+    "repetitive_pattern_suspected": true,
+    "normalized": {
+      "texture_entropy": 0.5736411844648887,
+      "corner_density": 1.0,
+      "feature_count": 0.7677777777777778,
+      "feature_distribution_uniformity": 0.8967228753152625,
+      "repetitiveness_score": 0.7959479015918958,
+      "brightness_quality": 0.9260326244212962,
+      "blur_quality": 1.0,
+      "flow_valid_ratio": 1.0,
+      "flow_inlier_ratio": 1.0,
+      "flow_direction_consistency": 1.0
+    },
+    "visual_matchability": 0.86,
+    "matchability_class": "HighMatchability",
+    "reasoning_trace": [
+      {
+        "rule": "rich_texture",
+        "metric": "texture_entropy",
+        "value": 0.573641,
+        "condition": ">= 0.48",
+        "fired": true,
+        "contribution": 0.1,
+        "explanation": "Rich intensity structure supports distinctive features."
+      },
+      {
+        "rule": "many_features",
+        "metric": "feature_count",
+        "value": 0.767778,
+        "condition": ">= 0.25",
+        "fired": true,
+        "contribution": 0.09,
+        "explanation": "Sufficient ORB support is available."
+      },
+      {
+        "rule": "too_few_features",
+        "metric": "feature_count",
+        "value": 0.767778,
+        "condition": "<= 0.03",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Too few descriptors makes place matching underconstrained."
+      },
+      {
+        "rule": "low_texture",
+        "metric": "texture_entropy",
+        "value": 0.573641,
+        "condition": "<= 0.25",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Low intensity entropy provides little distinctive structure."
+      },
+      {
+        "rule": "distributed_features",
+        "metric": "feature_distribution_uniformity",
+        "value": 0.896723,
+        "condition": ">= 0.55",
+        "fired": true,
+        "contribution": 0.12,
+        "explanation": "Features cover the image and improve geometric observability."
+      },
+      {
+        "rule": "low_aliasing",
+        "metric": "repetitiveness_score",
+        "value": 0.795948,
+        "condition": "<= 0.35",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Low descriptor self-similarity reduces false-place risk."
+      },
+      {
+        "rule": "repetitive_aliasing",
+        "metric": "repetitiveness_score",
+        "value": 0.795948,
+        "condition": ">= 0.55",
+        "fired": true,
+        "contribution": -0.18,
+        "explanation": "Repeated descriptors increase perceptual aliasing risk."
+      },
+      {
+        "rule": "sharp_image",
+        "metric": "blur_quality",
+        "value": 1.0,
+        "condition": ">= 0.25",
+        "fired": true,
+        "contribution": 0.08,
+        "explanation": "Laplacian energy indicates usable image sharpness."
+      },
+      {
+        "rule": "exposure_quality",
+        "metric": "brightness_quality",
+        "value": 0.926033,
+        "condition": ">= 0.55",
+        "fired": true,
+        "contribution": 0.05,
+        "explanation": "Exposure is away from saturation and darkness."
+      },
+      {
+        "rule": "stable_tracks",
+        "metric": "flow_valid_ratio",
+        "value": 1.0,
+        "condition": ">= 0.65",
+        "fired": true,
+        "contribution": 0.06,
+        "explanation": "Most short-term features remain trackable."
+      },
+      {
+        "rule": "coherent_geometry",
+        "metric": "flow_inlier_ratio",
+        "value": 1.0,
+        "condition": ">= 0.7",
+        "fired": true,
+        "contribution": 0.12,
+        "explanation": "RANSAC-consistent flow supports temporal stability."
+      },
+      {
+        "rule": "inconsistent_flow",
+        "metric": "flow_inlier_ratio",
+        "value": 1.0,
+        "condition": "<= 0.3",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Inconsistent flow suggests dynamic or unstable texture."
+      }
+    ]
+  },
+  {
+    "frame_id": "r00_urban_building_bright",
+    "timestamp_s": 1.1,
+    "texture_entropy": 4.676222251030867,
+    "texture_variance": 1845.6894870388928,
+    "edge_density": 0.05377197265625,
+    "corner_density": 1.0,
+    "feature_count": 699,
+    "feature_distribution_uniformity": 0.8870344494064013,
+    "repetitiveness_score": 0.8125894134477826,
+    "brightness": 169.89364284939236,
+    "blur_score": 1335.8694525824653,
+    "flow_mean": 31.987014770507812,
+    "flow_std": 55.2929801940918,
+    "flow_valid_ratio": 0.8066666666666666,
+    "flow_inlier_ratio": 0.4297520661157025,
+    "flow_direction_consistency": 0.6034883856773376,
+    "altitude_m": 10.0,
+    "ground_speed_mps": 3.0,
+    "roll_rad": 0.0,
+    "pitch_rad": 0.0,
+    "yaw_rate_rad_s": 0.0,
+    "terrain_type_if_available": "urban_building",
+    "dynamic_texture_suspected": false,
+    "low_texture_suspected": false,
+    "repetitive_pattern_suspected": true,
+    "normalized": {
+      "texture_entropy": 0.5845277813788584,
+      "corner_density": 1.0,
+      "feature_count": 0.7766666666666666,
+      "feature_distribution_uniformity": 0.8870344494064013,
+      "repetitiveness_score": 0.8125894134477826,
+      "brightness_quality": 0.6675008403969227,
+      "blur_quality": 1.0,
+      "flow_valid_ratio": 0.8066666666666666,
+      "flow_inlier_ratio": 0.4297520661157025,
+      "flow_direction_consistency": 0.6034883856773376
+    },
+    "visual_matchability": 0.74,
+    "matchability_class": "HighMatchability",
+    "reasoning_trace": [
+      {
+        "rule": "rich_texture",
+        "metric": "texture_entropy",
+        "value": 0.584528,
+        "condition": ">= 0.48",
+        "fired": true,
+        "contribution": 0.1,
+        "explanation": "Rich intensity structure supports distinctive features."
+      },
+      {
+        "rule": "many_features",
+        "metric": "feature_count",
+        "value": 0.776667,
+        "condition": ">= 0.25",
+        "fired": true,
+        "contribution": 0.09,
+        "explanation": "Sufficient ORB support is available."
+      },
+      {
+        "rule": "too_few_features",
+        "metric": "feature_count",
+        "value": 0.776667,
+        "condition": "<= 0.03",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Too few descriptors makes place matching underconstrained."
+      },
+      {
+        "rule": "low_texture",
+        "metric": "texture_entropy",
+        "value": 0.584528,
+        "condition": "<= 0.25",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Low intensity entropy provides little distinctive structure."
+      },
+      {
+        "rule": "distributed_features",
+        "metric": "feature_distribution_uniformity",
+        "value": 0.887034,
+        "condition": ">= 0.55",
+        "fired": true,
+        "contribution": 0.12,
+        "explanation": "Features cover the image and improve geometric observability."
+      },
+      {
+        "rule": "low_aliasing",
+        "metric": "repetitiveness_score",
+        "value": 0.812589,
+        "condition": "<= 0.35",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Low descriptor self-similarity reduces false-place risk."
+      },
+      {
+        "rule": "repetitive_aliasing",
+        "metric": "repetitiveness_score",
+        "value": 0.812589,
+        "condition": ">= 0.55",
+        "fired": true,
+        "contribution": -0.18,
+        "explanation": "Repeated descriptors increase perceptual aliasing risk."
+      },
+      {
+        "rule": "sharp_image",
+        "metric": "blur_quality",
+        "value": 1.0,
+        "condition": ">= 0.25",
+        "fired": true,
+        "contribution": 0.08,
+        "explanation": "Laplacian energy indicates usable image sharpness."
+      },
+      {
+        "rule": "exposure_quality",
+        "metric": "brightness_quality",
+        "value": 0.667501,
+        "condition": ">= 0.55",
+        "fired": true,
+        "contribution": 0.05,
+        "explanation": "Exposure is away from saturation and darkness."
+      },
+      {
+        "rule": "stable_tracks",
+        "metric": "flow_valid_ratio",
+        "value": 0.806667,
+        "condition": ">= 0.65",
+        "fired": true,
+        "contribution": 0.06,
+        "explanation": "Most short-term features remain trackable."
+      },
+      {
+        "rule": "coherent_geometry",
+        "metric": "flow_inlier_ratio",
+        "value": 0.429752,
+        "condition": ">= 0.7",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "RANSAC-consistent flow supports temporal stability."
+      },
+      {
+        "rule": "inconsistent_flow",
+        "metric": "flow_inlier_ratio",
+        "value": 0.429752,
+        "condition": "<= 0.3",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Inconsistent flow suggests dynamic or unstable texture."
+      }
+    ]
+  },
+  {
+    "frame_id": "r00_urban_building_dark",
+    "timestamp_s": 1.2,
+    "texture_entropy": 4.400681033417256,
+    "texture_variance": 423.53154823069036,
+    "edge_density": 0.03422715928819445,
+    "corner_density": 1.0,
+    "feature_count": 577,
+    "feature_distribution_uniformity": 0.8875024640001222,
+    "repetitiveness_score": 0.8405545927209706,
+    "brightness": 59.030483669704864,
+    "blur_score": 308.4638264973958,
+    "flow_mean": 136.80172729492188,
+    "flow_std": 79.35135650634766,
+    "flow_valid_ratio": 0.3433333333333333,
+    "flow_inlier_ratio": 0.05825242718446602,
+    "flow_direction_consistency": 0.2654726505279541,
+    "altitude_m": 10.0,
+    "ground_speed_mps": 3.0,
+    "roll_rad": 0.0,
+    "pitch_rad": 0.0,
+    "yaw_rate_rad_s": 0.0,
+    "terrain_type_if_available": "urban_building",
+    "dynamic_texture_suspected": false,
+    "low_texture_suspected": false,
+    "repetitive_pattern_suspected": true,
+    "normalized": {
+      "texture_entropy": 0.550085129177157,
+      "corner_density": 1.0,
+      "feature_count": 0.6411111111111111,
+      "feature_distribution_uniformity": 0.8875024640001222,
+      "repetitiveness_score": 0.8405545927209706,
+      "brightness_quality": 0.4629841856447441,
+      "blur_quality": 0.6169276529947916,
+      "flow_valid_ratio": 0.3433333333333333,
+      "flow_inlier_ratio": 0.05825242718446602,
+      "flow_direction_consistency": 0.2654726505279541
+    },
+    "visual_matchability": 0.47,
+    "matchability_class": "MediumMatchability",
+    "reasoning_trace": [
+      {
+        "rule": "rich_texture",
+        "metric": "texture_entropy",
+        "value": 0.550085,
+        "condition": ">= 0.48",
+        "fired": true,
+        "contribution": 0.1,
+        "explanation": "Rich intensity structure supports distinctive features."
+      },
+      {
+        "rule": "many_features",
+        "metric": "feature_count",
+        "value": 0.641111,
+        "condition": ">= 0.25",
+        "fired": true,
+        "contribution": 0.09,
+        "explanation": "Sufficient ORB support is available."
+      },
+      {
+        "rule": "too_few_features",
+        "metric": "feature_count",
+        "value": 0.641111,
+        "condition": "<= 0.03",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Too few descriptors makes place matching underconstrained."
+      },
+      {
+        "rule": "low_texture",
+        "metric": "texture_entropy",
+        "value": 0.550085,
+        "condition": "<= 0.25",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Low intensity entropy provides little distinctive structure."
+      },
+      {
+        "rule": "distributed_features",
+        "metric": "feature_distribution_uniformity",
+        "value": 0.887502,
+        "condition": ">= 0.55",
+        "fired": true,
+        "contribution": 0.12,
+        "explanation": "Features cover the image and improve geometric observability."
+      },
+      {
+        "rule": "low_aliasing",
+        "metric": "repetitiveness_score",
+        "value": 0.840555,
+        "condition": "<= 0.35",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Low descriptor self-similarity reduces false-place risk."
+      },
+      {
+        "rule": "repetitive_aliasing",
+        "metric": "repetitiveness_score",
+        "value": 0.840555,
+        "condition": ">= 0.55",
+        "fired": true,
+        "contribution": -0.18,
+        "explanation": "Repeated descriptors increase perceptual aliasing risk."
+      },
+      {
+        "rule": "sharp_image",
+        "metric": "blur_quality",
+        "value": 0.616928,
+        "condition": ">= 0.25",
+        "fired": true,
+        "contribution": 0.08,
+        "explanation": "Laplacian energy indicates usable image sharpness."
+      },
+      {
+        "rule": "exposure_quality",
+        "metric": "brightness_quality",
+        "value": 0.462984,
+        "condition": ">= 0.55",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Exposure is away from saturation and darkness."
+      },
+      {
+        "rule": "stable_tracks",
+        "metric": "flow_valid_ratio",
+        "value": 0.343333,
+        "condition": ">= 0.65",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Most short-term features remain trackable."
+      },
+      {
+        "rule": "coherent_geometry",
+        "metric": "flow_inlier_ratio",
+        "value": 0.058252,
+        "condition": ">= 0.7",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "RANSAC-consistent flow supports temporal stability."
+      },
+      {
+        "rule": "inconsistent_flow",
+        "metric": "flow_inlier_ratio",
+        "value": 0.058252,
+        "condition": "<= 0.3",
+        "fired": true,
+        "contribution": -0.16,
+        "explanation": "Inconsistent flow suggests dynamic or unstable texture."
+      }
+    ]
+  },
+  {
+    "frame_id": "r00_urban_building_blur",
+    "timestamp_s": 1.3,
+    "texture_entropy": 6.032377459232443,
+    "texture_variance": 937.2741132133904,
+    "edge_density": 0.028937445746527776,
+    "corner_density": 1.0,
+    "feature_count": 496,
+    "feature_distribution_uniformity": 0.8062717639678498,
+    "repetitiveness_score": 0.8205645161290323,
+    "brightness": 118.50543891059027,
+    "blur_score": 125.41018337673611,
+    "flow_mean": 0.112104631960392,
+    "flow_std": 0.07592922449111938,
+    "flow_valid_ratio": 1.0,
+    "flow_inlier_ratio": 1.0,
+    "flow_direction_consistency": 0.11772403120994568,
+    "altitude_m": 10.0,
+    "ground_speed_mps": 3.0,
+    "roll_rad": 0.0,
+    "pitch_rad": 0.0,
+    "yaw_rate_rad_s": 0.0,
+    "terrain_type_if_available": "urban_building",
+    "dynamic_texture_suspected": false,
+    "low_texture_suspected": false,
+    "repetitive_pattern_suspected": true,
+    "normalized": {
+      "texture_entropy": 0.7540471824040553,
+      "corner_density": 1.0,
+      "feature_count": 0.5511111111111111,
+      "feature_distribution_uniformity": 0.8062717639678498,
+      "repetitiveness_score": 0.8205645161290323,
+      "brightness_quality": 0.9294544228281589,
+      "blur_quality": 0.25082036675347225,
+      "flow_valid_ratio": 1.0,
+      "flow_inlier_ratio": 1.0,
+      "flow_direction_consistency": 0.11772403120994568
+    },
+    "visual_matchability": 0.86,
+    "matchability_class": "HighMatchability",
+    "reasoning_trace": [
+      {
+        "rule": "rich_texture",
+        "metric": "texture_entropy",
+        "value": 0.754047,
+        "condition": ">= 0.48",
+        "fired": true,
+        "contribution": 0.1,
+        "explanation": "Rich intensity structure supports distinctive features."
+      },
+      {
+        "rule": "many_features",
+        "metric": "feature_count",
+        "value": 0.551111,
+        "condition": ">= 0.25",
+        "fired": true,
+        "contribution": 0.09,
+        "explanation": "Sufficient ORB support is available."
+      },
+      {
+        "rule": "too_few_features",
+        "metric": "feature_count",
+        "value": 0.551111,
+        "condition": "<= 0.03",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Too few descriptors makes place matching underconstrained."
+      },
+      {
+        "rule": "low_texture",
+        "metric": "texture_entropy",
+        "value": 0.754047,
+        "condition": "<= 0.25",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Low intensity entropy provides little distinctive structure."
+      },
+      {
+        "rule": "distributed_features",
+        "metric": "feature_distribution_uniformity",
+        "value": 0.806272,
+        "condition": ">= 0.55",
+        "fired": true,
+        "contribution": 0.12,
+        "explanation": "Features cover the image and improve geometric observability."
+      },
+      {
+        "rule": "low_aliasing",
+        "metric": "repetitiveness_score",
+        "value": 0.820565,
+        "condition": "<= 0.35",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Low descriptor self-similarity reduces false-place risk."
+      },
+      {
+        "rule": "repetitive_aliasing",
+        "metric": "repetitiveness_score",
+        "value": 0.820565,
+        "condition": ">= 0.55",
+        "fired": true,
+        "contribution": -0.18,
+        "explanation": "Repeated descriptors increase perceptual aliasing risk."
+      },
+      {
+        "rule": "sharp_image",
+        "metric": "blur_quality",
+        "value": 0.25082,
+        "condition": ">= 0.25",
+        "fired": true,
+        "contribution": 0.08,
+        "explanation": "Laplacian energy indicates usable image sharpness."
+      },
+      {
+        "rule": "exposure_quality",
+        "metric": "brightness_quality",
+        "value": 0.929454,
+        "condition": ">= 0.55",
+        "fired": true,
+        "contribution": 0.05,
+        "explanation": "Exposure is away from saturation and darkness."
+      },
+      {
+        "rule": "stable_tracks",
+        "metric": "flow_valid_ratio",
+        "value": 1.0,
+        "condition": ">= 0.65",
+        "fired": true,
+        "contribution": 0.06,
+        "explanation": "Most short-term features remain trackable."
+      },
+      {
+        "rule": "coherent_geometry",
+        "metric": "flow_inlier_ratio",
+        "value": 1.0,
+        "condition": ">= 0.7",
+        "fired": true,
+        "contribution": 0.12,
+        "explanation": "RANSAC-consistent flow supports temporal stability."
+      },
+      {
+        "rule": "inconsistent_flow",
+        "metric": "flow_inlier_ratio",
+        "value": 1.0,
+        "condition": "<= 0.3",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Inconsistent flow suggests dynamic or unstable texture."
+      }
+    ]
+  },
+  {
+    "frame_id": "r00_urban_building_yaw",
+    "timestamp_s": 1.4,
+    "texture_entropy": 5.045427493579654,
+    "texture_variance": 1146.0562410663215,
+    "edge_density": 0.0646633572048611,
+    "corner_density": 1.0,
+    "feature_count": 891,
+    "feature_distribution_uniformity": 0.9090344494824936,
+    "repetitiveness_score": 0.835016835016835,
+    "brightness": 117.93696424696181,
+    "blur_score": 355.6634531679253,
+    "flow_mean": 58.84694290161133,
+    "flow_std": 33.288639068603516,
+    "flow_valid_ratio": 0.9333333333333333,
+    "flow_inlier_ratio": 0.04285714285714286,
+    "flow_direction_consistency": 0.314814954996109,
+    "altitude_m": 10.0,
+    "ground_speed_mps": 3.0,
+    "roll_rad": 0.0,
+    "pitch_rad": 0.0,
+    "yaw_rate_rad_s": 0.0,
+    "terrain_type_if_available": "urban_building",
+    "dynamic_texture_suspected": true,
+    "low_texture_suspected": false,
+    "repetitive_pattern_suspected": true,
+    "normalized": {
+      "texture_entropy": 0.6306784366974567,
+      "corner_density": 1.0,
+      "feature_count": 0.99,
+      "feature_distribution_uniformity": 0.9090344494824936,
+      "repetitiveness_score": 0.835016835016835,
+      "brightness_quality": 0.9249957980153867,
+      "blur_quality": 0.7113269063358506,
+      "flow_valid_ratio": 0.9333333333333333,
+      "flow_inlier_ratio": 0.04285714285714286,
+      "flow_direction_consistency": 0.314814954996109
+    },
+    "visual_matchability": 0.58,
+    "matchability_class": "MediumMatchability",
+    "reasoning_trace": [
+      {
+        "rule": "rich_texture",
+        "metric": "texture_entropy",
+        "value": 0.630678,
+        "condition": ">= 0.48",
+        "fired": true,
+        "contribution": 0.1,
+        "explanation": "Rich intensity structure supports distinctive features."
+      },
+      {
+        "rule": "many_features",
+        "metric": "feature_count",
+        "value": 0.99,
+        "condition": ">= 0.25",
+        "fired": true,
+        "contribution": 0.09,
+        "explanation": "Sufficient ORB support is available."
+      },
+      {
+        "rule": "too_few_features",
+        "metric": "feature_count",
+        "value": 0.99,
+        "condition": "<= 0.03",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Too few descriptors makes place matching underconstrained."
+      },
+      {
+        "rule": "low_texture",
+        "metric": "texture_entropy",
+        "value": 0.630678,
+        "condition": "<= 0.25",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Low intensity entropy provides little distinctive structure."
+      },
+      {
+        "rule": "distributed_features",
+        "metric": "feature_distribution_uniformity",
+        "value": 0.909034,
+        "condition": ">= 0.55",
+        "fired": true,
+        "contribution": 0.12,
+        "explanation": "Features cover the image and improve geometric observability."
+      },
+      {
+        "rule": "low_aliasing",
+        "metric": "repetitiveness_score",
+        "value": 0.835017,
+        "condition": "<= 0.35",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Low descriptor self-similarity reduces false-place risk."
+      },
+      {
+        "rule": "repetitive_aliasing",
+        "metric": "repetitiveness_score",
+        "value": 0.835017,
+        "condition": ">= 0.55",
+        "fired": true,
+        "contribution": -0.18,
+        "explanation": "Repeated descriptors increase perceptual aliasing risk."
+      },
+      {
+        "rule": "sharp_image",
+        "metric": "blur_quality",
+        "value": 0.711327,
+        "condition": ">= 0.25",
+        "fired": true,
+        "contribution": 0.08,
+        "explanation": "Laplacian energy indicates usable image sharpness."
+      },
+      {
+        "rule": "exposure_quality",
+        "metric": "brightness_quality",
+        "value": 0.924996,
+        "condition": ">= 0.55",
+        "fired": true,
+        "contribution": 0.05,
+        "explanation": "Exposure is away from saturation and darkness."
+      },
+      {
+        "rule": "stable_tracks",
+        "metric": "flow_valid_ratio",
+        "value": 0.933333,
+        "condition": ">= 0.65",
+        "fired": true,
+        "contribution": 0.06,
+        "explanation": "Most short-term features remain trackable."
+      },
+      {
+        "rule": "coherent_geometry",
+        "metric": "flow_inlier_ratio",
+        "value": 0.042857,
+        "condition": ">= 0.7",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "RANSAC-consistent flow supports temporal stability."
+      },
+      {
+        "rule": "inconsistent_flow",
+        "metric": "flow_inlier_ratio",
+        "value": 0.042857,
+        "condition": "<= 0.3",
+        "fired": true,
+        "contribution": -0.16,
+        "explanation": "Inconsistent flow suggests dynamic or unstable texture."
+      }
+    ]
+  },
+  {
+    "frame_id": "r00_water_normal",
+    "timestamp_s": 1.5,
+    "texture_entropy": 2.6760685054565476,
+    "texture_variance": 32.11505714592373,
+    "edge_density": 0.0,
+    "corner_density": 0.39333767361111116,
+    "feature_count": 0,
+    "feature_distribution_uniformity": 0.0,
+    "repetitiveness_score": 0.0,
+    "brightness": 92.95197211371527,
+    "blur_score": 5.0874754806727545,
+    "flow_mean": 6.271114349365234,
+    "flow_std": 1.2640800476074219,
+    "flow_valid_ratio": 1.0,
+    "flow_inlier_ratio": 0.8888888888888888,
+    "flow_direction_consistency": 0.9044280648231506,
+    "altitude_m": 10.0,
+    "ground_speed_mps": 3.0,
+    "roll_rad": 0.0,
+    "pitch_rad": 0.0,
+    "yaw_rate_rad_s": 0.0,
+    "terrain_type_if_available": "water",
+    "dynamic_texture_suspected": false,
+    "low_texture_suspected": false,
+    "repetitive_pattern_suspected": false,
+    "normalized": {
+      "texture_entropy": 0.33450856318206845,
+      "corner_density": 0.39333767361111116,
+      "feature_count": 0.0,
+      "feature_distribution_uniformity": 0.0,
+      "repetitiveness_score": 0.0,
+      "brightness_quality": 0.7290350754016883,
+      "blur_quality": 0.010174950961345509,
+      "flow_valid_ratio": 1.0,
+      "flow_inlier_ratio": 0.8888888888888888,
+      "flow_direction_consistency": 0.9044280648231506
+    },
+    "visual_matchability": 0.5,
+    "matchability_class": "MediumMatchability",
+    "reasoning_trace": [
+      {
+        "rule": "rich_texture",
+        "metric": "texture_entropy",
+        "value": 0.334509,
+        "condition": ">= 0.48",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Rich intensity structure supports distinctive features."
+      },
+      {
+        "rule": "many_features",
+        "metric": "feature_count",
+        "value": 0.0,
+        "condition": ">= 0.25",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Sufficient ORB support is available."
+      },
+      {
+        "rule": "too_few_features",
+        "metric": "feature_count",
+        "value": 0.0,
+        "condition": "<= 0.03",
+        "fired": true,
+        "contribution": -0.25,
+        "explanation": "Too few descriptors makes place matching underconstrained."
+      },
+      {
+        "rule": "low_texture",
+        "metric": "texture_entropy",
+        "value": 0.334509,
+        "condition": "<= 0.25",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Low intensity entropy provides little distinctive structure."
+      },
+      {
+        "rule": "distributed_features",
+        "metric": "feature_distribution_uniformity",
+        "value": 0.0,
+        "condition": ">= 0.55",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Features cover the image and improve geometric observability."
+      },
+      {
+        "rule": "low_aliasing",
+        "metric": "repetitiveness_score",
+        "value": 0.0,
+        "condition": "<= 0.35",
+        "fired": true,
+        "contribution": 0.1,
+        "explanation": "Low descriptor self-similarity reduces false-place risk."
+      },
+      {
+        "rule": "repetitive_aliasing",
+        "metric": "repetitiveness_score",
+        "value": 0.0,
+        "condition": ">= 0.55",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Repeated descriptors increase perceptual aliasing risk."
+      },
+      {
+        "rule": "sharp_image",
+        "metric": "blur_quality",
+        "value": 0.010175,
+        "condition": ">= 0.25",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Laplacian energy indicates usable image sharpness."
+      },
+      {
+        "rule": "exposure_quality",
+        "metric": "brightness_quality",
+        "value": 0.729035,
+        "condition": ">= 0.55",
+        "fired": true,
+        "contribution": 0.05,
+        "explanation": "Exposure is away from saturation and darkness."
+      },
+      {
+        "rule": "stable_tracks",
+        "metric": "flow_valid_ratio",
+        "value": 1.0,
+        "condition": ">= 0.65",
+        "fired": true,
+        "contribution": 0.06,
+        "explanation": "Most short-term features remain trackable."
+      },
+      {
+        "rule": "coherent_geometry",
+        "metric": "flow_inlier_ratio",
+        "value": 0.888889,
+        "condition": ">= 0.7",
+        "fired": true,
+        "contribution": 0.12,
+        "explanation": "RANSAC-consistent flow supports temporal stability."
+      },
+      {
+        "rule": "inconsistent_flow",
+        "metric": "flow_inlier_ratio",
+        "value": 0.888889,
+        "condition": "<= 0.3",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Inconsistent flow suggests dynamic or unstable texture."
+      }
+    ]
+  },
+  {
+    "frame_id": "r00_water_bright",
+    "timestamp_s": 1.6,
+    "texture_entropy": 2.6843874223148796,
+    "texture_variance": 51.16875932761181,
+    "edge_density": 0.0,
+    "corner_density": 0.32552083333333337,
+    "feature_count": 0,
+    "feature_distribution_uniformity": 0.0,
+    "repetitiveness_score": 0.0,
+    "brightness": 138.08412000868054,
+    "blur_score": 6.501754495096795,
+    "flow_mean": 0.0,
+    "flow_std": 0.0,
+    "flow_valid_ratio": 0.0,
+    "flow_inlier_ratio": 0.0,
+    "flow_direction_consistency": 0.0,
+    "altitude_m": 10.0,
+    "ground_speed_mps": 3.0,
+    "roll_rad": 0.0,
+    "pitch_rad": 0.0,
+    "yaw_rate_rad_s": 0.0,
+    "terrain_type_if_available": "water",
+    "dynamic_texture_suspected": false,
+    "low_texture_suspected": false,
+    "repetitive_pattern_suspected": false,
+    "normalized": {
+      "texture_entropy": 0.33554842778935995,
+      "corner_density": 0.32552083333333337,
+      "feature_count": 0.0,
+      "feature_distribution_uniformity": 0.0,
+      "repetitiveness_score": 0.0,
+      "brightness_quality": 0.9169872940495644,
+      "blur_quality": 0.013003508990193589
+    },
+    "visual_matchability": 0.16,
+    "matchability_class": "LowMatchability",
+    "reasoning_trace": [
+      {
+        "rule": "rich_texture",
+        "metric": "texture_entropy",
+        "value": 0.335548,
+        "condition": ">= 0.48",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Rich intensity structure supports distinctive features."
+      },
+      {
+        "rule": "many_features",
+        "metric": "feature_count",
+        "value": 0.0,
+        "condition": ">= 0.25",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Sufficient ORB support is available."
+      },
+      {
+        "rule": "too_few_features",
+        "metric": "feature_count",
+        "value": 0.0,
+        "condition": "<= 0.03",
+        "fired": true,
+        "contribution": -0.25,
+        "explanation": "Too few descriptors makes place matching underconstrained."
+      },
+      {
+        "rule": "low_texture",
+        "metric": "texture_entropy",
+        "value": 0.335548,
+        "condition": "<= 0.25",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Low intensity entropy provides little distinctive structure."
+      },
+      {
+        "rule": "distributed_features",
+        "metric": "feature_distribution_uniformity",
+        "value": 0.0,
+        "condition": ">= 0.55",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Features cover the image and improve geometric observability."
+      },
+      {
+        "rule": "low_aliasing",
+        "metric": "repetitiveness_score",
+        "value": 0.0,
+        "condition": "<= 0.35",
+        "fired": true,
+        "contribution": 0.1,
+        "explanation": "Low descriptor self-similarity reduces false-place risk."
+      },
+      {
+        "rule": "repetitive_aliasing",
+        "metric": "repetitiveness_score",
+        "value": 0.0,
+        "condition": ">= 0.55",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Repeated descriptors increase perceptual aliasing risk."
+      },
+      {
+        "rule": "sharp_image",
+        "metric": "blur_quality",
+        "value": 0.013004,
+        "condition": ">= 0.25",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Laplacian energy indicates usable image sharpness."
+      },
+      {
+        "rule": "exposure_quality",
+        "metric": "brightness_quality",
+        "value": 0.916987,
+        "condition": ">= 0.55",
+        "fired": true,
+        "contribution": 0.05,
+        "explanation": "Exposure is away from saturation and darkness."
+      },
+      {
+        "rule": "stable_tracks",
+        "metric": "flow_valid_ratio",
+        "value": 0.0,
+        "condition": ">= 0.65",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Most short-term features remain trackable."
+      },
+      {
+        "rule": "coherent_geometry",
+        "metric": "flow_inlier_ratio",
+        "value": 0.0,
+        "condition": ">= 0.7",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "RANSAC-consistent flow supports temporal stability."
+      },
+      {
+        "rule": "inconsistent_flow",
+        "metric": "flow_inlier_ratio",
+        "value": 0.0,
+        "condition": "<= 0.3",
+        "fired": true,
+        "contribution": -0.16,
+        "explanation": "Inconsistent flow suggests dynamic or unstable texture."
+      }
+    ]
+  },
+  {
+    "frame_id": "r00_water_dark",
+    "timestamp_s": 1.7,
+    "texture_entropy": 2.639018842425711,
+    "texture_variance": 12.495221321781477,
+    "edge_density": 0.0,
+    "corner_density": 0.3390842013888889,
+    "feature_count": 0,
+    "feature_distribution_uniformity": 0.0,
+    "repetitiveness_score": 0.0,
+    "brightness": 43.864217122395836,
+    "blur_score": 1.6414898501502142,
+    "flow_mean": 0.0,
+    "flow_std": 0.0,
+    "flow_valid_ratio": 0.0,
+    "flow_inlier_ratio": 0.0,
+    "flow_direction_consistency": 0.0,
+    "altitude_m": 10.0,
+    "ground_speed_mps": 3.0,
+    "roll_rad": 0.0,
+    "pitch_rad": 0.0,
+    "yaw_rate_rad_s": 0.0,
+    "terrain_type_if_available": "water",
+    "dynamic_texture_suspected": false,
+    "low_texture_suspected": false,
+    "repetitive_pattern_suspected": false,
+    "normalized": {
+      "texture_entropy": 0.3298773553032139,
+      "corner_density": 0.3390842013888889,
+      "feature_count": 0.0,
+      "feature_distribution_uniformity": 0.0,
+      "repetitiveness_score": 0.0,
+      "brightness_quality": 0.34403307546977135,
+      "blur_quality": 0.0032829797003004284
+    },
+    "visual_matchability": 0.11000000000000001,
+    "matchability_class": "LowMatchability",
+    "reasoning_trace": [
+      {
+        "rule": "rich_texture",
+        "metric": "texture_entropy",
+        "value": 0.329877,
+        "condition": ">= 0.48",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Rich intensity structure supports distinctive features."
+      },
+      {
+        "rule": "many_features",
+        "metric": "feature_count",
+        "value": 0.0,
+        "condition": ">= 0.25",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Sufficient ORB support is available."
+      },
+      {
+        "rule": "too_few_features",
+        "metric": "feature_count",
+        "value": 0.0,
+        "condition": "<= 0.03",
+        "fired": true,
+        "contribution": -0.25,
+        "explanation": "Too few descriptors makes place matching underconstrained."
+      },
+      {
+        "rule": "low_texture",
+        "metric": "texture_entropy",
+        "value": 0.329877,
+        "condition": "<= 0.25",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Low intensity entropy provides little distinctive structure."
+      },
+      {
+        "rule": "distributed_features",
+        "metric": "feature_distribution_uniformity",
+        "value": 0.0,
+        "condition": ">= 0.55",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Features cover the image and improve geometric observability."
+      },
+      {
+        "rule": "low_aliasing",
+        "metric": "repetitiveness_score",
+        "value": 0.0,
+        "condition": "<= 0.35",
+        "fired": true,
+        "contribution": 0.1,
+        "explanation": "Low descriptor self-similarity reduces false-place risk."
+      },
+      {
+        "rule": "repetitive_aliasing",
+        "metric": "repetitiveness_score",
+        "value": 0.0,
+        "condition": ">= 0.55",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Repeated descriptors increase perceptual aliasing risk."
+      },
+      {
+        "rule": "sharp_image",
+        "metric": "blur_quality",
+        "value": 0.003283,
+        "condition": ">= 0.25",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Laplacian energy indicates usable image sharpness."
+      },
+      {
+        "rule": "exposure_quality",
+        "metric": "brightness_quality",
+        "value": 0.344033,
+        "condition": ">= 0.55",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Exposure is away from saturation and darkness."
+      },
+      {
+        "rule": "stable_tracks",
+        "metric": "flow_valid_ratio",
+        "value": 0.0,
+        "condition": ">= 0.65",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Most short-term features remain trackable."
+      },
+      {
+        "rule": "coherent_geometry",
+        "metric": "flow_inlier_ratio",
+        "value": 0.0,
+        "condition": ">= 0.7",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "RANSAC-consistent flow supports temporal stability."
+      },
+      {
+        "rule": "inconsistent_flow",
+        "metric": "flow_inlier_ratio",
+        "value": 0.0,
+        "condition": "<= 0.3",
+        "fired": true,
+        "contribution": -0.16,
+        "explanation": "Inconsistent flow suggests dynamic or unstable texture."
+      }
+    ]
+  },
+  {
+    "frame_id": "r00_water_blur",
+    "timestamp_s": 1.8,
+    "texture_entropy": 2.697773824158308,
+    "texture_variance": 32.335518618424736,
+    "edge_density": 0.0,
+    "corner_density": 0.2848307291666667,
+    "feature_count": 0,
+    "feature_distribution_uniformity": 0.0,
+    "repetitiveness_score": 0.0,
+    "brightness": 92.866455078125,
+    "blur_score": 5.027399672402277,
+    "flow_mean": 1.3110060691833496,
+    "flow_std": 2.5859389305114746,
+    "flow_valid_ratio": 0.8888888888888888,
+    "flow_inlier_ratio": 0.9375,
+    "flow_direction_consistency": 0.921745240688324,
+    "altitude_m": 10.0,
+    "ground_speed_mps": 3.0,
+    "roll_rad": 0.0,
+    "pitch_rad": 0.0,
+    "yaw_rate_rad_s": 0.0,
+    "terrain_type_if_available": "water",
+    "dynamic_texture_suspected": false,
+    "low_texture_suspected": false,
+    "repetitive_pattern_suspected": false,
+    "normalized": {
+      "texture_entropy": 0.3372217280197885,
+      "corner_density": 0.2848307291666667,
+      "feature_count": 0.0,
+      "feature_distribution_uniformity": 0.0,
+      "repetitiveness_score": 0.0,
+      "brightness_quality": 0.7283643535539216,
+      "blur_quality": 0.010054799344804554,
+      "flow_valid_ratio": 0.8888888888888888,
+      "flow_inlier_ratio": 0.9375,
+      "flow_direction_consistency": 0.921745240688324
+    },
+    "visual_matchability": 0.5,
+    "matchability_class": "MediumMatchability",
+    "reasoning_trace": [
+      {
+        "rule": "rich_texture",
+        "metric": "texture_entropy",
+        "value": 0.337222,
+        "condition": ">= 0.48",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Rich intensity structure supports distinctive features."
+      },
+      {
+        "rule": "many_features",
+        "metric": "feature_count",
+        "value": 0.0,
+        "condition": ">= 0.25",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Sufficient ORB support is available."
+      },
+      {
+        "rule": "too_few_features",
+        "metric": "feature_count",
+        "value": 0.0,
+        "condition": "<= 0.03",
+        "fired": true,
+        "contribution": -0.25,
+        "explanation": "Too few descriptors makes place matching underconstrained."
+      },
+      {
+        "rule": "low_texture",
+        "metric": "texture_entropy",
+        "value": 0.337222,
+        "condition": "<= 0.25",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Low intensity entropy provides little distinctive structure."
+      },
+      {
+        "rule": "distributed_features",
+        "metric": "feature_distribution_uniformity",
+        "value": 0.0,
+        "condition": ">= 0.55",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Features cover the image and improve geometric observability."
+      },
+      {
+        "rule": "low_aliasing",
+        "metric": "repetitiveness_score",
+        "value": 0.0,
+        "condition": "<= 0.35",
+        "fired": true,
+        "contribution": 0.1,
+        "explanation": "Low descriptor self-similarity reduces false-place risk."
+      },
+      {
+        "rule": "repetitive_aliasing",
+        "metric": "repetitiveness_score",
+        "value": 0.0,
+        "condition": ">= 0.55",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Repeated descriptors increase perceptual aliasing risk."
+      },
+      {
+        "rule": "sharp_image",
+        "metric": "blur_quality",
+        "value": 0.010055,
+        "condition": ">= 0.25",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Laplacian energy indicates usable image sharpness."
+      },
+      {
+        "rule": "exposure_quality",
+        "metric": "brightness_quality",
+        "value": 0.728364,
+        "condition": ">= 0.55",
+        "fired": true,
+        "contribution": 0.05,
+        "explanation": "Exposure is away from saturation and darkness."
+      },
+      {
+        "rule": "stable_tracks",
+        "metric": "flow_valid_ratio",
+        "value": 0.888889,
+        "condition": ">= 0.65",
+        "fired": true,
+        "contribution": 0.06,
+        "explanation": "Most short-term features remain trackable."
+      },
+      {
+        "rule": "coherent_geometry",
+        "metric": "flow_inlier_ratio",
+        "value": 0.9375,
+        "condition": ">= 0.7",
+        "fired": true,
+        "contribution": 0.12,
+        "explanation": "RANSAC-consistent flow supports temporal stability."
+      },
+      {
+        "rule": "inconsistent_flow",
+        "metric": "flow_inlier_ratio",
+        "value": 0.9375,
+        "condition": "<= 0.3",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Inconsistent flow suggests dynamic or unstable texture."
+      }
+    ]
+  },
+  {
+    "frame_id": "r00_water_yaw",
+    "timestamp_s": 1.9,
+    "texture_entropy": 4.01757684495366,
+    "texture_variance": 31.140741749862098,
+    "edge_density": 0.0,
+    "corner_density": 1.0,
+    "feature_count": 0,
+    "feature_distribution_uniformity": 0.0,
+    "repetitiveness_score": 0.0,
+    "brightness": 92.86386447482639,
+    "blur_score": 6.836364745679828,
+    "flow_mean": 0.0,
+    "flow_std": 0.0,
+    "flow_valid_ratio": 0.16666666666666666,
+    "flow_inlier_ratio": 0.0,
+    "flow_direction_consistency": 0.0,
+    "altitude_m": 10.0,
+    "ground_speed_mps": 3.0,
+    "roll_rad": 0.0,
+    "pitch_rad": 0.0,
+    "yaw_rate_rad_s": 0.0,
+    "terrain_type_if_available": "water",
+    "dynamic_texture_suspected": false,
+    "low_texture_suspected": false,
+    "repetitive_pattern_suspected": false,
+    "normalized": {
+      "texture_entropy": 0.5021971056192075,
+      "corner_density": 1.0,
+      "feature_count": 0.0,
+      "feature_distribution_uniformity": 0.0,
+      "repetitiveness_score": 0.0,
+      "brightness_quality": 0.7283440350966776,
+      "blur_quality": 0.013672729491359656
+    },
+    "visual_matchability": 0.26,
+    "matchability_class": "LowMatchability",
+    "reasoning_trace": [
+      {
+        "rule": "rich_texture",
+        "metric": "texture_entropy",
+        "value": 0.502197,
+        "condition": ">= 0.48",
+        "fired": true,
+        "contribution": 0.1,
+        "explanation": "Rich intensity structure supports distinctive features."
+      },
+      {
+        "rule": "many_features",
+        "metric": "feature_count",
+        "value": 0.0,
+        "condition": ">= 0.25",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Sufficient ORB support is available."
+      },
+      {
+        "rule": "too_few_features",
+        "metric": "feature_count",
+        "value": 0.0,
+        "condition": "<= 0.03",
+        "fired": true,
+        "contribution": -0.25,
+        "explanation": "Too few descriptors makes place matching underconstrained."
+      },
+      {
+        "rule": "low_texture",
+        "metric": "texture_entropy",
+        "value": 0.502197,
+        "condition": "<= 0.25",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Low intensity entropy provides little distinctive structure."
+      },
+      {
+        "rule": "distributed_features",
+        "metric": "feature_distribution_uniformity",
+        "value": 0.0,
+        "condition": ">= 0.55",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Features cover the image and improve geometric observability."
+      },
+      {
+        "rule": "low_aliasing",
+        "metric": "repetitiveness_score",
+        "value": 0.0,
+        "condition": "<= 0.35",
+        "fired": true,
+        "contribution": 0.1,
+        "explanation": "Low descriptor self-similarity reduces false-place risk."
+      },
+      {
+        "rule": "repetitive_aliasing",
+        "metric": "repetitiveness_score",
+        "value": 0.0,
+        "condition": ">= 0.55",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Repeated descriptors increase perceptual aliasing risk."
+      },
+      {
+        "rule": "sharp_image",
+        "metric": "blur_quality",
+        "value": 0.013673,
+        "condition": ">= 0.25",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Laplacian energy indicates usable image sharpness."
+      },
+      {
+        "rule": "exposure_quality",
+        "metric": "brightness_quality",
+        "value": 0.728344,
+        "condition": ">= 0.55",
+        "fired": true,
+        "contribution": 0.05,
+        "explanation": "Exposure is away from saturation and darkness."
+      },
+      {
+        "rule": "stable_tracks",
+        "metric": "flow_valid_ratio",
+        "value": 0.0,
+        "condition": ">= 0.65",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "Most short-term features remain trackable."
+      },
+      {
+        "rule": "coherent_geometry",
+        "metric": "flow_inlier_ratio",
+        "value": 0.0,
+        "condition": ">= 0.7",
+        "fired": false,
+        "contribution": 0.0,
+        "explanation": "RANSAC-consistent flow supports temporal stability."
+      },
+      {
+        "rule": "inconsistent_flow",
+        "metric": "flow_inlier_ratio",
+        "value": 0.0,
+        "condition": "<= 0.3",
+        "fired": true,
+        "contribution": -0.16,
+        "explanation": "Inconsistent flow suggests dynamic or unstable texture."
+      }
+    ]
+  }
+]

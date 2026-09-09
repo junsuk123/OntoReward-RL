@@ -1,0 +1,13 @@
+function cur=getCurrent(env,cfg)
+%GETCURRENT Build the unchanged ontology/R-GAT input from PX4 telemetry.
+x=env.x; rpy=mathx.quatToEulerZYX(x(7:10));
+meas=struct('pos',x(1:3),'vel',x(4:6),'rpy',rpy,'omega',x(11:13), ...
+    'markerProb',env.lastDiag.markerQuality, ...
+    'markerDetected',env.lastDiag.markerQuality>0.1, ...
+    'markerQuality',env.lastDiag.markerQuality);
+sem=semantic.computeFeatures(x,env.lastDiag,meas,env.prevSem,cfg);
+graph=semantic.buildOntologyGraph(sem,cfg);
+cur=struct('meas',meas,'sem',sem,'graph',graph, ...
+    'obs',sim.makeObservation(meas,sem,cfg));
+end
+

@@ -1,0 +1,13 @@
+# <character> GoTo <x> <y> <z> <yaw_deg|_>   |   <character> Idle <seconds>
+Person_01 GoTo 3.0 -3.0 0.0 _
+Person_01 Idle 1
+Person_01 GoTo 3.0 3.0 0.0 _
+Person_01 Idle 1
+Person_02 GoTo -3.0 -3.0 0.0 _
+Person_02 Idle 1
+Person_02 GoTo -3.0 3.0 0.0 _
+Person_02 Idle 1
+Person_03 GoTo 4.5 4.5 0.0 _
+Person_03 Idle 1
+Person_03 GoTo 0.0 4.5 0.0 _
+Person_03 Idle 1

@@ -1,0 +1,94 @@
+{
+  "seed": 42,
+  "paths": {
+    "root": "C:\\Users\\user\\SynologyDrive\\junsuk\\학술대회\\CICS2026\\codes\\CICS2026_Ontology_TAGAT_PF_MATLAB",
+    "raw": "C:\\Users\\user\\SynologyDrive\\junsuk\\학술대회\\CICS2026\\codes\\CICS2026_Ontology_TAGAT_PF_MATLAB\\data\\raw",
+    "cache": "C:\\Users\\user\\SynologyDrive\\junsuk\\학술대회\\CICS2026\\codes\\CICS2026_Ontology_TAGAT_PF_MATLAB\\data\\cache",
+    "results": "C:\\Users\\user\\SynologyDrive\\junsuk\\학술대회\\CICS2026\\codes\\CICS2026_Ontology_TAGAT_PF_MATLAB\\results"
+  },
+  "data": {
+    "mode": "NCLT",
+    "session": "2013-01-10",
+    "autoDownload": true,
+    "downloadHokuyo": true,
+    "keepArchives": true,
+    "dt": 0.2,
+    "maxSamples": 2500,
+    "startOffsetSamples": 1,
+    "gpsMaxAge": 0.35,
+    "hokuyoMaxAge": 0.15,
+    "cachePrepared": true,
+    "forceRebuild": false
+  },
+  "split": {
+    "trainFraction": 0.55,
+    "valFraction": 0.15
+  },
+  "lidar": {
+    "maxRange": 28,
+    "minRange": 0.3,
+    "beamStride": 6,
+    "maxPointsICP": 220,
+    "icpIterations": 8,
+    "icpMaxCorrespondence": 1.4,
+    "icpTrimFraction": 0.72,
+    "minICPInliers": 25
+  },
+  "learning": {
+    "hiddenDim": 18,
+    "epochs": 24,
+    "batchSize": 12,
+    "learningRate": 0.002,
+    "weightDecay": 1E-5,
+    "trainStride": 2,
+    "window": 8,
+    "patience": 5,
+    "gradientClip": 5
+  },
+  "targets": {
+    "gpsSigma": 5,
+    "lidarSigma": 2.5,
+    "odomSigma": 4,
+    "smoothWindow": 5
+  },
+  "pf": {
+    "initialN": 800,
+    "fixedN": 1000,
+    "minN": 300,
+    "maxN": 3500,
+    "baseN": 850,
+    "failureThreshold": 5,
+    "kldEpsilon": 0.08,
+    "kldDelta": 0.01,
+    "kldBinXY": 0.75,
+    "kldBinYaw": 0.13962634015954636,
+    "essResampleRatio": 0.52,
+    "essBudgetGain": 1250,
+    "difficultyBudgetGain": 1150,
+    "lambdaFloor": 0.025,
+    "broadBase": 0.05,
+    "broadGain": 0.3,
+    "motionSigmaXY": 0.16,
+    "motionSigmaYaw": 0.043633231299858237,
+    "motionNoiseGain": 1.8,
+    "sigmaGpsFloor": 0.9,
+    "sigmaGpsBase": 0.7,
+    "sigmaGpsGain": 8,
+    "sigmaLidarFloor": 0.3,
+    "sigmaLidarBase": 0.18,
+    "sigmaLidarGain": 2.5,
+    "sigmaLidarYawFloor": 0.034906585039886591,
+    "sigmaLidarYawGain": 0.27925268031909273,
+    "sigmaGpsFixed": 4.5,
+    "sigmaLidarFixed": 1.4,
+    "sigmaLidarYawFixed": 0.13962634015954636,
+    "broadSigmaXY": 3.5,
+    "broadSigmaYaw": 0.43633231299858238
+  },
+  "visual": {
+    "live": true,
+    "liveUpdateEvery": 10,
+    "maxParticleDraw": 700,
+    "saveFig": true
+  }
+}

@@ -1,0 +1,26 @@
+function report_label_quality(D,cfg)
+%REPORT_LABEL_QUALITY State up front how much signal the weak label carries.
+% A weak-supervision benchmark whose weak label is uninformative will still
+% produce a full results table, so this has to be printed rather than assumed.
+y=[];p=[];
+for s=["medium","harsh","deep"]
+    y=[y;double(D.(char(s)).hard(:))]; p=[p;double(D.(char(s)).soft(:))]; %#ok<AGROW>
+end
+M=compute_metrics(y,p,cfg.threshold);
+fprintf('\n--- Weak label diagnostic (source: %s) ---\n',cfg.weakLabel.source);
+fprintf('  epoch-level soft label: mean %.3f  sd %.3f\n',mean(p),std(p));
+fprintf('  as a DIRECT predictor of hard_label: AUROC %.3f  F1 %.3f\n',M.AUROC,M.F1);
+if M.AUROC<0.55
+    warning('cics:uninformativeWeakLabel', ...
+        ['The weak label carries essentially no information about hard_label ' ...
+         '(AUROC %.3f). The weak EDL head can only fit noise, and Dual-EDL fusion ' ...
+         'will underperform the hard-only head. This is a property of the ' ...
+         'reconstruction, not of the architecture - do not read it as an ' ...
+         'architectural result.'],M.AUROC);
+elseif M.AUROC>0.99
+    warning('cics:circularWeakLabelQuality', ...
+        ['The weak label predicts hard_label almost perfectly (AUROC %.3f), so it ' ...
+         'is a restatement of the hard label. Dual-EDL gains under this setting ' ...
+         'are circular.'],M.AUROC);
+end
+end

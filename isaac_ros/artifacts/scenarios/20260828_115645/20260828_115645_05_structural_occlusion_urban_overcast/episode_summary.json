@@ -1,0 +1,108 @@
+{
+  "scenario": "structural_occlusion",
+  "environment": "urban_overcast",
+  "episode_id": "20260828_115645_05_structural_occlusion_urban_overcast",
+  "seed": 1034019005,
+  "duration_s": 60.0,
+  "event_start_s": 8.0,
+  "frame_drop_probability": 0.0,
+  "gaps": [],
+  "steps": 3600,
+  "elapsed_s": 60.0,
+  "minimum_separation_m": 1.8,
+  "safety_radius_m": 1.4,
+  "trajectory_seed": 1034019005,
+  "blackout_seconds": {},
+  "camera_gating": true,
+  "lanes": [
+    {
+      "drone_id": "Ally_01",
+      "team": "friendly",
+      "team_index": 0,
+      "lane_x": -0.9,
+      "start_side": -1.0,
+      "leg_duration_s": 10.253,
+      "crossing_group": 0,
+      "formation": "Ally",
+      "formation_offset_y": 0.0,
+      "occlusion_windows": {
+        "front_near": [
+          {
+            "blocker": "Wall_South",
+            "y_start": -6.95,
+            "y_end": -1.97
+          },
+          {
+            "blocker": "Pylon_Mid",
+            "y_start": 2.7,
+            "y_end": 5.58
+          },
+          {
+            "blocker": "Wall_North",
+            "y_start": 4.58,
+            "y_end": 9.51
+          }
+        ],
+        "front_far": [
+          {
+            "blocker": "Pylon_Mid",
+            "y_start": -6.64,
+            "y_end": -3.76
+          },
+          {
+            "blocker": "Wall_North",
+            "y_start": 0.86,
+            "y_end": 5.79
+          }
+        ]
+      }
+    },
+    {
+      "drone_id": "Enemy_01",
+      "team": "enemy",
+      "team_index": 0,
+      "lane_x": 0.9,
+      "start_side": 1.0,
+      "leg_duration_s": 13.556,
+      "crossing_group": 1,
+      "formation": "Enemy",
+      "formation_offset_y": 0.0,
+      "occlusion_windows": {
+        "front_near": [
+          {
+            "blocker": "Wall_South",
+            "y_start": -6.19,
+            "y_end": -1.9
+          },
+          {
+            "blocker": "Pylon_Mid",
+            "y_start": 2.12,
+            "y_end": 4.6
+          },
+          {
+            "blocker": "Wall_North",
+            "y_start": 3.73,
+            "y_end": 7.97
+          }
+        ],
+        "front_far": [
+          {
+            "blocker": "Wall_South",
+            "y_start": -9.04,
+            "y_end": -4.75
+          },
+          {
+            "blocker": "Pylon_Mid",
+            "y_start": -5.51,
+            "y_end": -3.03
+          },
+          {
+            "blocker": "Wall_North",
+            "y_start": 0.95,
+            "y_end": 5.19
+          }
+        ]
+      }
+    }
+  ]
+}

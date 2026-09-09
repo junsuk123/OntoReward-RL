@@ -1,0 +1,15 @@
+@prefix tv: <https://example.org/terrain-vision#> .
+tv:VisualObservation a tv:OntologyClass .
+tv:VisualMatchability a tv:OntologyClass .
+tv:rich_texture a tv:ReasoningRule ; tv:observesMetric "texture_entropy" ; tv:contribution "0.1" .
+tv:many_features a tv:ReasoningRule ; tv:observesMetric "feature_count" ; tv:contribution "0.09" .
+tv:too_few_features a tv:ReasoningRule ; tv:observesMetric "feature_count" ; tv:contribution "-0.25" .
+tv:low_texture a tv:ReasoningRule ; tv:observesMetric "texture_entropy" ; tv:contribution "-0.15" .
+tv:distributed_features a tv:ReasoningRule ; tv:observesMetric "feature_distribution_uniformity" ; tv:contribution "0.12" .
+tv:low_aliasing a tv:ReasoningRule ; tv:observesMetric "repetitiveness_score" ; tv:contribution "0.1" .
+tv:repetitive_aliasing a tv:ReasoningRule ; tv:observesMetric "repetitiveness_score" ; tv:contribution "-0.18" .
+tv:sharp_image a tv:ReasoningRule ; tv:observesMetric "blur_quality" ; tv:contribution "0.08" .
+tv:exposure_quality a tv:ReasoningRule ; tv:observesMetric "brightness_quality" ; tv:contribution "0.05" .
+tv:stable_tracks a tv:ReasoningRule ; tv:observesMetric "flow_valid_ratio" ; tv:contribution "0.06" .
+tv:coherent_geometry a tv:ReasoningRule ; tv:observesMetric "flow_inlier_ratio" ; tv:contribution "0.12" .
+tv:inconsistent_flow a tv:ReasoningRule ; tv:observesMetric "flow_inlier_ratio" ; tv:contribution "-0.16" .

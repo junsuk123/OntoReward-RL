@@ -1,0 +1,95 @@
+{
+  "scenario": "sensor_dropout",
+  "environment": "urban_night",
+  "episode_id": "20260828_115645_07_sensor_dropout_urban_night",
+  "seed": 1034019007,
+  "duration_s": 60.0,
+  "event_start_s": 8.0,
+  "frame_drop_probability": 0.02,
+  "gaps": [
+    {
+      "camera": "front_near",
+      "start_s": 8.109,
+      "end_s": 8.712,
+      "duration_s": 0.603,
+      "kind": "blackout"
+    },
+    {
+      "camera": "front_far",
+      "start_s": 19.526,
+      "end_s": 21.235,
+      "duration_s": 1.709,
+      "kind": "blackout"
+    },
+    {
+      "camera": "front_near",
+      "start_s": 27.249,
+      "end_s": 29.408,
+      "duration_s": 2.159,
+      "kind": "blackout"
+    },
+    {
+      "camera": "front_far",
+      "start_s": 38.158,
+      "end_s": 38.973,
+      "duration_s": 0.815,
+      "kind": "blackout"
+    },
+    {
+      "camera": "front_near",
+      "start_s": 47.303,
+      "end_s": 47.83,
+      "duration_s": 0.527,
+      "kind": "blackout"
+    },
+    {
+      "camera": "front_far",
+      "start_s": 49.37,
+      "end_s": 49.893,
+      "duration_s": 0.523,
+      "kind": "blackout"
+    }
+  ],
+  "steps": 3600,
+  "elapsed_s": 60.0,
+  "minimum_separation_m": 1.8,
+  "safety_radius_m": 1.4,
+  "trajectory_seed": 1034019007,
+  "blackout_seconds": {
+    "front_near": 4.417,
+    "front_far": 4.1
+  },
+  "camera_gating": true,
+  "lanes": [
+    {
+      "drone_id": "Ally_01",
+      "team": "friendly",
+      "team_index": 0,
+      "lane_x": -0.9,
+      "start_side": -1.0,
+      "leg_duration_s": 11.0,
+      "crossing_group": 0,
+      "formation": "Ally",
+      "formation_offset_y": 0.0,
+      "occlusion_windows": {
+        "front_near": [],
+        "front_far": []
+      }
+    },
+    {
+      "drone_id": "Enemy_01",
+      "team": "enemy",
+      "team_index": 0,
+      "lane_x": 0.9,
+      "start_side": 1.0,
+      "leg_duration_s": 11.0,
+      "crossing_group": 0,
+      "formation": "Enemy",
+      "formation_offset_y": 0.0,
+      "occlusion_windows": {
+        "front_near": [],
+        "front_far": []
+      }
+    }
+  ]
+}

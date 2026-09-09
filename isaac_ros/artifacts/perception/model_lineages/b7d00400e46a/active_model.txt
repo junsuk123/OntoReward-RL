@@ -1,0 +1,1 @@
+/home/j/SynologyDrive/junsuk/학술대회/CICS2026/codes/isaac_ros/artifacts/perception/training/drone_yolo26s_20260828_121810/weights/best.pt

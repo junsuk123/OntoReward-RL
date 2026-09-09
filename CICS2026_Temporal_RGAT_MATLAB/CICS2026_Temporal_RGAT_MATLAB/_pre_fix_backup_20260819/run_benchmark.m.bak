@@ -1,0 +1,91 @@
+function run_benchmark(mode)
+%RUN_BENCHMARK Full prior-study comparison and proposed-model validation.
+cfg=cics_config(mode); rng(cfg.seed,'twister');
+check_prior_reported_consistency();
+if ~isfolder(cfg.outputDir), mkdir(cfg.outputDir); end
+modelDir=fullfile(cfg.outputDir,'models'); if ~isfolder(modelDir), mkdir(modelDir); end
+D=load_scenarios(cfg); [D,mu,sigma]=normalize_scenarios(D,cfg);
+
+% Prior study manually weighted 12 features for Transformer baselines.
+Dbase=D;
+for s=["medium","harsh","deep"]
+    Dbase.(char(s)).X=D.(char(s)).X.*cfg.priorWeights;
+end
+[XTrainBase,YhTrain,YsTrain]=concat_windows(Dbase.medium,Dbase.harsh,cfg,0);
+[XTestBase,YhTest,YsTest,metaTest]=make_windows(Dbase.deep,cfg,0);
+[XTrain,YhTrain2,YsTrain2]=concat_windows(D.medium,D.harsh,cfg,0);
+[XTest,YhTest2,YsTest2]=make_windows(D.deep,cfg,0);
+assert(isequal(YhTrain,YhTrain2) && isequal(YsTrain,YsTrain2));
+assert(isequal(YhTest,YhTest2) && isequal(YsTest,YsTest2));
+
+% Keep demo smoke test fast while preserving the exact full-data real mode.
+if cfg.mode=="demo"
+    it=unique(round(linspace(1,size(XTrain,3),min(cfg.demoMaxTrainWindows,size(XTrain,3)))));
+    ie=unique(round(linspace(1,size(XTest,3),min(cfg.demoMaxTestWindows,size(XTest,3)))));
+    XTrain=XTrain(:,:,it); XTrainBase=XTrainBase(:,:,it);
+    YhTrain=YhTrain(it); YsTrain=YsTrain(it);
+    XTest=XTest(:,:,ie); XTestBase=XTestBase(:,:,ie);
+    YhTest=YhTest(ie); YsTest=YsTest(ie); metaTest=metaTest(ie,:);
+end
+
+results=struct(); histories=struct(); trained=struct();
+for name=cfg.modelList
+    key=matlab.lang.makeValidName(char(name));
+    if name=="SoftLabel"
+        Msoft=compute_metrics(YhTest,YsTest,cfg.threshold);
+        Msoft.MeanUncertainty=NaN; Msoft.MeanUncertaintyCorrect=NaN; Msoft.MeanUncertaintyIncorrect=NaN;
+        R=struct('name',name,'pFault',YsTest,'uncertainty',nan(size(YsTest),'single'), ...
+            'metrics',Msoft,'Yhard',YhTest,'Ysoft',YsTest);
+        results.(key)=R; continue
+    end
+    model=build_model(name,cfg);
+    if startsWith(name,"Transformer") || startsWith(name,"TransEDL")
+        Xtr=XTrainBase; Xte=XTestBase;
+    else
+        Xtr=XTrain; Xte=XTest;
+    end
+    [model,hist]=train_model(model,Xtr,YhTrain,YsTrain,cfg);
+    R=evaluate_model(model,Xte,YhTest,YsTest,cfg);
+    results.(key)=R; histories.(key)=hist; trained.(key)=model;
+    writetable(hist,fullfile(cfg.outputDir,['training_history_' key '.csv']));
+    save(fullfile(modelDir,[key '.mat']),'model','cfg','-v7.3');
+end
+
+priorKey=matlab.lang.makeValidName('Transformer-DualEDL'); newKey=matlab.lang.makeValidName('TemporalR-GAT-DualEDL');
+baseGate=abs(results.(priorKey).metrics.F1-cfg.reproduction.targetF1)<=cfg.reproduction.tolerance;
+if cfg.mode=="real" && ~baseGate
+    warning(['Prior Transformer-DualEDL baseline failed reproduction gate. ' ...
+        'Do not claim proposed-model improvement until preprocessing/training alignment is resolved.']);
+elseif cfg.mode=="nonstrict"
+    % The gate compares against a baseline trained on the prior soft label, which
+    % this mode does not have, so its outcome carries no information either way.
+    warning(['Non-strict mode: the reproduction gate is not interpretable because the ' ...
+        'weak head was trained on a surrogate soft label. Treat these metrics as an ' ...
+        'architecture/ablation comparison only.']);
+end
+
+boot=paired_bootstrap_compare(YhTest,results.(priorKey).pFault,results.(newKey).pFault, ...
+    cfg.threshold,cfg.bootstrapSamples,cfg.seed+1);
+mc=mcnemar_exact(YhTest,results.(priorKey).pFault,results.(newKey).pFault,cfg.threshold);
+
+% Attention diagnostics on one high-fault-probability Deep window.
+if isfield(trained,newKey)
+    [~,ix]=max(results.(newKey).pFault);
+    export_attention(trained.(newKey),XTest(:,:,ix),cfg);
+end
+
+forecastTable=table();
+if cfg.runForecast
+    forecastTable=run_forecast_benchmark(D,cfg);
+end
+export_benchmark_results(results,boot,mc,baseGate,metaTest,forecastTable,mu,sigma,cfg);
+plot_benchmark_results(results,YhTest,cfg);
+
+fprintf('\n=== FINAL SUMMARY ===\n');
+fprintf('Prior Transformer-DualEDL F1: %.4f\n',results.(priorKey).metrics.F1);
+fprintf('Proposed Temporal R-GAT-DualEDL F1: %.4f\n',results.(newKey).metrics.F1);
+fprintf('Delta F1: %.4f | bootstrap 95%% CI [%.4f, %.4f] | p=%.4g\n', ...
+    boot.MeanDeltaF1,boot.CI95Low,boot.CI95High,boot.Pbootstrap);
+fprintf('Baseline reproduction gate: %d\n',baseGate);
+fprintf('Outputs: %s\n',cfg.outputDir);
+end

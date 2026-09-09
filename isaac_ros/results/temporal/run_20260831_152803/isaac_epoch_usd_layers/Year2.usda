@@ -1,0 +1,639 @@
+#usda 1.0
+(
+    defaultPrim = "World"
+    endTimeCode = 1000000
+    metersPerUnit = 1
+    startTimeCode = 0
+    timeCodesPerSecond = 60
+    upAxis = "Z"
+)
+
+def "Render" (
+    hide_in_stage_window = true
+    no_delete = true
+)
+{
+    def "OmniverseKit"
+    {
+        def "HydraTextures" (
+            hide_in_stage_window = true
+            no_delete = true
+        )
+        {
+            def RenderProduct "omni_kit_widget_viewport_ViewportTexture_0" (
+                prepend apiSchemas = ["OmniRtxSettingsCommonAdvancedAPI_1", "OmniRtxSettingsRtAdvancedAPI_1", "OmniRtxSettingsPtAdvancedAPI_1", "OmniRtxPostColorGradingAPI_1", "OmniRtxPostChromaticAberrationAPI_1", "OmniRtxPostBloomPhysicalAPI_1", "OmniRtxPostMatteObjectAPI_1", "OmniRtxPostCompositingAPI_1", "OmniRtxPostDofAPI_1", "OmniRtxPostMotionBlurAPI_1", "OmniRtxPostTvNoiseAPI_1", "OmniRtxPostTonemapIrayReinhardAPI_1", "OmniRtxPostDebugSettingsAPI_1", "OmniRtxDebugSettingsAPI_1"]
+                hide_in_stage_window = true
+                no_delete = true
+            )
+            {
+                rel camera = </OmniverseKit_Persp>
+                token omni:rtx:background:source:texture:textureMode = "repeatMirrored"
+                token omni:rtx:background:source:type = "domeLight"
+                bool omni:rtx:dlss:frameGeneration = 0
+                bool omni:rtx:material:db:nonVisualMaterialCSV:enabled = 0
+                bool omni:rtx:material:db:syncLoads = 1
+                token omni:rtx:post:dlss:execMode = "performance"
+                bool omni:rtx:post:registeredCompositing:invertColorCorrection = 1
+                bool omni:rtx:post:registeredCompositing:invertToneMap = 1
+                int omni:rtx:pt:clampSpp = 64
+                bool omni:rtx:pt:lightcache:cached:dontResolveConflicts = 1
+                int omni:rtx:pt:maxSamplesPerLaunch = 2073600
+                int omni:rtx:pt:maxVolumeBounces = 4
+                int omni:rtx:pt:mgpu:maxPixelsPerRegionExponent = 12
+                int omni:rtx:pt:samplesPerIteration = 64
+                int omni:rtx:pt:samplesPerPixel = 64
+                color3f omni:rtx:rt:ambientLight:color = (0.1, 0.1, 0.1)
+                bool omni:rtx:rt:demoire = 0
+                bool omni:rtx:rt:ecoMode:enabled = 0
+                bool omni:rtx:rt:lightcache:spatialCache:dontResolveConflicts = 1
+                bool omni:rtx:scene:hydra:materialSyncLoads = 1
+                bool omni:rtx:scene:hydra:mdlMaterialWarmup = 1
+                uint omni:rtx:viewTile:limit = 4294967295
+                rel orderedVars = </Render/Vars/LdrColor>
+                custom bool overrideClipRange = 0
+                uniform int2 resolution = (1280, 720)
+            }
+
+            def RenderProduct "temporal_nadir" (
+                prepend apiSchemas = ["OmniRtxSettingsCommonAdvancedAPI_1", "OmniRtxSettingsRtAdvancedAPI_1", "OmniRtxSettingsPtAdvancedAPI_1", "OmniRtxPostColorGradingAPI_1", "OmniRtxPostChromaticAberrationAPI_1", "OmniRtxPostBloomPhysicalAPI_1", "OmniRtxPostMatteObjectAPI_1", "OmniRtxPostCompositingAPI_1", "OmniRtxPostDofAPI_1", "OmniRtxPostMotionBlurAPI_1", "OmniRtxPostTvNoiseAPI_1", "OmniRtxPostTonemapIrayReinhardAPI_1", "OmniRtxPostDebugSettingsAPI_1", "OmniRtxDebugSettingsAPI_1"]
+                hide_in_stage_window = true
+                no_delete = true
+            )
+            {
+                rel camera = </World/UAV/Camera>
+                token omni:rtx:background:source:texture:textureMode = "repeatMirrored"
+                token omni:rtx:background:source:type = "domeLight"
+                bool omni:rtx:dlss:frameGeneration = 0
+                bool omni:rtx:material:db:nonVisualMaterialCSV:enabled = 0
+                bool omni:rtx:material:db:syncLoads = 1
+                token omni:rtx:post:dlss:execMode = "performance"
+                bool omni:rtx:post:registeredCompositing:invertColorCorrection = 1
+                bool omni:rtx:post:registeredCompositing:invertToneMap = 1
+                int omni:rtx:pt:clampSpp = 64
+                bool omni:rtx:pt:lightcache:cached:dontResolveConflicts = 1
+                int omni:rtx:pt:maxSamplesPerLaunch = 2073600
+                int omni:rtx:pt:maxVolumeBounces = 4
+                int omni:rtx:pt:mgpu:maxPixelsPerRegionExponent = 12
+                int omni:rtx:pt:samplesPerIteration = 64
+                int omni:rtx:pt:samplesPerPixel = 64
+                color3f omni:rtx:rt:ambientLight:color = (0.1, 0.1, 0.1)
+                bool omni:rtx:rt:demoire = 0
+                bool omni:rtx:rt:ecoMode:enabled = 0
+                bool omni:rtx:rt:lightcache:spatialCache:dontResolveConflicts = 1
+                bool omni:rtx:scene:hydra:materialSyncLoads = 1
+                bool omni:rtx:scene:hydra:mdlMaterialWarmup = 1
+                uint omni:rtx:viewTile:limit = 4294967295
+                rel orderedVars = </Render/Vars/LdrColor>
+                custom bool overrideClipRange = 0
+                uniform int2 resolution = (320, 320)
+            }
+        }
+    }
+
+    def RenderSettings "OmniverseGlobalRenderSettings" (
+        prepend apiSchemas = ["OmniRtxSettingsGlobalRtAdvancedAPI_1", "OmniRtxSettingsGlobalPtAdvancedAPI_1"]
+        no_delete = true
+    )
+    {
+        rel products = [
+            </Render/OmniverseKit/HydraTextures/omni_kit_widget_viewport_ViewportTexture_0>,
+            </Render/OmniverseKit/HydraTextures/temporal_nadir>,
+        ]
+    }
+
+    def "Vars"
+    {
+        def RenderVar "LdrColor" (
+            hide_in_stage_window = true
+            no_delete = true
+        )
+        {
+            uniform string sourceName = "LdrColor"
+        }
+    }
+}
+
+def Xform "World"
+{
+    def Xform "Environment"
+    {
+        def Xform "Terrain"
+        {
+            def Cube "Ground"
+            {
+                color3f[] primvars:displayColor = [(0.28, 0.52, 0.3)]
+                custom string simlab:semanticId = "terrain_ground"
+                double size = 2
+                float3 xformOp:scale = (40, 40, 0.15)
+                double3 xformOp:translate = (0, 0, -0.15)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+        }
+
+        def Xform "Roads"
+        {
+            def Cube "Main"
+            {
+                color3f[] primvars:displayColor = [(0.2154, 0.2154, 0.2154)]
+                custom string simlab:semanticId = "road_main"
+                double size = 2
+                float3 xformOp:scale = (40, 9, 0.05)
+                double3 xformOp:translate = (0, 0, 0.02)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+
+                def Cube "Marking_00"
+                {
+                    color3f[] primvars:displayColor = [(0.774, 0.774, 0.774)]
+                    custom string simlab:semanticId = "lane_marking_00"
+                    double size = 2
+                    float3 xformOp:scale = (2, 0.175, 0.015)
+                    double3 xformOp:translate = (-36, 0, 0.09)
+                    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+                }
+
+                def Cube "Marking_01"
+                {
+                    color3f[] primvars:displayColor = [(0.774, 0.774, 0.774)]
+                    custom string simlab:semanticId = "lane_marking_01"
+                    double size = 2
+                    float3 xformOp:scale = (2, 0.175, 0.015)
+                    double3 xformOp:translate = (-28, 0, 0.09)
+                    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+                }
+
+                def Cube "Marking_02"
+                {
+                    color3f[] primvars:displayColor = [(0.774, 0.774, 0.774)]
+                    custom string simlab:semanticId = "lane_marking_02"
+                    double size = 2
+                    float3 xformOp:scale = (2, 0.175, 0.015)
+                    double3 xformOp:translate = (-20, 0, 0.09)
+                    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+                }
+
+                def Cube "Marking_03"
+                {
+                    color3f[] primvars:displayColor = [(0.774, 0.774, 0.774)]
+                    custom string simlab:semanticId = "lane_marking_03"
+                    double size = 2
+                    float3 xformOp:scale = (2, 0.175, 0.015)
+                    double3 xformOp:translate = (-12, 0, 0.09)
+                    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+                }
+
+                def Cube "Marking_04"
+                {
+                    color3f[] primvars:displayColor = [(0.774, 0.774, 0.774)]
+                    custom string simlab:semanticId = "lane_marking_04"
+                    double size = 2
+                    float3 xformOp:scale = (2, 0.175, 0.015)
+                    double3 xformOp:translate = (-4, 0, 0.09)
+                    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+                }
+
+                def Cube "Marking_05"
+                {
+                    color3f[] primvars:displayColor = [(0.774, 0.774, 0.774)]
+                    custom string simlab:semanticId = "lane_marking_05"
+                    double size = 2
+                    float3 xformOp:scale = (2, 0.175, 0.015)
+                    double3 xformOp:translate = (4, 0, 0.09)
+                    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+                }
+
+                def Cube "Marking_06"
+                {
+                    color3f[] primvars:displayColor = [(0.774, 0.774, 0.774)]
+                    custom string simlab:semanticId = "lane_marking_06"
+                    double size = 2
+                    float3 xformOp:scale = (2, 0.175, 0.015)
+                    double3 xformOp:translate = (12, 0, 0.09)
+                    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+                }
+
+                def Cube "Marking_07"
+                {
+                    color3f[] primvars:displayColor = [(0.774, 0.774, 0.774)]
+                    custom string simlab:semanticId = "lane_marking_07"
+                    double size = 2
+                    float3 xformOp:scale = (2, 0.175, 0.015)
+                    double3 xformOp:translate = (20, 0, 0.09)
+                    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+                }
+
+                def Cube "Marking_08"
+                {
+                    color3f[] primvars:displayColor = [(0.774, 0.774, 0.774)]
+                    custom string simlab:semanticId = "lane_marking_08"
+                    double size = 2
+                    float3 xformOp:scale = (2, 0.175, 0.015)
+                    double3 xformOp:translate = (28, 0, 0.09)
+                    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+                }
+
+                def Cube "Marking_09"
+                {
+                    color3f[] primvars:displayColor = [(0.774, 0.774, 0.774)]
+                    custom string simlab:semanticId = "lane_marking_09"
+                    double size = 2
+                    float3 xformOp:scale = (2, 0.175, 0.015)
+                    double3 xformOp:translate = (36, 0, 0.09)
+                    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+                }
+            }
+        }
+
+        def Xform "Buildings"
+        {
+            def Cube "Persistent"
+            {
+                color3f[] primvars:displayColor = [(0.52, 0.48, 0.43)]
+                custom string simlab:semanticId = "building_persistent"
+                double size = 2
+                float3 xformOp:scale = (8.5, 7.5, 3)
+                double3 xformOp:translate = (-10, -19, 3)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Cube "Development"
+            {
+                color3f[] primvars:displayColor = [(0.48, 0.45, 0.42)]
+                custom string simlab:semanticId = "building_development"
+                double size = 2
+                token visibility = "inherited"
+                float3 xformOp:scale = (9, 8, 3)
+                double3 xformOp:translate = (10, 19, 3)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+        }
+
+        def Xform "Vegetation"
+        {
+            def Sphere "Tree_000"
+            {
+                color3f[] primvars:displayColor = [(0.2, 0.68, 0.25)]
+                double radius = 1
+                custom string simlab:semanticId = "tree_000"
+                float3 xformOp:scale = (0.83, 0.83, 1.162)
+                double3 xformOp:translate = (-21.132548592812526, -26.236016780632823, 1.4)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Sphere "Tree_001"
+            {
+                color3f[] primvars:displayColor = [(0.2, 0.68, 0.25)]
+                double radius = 1
+                custom string simlab:semanticId = "tree_001"
+                float3 xformOp:scale = (0.83, 0.83, 1.162)
+                double3 xformOp:translate = (16.834220061668326, -13.282014219498148, 1.4)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Sphere "Tree_002"
+            {
+                color3f[] primvars:displayColor = [(0.2, 0.68, 0.25)]
+                double radius = 1
+                custom string simlab:semanticId = "tree_002"
+                float3 xformOp:scale = (0.83, 0.83, 1.162)
+                double3 xformOp:translate = (-26.041957524006452, 13.608158636982838, 1.4)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Sphere "Tree_003"
+            {
+                color3f[] primvars:displayColor = [(0.2, 0.68, 0.25)]
+                double radius = 1
+                custom string simlab:semanticId = "tree_003"
+                float3 xformOp:scale = (0.83, 0.83, 1.162)
+                double3 xformOp:translate = (27.384547974736723, 16.24566738380888, 1.4)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Sphere "Tree_004"
+            {
+                color3f[] primvars:displayColor = [(0.2, 0.68, 0.25)]
+                double radius = 1
+                custom string simlab:semanticId = "tree_004"
+                float3 xformOp:scale = (0.83, 0.83, 1.162)
+                double3 xformOp:translate = (-14.8194675498684, -18.258471696231652, 1.4)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Sphere "Tree_005"
+            {
+                color3f[] primvars:displayColor = [(0.2, 0.68, 0.25)]
+                double radius = 1
+                custom string simlab:semanticId = "tree_005"
+                float3 xformOp:scale = (0.83, 0.83, 1.162)
+                double3 xformOp:translate = (13.425706154099775, -30.030730296182362, 1.4)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Sphere "Tree_006"
+            {
+                color3f[] primvars:displayColor = [(0.2, 0.68, 0.25)]
+                double radius = 1
+                custom string simlab:semanticId = "tree_006"
+                float3 xformOp:scale = (0.83, 0.83, 1.162)
+                double3 xformOp:translate = (-21.84764536867927, 27.11559451811952, 1.4)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Sphere "Tree_007"
+            {
+                color3f[] primvars:displayColor = [(0.2, 0.68, 0.25)]
+                double radius = 1
+                custom string simlab:semanticId = "tree_007"
+                float3 xformOp:scale = (0.83, 0.83, 1.162)
+                double3 xformOp:translate = (14.08806293649972, 16.39341719678106, 1.4)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Sphere "Tree_008"
+            {
+                color3f[] primvars:displayColor = [(0.2, 0.68, 0.25)]
+                double radius = 1
+                custom string simlab:semanticId = "tree_008"
+                float3 xformOp:scale = (0.83, 0.83, 1.162)
+                double3 xformOp:translate = (-16.099653366208937, -25.83258783766815, 1.4)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Sphere "Tree_009"
+            {
+                color3f[] primvars:displayColor = [(0.2, 0.68, 0.25)]
+                double radius = 1
+                custom string simlab:semanticId = "tree_009"
+                float3 xformOp:scale = (0.83, 0.83, 1.162)
+                double3 xformOp:translate = (26.50856185465947, -29.817625495286464, 1.4)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Sphere "Tree_010"
+            {
+                color3f[] primvars:displayColor = [(0.2, 0.68, 0.25)]
+                double radius = 1
+                custom string simlab:semanticId = "tree_010"
+                float3 xformOp:scale = (0.83, 0.83, 1.162)
+                double3 xformOp:translate = (-13.040512879497381, 13.294411226667004, 1.4)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Sphere "Tree_011"
+            {
+                color3f[] primvars:displayColor = [(0.2, 0.68, 0.25)]
+                double radius = 1
+                custom string simlab:semanticId = "tree_011"
+                float3 xformOp:scale = (0.83, 0.83, 1.162)
+                double3 xformOp:translate = (14.712412895792365, 14.409205087249287, 1.4)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Sphere "Tree_012"
+            {
+                color3f[] primvars:displayColor = [(0.2, 0.68, 0.25)]
+                double radius = 1
+                custom string simlab:semanticId = "tree_012"
+                float3 xformOp:scale = (0.83, 0.83, 1.162)
+                double3 xformOp:translate = (-17.821971036298415, -15.063035942639932, 1.4)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Sphere "Tree_013"
+            {
+                color3f[] primvars:displayColor = [(0.2, 0.68, 0.25)]
+                double radius = 1
+                custom string simlab:semanticId = "tree_013"
+                float3 xformOp:scale = (0.83, 0.83, 1.162)
+                double3 xformOp:translate = (13.466775241764445, -24.469925872038505, 1.4)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Sphere "Tree_014"
+            {
+                color3f[] primvars:displayColor = [(0.2, 0.68, 0.25)]
+                double radius = 1
+                custom string simlab:semanticId = "tree_014"
+                float3 xformOp:scale = (0.83, 0.83, 1.162)
+                double3 xformOp:translate = (-14.308077945052302, 14.144082413013352, 1.4)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Sphere "Tree_015"
+            {
+                color3f[] primvars:displayColor = [(0.2, 0.68, 0.25)]
+                double radius = 1
+                custom string simlab:semanticId = "tree_015"
+                float3 xformOp:scale = (0.83, 0.83, 1.162)
+                double3 xformOp:translate = (18.206425009013653, 20.547316952922, 1.4)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Sphere "Tree_016"
+            {
+                color3f[] primvars:displayColor = [(0.2, 0.68, 0.25)]
+                double radius = 1
+                custom string simlab:semanticId = "tree_016"
+                float3 xformOp:scale = (0.83, 0.83, 1.162)
+                double3 xformOp:translate = (-22.82347535618853, -14.392199267535062, 1.4)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Sphere "Tree_017"
+            {
+                color3f[] primvars:displayColor = [(0.2, 0.68, 0.25)]
+                double radius = 1
+                custom string simlab:semanticId = "tree_017"
+                float3 xformOp:scale = (0.83, 0.83, 1.162)
+                double3 xformOp:translate = (26.84085940654405, -13.177248968986081, 1.4)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Sphere "Tree_018"
+            {
+                color3f[] primvars:displayColor = [(0.2, 0.68, 0.25)]
+                double radius = 1
+                custom string simlab:semanticId = "tree_018"
+                float3 xformOp:scale = (0.83, 0.83, 1.162)
+                double3 xformOp:translate = (-29.130528465432473, 21.324827831150465, 1.4)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Sphere "Tree_019"
+            {
+                color3f[] primvars:displayColor = [(0.2, 0.68, 0.25)]
+                double radius = 1
+                custom string simlab:semanticId = "tree_019"
+                float3 xformOp:scale = (0.83, 0.83, 1.162)
+                double3 xformOp:translate = (24.9413743361539, 26.079921863252466, 1.4)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Sphere "Tree_020"
+            {
+                color3f[] primvars:displayColor = [(0.2, 0.68, 0.25)]
+                double radius = 1
+                custom string simlab:semanticId = "tree_020"
+                float3 xformOp:scale = (0.83, 0.83, 1.162)
+                double3 xformOp:translate = (-13.155540939201934, -21.695948757768782, 1.4)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Sphere "Tree_021"
+            {
+                color3f[] primvars:displayColor = [(0.2, 0.68, 0.25)]
+                double radius = 1
+                custom string simlab:semanticId = "tree_021"
+                float3 xformOp:scale = (0.83, 0.83, 1.162)
+                double3 xformOp:translate = (14.90032851179108, -25.110669001956452, 1.4)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Sphere "Tree_022"
+            {
+                color3f[] primvars:displayColor = [(0.2, 0.68, 0.25)]
+                double radius = 1
+                custom string simlab:semanticId = "tree_022"
+                float3 xformOp:scale = (0.83, 0.83, 1.162)
+                double3 xformOp:translate = (-26.982230067574907, 14.482192436220435, 1.4)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Sphere "Tree_023"
+            {
+                color3f[] primvars:displayColor = [(0.2, 0.68, 0.25)]
+                double radius = 1
+                custom string simlab:semanticId = "tree_023"
+                float3 xformOp:scale = (0.83, 0.83, 1.162)
+                double3 xformOp:translate = (29.234465012218365, 22.577442931971206, 1.4)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Sphere "Tree_024"
+            {
+                color3f[] primvars:displayColor = [(0.2, 0.68, 0.25)]
+                double radius = 1
+                custom string simlab:semanticId = "tree_024"
+                token visibility = "inherited"
+                float3 xformOp:scale = (0.83, 0.83, 1.162)
+                double3 xformOp:translate = (-24.91584675328838, -19.520188479738906, 1.4)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Sphere "Tree_025"
+            {
+                color3f[] primvars:displayColor = [(0.2, 0.68, 0.25)]
+                double radius = 1
+                custom string simlab:semanticId = "tree_025"
+                token visibility = "inherited"
+                float3 xformOp:scale = (0.83, 0.83, 1.162)
+                double3 xformOp:translate = (19.568487280829686, -13.262320106148351, 1.4)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Sphere "Tree_026"
+            {
+                color3f[] primvars:displayColor = [(0.2, 0.68, 0.25)]
+                double radius = 1
+                custom string simlab:semanticId = "tree_026"
+                token visibility = "invisible"
+                float3 xformOp:scale = (0.83, 0.83, 1.162)
+                double3 xformOp:translate = (-26.90298034475893, 19.31040897828239, 1.4)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Sphere "Tree_027"
+            {
+                color3f[] primvars:displayColor = [(0.2, 0.68, 0.25)]
+                double radius = 1
+                custom string simlab:semanticId = "tree_027"
+                token visibility = "invisible"
+                float3 xformOp:scale = (0.83, 0.83, 1.162)
+                double3 xformOp:translate = (16.45430480100595, 25.599316748501032, 1.4)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Sphere "Tree_028"
+            {
+                color3f[] primvars:displayColor = [(0.2, 0.68, 0.25)]
+                double radius = 1
+                custom string simlab:semanticId = "tree_028"
+                token visibility = "invisible"
+                float3 xformOp:scale = (0.83, 0.83, 1.162)
+                double3 xformOp:translate = (-27.849914039759398, -16.573923813471556, 1.4)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Sphere "Tree_029"
+            {
+                color3f[] primvars:displayColor = [(0.2, 0.68, 0.25)]
+                double radius = 1
+                custom string simlab:semanticId = "tree_029"
+                token visibility = "invisible"
+                float3 xformOp:scale = (0.83, 0.83, 1.162)
+                double3 xformOp:translate = (22.852935247709784, -23.62258732078373, 1.4)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Sphere "Tree_030"
+            {
+                color3f[] primvars:displayColor = [(0.2, 0.68, 0.25)]
+                double radius = 1
+                custom string simlab:semanticId = "tree_030"
+                token visibility = "invisible"
+                float3 xformOp:scale = (0.83, 0.83, 1.162)
+                double3 xformOp:translate = (-21.905505254632143, 13.715088268329223, 1.4)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+
+            def Sphere "Tree_031"
+            {
+                color3f[] primvars:displayColor = [(0.2, 0.68, 0.25)]
+                double radius = 1
+                custom string simlab:semanticId = "tree_031"
+                token visibility = "invisible"
+                float3 xformOp:scale = (0.83, 0.83, 1.162)
+                double3 xformOp:translate = (21.439447749440355, 20.58821171274568, 1.4)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+        }
+
+        def Xform "Weather"
+        {
+        }
+    }
+
+    def Xform "Lighting"
+    {
+        def DomeLight "Dome"
+        {
+            color3f inputs:color = (1, 0.96, 0.9)
+            float inputs:intensity = 1056.44
+        }
+    }
+
+    def Xform "UAV"
+    {
+        def Camera "Camera"
+        {
+            float2 clippingRange = (0.1, 1000)
+            float focalLength = 24
+            float horizontalAperture = 36
+            custom string simlab:sensorId = "temporal_nadir"
+            double3 xformOp:translate = (18, 0, 30)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+        }
+    }
+
+    def Xform "GroundTruth" (
+        customData = {
+            double appearanceChangeScore = 0.10400000000000001
+            double environmentChangeScore = 0.1557
+            string epoch = "Year2"
+            double structuralChangeScore = 0.252
+        }
+    )
+    {
+    }
+}
+

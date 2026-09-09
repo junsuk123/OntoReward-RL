@@ -1,0 +1,33 @@
+{
+  "session": "20260828_115645_04_structural_occlusion_industrial_yard",
+  "scenario": "structural_occlusion",
+  "environment": "industrial_yard",
+  "episode_id": "20260828_115645_04_structural_occlusion_industrial_yard",
+  "seed": 1034019004,
+  "min_visibility": 0.35,
+  "roster": {
+    "Ally_01": {
+      "team": "friendly",
+      "model": "iris",
+      "formation": "Ally"
+    },
+    "Enemy_01": {
+      "team": "enemy",
+      "model": "quadcopter",
+      "formation": "Enemy"
+    }
+  },
+  "timeline": {
+    "scenario": "structural_occlusion",
+    "environment": "industrial_yard",
+    "episode_id": "20260828_115645_04_structural_occlusion_industrial_yard",
+    "seed": 1034019004,
+    "duration_s": 60.0,
+    "event_start_s": 8.0,
+    "frame_drop_probability": 0.0,
+    "gaps": []
+  },
+  "images": 180,
+  "labelled_objects": 227,
+  "occluded_objects": 133
+}

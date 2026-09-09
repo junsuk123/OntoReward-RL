@@ -1,0 +1,224 @@
+# Default scene: two different quadrotors cross in the front cameras' line of sight.
+# Override any subtree from the CLI, or copy this file and pass --config.
+#
+# `scenarios` at the bottom holds the episode plan. This file leaves it disabled,
+# so `./run.sh` still flies the plain crossing shuttle; `./run_scenarios.sh`
+# reads the plan, writes one resolved copy of this file per episode, and runs
+# each of them as its own simulator process.
+
+app:
+  headless: false
+  physics_dt: 0.0166666667      # 60 Hz
+  rendering_dt: 0.0166666667
+  duration_s: 0.0               # 0 = run until the window is closed
+
+world:
+  ground_plane: false             # the procedural city includes its own ground
+  dome_light_intensity: 1000.0
+  stage_units_in_meters: 1.0
+  environment_type: procedural_urban
+  environment_usd: null           # optional external USD; composed in addition when set
+  environment_prim_path: /World/UrbanEnvironment
+  # Which look procedural_urban wears. See simlab/scenarios/environments.py:
+  #   urban_day  urban_overcast  urban_dusk  urban_night
+  #   industrial_yard  desert_outpost  coastal_flats
+  environment: urban_day
+  environment_seed: null          # null = follow the episode seed
+  occluder_set: null              # null = the environment preset's own loadout
+
+drones:
+  enabled: true
+  root_prim: /World/Drones
+  friendly:
+    count: 1
+    model: iris               # realistic 3DR Iris USD from Pegasus Simulator
+    color: [0.04, 0.28, 1.0]
+    label: Ally
+    cruise_altitude: 3.2
+    asset_scale: 1.35         # about 0.70 m rotor-to-rotor in the rendered scene
+  enemy:
+    count: 1
+    model: quadcopter         # official Isaac Sim generic Quadcopter USD
+    color: [1.0, 0.06, 0.025]
+    label: Enemy
+    cruise_altitude: 3.2       # same image-plane height at the randomized overlap
+    asset_scale: 1.5          # preserve the distinct airframe while keeping it visible overhead
+  takeoff_duration_s: 4.0
+  activity_half_length: 5.5    # y-axis endpoints; path is normal to the x-axis camera view
+  safety_radius: 1.4           # minimum allowed real 3-D separation
+  max_speed: 2.2               # m/s
+  motion_mode: crossing_shuttle
+  shuttle_leg_duration_s: 11.0 # each one-way straight traversal
+  crossing_offset_limit: 3.5   # random crossing point y in [-3.5, 3.5] m
+  crossing_time_jitter: 0.1    # crossing time is randomized around the middle of each leg
+  camera_depth_separation_m: 1.8 # physical separation on the camera optical axis
+  trajectory_seed: null        # null = a different crossing sequence on every simulation run
+
+cameras:
+  enabled: true
+  root_prim: /World/Sensors
+  front:
+    # The two cameras share a parallel optical axis and their 3 m baseline is
+    # parallel to the drones' ground-horizontal y-axis shuttle motion.
+    near_position: [12.0, -1.5, 4.0]
+    view_direction: [-1.0, 0.0, 0.0]
+    baseline_direction: [0.0, 1.0, 0.0]
+    separation_m: 3.0
+    image_rotation_clockwise_deg: 90.0  # 기존 영상 기준 시계 방향 90도 보정
+    optics:
+      resolution: [1920, 1080]
+      focal_length_mm: 35.0
+      horizontal_aperture_mm: 36.0
+      clipping_range: [0.1, 1000.0]
+  satellite:
+    position: [0.0, 0.0, 20.0]
+    target: [0.0, 0.0, 2.5]
+    optics:
+      resolution: [2048, 2048]
+      focal_length_mm: 35.0
+      horizontal_aperture_mm: 36.0
+      clipping_range: [0.1, 1000.0]
+
+ugv:
+  model: nova_carter            # see simlab/sim/assets.py ROBOTS
+  prim_path: /World/Robots/UGV
+  name: ugv
+  spawn: null                   # null = the model's default spawn height
+  controller:
+    # see simlab/algorithms/registry.py CONTROLLERS
+    #   social_force  waypoints + pedestrian avoidance   (default)
+    #   square_loop   open-loop patrol, ignores people
+    #   stand_still   parked
+    name: social_force
+    params:
+      # Keep the goals clear of the pedestrian lanes (x=+-3.0 and y=4.5).
+      # A goal sitting in a lane means the robot parks there and decelerates
+      # while someone walks into it at ~1.1 m/s, which no reactive controller
+      # can escape at these speeds.
+      waypoints: [[2.0, 0.0], [0.0, 2.0], [-2.0, 0.0], [0.0, -2.0]]
+      goal_tolerance: 0.6       # m
+      linear_speed: 0.6         # m/s
+      max_angular_speed: 1.2    # rad/s
+      heading_gain: 1.6
+      influence_radius: 2.5     # m, people beyond this are ignored
+      repulsion_gain: 1.6
+      swirl_gain: 0.9           # tangential push; 0 re-introduces head-on deadlock
+      caution_radius: 1.5       # m, slow down inside this
+      stop_radius: 0.9          # m, back away instead of pushing through
+      reverse_speed: 0.5        # m/s while backing off
+      loop: true
+
+people:                        # legacy UGV scene; ignored while drones.enabled=true
+  root_prim: /World/Characters
+  command_file: people_commands.txt   # generated on every run
+  navmesh: false                # true needs a baked navmesh in the stage
+  dynamic_avoidance: false
+  loop: inf
+  count: null                   # null = spawn every agent below
+  agents:
+    - asset: F_Business_02
+      start: [3.0, 3.0, 0.0]
+      waypoints: [[3.0, -3.0, 0.0], [3.0, 3.0, 0.0]]
+    - asset: M_Medical_01
+      start: [-3.0, 3.0, 0.0]
+      waypoints: [[-3.0, -3.0, 0.0], [-3.0, 3.0, 0.0]]
+    - asset: male_adult_construction_01_new
+      start: [0.0, 4.5, 0.0]
+      waypoints: [[4.5, 4.5, 0.0], [0.0, 4.5, 0.0]]
+
+scenarios:
+  # Three ways a multi-UAV tracker loses an identity. Each entry of `plan` runs
+  # as one episode: the whole stack starts, collects, and is torn down again
+  # before the next episode begins, so nothing carries over between them.
+  #
+  #   mutual_occlusion      aircraft overlap and swap places in the same image.
+  #                         Truth kept: heading, speed, relative position, depth
+  #                         order along the camera axis, formation membership.
+  #   structural_occlusion  aircraft pass behind a building or a structure and
+  #                         reappear. Truth kept: last seen pose and velocity,
+  #                         which structure hides it, the predicted path, and
+  #                         the predicted re-emergence box in the image.
+  #   sensor_dropout        the camera link goes dark while the aircraft keeps
+  #                         flying. Truth kept: last observation time, gap
+  #                         length, predicted position, and that the track is
+  #                         still alive.
+  enabled: false                # the orchestrator turns this on per episode
+  active: null                  # which scenario this process is flying
+  seed: null                    # null = a fresh plan per run; set to reproduce
+  episode_id: ""                # filled in by the orchestrator
+  run_dir: artifacts/scenarios
+  dataset_root: artifacts/perception/raw
+  episode_duration_s: 60.0
+  event_start_s: 8.0            # no events until takeoff has settled
+  cooldown_s: 8.0               # dead time between episodes for DDS discovery
+
+  # Every scenario is flown in several environments; the perception stage needs
+  # to see the same task under different light, palette and skyline or it learns
+  # the environment instead of the aircraft.
+  plan:
+    - {scenario: mutual_occlusion, environment: urban_day}
+    - {scenario: mutual_occlusion, environment: urban_dusk}
+    - {scenario: mutual_occlusion, environment: coastal_flats}
+    - {scenario: structural_occlusion, environment: urban_day}
+    - {scenario: structural_occlusion, environment: industrial_yard}
+    - {scenario: structural_occlusion, environment: urban_overcast}
+    - {scenario: sensor_dropout, environment: urban_day}
+    - {scenario: sensor_dropout, environment: urban_night}
+    - {scenario: sensor_dropout, environment: desert_outpost}
+
+  mutual_occlusion:
+    lane_pitch_m: null          # null = drones.safety_radius * 1.05
+    formation_pitch_m: 0.7      # lateral spread inside one team's formation
+    leg_scale_range: [0.92, 1.08]
+    pair_teams: true            # ally i and enemy i aim at the same crossing point
+
+  structural_occlusion:
+    occluder_set: null          # null = the environment preset's loadout
+    lane_pitch_m: null
+    leg_scale_range: [0.8, 1.2] # desynchronized, so each track dies alone
+
+  sensor_dropout:
+    cameras: [front_near, front_far]
+    dropout_count: 6
+    min_dropout_s: 0.4
+    max_dropout_s: 2.5
+    simultaneous: false         # false = the other camera still sees the truth
+    frame_drop_probability: 0.02
+
+telemetry:
+  report_every_s: 2.0           # 0 = no periodic pose reports
+
+ros2:
+  enabled: false                # legacy UGV/People ROS bridge only
+  drive_from_cmd_vel: true      # true = the ROS 2 graph owns the wheels
+  domain_id: null               # null = use $ROS_DOMAIN_ID
+  node_namespace: ""
+  clock_topic: clock
+  cmd_vel_topic: cmd_vel
+  odom_topic: odom
+  tf_topic: tf
+  odom_frame: odom
+  base_frame: base_link
+  person_frame_prefix: person   # -> person_01, person_02, ...
+  max_linear_speed: 1.0
+  max_angular_speed: 2.0
+  publish_people_tf: true
+  map_frame: map
+  publish_swarm_tf: true
+  publish_swarm_cameras: true
+  swarm_image_scale: 0.5       # RViz preview; full camera resolution remains in USD metadata
+
+  # Sensors for Nav2 / perception. Prim paths are relative to ugv.prim_path.
+  sensors:
+    lidar_enabled: true
+    lidar_prim: chassis_link/sensors/front_RPLidar/RPLidar_S2E
+    lidar_topic: scan
+    lidar_frame: front_lidar
+
+    camera_enabled: true
+    camera_prim: chassis_link/sensors/front_hawk/left/camera_left
+    camera_topic: front/rgb
+    camera_info_topic: front/camera_info
+    camera_frame: front_camera
+    camera_width: 640
+    camera_height: 480

@@ -1,0 +1,9 @@
+{
+  "session": "20260828_115645_06_sensor_dropout_urban_day",
+  "images": 173,
+  "objects": 307,
+  "negatives": 3,
+  "scenario": "sensor_dropout",
+  "environment": "urban_day",
+  "episode_id": "20260828_115645_06_sensor_dropout_urban_day"
+}

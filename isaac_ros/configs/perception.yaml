@@ -1,0 +1,40 @@
+# Real-time detector, synthetic-data labelling, and model quality gate.
+detector:
+  base_model: yolo26s.pt
+  confidence: 0.30
+  iou: 0.55
+  image_size: 640
+  max_rate_hz: 10.0
+  device: 0                 # falls back to CPU when CUDA is unavailable
+  half: true
+
+auto_label:
+  sam_model: sam2_t.pt      # small promptable SAM 2.1 model; offline labelling only
+  sam_min_prompt_iou: 0.65  # SAM mask box vs simulator prompt consistency
+  sample_period_s: 1.0
+  collection_seconds: 25
+  geometric_fallback: true  # simulator-projected box if SAM cannot return a mask
+  # An aircraft hidden behind a structure, or painted over by a nearer aircraft,
+  # gets no box. Labelling what the camera cannot see is how a detector learns
+  # to fire on empty facades.
+  label_min_visibility: 0.35
+  # Frames where everything is hidden are kept, up to this share of the labelled
+  # frames, as background with an empty label file. Occlusion episodes produce a
+  # lot of them and a detector needs some, but not all, of them.
+  negative_fraction: 0.15
+
+training:
+  # Every start-up ingests the collection sessions the dataset is missing and
+  # fine-tunes from the latest weights for the current drone-model signature
+  # whenever a session exists that the deployed weights have not seen.
+  # Training runs over the whole cumulative dataset, not just the new frames, so
+  # an episode in a new environment does not erase the earlier ones.
+  acceptance_map50_95: 0.65
+  epochs: 30
+  patience: 8
+  batch: 8
+  image_size: 640
+  seed: 42
+  minimum_images: 18
+
+artifacts_root: artifacts/perception

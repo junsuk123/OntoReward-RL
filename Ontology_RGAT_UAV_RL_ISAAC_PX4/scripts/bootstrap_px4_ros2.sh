@@ -1,0 +1,98 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+workspace_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+ascii_ros2_ws=${ASCII_ROS2_WS:-/home/${USER}/.local/share/ontology_rgat_uav_rl/ros2_ws}
+px4_version=${PX4_VERSION:-v1.14.3}
+px4_msgs_branch=${PX4_MSGS_BRANCH:-release/1.14}
+xrce_version=${XRCE_AGENT_VERSION:-v2.4.2}
+
+if [[ ${1:-} == "--help" ]]; then
+  printf '%s\n' \
+    "Usage: $0" \
+    "Environment overrides:" \
+    "  PX4_VERSION=$px4_version" \
+    "  PX4_MSGS_BRANCH=$px4_msgs_branch (must match PX4)" \
+    "  XRCE_AGENT_VERSION=$xrce_version" \
+    "  ROS_DISTRO=humble" \
+    "  ASCII_ROS2_WS=$ascii_ros2_ws (ROS 2 Humble non-ASCII path workaround)"
+  exit 0
+fi
+
+set +u
+source "/opt/ros/${ROS_DISTRO:-humble}/setup.bash"
+set -u
+mkdir -p "$workspace_root/external" "$workspace_root/ros2_ws/src"
+python3 -m pip install --user -r "$workspace_root/requirements-dev.txt"
+
+if [[ ! -d "$workspace_root/external/PX4-Autopilot/.git" ]]; then
+  git clone --branch "$px4_version" --depth 1 \
+    https://github.com/PX4/PX4-Autopilot.git \
+    "$workspace_root/external/PX4-Autopilot"
+fi
+
+# PX4 v1.14 has a legacy pip spec (>=3.0.*) rejected by current pip.
+if grep -q 'matplotlib>=3.0\.\*' \
+  "$workspace_root/external/PX4-Autopilot/Tools/setup/requirements.txt"; then
+  git -C "$workspace_root/external/PX4-Autopilot" apply \
+    "$workspace_root/patches/px4-v1.14-python-requirements.patch"
+fi
+
+python3 -m pip install --user \
+  --constraint "$workspace_root/requirements-px4-constraints.txt" \
+  --requirement "$workspace_root/external/PX4-Autopilot/Tools/setup/requirements.txt"
+
+# PX4 v1.14 does not publish vehicle_land_detected or vehicle_command_ack over
+# uXRCE-DDS. Without the land detector the gateway cannot tell a hovering
+# vehicle from a landed one, so touchdown is never detected.
+if ! grep -q 'vehicle_land_detected' \
+  "$workspace_root/external/PX4-Autopilot/src/modules/uxrce_dds_client/dds_topics.yaml"; then
+  git -C "$workspace_root/external/PX4-Autopilot" apply \
+    "$workspace_root/patches/px4-v1.14-publish-land-detected.patch"
+fi
+
+if [[ ! -d "$workspace_root/ros2_ws/src/px4_msgs/.git" ]]; then
+  git clone --branch "$px4_msgs_branch" \
+    https://github.com/PX4/px4_msgs.git \
+    "$workspace_root/ros2_ws/src/px4_msgs"
+fi
+
+if [[ ! -d "$workspace_root/external/Micro-XRCE-DDS-Agent/.git" ]]; then
+  git clone --branch "$xrce_version" --recursive \
+    https://github.com/eProsima/Micro-XRCE-DDS-Agent.git \
+    "$workspace_root/external/Micro-XRCE-DDS-Agent"
+fi
+
+# Agent v2.4.2 references the now-deleted moving Fast-DDS branch 2.12.x.
+# Pin the final upstream 2.12 release so a clean bootstrap remains reproducible.
+if grep -q 'set(_fastdds_tag 2.12.x)' \
+  "$workspace_root/external/Micro-XRCE-DDS-Agent/CMakeLists.txt"; then
+  git -C "$workspace_root/external/Micro-XRCE-DDS-Agent" apply \
+    "$workspace_root/patches/micro-xrce-dds-agent-fastdds-v2.12.2.patch"
+fi
+
+cmake -S "$workspace_root/external/Micro-XRCE-DDS-Agent" \
+  -B "$workspace_root/external/Micro-XRCE-DDS-Agent/build" \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_INSTALL_PREFIX="$workspace_root/external/install"
+cmake --build "$workspace_root/external/Micro-XRCE-DDS-Agent/build" --parallel
+cmake --install "$workspace_root/external/Micro-XRCE-DDS-Agent/build"
+
+if [[ ! -x "$workspace_root/external/PX4-Autopilot/build/px4_sitl_default/bin/px4" ]]; then
+  make -C "$workspace_root/external/PX4-Autopilot" px4_sitl_default
+fi
+
+# Humble's rosidl dependency parser corrupts non-ASCII source/build paths.
+# Mirror only the ROS packages into a stable ASCII-only runtime workspace.
+mkdir -p "$ascii_ros2_ws/src"
+cmake -E copy_directory \
+  "$workspace_root/ros2_ws/src/px4_msgs" "$ascii_ros2_ws/src/px4_msgs"
+cmake -E copy_directory \
+  "$workspace_root/ros2_ws/src/ontology_rgat_px4" \
+  "$ascii_ros2_ws/src/ontology_rgat_px4"
+
+cd "$ascii_ros2_ws"
+set +u
+colcon build --symlink-install
+set -u
+printf 'Bootstrap complete. Source %s\n' "$ascii_ros2_ws/install/local_setup.bash"

@@ -1,0 +1,8 @@
+function o=makeObservation(meas,s,cfg)
+o=[meas.pos(1:2)/4; meas.pos(3)/6; meas.vel/3; ...
+   meas.rpy(1:2)/cfg.rl.maxRollPitch; mathx.wrapPi(meas.rpy(3))/pi; ...
+   meas.omega/deg2rad(180); s.windRisk; s.visualStability; s.alignment];
+o=max(-3,min(3,o));
+if numel(o)~=cfg.rl.obsDim, error('Observation dimension mismatch.'); end
+end
+

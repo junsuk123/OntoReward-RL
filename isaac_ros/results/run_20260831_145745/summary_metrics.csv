@@ -1,0 +1,5 @@
+metric,value
+relocalization_success_rate,0.65
+false_match_rate,0.35
+matchability_inlier_pearson,0.3505217505601616
+median_position_error_m,1.0

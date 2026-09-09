@@ -1,0 +1,52 @@
+# Stable vocabulary shared by satellite labels, front-camera detections and tracking.
+namespace: urn:simlab:ontology
+version: 1
+
+classes:
+  Quadrotor:
+    parent: AerialVehicle
+    immutable_identity_property: track_id
+    properties:
+      - track_id
+      - team
+      - model
+      - manufacturer
+      - platform
+      - asset_uri
+  CameraObservation:
+    properties: [sensor_id, frame_index, timestamp, bbox, feature_embedding]
+
+relations:
+  observed_by:
+    domain: Quadrotor
+    range: CameraObservation
+  same_physical_entity:
+    domain: CameraObservation
+    range: CameraObservation
+  member_of_team:
+    domain: Quadrotor
+    range: Team
+
+sensors:
+  front_near:
+    calibration_group: front_parallel
+    usd_prim: /World/Sensors/FrontNear
+  front_far:
+    calibration_group: front_parallel
+    usd_prim: /World/Sensors/FrontFar
+  satellite_nadir:
+    calibration_group: satellite
+    usd_prim: /World/Sensors/SatelliteNadir
+
+association_contract:
+  # Ground-truth ID is a supervision target only; do not feed it as an image feature.
+  supervision_identity: track_id
+  hard_compatibility: [entity_type, model]
+  soft_compatibility: [team, manufacturer, platform]
+  runtime_evidence:
+    - calibrated_ray_geometry
+    - timestamp
+    - motion_prediction
+    - appearance_embedding
+    - silhouette
+  lifecycle_rule: preserve track_id through temporary occlusion; create a new ID only after gating timeout

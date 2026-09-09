@@ -1,0 +1,5 @@
+path: "/home/j/SynologyDrive/junsuk/\uD559\uC220\uB300\uD68C/CICS2026/codes/isaac_ros/artifacts/perception/datasets/20260827_172015"
+train: images/train
+val: images/val
+names:
+  0: drone

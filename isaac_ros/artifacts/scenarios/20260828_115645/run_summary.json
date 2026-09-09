@@ -1,0 +1,1319 @@
+{
+  "stamp": "20260828_115645",
+  "base_seed": 1034019,
+  "episodes": [
+    {
+      "index": 0,
+      "scenario": "mutual_occlusion",
+      "environment": "urban_day",
+      "seed": 1034019000,
+      "duration_s": 60.0,
+      "episode_id": "20260828_115645_00_mutual_occlusion_urban_day",
+      "config": "/home/j/SynologyDrive/junsuk/\ud559\uc220\ub300\ud68c/CICS2026/codes/isaac_ros/artifacts/scenarios/20260828_115645/20260828_115645_00_mutual_occlusion_urban_day/episode.yaml",
+      "raw": "/home/j/SynologyDrive/junsuk/\ud559\uc220\ub300\ud68c/CICS2026/codes/isaac_ros/artifacts/perception/raw/20260828_115645_00_mutual_occlusion_urban_day",
+      "bag": "/home/j/SynologyDrive/junsuk/\ud559\uc220\ub300\ud68c/CICS2026/codes/isaac_ros/artifacts/perception/bags/20260828_115645/20260828_115645_00_mutual_occlusion_urban_day",
+      "status": "ok",
+      "exit_code": 0,
+      "wall_seconds": 126.2,
+      "session": {
+        "session": "20260828_115645_00_mutual_occlusion_urban_day",
+        "scenario": "mutual_occlusion",
+        "environment": "urban_day",
+        "episode_id": "20260828_115645_00_mutual_occlusion_urban_day",
+        "seed": 1034019000,
+        "min_visibility": 0.35,
+        "roster": {
+          "Ally_01": {
+            "team": "friendly",
+            "model": "iris",
+            "formation": "Ally"
+          },
+          "Enemy_01": {
+            "team": "enemy",
+            "model": "quadcopter",
+            "formation": "Enemy"
+          }
+        },
+        "timeline": {
+          "scenario": "mutual_occlusion",
+          "environment": "urban_day",
+          "episode_id": "20260828_115645_00_mutual_occlusion_urban_day",
+          "seed": 1034019000,
+          "duration_s": 60.0,
+          "event_start_s": 8.0,
+          "frame_drop_probability": 0.0,
+          "gaps": []
+        },
+        "images": 180,
+        "labelled_objects": 320,
+        "occluded_objects": 40
+      },
+      "summary": {
+        "scenario": "mutual_occlusion",
+        "environment": "urban_day",
+        "episode_id": "20260828_115645_00_mutual_occlusion_urban_day",
+        "seed": 1034019000,
+        "duration_s": 60.0,
+        "event_start_s": 8.0,
+        "frame_drop_probability": 0.0,
+        "gaps": [],
+        "steps": 3600,
+        "elapsed_s": 60.0,
+        "minimum_separation_m": 1.8,
+        "safety_radius_m": 1.4,
+        "trajectory_seed": 1034019000,
+        "blackout_seconds": {},
+        "camera_gating": true,
+        "lanes": [
+          {
+            "drone_id": "Ally_01",
+            "team": "friendly",
+            "team_index": 0,
+            "lane_x": -0.9,
+            "start_side": -1.0,
+            "leg_duration_s": 11.851,
+            "crossing_group": 0,
+            "formation": "Ally",
+            "formation_offset_y": 0.0,
+            "occlusion_windows": {
+              "front_near": [],
+              "front_far": []
+            }
+          },
+          {
+            "drone_id": "Enemy_01",
+            "team": "enemy",
+            "team_index": 0,
+            "lane_x": 0.9,
+            "start_side": 1.0,
+            "leg_duration_s": 11.851,
+            "crossing_group": 0,
+            "formation": "Enemy",
+            "formation_offset_y": 0.0,
+            "occlusion_windows": {
+              "front_near": [],
+              "front_far": []
+            }
+          }
+        ]
+      }
+    },
+    {
+      "index": 1,
+      "scenario": "mutual_occlusion",
+      "environment": "urban_dusk",
+      "seed": 1034019001,
+      "duration_s": 60.0,
+      "episode_id": "20260828_115645_01_mutual_occlusion_urban_dusk",
+      "config": "/home/j/SynologyDrive/junsuk/\ud559\uc220\ub300\ud68c/CICS2026/codes/isaac_ros/artifacts/scenarios/20260828_115645/20260828_115645_01_mutual_occlusion_urban_dusk/episode.yaml",
+      "raw": "/home/j/SynologyDrive/junsuk/\ud559\uc220\ub300\ud68c/CICS2026/codes/isaac_ros/artifacts/perception/raw/20260828_115645_01_mutual_occlusion_urban_dusk",
+      "bag": "/home/j/SynologyDrive/junsuk/\ud559\uc220\ub300\ud68c/CICS2026/codes/isaac_ros/artifacts/perception/bags/20260828_115645/20260828_115645_01_mutual_occlusion_urban_dusk",
+      "status": "ok",
+      "exit_code": 0,
+      "wall_seconds": 123.8,
+      "session": {
+        "session": "20260828_115645_01_mutual_occlusion_urban_dusk",
+        "scenario": "mutual_occlusion",
+        "environment": "urban_dusk",
+        "episode_id": "20260828_115645_01_mutual_occlusion_urban_dusk",
+        "seed": 1034019001,
+        "min_visibility": 0.35,
+        "roster": {
+          "Ally_01": {
+            "team": "friendly",
+            "model": "iris",
+            "formation": "Ally"
+          },
+          "Enemy_01": {
+            "team": "enemy",
+            "model": "quadcopter",
+            "formation": "Enemy"
+          }
+        },
+        "timeline": {
+          "scenario": "mutual_occlusion",
+          "environment": "urban_dusk",
+          "episode_id": "20260828_115645_01_mutual_occlusion_urban_dusk",
+          "seed": 1034019001,
+          "duration_s": 60.0,
+          "event_start_s": 8.0,
+          "frame_drop_probability": 0.0,
+          "gaps": []
+        },
+        "images": 180,
+        "labelled_objects": 322,
+        "occluded_objects": 38
+      },
+      "summary": {
+        "scenario": "mutual_occlusion",
+        "environment": "urban_dusk",
+        "episode_id": "20260828_115645_01_mutual_occlusion_urban_dusk",
+        "seed": 1034019001,
+        "duration_s": 60.0,
+        "event_start_s": 8.0,
+        "frame_drop_probability": 0.0,
+        "gaps": [],
+        "steps": 3600,
+        "elapsed_s": 60.0,
+        "minimum_separation_m": 1.8,
+        "safety_radius_m": 1.4,
+        "trajectory_seed": 1034019001,
+        "blackout_seconds": {},
+        "camera_gating": true,
+        "lanes": [
+          {
+            "drone_id": "Ally_01",
+            "team": "friendly",
+            "team_index": 0,
+            "lane_x": -0.9,
+            "start_side": -1.0,
+            "leg_duration_s": 11.235,
+            "crossing_group": 0,
+            "formation": "Ally",
+            "formation_offset_y": 0.0,
+            "occlusion_windows": {
+              "front_near": [],
+              "front_far": []
+            }
+          },
+          {
+            "drone_id": "Enemy_01",
+            "team": "enemy",
+            "team_index": 0,
+            "lane_x": 0.9,
+            "start_side": 1.0,
+            "leg_duration_s": 11.235,
+            "crossing_group": 0,
+            "formation": "Enemy",
+            "formation_offset_y": 0.0,
+            "occlusion_windows": {
+              "front_near": [],
+              "front_far": []
+            }
+          }
+        ]
+      }
+    },
+    {
+      "index": 2,
+      "scenario": "mutual_occlusion",
+      "environment": "coastal_flats",
+      "seed": 1034019002,
+      "duration_s": 60.0,
+      "episode_id": "20260828_115645_02_mutual_occlusion_coastal_flats",
+      "config": "/home/j/SynologyDrive/junsuk/\ud559\uc220\ub300\ud68c/CICS2026/codes/isaac_ros/artifacts/scenarios/20260828_115645/20260828_115645_02_mutual_occlusion_coastal_flats/episode.yaml",
+      "raw": "/home/j/SynologyDrive/junsuk/\ud559\uc220\ub300\ud68c/CICS2026/codes/isaac_ros/artifacts/perception/raw/20260828_115645_02_mutual_occlusion_coastal_flats",
+      "bag": "/home/j/SynologyDrive/junsuk/\ud559\uc220\ub300\ud68c/CICS2026/codes/isaac_ros/artifacts/perception/bags/20260828_115645/20260828_115645_02_mutual_occlusion_coastal_flats",
+      "status": "ok",
+      "exit_code": 0,
+      "wall_seconds": 112.7,
+      "session": {
+        "session": "20260828_115645_02_mutual_occlusion_coastal_flats",
+        "scenario": "mutual_occlusion",
+        "environment": "coastal_flats",
+        "episode_id": "20260828_115645_02_mutual_occlusion_coastal_flats",
+        "seed": 1034019002,
+        "min_visibility": 0.35,
+        "roster": {
+          "Ally_01": {
+            "team": "friendly",
+            "model": "iris",
+            "formation": "Ally"
+          },
+          "Enemy_01": {
+            "team": "enemy",
+            "model": "quadcopter",
+            "formation": "Enemy"
+          }
+        },
+        "timeline": {
+          "scenario": "mutual_occlusion",
+          "environment": "coastal_flats",
+          "episode_id": "20260828_115645_02_mutual_occlusion_coastal_flats",
+          "seed": 1034019002,
+          "duration_s": 60.0,
+          "event_start_s": 8.0,
+          "frame_drop_probability": 0.0,
+          "gaps": []
+        },
+        "images": 180,
+        "labelled_objects": 320,
+        "occluded_objects": 40
+      },
+      "summary": {
+        "scenario": "mutual_occlusion",
+        "environment": "coastal_flats",
+        "episode_id": "20260828_115645_02_mutual_occlusion_coastal_flats",
+        "seed": 1034019002,
+        "duration_s": 60.0,
+        "event_start_s": 8.0,
+        "frame_drop_probability": 0.0,
+        "gaps": [],
+        "steps": 3600,
+        "elapsed_s": 60.0,
+        "minimum_separation_m": 1.8,
+        "safety_radius_m": 1.4,
+        "trajectory_seed": 1034019002,
+        "blackout_seconds": {},
+        "camera_gating": true,
+        "lanes": [
+          {
+            "drone_id": "Ally_01",
+            "team": "friendly",
+            "team_index": 0,
+            "lane_x": -0.9,
+            "start_side": -1.0,
+            "leg_duration_s": 11.438,
+            "crossing_group": 0,
+            "formation": "Ally",
+            "formation_offset_y": 0.0,
+            "occlusion_windows": {
+              "front_near": [],
+              "front_far": []
+            }
+          },
+          {
+            "drone_id": "Enemy_01",
+            "team": "enemy",
+            "team_index": 0,
+            "lane_x": 0.9,
+            "start_side": 1.0,
+            "leg_duration_s": 11.438,
+            "crossing_group": 0,
+            "formation": "Enemy",
+            "formation_offset_y": 0.0,
+            "occlusion_windows": {
+              "front_near": [],
+              "front_far": []
+            }
+          }
+        ]
+      }
+    },
+    {
+      "index": 3,
+      "scenario": "structural_occlusion",
+      "environment": "urban_day",
+      "seed": 1034019003,
+      "duration_s": 60.0,
+      "episode_id": "20260828_115645_03_structural_occlusion_urban_day",
+      "config": "/home/j/SynologyDrive/junsuk/\ud559\uc220\ub300\ud68c/CICS2026/codes/isaac_ros/artifacts/scenarios/20260828_115645/20260828_115645_03_structural_occlusion_urban_day/episode.yaml",
+      "raw": "/home/j/SynologyDrive/junsuk/\ud559\uc220\ub300\ud68c/CICS2026/codes/isaac_ros/artifacts/perception/raw/20260828_115645_03_structural_occlusion_urban_day",
+      "bag": "/home/j/SynologyDrive/junsuk/\ud559\uc220\ub300\ud68c/CICS2026/codes/isaac_ros/artifacts/perception/bags/20260828_115645/20260828_115645_03_structural_occlusion_urban_day",
+      "status": "ok",
+      "exit_code": 0,
+      "wall_seconds": 127.0,
+      "session": {
+        "session": "20260828_115645_03_structural_occlusion_urban_day",
+        "scenario": "structural_occlusion",
+        "environment": "urban_day",
+        "episode_id": "20260828_115645_03_structural_occlusion_urban_day",
+        "seed": 1034019003,
+        "min_visibility": 0.35,
+        "roster": {
+          "Ally_01": {
+            "team": "friendly",
+            "model": "iris",
+            "formation": "Ally"
+          },
+          "Enemy_01": {
+            "team": "enemy",
+            "model": "quadcopter",
+            "formation": "Enemy"
+          }
+        },
+        "timeline": {
+          "scenario": "structural_occlusion",
+          "environment": "urban_day",
+          "episode_id": "20260828_115645_03_structural_occlusion_urban_day",
+          "seed": 1034019003,
+          "duration_s": 60.0,
+          "event_start_s": 8.0,
+          "frame_drop_probability": 0.0,
+          "gaps": []
+        },
+        "images": 180,
+        "labelled_objects": 218,
+        "occluded_objects": 142
+      },
+      "summary": {
+        "scenario": "structural_occlusion",
+        "environment": "urban_day",
+        "episode_id": "20260828_115645_03_structural_occlusion_urban_day",
+        "seed": 1034019003,
+        "duration_s": 60.0,
+        "event_start_s": 8.0,
+        "frame_drop_probability": 0.0,
+        "gaps": [],
+        "steps": 3600,
+        "elapsed_s": 60.0,
+        "minimum_separation_m": 1.8,
+        "safety_radius_m": 1.4,
+        "trajectory_seed": 1034019003,
+        "blackout_seconds": {},
+        "camera_gating": true,
+        "lanes": [
+          {
+            "drone_id": "Ally_01",
+            "team": "friendly",
+            "team_index": 0,
+            "lane_x": -0.9,
+            "start_side": -1.0,
+            "leg_duration_s": 13.667,
+            "crossing_group": 0,
+            "formation": "Ally",
+            "formation_offset_y": 0.0,
+            "occlusion_windows": {
+              "front_near": [
+                {
+                  "blocker": "Tower_C",
+                  "y_start": -7.07,
+                  "y_end": -4.43
+                },
+                {
+                  "blocker": "Screen_B",
+                  "y_start": -4.04,
+                  "y_end": -2.46
+                },
+                {
+                  "blocker": "Screen_A",
+                  "y_start": 2.75,
+                  "y_end": 4.64
+                }
+              ],
+              "front_far": [
+                {
+                  "blocker": "Screen_A",
+                  "y_start": -0.56,
+                  "y_end": 1.33
+                },
+                {
+                  "blocker": "Billboard_D",
+                  "y_start": 3.92,
+                  "y_end": 6.82
+                }
+              ]
+            }
+          },
+          {
+            "drone_id": "Enemy_01",
+            "team": "enemy",
+            "team_index": 0,
+            "lane_x": 0.9,
+            "start_side": 1.0,
+            "leg_duration_s": 12.952,
+            "crossing_group": 1,
+            "formation": "Enemy",
+            "formation_offset_y": 0.0,
+            "occlusion_windows": {
+              "front_near": [
+                {
+                  "blocker": "Tower_C",
+                  "y_start": -6.29,
+                  "y_end": -4.02
+                },
+                {
+                  "blocker": "Screen_B",
+                  "y_start": -3.69,
+                  "y_end": -2.32
+                },
+                {
+                  "blocker": "Screen_A",
+                  "y_start": 2.15,
+                  "y_end": 3.78
+                }
+              ],
+              "front_far": [
+                {
+                  "blocker": "Tower_C",
+                  "y_start": -7.56,
+                  "y_end": -5.28
+                },
+                {
+                  "blocker": "Screen_A",
+                  "y_start": -0.27,
+                  "y_end": 1.35
+                },
+                {
+                  "blocker": "Billboard_D",
+                  "y_start": 3.58,
+                  "y_end": 6.08
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "index": 4,
+      "scenario": "structural_occlusion",
+      "environment": "industrial_yard",
+      "seed": 1034019004,
+      "duration_s": 60.0,
+      "episode_id": "20260828_115645_04_structural_occlusion_industrial_yard",
+      "config": "/home/j/SynologyDrive/junsuk/\ud559\uc220\ub300\ud68c/CICS2026/codes/isaac_ros/artifacts/scenarios/20260828_115645/20260828_115645_04_structural_occlusion_industrial_yard/episode.yaml",
+      "raw": "/home/j/SynologyDrive/junsuk/\ud559\uc220\ub300\ud68c/CICS2026/codes/isaac_ros/artifacts/perception/raw/20260828_115645_04_structural_occlusion_industrial_yard",
+      "bag": "/home/j/SynologyDrive/junsuk/\ud559\uc220\ub300\ud68c/CICS2026/codes/isaac_ros/artifacts/perception/bags/20260828_115645/20260828_115645_04_structural_occlusion_industrial_yard",
+      "status": "ok",
+      "exit_code": 0,
+      "wall_seconds": 123.3,
+      "session": {
+        "session": "20260828_115645_04_structural_occlusion_industrial_yard",
+        "scenario": "structural_occlusion",
+        "environment": "industrial_yard",
+        "episode_id": "20260828_115645_04_structural_occlusion_industrial_yard",
+        "seed": 1034019004,
+        "min_visibility": 0.35,
+        "roster": {
+          "Ally_01": {
+            "team": "friendly",
+            "model": "iris",
+            "formation": "Ally"
+          },
+          "Enemy_01": {
+            "team": "enemy",
+            "model": "quadcopter",
+            "formation": "Enemy"
+          }
+        },
+        "timeline": {
+          "scenario": "structural_occlusion",
+          "environment": "industrial_yard",
+          "episode_id": "20260828_115645_04_structural_occlusion_industrial_yard",
+          "seed": 1034019004,
+          "duration_s": 60.0,
+          "event_start_s": 8.0,
+          "frame_drop_probability": 0.0,
+          "gaps": []
+        },
+        "images": 180,
+        "labelled_objects": 227,
+        "occluded_objects": 133
+      },
+      "summary": {
+        "scenario": "structural_occlusion",
+        "environment": "industrial_yard",
+        "episode_id": "20260828_115645_04_structural_occlusion_industrial_yard",
+        "seed": 1034019004,
+        "duration_s": 60.0,
+        "event_start_s": 8.0,
+        "frame_drop_probability": 0.0,
+        "gaps": [],
+        "steps": 3600,
+        "elapsed_s": 60.0,
+        "minimum_separation_m": 1.8,
+        "safety_radius_m": 1.4,
+        "trajectory_seed": 1034019004,
+        "blackout_seconds": {},
+        "camera_gating": true,
+        "lanes": [
+          {
+            "drone_id": "Ally_01",
+            "team": "friendly",
+            "team_index": 0,
+            "lane_x": -0.9,
+            "start_side": -1.0,
+            "leg_duration_s": 11.463,
+            "crossing_group": 0,
+            "formation": "Ally",
+            "formation_offset_y": 0.0,
+            "occlusion_windows": {
+              "front_near": [
+                {
+                  "blocker": "Stack_B",
+                  "y_start": -2.7,
+                  "y_end": -1.29
+                },
+                {
+                  "blocker": "Stack_C",
+                  "y_start": 2.77,
+                  "y_end": 4.36
+                },
+                {
+                  "blocker": "Stack_A",
+                  "y_start": 3.46,
+                  "y_end": 4.85
+                }
+              ],
+              "front_far": [
+                {
+                  "blocker": "Stack_B",
+                  "y_start": -4.97,
+                  "y_end": -3.56
+                },
+                {
+                  "blocker": "Stack_C",
+                  "y_start": -3.73,
+                  "y_end": -2.15
+                },
+                {
+                  "blocker": "Stack_A",
+                  "y_start": 1.22,
+                  "y_end": 2.62
+                }
+              ]
+            }
+          },
+          {
+            "drone_id": "Enemy_01",
+            "team": "enemy",
+            "team_index": 0,
+            "lane_x": 0.9,
+            "start_side": 1.0,
+            "leg_duration_s": 11.226,
+            "crossing_group": 1,
+            "formation": "Enemy",
+            "formation_offset_y": 0.0,
+            "occlusion_windows": {
+              "front_near": [
+                {
+                  "blocker": "Stack_B",
+                  "y_start": -2.53,
+                  "y_end": -1.32
+                },
+                {
+                  "blocker": "Stack_C",
+                  "y_start": 2.18,
+                  "y_end": 3.54
+                },
+                {
+                  "blocker": "Stack_A",
+                  "y_start": 2.76,
+                  "y_end": 3.97
+                }
+              ],
+              "front_far": [
+                {
+                  "blocker": "Stack_B",
+                  "y_start": -4.07,
+                  "y_end": -2.86
+                },
+                {
+                  "blocker": "Stack_C",
+                  "y_start": -3.0,
+                  "y_end": -1.64
+                },
+                {
+                  "blocker": "Stack_A",
+                  "y_start": 1.26,
+                  "y_end": 2.46
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "index": 5,
+      "scenario": "structural_occlusion",
+      "environment": "urban_overcast",
+      "seed": 1034019005,
+      "duration_s": 60.0,
+      "episode_id": "20260828_115645_05_structural_occlusion_urban_overcast",
+      "config": "/home/j/SynologyDrive/junsuk/\ud559\uc220\ub300\ud68c/CICS2026/codes/isaac_ros/artifacts/scenarios/20260828_115645/20260828_115645_05_structural_occlusion_urban_overcast/episode.yaml",
+      "raw": "/home/j/SynologyDrive/junsuk/\ud559\uc220\ub300\ud68c/CICS2026/codes/isaac_ros/artifacts/perception/raw/20260828_115645_05_structural_occlusion_urban_overcast",
+      "bag": "/home/j/SynologyDrive/junsuk/\ud559\uc220\ub300\ud68c/CICS2026/codes/isaac_ros/artifacts/perception/bags/20260828_115645/20260828_115645_05_structural_occlusion_urban_overcast",
+      "status": "ok",
+      "exit_code": 0,
+      "wall_seconds": 124.0,
+      "session": {
+        "session": "20260828_115645_05_structural_occlusion_urban_overcast",
+        "scenario": "structural_occlusion",
+        "environment": "urban_overcast",
+        "episode_id": "20260828_115645_05_structural_occlusion_urban_overcast",
+        "seed": 1034019005,
+        "min_visibility": 0.35,
+        "roster": {
+          "Ally_01": {
+            "team": "friendly",
+            "model": "iris",
+            "formation": "Ally"
+          },
+          "Enemy_01": {
+            "team": "enemy",
+            "model": "quadcopter",
+            "formation": "Enemy"
+          }
+        },
+        "timeline": {
+          "scenario": "structural_occlusion",
+          "environment": "urban_overcast",
+          "episode_id": "20260828_115645_05_structural_occlusion_urban_overcast",
+          "seed": 1034019005,
+          "duration_s": 60.0,
+          "event_start_s": 8.0,
+          "frame_drop_probability": 0.0,
+          "gaps": []
+        },
+        "images": 180,
+        "labelled_objects": 180,
+        "occluded_objects": 180
+      },
+      "summary": {
+        "scenario": "structural_occlusion",
+        "environment": "urban_overcast",
+        "episode_id": "20260828_115645_05_structural_occlusion_urban_overcast",
+        "seed": 1034019005,
+        "duration_s": 60.0,
+        "event_start_s": 8.0,
+        "frame_drop_probability": 0.0,
+        "gaps": [],
+        "steps": 3600,
+        "elapsed_s": 60.0,
+        "minimum_separation_m": 1.8,
+        "safety_radius_m": 1.4,
+        "trajectory_seed": 1034019005,
+        "blackout_seconds": {},
+        "camera_gating": true,
+        "lanes": [
+          {
+            "drone_id": "Ally_01",
+            "team": "friendly",
+            "team_index": 0,
+            "lane_x": -0.9,
+            "start_side": -1.0,
+            "leg_duration_s": 10.253,
+            "crossing_group": 0,
+            "formation": "Ally",
+            "formation_offset_y": 0.0,
+            "occlusion_windows": {
+              "front_near": [
+                {
+                  "blocker": "Wall_South",
+                  "y_start": -6.95,
+                  "y_end": -1.97
+                },
+                {
+                  "blocker": "Pylon_Mid",
+                  "y_start": 2.7,
+                  "y_end": 5.58
+                },
+                {
+                  "blocker": "Wall_North",
+                  "y_start": 4.58,
+                  "y_end": 9.51
+                }
+              ],
+              "front_far": [
+                {
+                  "blocker": "Pylon_Mid",
+                  "y_start": -6.64,
+                  "y_end": -3.76
+                },
+                {
+                  "blocker": "Wall_North",
+                  "y_start": 0.86,
+                  "y_end": 5.79
+                }
+              ]
+            }
+          },
+          {
+            "drone_id": "Enemy_01",
+            "team": "enemy",
+            "team_index": 0,
+            "lane_x": 0.9,
+            "start_side": 1.0,
+            "leg_duration_s": 13.556,
+            "crossing_group": 1,
+            "formation": "Enemy",
+            "formation_offset_y": 0.0,
+            "occlusion_windows": {
+              "front_near": [
+                {
+                  "blocker": "Wall_South",
+                  "y_start": -6.19,
+                  "y_end": -1.9
+                },
+                {
+                  "blocker": "Pylon_Mid",
+                  "y_start": 2.12,
+                  "y_end": 4.6
+                },
+                {
+                  "blocker": "Wall_North",
+                  "y_start": 3.73,
+                  "y_end": 7.97
+                }
+              ],
+              "front_far": [
+                {
+                  "blocker": "Wall_South",
+                  "y_start": -9.04,
+                  "y_end": -4.75
+                },
+                {
+                  "blocker": "Pylon_Mid",
+                  "y_start": -5.51,
+                  "y_end": -3.03
+                },
+                {
+                  "blocker": "Wall_North",
+                  "y_start": 0.95,
+                  "y_end": 5.19
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "index": 6,
+      "scenario": "sensor_dropout",
+      "environment": "urban_day",
+      "seed": 1034019006,
+      "duration_s": 60.0,
+      "episode_id": "20260828_115645_06_sensor_dropout_urban_day",
+      "config": "/home/j/SynologyDrive/junsuk/\ud559\uc220\ub300\ud68c/CICS2026/codes/isaac_ros/artifacts/scenarios/20260828_115645/20260828_115645_06_sensor_dropout_urban_day/episode.yaml",
+      "raw": "/home/j/SynologyDrive/junsuk/\ud559\uc220\ub300\ud68c/CICS2026/codes/isaac_ros/artifacts/perception/raw/20260828_115645_06_sensor_dropout_urban_day",
+      "bag": "/home/j/SynologyDrive/junsuk/\ud559\uc220\ub300\ud68c/CICS2026/codes/isaac_ros/artifacts/perception/bags/20260828_115645/20260828_115645_06_sensor_dropout_urban_day",
+      "status": "ok",
+      "exit_code": 0,
+      "wall_seconds": 126.0,
+      "session": {
+        "session": "20260828_115645_06_sensor_dropout_urban_day",
+        "scenario": "sensor_dropout",
+        "environment": "urban_day",
+        "episode_id": "20260828_115645_06_sensor_dropout_urban_day",
+        "seed": 1034019006,
+        "min_visibility": 0.35,
+        "roster": {
+          "Ally_01": {
+            "team": "friendly",
+            "model": "iris",
+            "formation": "Ally"
+          },
+          "Enemy_01": {
+            "team": "enemy",
+            "model": "quadcopter",
+            "formation": "Enemy"
+          }
+        },
+        "timeline": {
+          "scenario": "sensor_dropout",
+          "environment": "urban_day",
+          "episode_id": "20260828_115645_06_sensor_dropout_urban_day",
+          "seed": 1034019006,
+          "duration_s": 60.0,
+          "event_start_s": 8.0,
+          "frame_drop_probability": 0.02,
+          "gaps": [
+            {
+              "camera": "front_near",
+              "start_s": 11.602,
+              "end_s": 13.695,
+              "duration_s": 2.092,
+              "kind": "blackout"
+            },
+            {
+              "camera": "front_far",
+              "start_s": 19.8,
+              "end_s": 21.336,
+              "duration_s": 1.536,
+              "kind": "blackout"
+            },
+            {
+              "camera": "front_near",
+              "start_s": 25.559,
+              "end_s": 27.773,
+              "duration_s": 2.214,
+              "kind": "blackout"
+            },
+            {
+              "camera": "front_far",
+              "start_s": 35.279,
+              "end_s": 36.827,
+              "duration_s": 1.548,
+              "kind": "blackout"
+            },
+            {
+              "camera": "front_near",
+              "start_s": 44.723,
+              "end_s": 45.843,
+              "duration_s": 1.12,
+              "kind": "blackout"
+            },
+            {
+              "camera": "front_far",
+              "start_s": 52.836,
+              "end_s": 53.809,
+              "duration_s": 0.973,
+              "kind": "blackout"
+            }
+          ]
+        },
+        "images": 173,
+        "labelled_objects": 307,
+        "occluded_objects": 39
+      },
+      "summary": {
+        "scenario": "sensor_dropout",
+        "environment": "urban_day",
+        "episode_id": "20260828_115645_06_sensor_dropout_urban_day",
+        "seed": 1034019006,
+        "duration_s": 60.0,
+        "event_start_s": 8.0,
+        "frame_drop_probability": 0.02,
+        "gaps": [
+          {
+            "camera": "front_near",
+            "start_s": 11.602,
+            "end_s": 13.695,
+            "duration_s": 2.092,
+            "kind": "blackout"
+          },
+          {
+            "camera": "front_far",
+            "start_s": 19.8,
+            "end_s": 21.336,
+            "duration_s": 1.536,
+            "kind": "blackout"
+          },
+          {
+            "camera": "front_near",
+            "start_s": 25.559,
+            "end_s": 27.773,
+            "duration_s": 2.214,
+            "kind": "blackout"
+          },
+          {
+            "camera": "front_far",
+            "start_s": 35.279,
+            "end_s": 36.827,
+            "duration_s": 1.548,
+            "kind": "blackout"
+          },
+          {
+            "camera": "front_near",
+            "start_s": 44.723,
+            "end_s": 45.843,
+            "duration_s": 1.12,
+            "kind": "blackout"
+          },
+          {
+            "camera": "front_far",
+            "start_s": 52.836,
+            "end_s": 53.809,
+            "duration_s": 0.973,
+            "kind": "blackout"
+          }
+        ],
+        "steps": 3600,
+        "elapsed_s": 60.0,
+        "minimum_separation_m": 1.8,
+        "safety_radius_m": 1.4,
+        "trajectory_seed": 1034019006,
+        "blackout_seconds": {
+          "front_near": 6.533,
+          "front_far": 5.267
+        },
+        "camera_gating": true,
+        "lanes": [
+          {
+            "drone_id": "Ally_01",
+            "team": "friendly",
+            "team_index": 0,
+            "lane_x": -0.9,
+            "start_side": -1.0,
+            "leg_duration_s": 11.0,
+            "crossing_group": 0,
+            "formation": "Ally",
+            "formation_offset_y": 0.0,
+            "occlusion_windows": {
+              "front_near": [],
+              "front_far": []
+            }
+          },
+          {
+            "drone_id": "Enemy_01",
+            "team": "enemy",
+            "team_index": 0,
+            "lane_x": 0.9,
+            "start_side": 1.0,
+            "leg_duration_s": 11.0,
+            "crossing_group": 0,
+            "formation": "Enemy",
+            "formation_offset_y": 0.0,
+            "occlusion_windows": {
+              "front_near": [],
+              "front_far": []
+            }
+          }
+        ]
+      }
+    },
+    {
+      "index": 7,
+      "scenario": "sensor_dropout",
+      "environment": "urban_night",
+      "seed": 1034019007,
+      "duration_s": 60.0,
+      "episode_id": "20260828_115645_07_sensor_dropout_urban_night",
+      "config": "/home/j/SynologyDrive/junsuk/\ud559\uc220\ub300\ud68c/CICS2026/codes/isaac_ros/artifacts/scenarios/20260828_115645/20260828_115645_07_sensor_dropout_urban_night/episode.yaml",
+      "raw": "/home/j/SynologyDrive/junsuk/\ud559\uc220\ub300\ud68c/CICS2026/codes/isaac_ros/artifacts/perception/raw/20260828_115645_07_sensor_dropout_urban_night",
+      "bag": "/home/j/SynologyDrive/junsuk/\ud559\uc220\ub300\ud68c/CICS2026/codes/isaac_ros/artifacts/perception/bags/20260828_115645/20260828_115645_07_sensor_dropout_urban_night",
+      "status": "ok",
+      "exit_code": 0,
+      "wall_seconds": 124.4,
+      "session": {
+        "session": "20260828_115645_07_sensor_dropout_urban_night",
+        "scenario": "sensor_dropout",
+        "environment": "urban_night",
+        "episode_id": "20260828_115645_07_sensor_dropout_urban_night",
+        "seed": 1034019007,
+        "min_visibility": 0.35,
+        "roster": {
+          "Ally_01": {
+            "team": "friendly",
+            "model": "iris",
+            "formation": "Ally"
+          },
+          "Enemy_01": {
+            "team": "enemy",
+            "model": "quadcopter",
+            "formation": "Enemy"
+          }
+        },
+        "timeline": {
+          "scenario": "sensor_dropout",
+          "environment": "urban_night",
+          "episode_id": "20260828_115645_07_sensor_dropout_urban_night",
+          "seed": 1034019007,
+          "duration_s": 60.0,
+          "event_start_s": 8.0,
+          "frame_drop_probability": 0.02,
+          "gaps": [
+            {
+              "camera": "front_near",
+              "start_s": 8.109,
+              "end_s": 8.712,
+              "duration_s": 0.603,
+              "kind": "blackout"
+            },
+            {
+              "camera": "front_far",
+              "start_s": 19.526,
+              "end_s": 21.235,
+              "duration_s": 1.709,
+              "kind": "blackout"
+            },
+            {
+              "camera": "front_near",
+              "start_s": 27.249,
+              "end_s": 29.408,
+              "duration_s": 2.159,
+              "kind": "blackout"
+            },
+            {
+              "camera": "front_far",
+              "start_s": 38.158,
+              "end_s": 38.973,
+              "duration_s": 0.815,
+              "kind": "blackout"
+            },
+            {
+              "camera": "front_near",
+              "start_s": 47.303,
+              "end_s": 47.83,
+              "duration_s": 0.527,
+              "kind": "blackout"
+            },
+            {
+              "camera": "front_far",
+              "start_s": 49.37,
+              "end_s": 49.893,
+              "duration_s": 0.523,
+              "kind": "blackout"
+            }
+          ]
+        },
+        "images": 177,
+        "labelled_objects": 318,
+        "occluded_objects": 36
+      },
+      "summary": {
+        "scenario": "sensor_dropout",
+        "environment": "urban_night",
+        "episode_id": "20260828_115645_07_sensor_dropout_urban_night",
+        "seed": 1034019007,
+        "duration_s": 60.0,
+        "event_start_s": 8.0,
+        "frame_drop_probability": 0.02,
+        "gaps": [
+          {
+            "camera": "front_near",
+            "start_s": 8.109,
+            "end_s": 8.712,
+            "duration_s": 0.603,
+            "kind": "blackout"
+          },
+          {
+            "camera": "front_far",
+            "start_s": 19.526,
+            "end_s": 21.235,
+            "duration_s": 1.709,
+            "kind": "blackout"
+          },
+          {
+            "camera": "front_near",
+            "start_s": 27.249,
+            "end_s": 29.408,
+            "duration_s": 2.159,
+            "kind": "blackout"
+          },
+          {
+            "camera": "front_far",
+            "start_s": 38.158,
+            "end_s": 38.973,
+            "duration_s": 0.815,
+            "kind": "blackout"
+          },
+          {
+            "camera": "front_near",
+            "start_s": 47.303,
+            "end_s": 47.83,
+            "duration_s": 0.527,
+            "kind": "blackout"
+          },
+          {
+            "camera": "front_far",
+            "start_s": 49.37,
+            "end_s": 49.893,
+            "duration_s": 0.523,
+            "kind": "blackout"
+          }
+        ],
+        "steps": 3600,
+        "elapsed_s": 60.0,
+        "minimum_separation_m": 1.8,
+        "safety_radius_m": 1.4,
+        "trajectory_seed": 1034019007,
+        "blackout_seconds": {
+          "front_near": 4.417,
+          "front_far": 4.1
+        },
+        "camera_gating": true,
+        "lanes": [
+          {
+            "drone_id": "Ally_01",
+            "team": "friendly",
+            "team_index": 0,
+            "lane_x": -0.9,
+            "start_side": -1.0,
+            "leg_duration_s": 11.0,
+            "crossing_group": 0,
+            "formation": "Ally",
+            "formation_offset_y": 0.0,
+            "occlusion_windows": {
+              "front_near": [],
+              "front_far": []
+            }
+          },
+          {
+            "drone_id": "Enemy_01",
+            "team": "enemy",
+            "team_index": 0,
+            "lane_x": 0.9,
+            "start_side": 1.0,
+            "leg_duration_s": 11.0,
+            "crossing_group": 0,
+            "formation": "Enemy",
+            "formation_offset_y": 0.0,
+            "occlusion_windows": {
+              "front_near": [],
+              "front_far": []
+            }
+          }
+        ]
+      }
+    },
+    {
+      "index": 8,
+      "scenario": "sensor_dropout",
+      "environment": "desert_outpost",
+      "seed": 1034019008,
+      "duration_s": 60.0,
+      "episode_id": "20260828_115645_08_sensor_dropout_desert_outpost",
+      "config": "/home/j/SynologyDrive/junsuk/\ud559\uc220\ub300\ud68c/CICS2026/codes/isaac_ros/artifacts/scenarios/20260828_115645/20260828_115645_08_sensor_dropout_desert_outpost/episode.yaml",
+      "raw": "/home/j/SynologyDrive/junsuk/\ud559\uc220\ub300\ud68c/CICS2026/codes/isaac_ros/artifacts/perception/raw/20260828_115645_08_sensor_dropout_desert_outpost",
+      "bag": "/home/j/SynologyDrive/junsuk/\ud559\uc220\ub300\ud68c/CICS2026/codes/isaac_ros/artifacts/perception/bags/20260828_115645/20260828_115645_08_sensor_dropout_desert_outpost",
+      "status": "ok",
+      "exit_code": 0,
+      "wall_seconds": 113.5,
+      "session": {
+        "session": "20260828_115645_08_sensor_dropout_desert_outpost",
+        "scenario": "sensor_dropout",
+        "environment": "desert_outpost",
+        "episode_id": "20260828_115645_08_sensor_dropout_desert_outpost",
+        "seed": 1034019008,
+        "min_visibility": 0.35,
+        "roster": {
+          "Ally_01": {
+            "team": "friendly",
+            "model": "iris",
+            "formation": "Ally"
+          },
+          "Enemy_01": {
+            "team": "enemy",
+            "model": "quadcopter",
+            "formation": "Enemy"
+          }
+        },
+        "timeline": {
+          "scenario": "sensor_dropout",
+          "environment": "desert_outpost",
+          "episode_id": "20260828_115645_08_sensor_dropout_desert_outpost",
+          "seed": 1034019008,
+          "duration_s": 60.0,
+          "event_start_s": 8.0,
+          "frame_drop_probability": 0.02,
+          "gaps": [
+            {
+              "camera": "front_near",
+              "start_s": 9.985,
+              "end_s": 12.182,
+              "duration_s": 2.197,
+              "kind": "blackout"
+            },
+            {
+              "camera": "front_far",
+              "start_s": 21.255,
+              "end_s": 22.841,
+              "duration_s": 1.587,
+              "kind": "blackout"
+            },
+            {
+              "camera": "front_near",
+              "start_s": 25.305,
+              "end_s": 27.342,
+              "duration_s": 2.036,
+              "kind": "blackout"
+            },
+            {
+              "camera": "front_far",
+              "start_s": 35.775,
+              "end_s": 37.978,
+              "duration_s": 2.202,
+              "kind": "blackout"
+            },
+            {
+              "camera": "front_near",
+              "start_s": 46.423,
+              "end_s": 47.776,
+              "duration_s": 1.353,
+              "kind": "blackout"
+            },
+            {
+              "camera": "front_far",
+              "start_s": 56.007,
+              "end_s": 56.731,
+              "duration_s": 0.725,
+              "kind": "blackout"
+            }
+          ]
+        },
+        "images": 174,
+        "labelled_objects": 312,
+        "occluded_objects": 36
+      },
+      "summary": {
+        "scenario": "sensor_dropout",
+        "environment": "desert_outpost",
+        "episode_id": "20260828_115645_08_sensor_dropout_desert_outpost",
+        "seed": 1034019008,
+        "duration_s": 60.0,
+        "event_start_s": 8.0,
+        "frame_drop_probability": 0.02,
+        "gaps": [
+          {
+            "camera": "front_near",
+            "start_s": 9.985,
+            "end_s": 12.182,
+            "duration_s": 2.197,
+            "kind": "blackout"
+          },
+          {
+            "camera": "front_far",
+            "start_s": 21.255,
+            "end_s": 22.841,
+            "duration_s": 1.587,
+            "kind": "blackout"
+          },
+          {
+            "camera": "front_near",
+            "start_s": 25.305,
+            "end_s": 27.342,
+            "duration_s": 2.036,
+            "kind": "blackout"
+          },
+          {
+            "camera": "front_far",
+            "start_s": 35.775,
+            "end_s": 37.978,
+            "duration_s": 2.202,
+            "kind": "blackout"
+          },
+          {
+            "camera": "front_near",
+            "start_s": 46.423,
+            "end_s": 47.776,
+            "duration_s": 1.353,
+            "kind": "blackout"
+          },
+          {
+            "camera": "front_far",
+            "start_s": 56.007,
+            "end_s": 56.731,
+            "duration_s": 0.725,
+            "kind": "blackout"
+          }
+        ],
+        "steps": 3600,
+        "elapsed_s": 60.0,
+        "minimum_separation_m": 1.8,
+        "safety_radius_m": 1.4,
+        "trajectory_seed": 1034019008,
+        "blackout_seconds": {
+          "front_near": 6.817,
+          "front_far": 5.483
+        },
+        "camera_gating": true,
+        "lanes": [
+          {
+            "drone_id": "Ally_01",
+            "team": "friendly",
+            "team_index": 0,
+            "lane_x": -0.9,
+            "start_side": -1.0,
+            "leg_duration_s": 11.0,
+            "crossing_group": 0,
+            "formation": "Ally",
+            "formation_offset_y": 0.0,
+            "occlusion_windows": {
+              "front_near": [],
+              "front_far": []
+            }
+          },
+          {
+            "drone_id": "Enemy_01",
+            "team": "enemy",
+            "team_index": 0,
+            "lane_x": 0.9,
+            "start_side": 1.0,
+            "leg_duration_s": 11.0,
+            "crossing_group": 0,
+            "formation": "Enemy",
+            "formation_offset_y": 0.0,
+            "occlusion_windows": {
+              "front_near": [],
+              "front_far": []
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

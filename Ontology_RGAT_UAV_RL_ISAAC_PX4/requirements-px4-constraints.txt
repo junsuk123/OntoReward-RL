@@ -1,0 +1,4 @@
+# PX4 v1.14 generators use EmPy's 3.x API. Colcon-core on Humble requires
+# setuptools below 80. Keep these transitive tools deterministic.
+empy==3.3.4
+setuptools<80

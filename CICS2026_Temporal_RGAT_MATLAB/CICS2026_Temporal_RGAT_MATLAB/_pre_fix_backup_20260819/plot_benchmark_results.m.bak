@@ -1,0 +1,26 @@
+function plot_benchmark_results(results,Y,cfg)
+%PLOT_BENCHMARK_RESULTS Figures appear immediately and are also exported.
+keys=fieldnames(results); names=strings(numel(keys),1); f1=zeros(numel(keys),1); au=zeros(numel(keys),1);
+for i=1:numel(keys), names(i)=results.(keys{i}).name; f1(i)=results.(keys{i}).metrics.F1; au(i)=results.(keys{i}).metrics.AUROC; end
+% Figures travel out of their directory into slides, so a surrogate run labels itself.
+if cfg.allowSurrogateSoftLabel
+    tag=" [NON-STRICT: surrogate soft label]";
+else
+    tag="";
+end
+figure('Name','CICS2026 Benchmark Summary','Color','w');
+tiledlayout(1,2);
+nexttile; bar(f1); ylim([0 1]); xticks(1:numel(names)); xticklabels(names); xtickangle(45); ylabel('F1'); title("Deep Urban F1"+tag); grid on;
+nexttile; bar(au); ylim([0 1]); xticks(1:numel(names)); xticklabels(names); xtickangle(45); ylabel('AUROC'); title("Deep Urban AUROC"+tag); grid on;
+exportgraphics(gcf,fullfile(cfg.outputDir,'benchmark_summary.png'),'Resolution',180);
+
+prior=matlab.lang.makeValidName('Transformer-DualEDL'); prop=matlab.lang.makeValidName('TemporalR-GAT-DualEDL');
+figure('Name','Deep Urban Fault Probability','Color','w');
+plot(Y,'k','LineWidth',1.2); hold on;
+plot(results.(prior).pFault,'LineWidth',1.0);
+plot(results.(prop).pFault,'LineWidth',1.0);
+yline(cfg.threshold,'--'); ylim([-0.05 1.05]); grid on;
+legend('Hard label','Prior Transformer-Dual EDL','Temporal R-GAT-Dual EDL','Threshold','Location','best');
+xlabel('Window'); ylabel('Fault probability'); title("Deep Urban"+tag);
+exportgraphics(gcf,fullfile(cfg.outputDir,'fault_probability_timeseries.png'),'Resolution',180);
+end

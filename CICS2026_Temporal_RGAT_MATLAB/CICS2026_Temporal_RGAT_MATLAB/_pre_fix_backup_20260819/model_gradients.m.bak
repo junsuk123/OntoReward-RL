@@ -1,0 +1,39 @@
+function [loss,gradients,state,parts] = model_gradients(net,X,Yhard,Ysoft,lossMode,cfg,epoch)
+%MODEL_GRADIENTS Custom loss for softmax/EDL/Dual-EDL models.
+[raw,state]=forward(net,X);
+raw=stripdims(raw); Yhard=single(Yhard); Ysoft=single(Ysoft);
+Th=[1-Yhard;Yhard]; Ts=[1-Ysoft;Ysoft];
+mode=string(lossMode); parts=struct('hard',0,'weak',0,'klHard',0,'klWeak',0);
+switch mode
+    case "softmax_hard"
+        P=softmax_cols(raw); loss=cross_entropy_prob(P,Th);
+    case "edl_hard"
+        a=softplus_stable(raw)+1; P=a./sum(a,1);
+        ce=cross_entropy_prob(P,Th); kl=dirichlet_kl_uniform(a);
+        loss=ce+cfg.edl.klHardWeight*kl; parts.hard=ce; parts.klHard=kl;
+    case "edl_soft"
+        a=softplus_stable(raw)+1; P=a./sum(a,1);
+        ce=cross_entropy_prob(P,Ts); kl=dirichlet_kl_uniform(a);
+        lam=min(1,epoch/cfg.edl.annealEpochs);
+        loss=ce+lam*cfg.edl.klWeakWeight*kl; parts.weak=ce; parts.klWeak=kl;
+    case "dual_edl"
+        a1=softplus_stable(raw(1:2,:))+1; a2=softplus_stable(raw(3:4,:))+1;
+        p1=a1./sum(a1,1); p2=a2./sum(a2,1);
+        ce1=cross_entropy_prob(p1,Th); kl1=dirichlet_kl_uniform(a1);
+        ce2=cross_entropy_prob(p2,Ts); kl2=dirichlet_kl_uniform(a2);
+        lam=min(1,epoch/cfg.edl.annealEpochs);
+        Lh=ce1+cfg.edl.klHardWeight*kl1;
+        Lw=ce2+lam*cfg.edl.klWeakWeight*kl2;
+        loss=Lh+cfg.edl.betaWeak*Lw;
+        parts.hard=Lh; parts.weak=Lw; parts.klHard=kl1; parts.klWeak=kl2;
+    otherwise
+        error('Unknown loss mode %s',mode);
+end
+gradients=dlgradient(loss,net.Learnables);
+end
+function P=softmax_cols(Z)
+Z=Z-max(Z,[],1); E=exp(Z); P=E./(sum(E,1)+1e-8);
+end
+function L=cross_entropy_prob(P,T)
+L=-mean(sum(T.*log(P+single(1e-7)),1),'all');
+end

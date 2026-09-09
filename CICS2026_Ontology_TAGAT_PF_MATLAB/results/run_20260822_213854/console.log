@@ -1,0 +1,9 @@
+
+=== CICS2026 Ontology-TA-GAT Adaptive PF Experiment ===
+Mode        : SYNTHETIC
+Run folder  : c:\Users\user\SynologyDrive\junsuk\학술대회\CICS2026\codes\CICS2026_Ontology_TAGAT_PF_MATLAB\results\run_20260822_213854
+MATLAB      : 25.2.0.3312555 (R2025b) Update 6
+
+Samples: total=200 train=110 val=30 test=60
+
+--- Training GAT baseline ---

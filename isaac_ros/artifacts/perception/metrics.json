@@ -1,0 +1,24 @@
+{
+  "model": "/home/j/SynologyDrive/junsuk/\ud559\uc220\ub300\ud68c/CICS2026/codes/isaac_ros/artifacts/perception/training/drone_yolo26s_20260828_121810/weights/best.pt",
+  "initial_model": "/home/j/SynologyDrive/junsuk/\ud559\uc220\ub300\ud68c/CICS2026/codes/isaac_ros/artifacts/perception/training/drone_yolo26s_20260828_110057/weights/best.pt",
+  "signature": "b7d00400e46a",
+  "dataset": "/home/j/SynologyDrive/junsuk/\ud559\uc220\ub300\ud68c/CICS2026/codes/isaac_ros/artifacts/perception/datasets/cumulative_b7d00400e46a",
+  "metric": "mAP50-95",
+  "score": 0.72358225944371,
+  "threshold": 0.65,
+  "incumbent_score": 0.6688016209403542,
+  "required_score": 0.6688016209403542,
+  "accepted": true,
+  "sessions_learned": [
+    "20260828_115645_00_mutual_occlusion_urban_day",
+    "20260828_115645_01_mutual_occlusion_urban_dusk",
+    "20260828_115645_02_mutual_occlusion_coastal_flats",
+    "20260828_115645_03_structural_occlusion_urban_day",
+    "20260828_115645_04_structural_occlusion_industrial_yard",
+    "20260828_115645_05_structural_occlusion_urban_overcast",
+    "20260828_115645_06_sensor_dropout_urban_day",
+    "20260828_115645_07_sensor_dropout_urban_night",
+    "20260828_115645_08_sensor_dropout_desert_outpost"
+  ],
+  "dataset_images": 2180
+}

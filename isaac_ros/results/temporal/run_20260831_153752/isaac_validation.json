@@ -1,0 +1,13 @@
+{
+  "isaac_sim_version": "5.1.0.0",
+  "aircraft_type": "procedural_fixed_wing",
+  "trajectory_mode": "spiral",
+  "map_extent_m": 300.0,
+  "epoch_count": 6,
+  "camera_pose_count": 32,
+  "rgb_image_count": 192,
+  "video_count": 6,
+  "usd_layer_count": 6,
+  "matching_query_count": 160,
+  "status": "complete"
+}

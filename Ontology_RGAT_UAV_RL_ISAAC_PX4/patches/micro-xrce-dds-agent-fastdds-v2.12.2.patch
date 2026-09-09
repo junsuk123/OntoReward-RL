@@ -1,0 +1,13 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 65e15c6..7377164 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -96,7 +96,7 @@ if(NOT UAGENT_USE_SYSTEM_FASTDDS)
+         set(_fastdds_version 2)
+     else()
+         set(_fastdds_version 2.12)
+-        set(_fastdds_tag 2.12.x)
++        set(_fastdds_tag v2.12.2)
+     endif()
+ 
+     list(APPEND _deps "fastrtps\;${_fastdds_version}")

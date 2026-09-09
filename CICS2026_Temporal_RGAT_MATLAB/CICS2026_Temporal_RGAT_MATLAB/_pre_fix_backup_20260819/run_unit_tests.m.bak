@@ -1,0 +1,45 @@
+function run_unit_tests()
+%RUN_UNIT_TESTS Data-contract, model-build, forward-shape, EDL and attention tests.
+cfg=cics_config("demo");
+D=load_scenarios(cfg); [D,~,~]=normalize_scenarios(D,cfg);
+[X,yh,ys]=concat_windows(D.medium,D.harsh,cfg,0);
+assert(size(X,1)==12 && size(X,2)==cfg.window);
+assert(numel(yh)==size(X,3) && all(ys>=0&ys<=1));
+G=build_ontology_graph(cfg,false);
+assert(isequal(size(G.adjacency),[12 12 6]));
+
+% EDL decoder sanity.
+a=single([2 3;4 1]);
+[p,u]=edl_decode(a,"edl_hard");
+assert(all(p>=0&p<=1) && all(u>0&u<=1));
+
+% Temporal R-GAT forward and analyzer sanity.
+m=build_model("TemporalR-GAT-DualEDL",cfg);
+xb=permute(X(:,:,1:min(2,size(X,3))),[1 3 2]); % C x B x T
+raw=predict(m.net,dlarray(single(xb),'CBT'));
+r=extractdata(raw);
+assert(size(r,1)==4 && size(r,2)==size(xb,2));
+[p2,u2]=edl_decode(single(r),m.lossMode);
+assert(all(isfinite(p2)) && all(p2>=0&p2<=1));
+assert(all(isfinite(u2)) && all(u2>0&u2<=1));
+
+layers=m.net.Layers; rg=[];
+for k=1:numel(layers)
+    if isa(layers(k),'TemporalRGATLayer'), rg=layers(k); break; end
+end
+assert(~isempty(rg));
+S=rg.analyze(single(X(:,:,1)));
+assert(abs(sum(S.node)-1)<1e-4);
+assert(abs(sum(S.relation)-1)<1e-4);
+assert(abs(sum(S.timeLag)-1)<1e-4);
+assert(abs(sum(S.head)-1)<1e-4);
+assert(abs(sum(S.layer)-1)<1e-4);
+
+% Prior Transformer forward path sanity.
+tm=build_model("Transformer-DualEDL",cfg);
+rawT=predict(tm.net,dlarray(single(xb),'CBT'));
+rT=extractdata(rawT);
+assert(size(rT,1)==4 && size(rT,2)==size(xb,2));
+
+fprintf('All unit/forward-shape tests passed.\n');
+end

@@ -1,0 +1,49 @@
+{
+  "scenario": "mutual_occlusion",
+  "environment": "coastal_flats",
+  "episode_id": "20260828_115645_02_mutual_occlusion_coastal_flats",
+  "seed": 1034019002,
+  "duration_s": 60.0,
+  "event_start_s": 8.0,
+  "frame_drop_probability": 0.0,
+  "gaps": [],
+  "steps": 3600,
+  "elapsed_s": 60.0,
+  "minimum_separation_m": 1.8,
+  "safety_radius_m": 1.4,
+  "trajectory_seed": 1034019002,
+  "blackout_seconds": {},
+  "camera_gating": true,
+  "lanes": [
+    {
+      "drone_id": "Ally_01",
+      "team": "friendly",
+      "team_index": 0,
+      "lane_x": -0.9,
+      "start_side": -1.0,
+      "leg_duration_s": 11.438,
+      "crossing_group": 0,
+      "formation": "Ally",
+      "formation_offset_y": 0.0,
+      "occlusion_windows": {
+        "front_near": [],
+        "front_far": []
+      }
+    },
+    {
+      "drone_id": "Enemy_01",
+      "team": "enemy",
+      "team_index": 0,
+      "lane_x": 0.9,
+      "start_side": 1.0,
+      "leg_duration_s": 11.438,
+      "crossing_group": 0,
+      "formation": "Enemy",
+      "formation_offset_y": 0.0,
+      "occlusion_windows": {
+        "front_near": [],
+        "front_far": []
+      }
+    }
+  ]
+}

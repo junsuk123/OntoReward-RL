@@ -53,10 +53,11 @@ What is modelled
 What is not modelled
 --------------------
 Carrier phase, RTK, or any correction service; the constellation moves
-negligibly over a fifteen-second episode and is held fixed within one; and PX4's
-own EKF is not corrupted (Pegasus' GPS sensor is not part of this workspace).
-The modelled error is applied to the estimate the *gateway* hands the policy,
-which is documented in docs/ARCHITECTURE.md, "GNSS".
+negligibly over a fifteen-second episode and is held fixed within one.  The
+resulting fix is converted to Pegasus' HIL_GPS sensor contract by
+``hil_gps_measurement``.  PX4 therefore sees the same degraded measurements as
+the policy telemetry and its EKF can genuinely switch between GNSS aiding and
+inertial dead reckoning.
 """
 
 from __future__ import annotations
@@ -108,6 +109,11 @@ class GnssConfig:
     cn0_sigma_db: float
     nlos_cn0_penalty_db: float
     cn0_detection_margin_db: float
+    # Inflate the range variance of a signal whose C/N0 is inconsistent with
+    # its elevation. This is the receiver-side NLOS mitigation step: detected
+    # reflections still contribute weakly instead of dragging the entire WLS
+    # solution across the street.
+    nlos_sigma_scale: float
     # Doppler is far less sensitive to a reflected path than the pseudorange.
     velocity_error_scale: float
     # How much of the vertical GNSS error survives into the estimate. A
@@ -124,6 +130,17 @@ class GnssConfig:
     cn0_weight: float
     # Dead reckoning while there are too few satellites for a fix.
     outage_drift_m_s: float
+    # Receiver/HIL interface.  EPH/EPV are deliberately never reported as
+    # zero: PX4 interprets them as measurement accuracy and uses them to set
+    # the GNSS observation weight.
+    update_rate_hz: float
+    eph_floor_m: float
+    epv_floor_m: float
+    inject_into_px4: bool
+    dr_enter_quality: float
+    dr_exit_quality: float
+    recovery_epochs: int
+    bootstrap_s: float
 
     @classmethod
     def from_mapping(cls, data: dict[str, Any]) -> "GnssConfig":
@@ -143,6 +160,7 @@ class GnssConfig:
             cn0_sigma_db=float(gnss.get("cn0_sigma_db", 1.5)),
             nlos_cn0_penalty_db=float(gnss.get("nlos_cn0_penalty_db", 9.0)),
             cn0_detection_margin_db=float(gnss.get("cn0_detection_margin_db", 4.0)),
+            nlos_sigma_scale=float(gnss.get("nlos_sigma_scale", 10.0)),
             velocity_error_scale=float(gnss.get("velocity_error_scale", 0.06)),
             vertical_blend=float(gnss.get("vertical_blend", 0.15)),
             hdop_scale=float(gnss.get("hdop_scale", 2.5)),
@@ -150,6 +168,14 @@ class GnssConfig:
             sigma_scale_m=float(gnss.get("sigma_scale_m", 10.0)),
             cn0_weight=float(gnss.get("cn0_weight", 0.85)),
             outage_drift_m_s=float(gnss.get("outage_drift_m_s", 0.8)),
+            update_rate_hz=float(gnss.get("update_rate_hz", 10.0)),
+            eph_floor_m=float(gnss.get("eph_floor_m", 0.6)),
+            epv_floor_m=float(gnss.get("epv_floor_m", 1.0)),
+            inject_into_px4=bool(gnss.get("inject_into_px4", True)),
+            dr_enter_quality=float(gnss.get("dr_enter_quality", 0.45)),
+            dr_exit_quality=float(gnss.get("dr_exit_quality", 0.65)),
+            recovery_epochs=int(gnss.get("recovery_epochs", 5)),
+            bootstrap_s=float(gnss.get("bootstrap_s", 15.0)),
         )
 
 
@@ -200,10 +226,10 @@ class GnssFix:
     def to_dict(self) -> dict[str, Any]:
         """Observables plus the simulator's truth, the latter clearly labelled.
 
-        The truth crosses the simulator-to-gateway wire because the gateway is
-        what injects the error into the estimate: Pegasus' GPS sensor is not in
-        this workspace, so it cannot be applied upstream of PX4's EKF. The
-        gateway forwards the observables to the policy and keeps the rest.
+        The truth crosses the simulator-to-gateway wire for diagnostics and
+        legacy replay only. UrbanGnssSensor applies the same error upstream of
+        PX4 through HIL_GPS; the gateway forwards the observables to the policy
+        and never exposes this subobject to the learner.
         """
         out = self.observables()
         out["truth"] = {
@@ -364,11 +390,20 @@ class GnssReceiver:
                  + cfg.thermal_sigma_m * self.rng.standard_normal(used.size) / sin_el)
         error *= self.scale
 
+        cn0, suspect = self._carrier_to_noise(used, elevation, is_nlos)
+        # C/N0-based NLOS mitigation. A signal that is implausibly weak for its
+        # claimed elevation is not thrown away (which could destroy geometry),
+        # but its variance is inflated so the clean LOS ranges and IMU dominate.
+        # The detector is imperfect by construction, hence the remaining urban
+        # bias that the ontology still has to reason about.
+        effective_sigma = sigma * np.where(
+            suspect, max(float(cfg.nlos_sigma_scale), 1.0), 1.0)
+
         # Weighted least squares, exactly as the receiver solves it: rows are
         # [-u, 1] because a pseudorange grows when the receiver moves away from
         # the satellite, and the fourth column is the receiver clock.
         design = np.concatenate([-unit, np.ones((used.size, 1))], axis=1)
-        weight = 1.0 / sigma**2
+        weight = 1.0 / effective_sigma**2
         try:
             # Unweighted, so the reported DOP is the classical geometry figure
             # and not something in units of an assumed range accuracy.
@@ -386,7 +421,6 @@ class GnssReceiver:
         hdop = float(math.sqrt(max(geometry[0, 0] + geometry[1, 1], 0.0)))
         vdop = float(math.sqrt(max(geometry[2, 2], 0.0)))
         residual_rms = float(math.sqrt(float(np.mean(residual ** 2))))
-        cn0, suspect = self._carrier_to_noise(used, elevation, is_nlos)
         # The accuracy the receiver publishes: its own formal covariance,
         # rescaled by how badly the ranges disagree with each other. That
         # a-posteriori variance factor is the receiver's only handle on
@@ -500,3 +534,72 @@ class UrbanGnss:
     def update(self, uav_position, deck_position, dt: float) -> tuple[GnssFix, GnssFix]:
         return (self.uav.update(uav_position, self.layout, dt),
                 self.deck.update(deck_position, self.layout, dt))
+
+
+# WGS84 semi-major axis.  This is the same local tangent-plane approximation
+# used by osm_city.py and by the ROS gateway; over this city block the omitted
+# ellipsoid terms are far below the sensor noise.
+WGS84_A = 6378137.0
+
+
+def hil_gps_measurement(fix: GnssFix, position_enu, velocity_enu,
+                        origin_latitude_deg: float, origin_longitude_deg: float,
+                        origin_altitude_m: float, cfg: GnssConfig) -> dict[str, Any]:
+    """Convert one urban fix to the dictionary Pegasus sends as HIL_GPS.
+
+    Pegasus' backend expects position in degrees/metres, velocity in NED, and
+    EPH/EPV in centimetres (the MAVLink uint16 units).  Keeping this conversion
+    here, outside Isaac Sim, makes its units and axes regression-testable.
+    """
+    position = np.asarray(position_enu, dtype=float)
+    velocity = np.asarray(velocity_enu, dtype=float)
+    error = np.asarray(fix.error_enu_m, dtype=float)
+    velocity_error = np.asarray(fix.velocity_error_enu_m_s, dtype=float)
+    if any(value.shape != (3,) for value in (position, velocity, error, velocity_error)):
+        raise ValueError("HIL_GPS position, velocity and errors must be 3-vectors")
+    if not all(np.isfinite(value).all()
+               for value in (position, velocity, error, velocity_error)):
+        raise ValueError("HIL_GPS position, velocity and errors must be finite")
+
+    measured_position = position + error
+    measured_velocity = velocity + velocity_error
+    lat0_rad = math.radians(float(origin_latitude_deg))
+    latitude = float(origin_latitude_deg) + math.degrees(measured_position[1] / WGS84_A)
+    longitude = float(origin_longitude_deg) + math.degrees(
+        measured_position[0] / (WGS84_A * max(abs(math.cos(lat0_rad)), 1e-9)))
+
+    # The model directly estimates horizontal covariance.  Scale the vertical
+    # accuracy by DOP when available.  HIL_GPS uses centimetres and saturates at
+    # uint16; an outage uses the maximum rather than pretending to be precise.
+    if fix.valid:
+        eph_m = max(float(fix.sigma_xy_m), float(cfg.eph_floor_m))
+        dop_ratio = float(fix.vdop) / max(float(fix.hdop), 1e-3)
+        epv_m = max(eph_m * dop_ratio, float(cfg.epv_floor_m))
+    else:
+        eph_m = epv_m = 655.35
+    eph_cm = int(np.clip(round(100.0 * eph_m), 1, 65535))
+    epv_cm = int(np.clip(round(100.0 * epv_m), 1, 65535))
+
+    speed = float(np.linalg.norm(measured_velocity[:2]))
+    course = math.degrees(math.atan2(measured_velocity[0], measured_velocity[1]))
+    if course < 0.0:
+        course += 360.0
+    return {
+        "fix_type": int(fix.fix_type if fix.valid else 0),
+        "latitude": latitude,
+        "longitude": longitude,
+        "altitude": float(origin_altitude_m) + float(measured_position[2]),
+        "eph": eph_cm,
+        "epv": epv_cm,
+        "speed": speed,
+        "velocity_north": float(measured_velocity[1]),
+        "velocity_east": float(measured_velocity[0]),
+        "velocity_down": float(-measured_velocity[2]),
+        "cog": course,
+        # Pegasus misspells this key in its public sensor contract.
+        "sattelites_visible": int(fix.satellites_tracked),
+        "latitude_gt": float(origin_latitude_deg) + math.degrees(position[1] / WGS84_A),
+        "longitude_gt": float(origin_longitude_deg) + math.degrees(
+            position[0] / (WGS84_A * max(abs(math.cos(lat0_rad)), 1e-9))),
+        "altitude_gt": float(origin_altitude_m) + float(position[2]),
+    }

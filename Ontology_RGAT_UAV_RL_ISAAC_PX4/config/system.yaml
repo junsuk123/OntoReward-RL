@@ -243,6 +243,29 @@ gnss:
   # about the difference. See isaac_sim/gnss.py for the model and
   # docs/REFERENCES.md for where the numbers come from.
   enabled: true
+  # Feed this receiver into Pegasus HIL_GPS so PX4 EKF2, rather than the ROS
+  # gateway, performs GNSS/IMU fusion. During poor fixes EKF2 reduces or rejects
+  # GNSS aiding and propagates on its inertial solution; when accuracy recovers
+  # its observation covariance brings the state back without a position step.
+  inject_into_px4: true
+  update_rate_hz: 10.0
+  # Minimum accuracy sent in HIL_GPS. MAVLink carries centimetres; zero means
+  # "unknown" on some stacks and must never be used as perfect covariance.
+  eph_floor_m: 0.6
+  epv_floor_m: 1.0
+  # Hysteresis around the receiver's observable integrity. Below the enter
+  # threshold the estimator is labelled IMU-dominant and the large reported
+  # covariance gives GNSS little weight. A true receiver outage reports no fix
+  # and uses pure DR. Full GNSS-aided mode resumes only after recovery_epochs
+  # consecutive fixes above the exit threshold.
+  dr_enter_quality: 0.45
+  dr_exit_quality: 0.65
+  recovery_epochs: 5
+  # Stable origin/bias initialisation before the first policy handover. EKF2
+  # needs several seconds after its GPS checks pass before it actually enables
+  # GPS fusion, so keep this comfortably longer than the check window. This is
+  # consumed during PX4 boot and is not part of a learning episode.
+  bootstrap_s: 15.0
   seed: 17
   # One epoch of a GPS+Galileo receiver at mid latitude.
   n_satellites: 12
@@ -268,6 +291,9 @@ gnss:
   # the direct path and slip past the detector carrying their full bias.
   nlos_cn0_penalty_db: 9.0
   cn0_detection_margin_db: 4.0
+  # C/N0-detected reflections get this much larger pseudorange sigma in the
+  # receiver WLS. They retain geometry but cannot drag the fix across a road.
+  nlos_sigma_scale: 10.0
   # How much of the integrity a fully suspect signal set costs.
   cn0_weight: 0.85
   # A multirotor holds altitude on its barometer, so most of the (large)

@@ -54,6 +54,7 @@ class GatewayConfig:
     pad_track_tau_s: float
     map_latitude_deg: float
     map_longitude_deg: float
+    map_altitude_m: float
     gnss_enabled: bool
     battery: BatteryConfig
 
@@ -117,6 +118,7 @@ class GatewayConfig:
             pad_track_tau_s=float(pad.get("entry_track_tau_s", 2.5)),
             map_latitude_deg=float((urban.get("origin") or {}).get("latitude", 0.0)),
             map_longitude_deg=float((urban.get("origin") or {}).get("longitude", 0.0)),
+            map_altitude_m=float((urban.get("origin") or {}).get("altitude", 0.0)),
             gnss_enabled=bool(gnss.get("enabled", False)),
             battery=BatteryConfig.from_mapping(data),
         )

@@ -51,11 +51,13 @@ def _load_ros_types():
     from nav_msgs.msg import Odometry
     from rclpy.node import Node
     from px4_msgs.msg import BatteryStatus, OffboardControlMode, TrajectorySetpoint
+    from px4_msgs.msg import EstimatorGpsStatus, EstimatorStatusFlags, SensorGps
     from px4_msgs.msg import VehicleAttitudeSetpoint, VehicleCommand, VehicleCommandAck
     from px4_msgs.msg import VehicleLandDetected, VehicleLocalPosition
     from px4_msgs.msg import VehicleOdometry, VehicleStatus, VehicleThrustSetpoint
     from std_msgs.msg import Float32, String
     return (Node, PoseStamped, Vector3Stamped, Odometry, BatteryStatus,
+            EstimatorGpsStatus, EstimatorStatusFlags, SensorGps,
             OffboardControlMode, TrajectorySetpoint,
             VehicleAttitudeSetpoint, VehicleCommand, VehicleCommandAck, VehicleLandDetected,
             VehicleLocalPosition, VehicleOdometry, VehicleStatus, VehicleThrustSetpoint,
@@ -65,6 +67,15 @@ def _load_ros_types():
 def _set_if_present(message: Any, name: str, value: Any) -> None:
     if hasattr(message, name):
         setattr(message, name, value)
+
+
+def _finite_or(value: Any, fallback: float = 0.0) -> float:
+    """Keep optional PX4 diagnostics safe for the strict JSON wire format."""
+    try:
+        result = float(value)
+    except (TypeError, ValueError):
+        return float(fallback)
+    return result if math.isfinite(result) else float(fallback)
 
 
 def _topic(cfg: GatewayConfig, direction: str, name: str) -> str:
@@ -90,6 +101,7 @@ def _make_qos(rclpy_module):
 
 def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
     (Node, PoseStamped, Vector3Stamped, Odometry, BatteryStatus,
+     EstimatorGpsStatus, EstimatorStatusFlags, SensorGps,
      OffboardControlMode, TrajectorySetpoint,
      VehicleAttitudeSetpoint, VehicleCommand, VehicleCommandAck, VehicleLandDetected,
      VehicleLocalPosition, VehicleOdometry, VehicleStatus, VehicleThrustSetpoint,
@@ -145,13 +157,15 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             # never reaches the policy: see docs/ARCHITECTURE.md, "GNSS".
             self.deck_truth_position_enu: np.ndarray | None = None
             self.deck_truth_velocity_enu = np.zeros(3)
-            # The drone's receiver. `gnss_offset` is the error the simulator is
-            # injecting into the estimate this gateway hands the policy --
-            # Pegasus' GPS sensor is not in this workspace, so PX4's own EKF
-            # runs clean and the canyon error is applied here instead.
+            self.uav_truth_position_enu: np.ndarray | None = None
+            self.uav_truth_velocity_enu = np.zeros(3)
+            # The drone receiver is normally injected upstream through HIL_GPS.
+            # The offset members remain only for legacy telemetry-only runs;
+            # `gnss_injected_into_px4` prevents accidental double injection.
             self.gnss = open_sky_gnss_state()
             self.gnss_offset = np.zeros(3)
             self.gnss_velocity_offset = np.zeros(3)
+            self.gnss_injected_into_px4 = False
             self.gnss_time_ns = 0
             self.warned_missing_gnss = False
             # Pre-episode climb flown by PX4's own position controller.
@@ -196,6 +210,14 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                                      self._on_land, qos)
             self.create_subscription(VehicleLocalPosition, _topic(cfg, "out", "vehicle_local_position"),
                                      self._on_local_position, qos)
+            self.create_subscription(SensorGps, _topic(cfg, "out", "vehicle_gps_position"),
+                                     self._on_sensor_gps, qos)
+            self.create_subscription(EstimatorGpsStatus,
+                                     _topic(cfg, "out", "estimator_gps_status"),
+                                     self._on_estimator_gps, qos)
+            self.create_subscription(EstimatorStatusFlags,
+                                     _topic(cfg, "out", "estimator_status_flags"),
+                                     self._on_estimator_flags, qos)
             self.create_subscription(VehicleCommandAck, _topic(cfg, "out", "vehicle_command_ack"),
                                      self._on_command_ack, qos)
             self.create_subscription(VehicleThrustSetpoint,
@@ -217,6 +239,8 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                                      self._on_deck_odom, sensor_qos)
             self.create_subscription(Odometry, "/landing_pad/state/odom_truth",
                                      self._on_deck_truth, sensor_qos)
+            self.create_subscription(Odometry, "/landing_uav0/state/odom_truth",
+                                     self._on_uav_truth, sensor_qos)
             # The drone's own receiver, as a receiver reports it, plus the error
             # the simulator wants injected downstream of PX4's estimator.
             self.create_subscription(String, "/landing_uav0/gnss/status",
@@ -538,15 +562,14 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             # to the deck origin -- deliberately not rotated with the deck, so
             # the axes stay gravity-aligned and no Coriolis term appears in the
             # relative velocity.
-            # The estimate the policy is handed, with the canyon's GNSS error
-            # in it. The marker solve is a direct optical measurement of the
-            # pad-relative pose and is unaffected; the PX4 fallback is a
-            # difference of two GNSS-derived positions, so it carries the
-            # drone's error and the lorry's broadcast error both -- and those
-            # are partly common-mode, which is why the fallback degrades less
-            # than either absolute position does.
-            estimated_position = position + self.gnss_offset
-            estimated_velocity = velocity + self.gnss_velocity_offset
+            # With upstream injection this is already EKF2's covariance-
+            # weighted GNSS/inertial estimate.  The legacy downstream path is
+            # retained for recorded fixtures and configurations that explicitly
+            # disable HIL_GPS injection, but the error must never be added twice.
+            estimated_position = position + (
+                np.zeros(3) if self.gnss_injected_into_px4 else self.gnss_offset)
+            estimated_velocity = velocity + (
+                np.zeros(3) if self.gnss_injected_into_px4 else self.gnss_velocity_offset)
             fallback_position = estimated_position - self.deck_position_enu
             policy_position = self._blend_position_source(
                 use_pad_pose, self.pad_position_enu, fallback_position, stamp)
@@ -577,7 +600,7 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                 and (cfg.pad_is_static or deck_fresh)
             )
             self.sample.extra["position_source"] = (
-                "uav_pose_in_pad" if use_pad_pose else "px4_local_minus_deck_gnss")
+                "uav_pose_in_pad" if use_pad_pose else "px4_ekf_minus_deck_gnss")
             # How much of the last source change has not yet been faded out. A
             # consumer reading position_source alone would think the handover
             # was instantaneous; it is not, and this says by how much.
@@ -605,6 +628,9 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             self.sample.nav_state = int(msg.nav_state)
             armed_value = getattr(msg, "ARMING_STATE_ARMED", 2)
             self.sample.armed = int(msg.arming_state) == int(armed_value)
+            self.sample.extra["pre_flight_checks_pass"] = bool(
+                getattr(msg, "pre_flight_checks_pass", False))
+            self.sample.extra["px4_failsafe"] = bool(getattr(msg, "failsafe", False))
             self._publish_flight_state()
 
         def _on_land(self, msg) -> None:
@@ -643,7 +669,62 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             self.sample.extra["heading_good_for_control"] = bool(
                 getattr(msg, "heading_good_for_control", False)
             )
+            dead_reckoning = bool(getattr(msg, "dead_reckoning", False))
+            self.sample.extra["navigation_mode"] = (
+                "inertial_dead_reckoning" if dead_reckoning else "gnss_aided")
+            self.sample.extra["local_position_accuracy"] = {
+                "eph_m": _finite_or(getattr(msg, "eph", 0.0), 99.9),
+                "epv_m": _finite_or(getattr(msg, "epv", 0.0), 99.9),
+                "evh_m_s": _finite_or(getattr(msg, "evh", 0.0), 99.9),
+                "evv_m_s": _finite_or(getattr(msg, "evv", 0.0), 99.9),
+            }
             self._update_world_origin(msg)
+
+        def _on_sensor_gps(self, msg) -> None:
+            self.sample.extra["sensor_gps"] = {
+                "fix_type": int(getattr(msg, "fix_type", 0)),
+                "satellites_used": int(getattr(msg, "satellites_used", 0)),
+                "eph_m": _finite_or(getattr(msg, "eph", 0.0), 99.9),
+                "epv_m": _finite_or(getattr(msg, "epv", 0.0), 99.9),
+                "speed_accuracy_m_s": _finite_or(
+                    getattr(msg, "s_variance_m_s", 0.0), 99.9),
+            }
+
+        def _on_estimator_gps(self, msg) -> None:
+            failures = [name.removeprefix("check_fail_") for name in (
+                "check_fail_gps_fix", "check_fail_min_sat_count", "check_fail_max_pdop",
+                "check_fail_max_horz_err", "check_fail_max_vert_err",
+                "check_fail_max_spd_err", "check_fail_max_horz_drift",
+                "check_fail_max_vert_drift", "check_fail_max_horz_spd_err",
+                "check_fail_max_vert_spd_err") if bool(getattr(msg, name, False))]
+            self.sample.extra["ekf_gps_checks"] = {
+                "passed": bool(getattr(msg, "checks_passed", False)),
+                "failed": failures,
+                "horizontal_drift_m_s": _finite_or(getattr(
+                    msg, "position_drift_rate_horizontal_m_s", 0.0), 99.9),
+                "vertical_drift_m_s": _finite_or(getattr(
+                    msg, "position_drift_rate_vertical_m_s", 0.0), 99.9),
+            }
+
+        def _on_estimator_flags(self, msg) -> None:
+            inertial_dr = bool(getattr(msg, "cs_inertial_dead_reckoning", False))
+            gps_fused = bool(getattr(msg, "cs_gps", False))
+            self.sample.extra["ekf_fusion"] = {
+                "gps": gps_fused,
+                "inertial_dead_reckoning": inertial_dr,
+                "horizontal_position_rejected": bool(
+                    getattr(msg, "reject_hor_pos", False)),
+                "horizontal_velocity_rejected": bool(
+                    getattr(msg, "reject_hor_vel", False)),
+                "accelerometer_bias_fault": bool(
+                    getattr(msg, "fs_bad_acc_bias", False)),
+            }
+            # EstimatorStatusFlags is more explicit than VehicleLocalPosition
+            # on the transition edge; let it refine the telemetry label.
+            if inertial_dr:
+                self.sample.extra["navigation_mode"] = "inertial_dead_reckoning"
+            elif gps_fused:
+                self.sample.extra["navigation_mode"] = "gnss_aided"
 
         def _update_world_origin(self, msg) -> None:
             """Where PX4's local frame sits in the simulator's world frame.
@@ -676,12 +757,17 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                 self.world_from_px4 = np.zeros(3)
                 self.world_origin_known = True
                 return
+            altitude = float(getattr(msg, "ref_alt", float("nan")))
+            if not math.isfinite(altitude):
+                altitude = cfg.map_altitude_m
             offset = geodetic_to_enu(latitude, longitude,
-                                     cfg.map_latitude_deg, cfg.map_longitude_deg)
+                                     cfg.map_latitude_deg, cfg.map_longitude_deg,
+                                     altitude, cfg.map_altitude_m)
             if not self.world_origin_known:
                 self.get_logger().info(
                     f"PX4 local frame is at world ENU ({offset[0]:.1f}, "
-                    f"{offset[1]:.1f}) m; deck poses will be brought into it.")
+                    f"{offset[1]:.1f}, {offset[2]:.2f}) m; deck poses will be "
+                    "brought into it.")
             self.world_from_px4 = offset
             self.world_origin_known = True
 
@@ -879,6 +965,16 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                 self.deck_truth_position_enu = position
                 self.deck_truth_velocity_enu = velocity
 
+        def _on_uav_truth(self, msg) -> None:
+            """Simulator geometry for scoring only, never policy or control."""
+            p = msg.pose.pose.position
+            v = msg.twist.twist.linear
+            position = np.array([p.x, p.y, p.z], dtype=float)
+            velocity = np.array([v.x, v.y, v.z], dtype=float)
+            if np.isfinite(position).all() and np.isfinite(velocity).all():
+                self.uav_truth_position_enu = position
+                self.uav_truth_velocity_enu = velocity
+
         def _on_gnss_status(self, msg) -> None:
             """The drone's receiver, and the error to inject downstream of it.
 
@@ -902,11 +998,16 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                 truth.get("velocity_error_enu_m_s", (0.0, 0.0, 0.0)), dtype=float)
             if velocity_offset.shape != (3,) or not np.isfinite(velocity_offset).all():
                 velocity_offset = np.zeros(3)
-            self.gnss_offset = offset
-            self.gnss_velocity_offset = velocity_offset
+            self.gnss_injected_into_px4 = bool(payload.get("injected_into_px4", False))
+            self.sample.extra["hil_gps_mode"] = str(payload.get("hil_gps_mode", "legacy"))
+            self.gnss_offset = np.zeros(3) if self.gnss_injected_into_px4 else offset
+            self.gnss_velocity_offset = (
+                np.zeros(3) if self.gnss_injected_into_px4 else velocity_offset)
             self.gnss = {
                 "enabled": True,
                 "source": "isaac",
+                "fusion_path": ("px4_ekf2_hil_gps" if self.gnss_injected_into_px4
+                                else "gateway_legacy"),
                 "valid": bool(uav.get("valid", True)),
                 "fix_type": int(uav.get("fix_type", 3)),
                 "satellites_tracked": int(uav.get("satellites_tracked", 0)),
@@ -986,23 +1087,38 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                     self.warned_missing_gnss = True
                     self.get_logger().error(
                         "gnss.enabled is true but no /landing_uav0/gnss/status has "
-                        "arrived; the policy is being told it has open sky")
-                return open_sky_gnss_state()
+                        "arrived; navigation integrity is being marked invalid")
+                state = open_sky_gnss_state()
+                state.update({"enabled": True, "source": "missing", "valid": False,
+                              "fix_type": 0, "satellites_tracked": 0,
+                              "sigma_xy_m": 99.9, "quality": 0.0})
+                return state
             state = dict(self.gnss)
             if (stamp - self.gnss_time_ns) * 1e-9 > cfg.state_timeout_s:
                 state["source"] = "stale"
+                state["valid"] = False
+                state["quality"] = 0.0
             return state
 
         def _set_truth(self, position: np.ndarray, velocity: np.ndarray) -> None:
             """Pad-relative state as the simulator knows it, for scoring only.
 
-            PX4's estimator is not corrupted by the GNSS model, so its world
-            pose is the truth up to the EKF's own error; subtracting the
-            simulator's deck pose therefore gives the relative state the
-            episode should be graded on. Absent the truth topic there is no
-            such thing, and the field says so rather than guessing.
+            With HIL_GPS injection PX4's world pose is deliberately fallible,
+            so scoring uses the separate simulator UAV and deck odometry. A
+            legacy downstream-injection run may still use the clean PX4 pose.
+            Absent either valid truth path the field says so rather than
+            guessing.
             """
             if self.deck_truth_position_enu is None:
+                self.sample.truth_position_enu = None
+                self.sample.truth_velocity_enu = None
+                return
+            if self.uav_truth_position_enu is not None:
+                position = self.uav_truth_position_enu
+                velocity = self.uav_truth_velocity_enu
+            elif self.gnss_injected_into_px4:
+                # Once the urban fix is fused upstream, PX4 odometry is no
+                # longer simulator truth.  Never grade on it as if it were.
                 self.sample.truth_position_enu = None
                 self.sample.truth_velocity_enu = None
                 return
@@ -1212,11 +1328,22 @@ def main(argv=None) -> None:
     node = Px4GatewayNode(cfg, allow_arm=args.allow_arm, allow_offboard=args.allow_offboard)
     try:
         rclpy.spin(node)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, rclpy.executors.ExternalShutdownException):
         pass
+    except Exception:
+        # Some Humble builds surface the same launch-driven context shutdown as
+        # RCLError while constructing the executor wait set. Preserve genuine
+        # runtime failures, but do not print a traceback for an already-closed
+        # ROS context during an otherwise clean stack restart.
+        if rclpy.ok():
+            raise
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        # A launch service can shut the shared context down before spin exits.
+        # Calling shutdown twice used to turn every clean stack restart into a
+        # misleading traceback in gateway.log.
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == "__main__":

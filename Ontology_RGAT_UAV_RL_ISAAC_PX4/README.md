@@ -84,10 +84,12 @@ biases agree with one another, so no consistency check sees anything wrong, and
 signal strength is the only evidence left. It is not an oracle either, because
 a few reflections come in nearly as strong as the direct path.
 
-PX4's own EKF is not corrupted -- Pegasus' GPS sensor is not part of this
-workspace -- so the modelled error is injected downstream of the estimator, in
-the gateway, on the estimate handed to the policy. `docs/ARCHITECTURE.md`,
-"GNSS", says exactly where.
+The urban receiver replaces Pegasus' generic GPS on MAVLink `HIL_GPS`, including
+its reported EPH/EPV. PX4 EKF2 therefore performs the real GNSS/IMU fusion:
+degraded or rejected fixes fall back to inertial dead reckoning and good fixes
+are blended back according to their covariance. The gateway observes that
+estimate and does not add a second synthetic offset. `docs/ARCHITECTURE.md`,
+"GNSS", details the path and its diagnostic topics.
 
 ## Marker-based landing
 

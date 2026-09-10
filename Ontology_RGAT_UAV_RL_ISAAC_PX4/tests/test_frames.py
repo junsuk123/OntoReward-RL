@@ -83,3 +83,27 @@ def test_a_local_frame_offset_is_what_sent_the_drone_sideways():
     target_world = np.array([12.0, -8.0, 6.0])
     local = target_world - offset
     assert local + offset == pytest.approx(target_world)
+
+
+def test_the_frame_offset_carries_altitude():
+    """Up is the axis a plan view never shows, and the one that broke this.
+
+    PX4 pins its local frame at the spawn point, which here is the roof of a
+    lorry three metres off the road. With the vertical left at zero every
+    world-frame altitude came out that much low, the touchdown test fired while
+    the vehicle was still in the air, and the resulting nonsense looked like a
+    perception error rather than a frame error.
+    """
+    lat0, lon0, alt0 = 37.5636, 126.9850, 25.0
+    # Same lat/lon, three metres up: a pure vertical offset and nothing else.
+    offset = geodetic_to_enu(lat0, lon0, lat0, lon0, alt0 + 3.29, alt0)
+
+    assert offset[0] == pytest.approx(0.0, abs=1e-9)
+    assert offset[1] == pytest.approx(0.0, abs=1e-9)
+    assert offset[2] == pytest.approx(3.29)
+
+
+def test_altitude_defaults_leave_the_vertical_alone():
+    """A caller that has no altitude must not silently invent one."""
+    offset = geodetic_to_enu(37.5650, 126.9861, 37.5636, 126.9850)
+    assert offset[2] == pytest.approx(0.0)

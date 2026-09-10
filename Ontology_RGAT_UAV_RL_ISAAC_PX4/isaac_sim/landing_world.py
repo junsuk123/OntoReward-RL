@@ -78,6 +78,7 @@ from marker_vision import (
 from pad_motion import PadMotionConfig, PadTrajectory, lorry_parts
 from urban_scene import UrbanConfig, UrbanLayout, UrbanScene
 from gnss import GnssConfig, UrbanGnss
+from px4_gnss import UrbanGnssSensor
 from live_overlay import LiveOverlay
 
 
@@ -698,6 +699,8 @@ class LandingWorld:
         gnss_cfg = GnssConfig.from_mapping(CONFIG)
         self.gnss = UrbanGnss(gnss_cfg, self.urban if self.urban.cfg.enabled else None)
         self.gnss_enabled = bool(gnss_cfg.enabled)
+        self.gnss_injected_into_px4 = bool(
+            self.gnss_enabled and gnss_cfg.inject_into_px4)
         self.gnss_time = 0.0
 
         px4_dir = Path(isaac_cfg["px4_dir"])
@@ -732,6 +735,16 @@ class LandingWorld:
         self.deck.spawn(self.world)
 
         vehicle_cfg = MultirotorConfig()
+        if self.gnss_injected_into_px4:
+            # Replace Pegasus' generic clean GPS with the receiver that sees the
+            # same buildings as the rendered camera.  IMU, barometer and
+            # magnetometer remain Pegasus sensors; PX4 EKF2 performs the actual
+            # covariance-weighted fusion and inertial dead reckoning.
+            self.urban_gps_sensor = UrbanGnssSensor(
+                self.gnss, self.deck, gnss_cfg)
+            vehicle_cfg.sensors[-1] = self.urban_gps_sensor
+        else:
+            self.urban_gps_sensor = None
         # Replace Pegasus' still-air linear drag with the wind-relative model below.
         vehicle_cfg.drag = LinearDrag([0.0, 0.0, 0.0])
         vehicle_cfg.backends = [self.px4_backend, self.ros_backend]
@@ -798,6 +811,8 @@ class LandingWorld:
         # the control path subscribes to it; see docs/ARCHITECTURE.md, "GNSS".
         self.deck_truth_pub = node.create_publisher(
             Odometry, "/landing_pad/state/odom_truth", 10)
+        self.uav_truth_pub = node.create_publisher(
+            Odometry, "/landing_uav0/state/odom_truth", 10)
         self.gnss_pub = node.create_publisher(String, "/landing_uav0/gnss/status", 10)
         node.create_subscription(String, "/landing_sim/reset", self._on_reset_request, 10)
         node.create_subscription(String, "/landing_sim/flight_state",
@@ -1121,7 +1136,11 @@ class LandingWorld:
         is the same geometry -- the facades that hide the satellites are the
         ones channeling the flow, and both relax at the intersections.
         """
-        if self.gnss_enabled:
+        # When HIL injection is disabled this preserves the legacy telemetry-
+        # only model.  With injection enabled UrbanGnssSensor updates both
+        # receivers at the configured GNSS rate; updating again here would make
+        # the pseudorange process run twice as fast as its timestamps.
+        if self.gnss_enabled and not self.gnss_injected_into_px4:
             self.gnss.update(self.vehicle.state.position, self.deck.position, dt)
         if self.wind.config.get("canyon", {}).get("enabled", False):
             self.wind.set_street_axis(self.deck.yaw,
@@ -1133,20 +1152,39 @@ class LandingWorld:
         self.deck_pub.publish(self.deck.odometry(
             stamp, fix.error_enu_m, fix.velocity_error_enu_m_s, fix.sigma_xy_m))
         self.deck_truth_pub.publish(self.deck.odometry(stamp))
+        state = self.vehicle.state
+        truth = Odometry()
+        truth.header.stamp = stamp
+        truth.header.frame_id = "map"
+        truth.child_frame_id = "landing_uav0/base_link"
+        truth.pose.pose.position.x = float(state.position[0])
+        truth.pose.pose.position.y = float(state.position[1])
+        truth.pose.pose.position.z = float(state.position[2])
+        qx, qy, qz, qw = state.attitude
+        truth.pose.pose.orientation.w = float(qw)
+        truth.pose.pose.orientation.x = float(qx)
+        truth.pose.pose.orientation.y = float(qy)
+        truth.pose.pose.orientation.z = float(qz)
+        truth.twist.twist.linear.x = float(state.linear_velocity[0])
+        truth.twist.twist.linear.y = float(state.linear_velocity[1])
+        truth.twist.twist.linear.z = float(state.linear_velocity[2])
+        self.uav_truth_pub.publish(truth)
 
     def _publish_gnss(self) -> None:
         """The drone's own receiver, as a receiver would report it.
 
-        ``error_enu_m`` rides along because the gateway is what applies it to
-        the PX4 estimate -- Pegasus' GPS sensor is not part of this workspace,
-        so the error is injected downstream of the EKF rather than into it.
-        The field is named for what it is so that no consumer can mistake it
-        for something a receiver knows.
+        The truth subobject remains simulator-only diagnostics.  When
+        ``injected_into_px4`` is true the gateway must not apply that error a
+        second time: it has already crossed HIL_GPS and been fused by EKF2.
         """
         if not self.gnss_enabled:
             return
         msg = String()
         msg.data = json.dumps({"v": int(CONFIG["system"]["protocol_version"]),
+                               "injected_into_px4": self.gnss_injected_into_px4,
+                               "hil_gps_mode": (self.urban_gps_sensor.mode
+                                                if self.urban_gps_sensor is not None
+                                                else "legacy"),
                                "uav": self.gnss.uav.last.to_dict(),
                                "deck": self.gnss.deck.last.to_dict()})
         self.gnss_pub.publish(msg)

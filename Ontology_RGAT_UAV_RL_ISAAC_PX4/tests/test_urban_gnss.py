@@ -25,7 +25,8 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "isaac_sim"))
 
-from gnss import MIN_SATELLITES, GnssConfig, GnssFix, UrbanGnss  # noqa: E402
+from gnss import (  # noqa: E402
+    MIN_SATELLITES, GnssConfig, GnssFix, UrbanGnss, hil_gps_measurement)
 from pad_motion import PadMotionConfig, PadTrajectory, RoadRoute  # noqa: E402
 from urban_scene import UrbanConfig, UrbanLayout  # noqa: E402
 
@@ -415,6 +416,42 @@ def test_a_tunnel_is_an_outage_and_not_a_confident_fix(system_config):
     # The estimate coasts rather than freezing, so an outage is visible as
     # drift instead of as a suspiciously steady position.
     assert np.linalg.norm(fix.error_enu_m) > 0.0
+
+
+def test_hil_gps_carries_the_urban_fix_with_mavlink_units(system_config):
+    cfg = GnssConfig.from_mapping(system_config)
+    fix = GnssFix(valid=True, fix_type=3, satellites_tracked=7,
+                  hdop=2.0, vdop=3.0, sigma_xy_m=4.25,
+                  error_enu_m=np.array([8.0, -3.0, 1.5]),
+                  velocity_error_enu_m_s=np.array([0.2, -0.1, 0.05]))
+    measurement = hil_gps_measurement(
+        fix, np.array([100.0, 200.0, 10.0]), np.array([1.0, 2.0, -0.5]),
+        37.5636, 126.9850, 25.0, cfg)
+
+    assert measurement["fix_type"] == 3
+    assert measurement["sattelites_visible"] == 7
+    assert measurement["eph"] == 425  # MAVLink HIL_GPS EPH is centimetres
+    assert measurement["epv"] == 638
+    assert measurement["altitude"] == pytest.approx(36.5)
+    assert measurement["velocity_east"] == pytest.approx(1.2)
+    assert measurement["velocity_north"] == pytest.approx(1.9)
+    assert measurement["velocity_down"] == pytest.approx(0.45)
+    # East changes longitude and north changes latitude, never the reverse.
+    assert measurement["longitude"] > measurement["longitude_gt"]
+    assert measurement["latitude"] < measurement["latitude_gt"]
+
+
+def test_hil_gps_outage_forces_px4_to_dead_reckon(system_config):
+    cfg = GnssConfig.from_mapping(system_config)
+    fix = GnssFix(valid=False, fix_type=0, satellites_tracked=2,
+                  error_enu_m=np.zeros(3), velocity_error_enu_m_s=np.zeros(3))
+    measurement = hil_gps_measurement(
+        fix, np.zeros(3), np.zeros(3), 37.0, 127.0, 20.0, cfg)
+
+    assert measurement["fix_type"] == 0
+    assert measurement["sattelites_visible"] == 2
+    assert measurement["eph"] == 65535
+    assert measurement["epv"] == 65535
 
 
 def test_a_fix_is_reproducible_in_a_fresh_interpreter(system_config, tmp_path):

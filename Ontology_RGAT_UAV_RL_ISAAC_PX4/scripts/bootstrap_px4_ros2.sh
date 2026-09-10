@@ -42,8 +42,9 @@ python3 -m pip install --user \
   --constraint "$workspace_root/requirements-px4-constraints.txt" \
   --requirement "$workspace_root/external/PX4-Autopilot/Tools/setup/requirements.txt"
 
-# PX4 v1.14 publishes neither vehicle_land_detected, vehicle_command_ack,
-# vehicle_thrust_setpoint nor battery_status over uXRCE-DDS. Without the land
+# PX4 v1.14 publishes neither the estimator diagnostics used to verify
+# GNSS/DR switching nor vehicle_land_detected, vehicle_command_ack,
+# vehicle_thrust_setpoint and battery_status over uXRCE-DDS. Without the land
 # detector the gateway cannot tell a hovering vehicle from a landed one, so
 # touchdown is never detected; without the thrust setpoint it cannot price the
 # energy a landing costs.
@@ -52,7 +53,7 @@ python3 -m pip install --user \
 # tree carrying an earlier version of this patch is brought up to date instead
 # of being skipped because an older topic is already present.
 dds_topics=src/modules/uxrce_dds_client/dds_topics.yaml
-if ! grep -q 'battery_status' \
+if ! grep -q 'estimator_status_flags' \
   "$workspace_root/external/PX4-Autopilot/$dds_topics"; then
   git -C "$workspace_root/external/PX4-Autopilot" checkout -- "$dds_topics"
   git -C "$workspace_root/external/PX4-Autopilot" apply \

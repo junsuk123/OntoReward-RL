@@ -161,14 +161,16 @@ building, so scale 0 is open sky **in the same city** — the facades still hide
 the markers and still channel the wind. That is what isolates the fix from the
 geometry in `evaluation.sweeps.gnss_sweep`.
 
-**Where the error is applied.** PX4's EKF is not corrupted: Pegasus' GPS sensor
-is not part of this workspace, so the modelled error cannot be applied upstream
-of the estimator. Isaac publishes it on `/landing_uav0/gnss/status` under a
-`truth` key, and the gateway adds it to PX4's world estimate before differencing
-against the deck. The consequence to keep in mind is that PX4's own internal
-position stays clean, so its estimator never *responds* to the canyon the way a
-real one would (innovation rejection, GPS-loss reversion). Biasing the `HIL_GPS`
-Pegasus sends is the honest next step and is not done here.
+**Where the error is applied.** The generic clean Pegasus GPS is replaced by
+`UrbanGnssSensor`, which converts the urban receiver solution and reported
+accuracy to MAVLink `HIL_GPS`. PX4 EKF2 therefore owns the navigation estimate:
+large EPH/EPV lowers the observation weight, rejected or invalid fixes make the
+filter propagate on IMU dead reckoning, and a recovered fix is fused back through
+the EKF instead of being added as a position step in the ROS gateway. The status
+topic still carries the receiver observables for the ontology, plus a simulator-
+only `truth` subobject; `injected_into_px4` prevents the gateway applying that
+error twice. `/fmu/out/estimator_status_flags`, `estimator_gps_status` and the
+raw GPS topic expose the actual fusion decision.
 
 **Two receivers.** The lorry has one too. What it broadcasts on
 `/landing_pad/state/odom` is its own fix — errors and all — with its reported
@@ -210,8 +212,10 @@ view are not, and `tests/test_urban_gnss.py` enforces it.
 
 **Scoring.** Under a canyon fix the pad-relative pose the policy flies on is
 metres from the truth, so the terminal test and the touchdown metrics run on
-`env.truth_state` — the gateway's `truth` block, which is the simulator's own
-pad-relative geometry — and nothing else does. A link with no `truth` block
+`env.truth_state` — the gateway's `truth` block built from the simulator-only
+`/landing_uav0/state/odom_truth` and deck truth streams — and nothing else does.
+PX4 odometry cannot be reused as truth now that it fuses the degraded HIL_GPS.
+A link with no `truth` block
 falls back to the sensor, as the fixed-pad experiment always did. R-GAT forward/gradient computation is batched and
 vectorized; GPU selection is explicit through `cfg.gpu.*`, with a conservative
 RTX 4060 crossover of batch 1024. Models are gathered back to CPU double before

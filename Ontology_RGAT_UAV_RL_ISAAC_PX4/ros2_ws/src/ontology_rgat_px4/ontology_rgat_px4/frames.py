@@ -128,9 +128,17 @@ WGS84_A = 6378137.0
 
 
 def geodetic_to_enu(latitude_deg: float, longitude_deg: float,
-                    lat0_deg: float, lon0_deg: float) -> np.ndarray:
-    """Where a lat/lon sits in the ENU frame pinned at (LAT0, LON0), in metres."""
+                    lat0_deg: float, lon0_deg: float,
+                    altitude_m: float = 0.0, alt0_m: float = 0.0) -> np.ndarray:
+    """Where a lat/lon/alt sits in the ENU frame pinned at the datum, in metres.
+
+    Up is not optional here, even though it is the axis a plan view never shows.
+    PX4 pins its local frame at the spawn point, which in this environment is
+    the roof of a lorry three metres off the road; leaving the vertical at zero
+    puts every world-frame altitude that many metres low, and the touchdown test
+    fires while the vehicle is still in the air.
+    """
     east = math.radians(longitude_deg - lon0_deg) * WGS84_A * math.cos(
         math.radians(lat0_deg))
     north = math.radians(latitude_deg - lat0_deg) * WGS84_A
-    return np.array([east, north, 0.0], dtype=float)
+    return np.array([east, north, float(altitude_m) - float(alt0_m)], dtype=float)

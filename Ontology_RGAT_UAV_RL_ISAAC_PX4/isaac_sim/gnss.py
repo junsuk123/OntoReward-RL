@@ -109,6 +109,7 @@ class GnssConfig:
     cn0_sigma_db: float
     nlos_cn0_penalty_db: float
     cn0_detection_margin_db: float
+    map_aided_nlos_mitigation: bool
     # Inflate the range variance of a signal whose C/N0 is inconsistent with
     # its elevation. This is the receiver-side NLOS mitigation step: detected
     # reflections still contribute weakly instead of dragging the entire WLS
@@ -160,8 +161,10 @@ class GnssConfig:
             cn0_sigma_db=float(gnss.get("cn0_sigma_db", 1.5)),
             nlos_cn0_penalty_db=float(gnss.get("nlos_cn0_penalty_db", 9.0)),
             cn0_detection_margin_db=float(gnss.get("cn0_detection_margin_db", 4.0)),
+            map_aided_nlos_mitigation=bool(
+                gnss.get("map_aided_nlos_mitigation", True)),
             nlos_sigma_scale=float(gnss.get("nlos_sigma_scale", 10.0)),
-            velocity_error_scale=float(gnss.get("velocity_error_scale", 0.06)),
+            velocity_error_scale=float(gnss.get("velocity_error_scale", 0.01)),
             vertical_blend=float(gnss.get("vertical_blend", 0.15)),
             hdop_scale=float(gnss.get("hdop_scale", 2.5)),
             sigma_floor_m=float(gnss.get("sigma_floor_m", 1.5)),
@@ -396,8 +399,13 @@ class GnssReceiver:
         # but its variance is inflated so the clean LOS ranges and IMU dominate.
         # The detector is imperfect by construction, hence the remaining urban
         # bias that the ontology still has to reason about.
+        # The same OSM/3-D city model used for rendering can predict satellite
+        # shadowing from the receiver's coarse state. Combining that prediction
+        # with C/N0 catches strong reflections that a power-only detector misses.
+        mitigated_nlos = (suspect | is_nlos
+                          if cfg.map_aided_nlos_mitigation else suspect)
         effective_sigma = sigma * np.where(
-            suspect, max(float(cfg.nlos_sigma_scale), 1.0), 1.0)
+            mitigated_nlos, max(float(cfg.nlos_sigma_scale), 1.0), 1.0)
 
         # Weighted least squares, exactly as the receiver solves it: rows are
         # [-u, 1] because a pseudorange grows when the receiver moves away from

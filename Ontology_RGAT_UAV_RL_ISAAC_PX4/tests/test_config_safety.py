@@ -18,6 +18,7 @@ def test_configuration_loads():
     assert cfg.target == "sitl"
     assert cfg.control_hz == 50.0
     assert cfg.namespace == "/fmu"
+    assert cfg.gnss_dr_enter_quality == 0.45
 
 
 def test_sitl_reset_and_arm_gate():

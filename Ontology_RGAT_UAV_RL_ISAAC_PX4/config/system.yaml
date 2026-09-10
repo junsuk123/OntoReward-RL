@@ -291,6 +291,9 @@ gnss:
   # the direct path and slip past the detector carrying their full bias.
   nlos_cn0_penalty_db: 9.0
   cn0_detection_margin_db: 4.0
+  # Use the already-loaded OSM/3-D building model as a satellite shadow mask.
+  # This catches strong NLOS reflections that C/N0 alone cannot distinguish.
+  map_aided_nlos_mitigation: true
   # C/N0-detected reflections get this much larger pseudorange sigma in the
   # receiver WLS. They retain geometry but cannot drag the fix across a road.
   nlos_sigma_scale: 10.0
@@ -299,7 +302,9 @@ gnss:
   # A multirotor holds altitude on its barometer, so most of the (large)
   # vertical GNSS error is rejected and the urban failure mode is horizontal.
   vertical_blend: 0.15
-  velocity_error_scale: 0.06
+  # Doppler velocity is much less sensitive to reflected pseudorange than the
+  # absolute fix. Keep it accurate enough to propagate marker outages by DR.
+  velocity_error_scale: 0.01
   # Integrity shaping: what the reported quality is worth at a given geometry
   # and formal accuracy. sigma_floor_m is a good open-sky fix.
   hdop_scale: 2.5

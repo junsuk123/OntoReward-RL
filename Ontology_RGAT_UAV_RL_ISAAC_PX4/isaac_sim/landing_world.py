@@ -1149,8 +1149,12 @@ class LandingWorld:
     def _publish_deck(self) -> None:
         stamp = self.ros_backend.node.get_clock().now().to_msg()
         fix = self.gnss.deck.last
+        # The cooperative vehicle knows its own velocity from wheel odometry;
+        # GNSS supplies its global position and covariance. Injecting a fraction
+        # of pseudorange position bias into speed made relative DR drift by
+        # metres even though Doppler/wheel speed is the well-observed channel.
         self.deck_pub.publish(self.deck.odometry(
-            stamp, fix.error_enu_m, fix.velocity_error_enu_m_s, fix.sigma_xy_m))
+            stamp, fix.error_enu_m, None, fix.sigma_xy_m))
         self.deck_truth_pub.publish(self.deck.odometry(stamp))
         state = self.vehicle.state
         truth = Odometry()
@@ -1276,24 +1280,32 @@ class LandingWorld:
         render_divider = max(1, round(float(CONFIG["isaac"]["rendering_dt"]) /
                                       float(CONFIG["isaac"]["physics_dt"])))
         step = 0
-        while simulation_app.is_running() and not self.stop_sim:
-            if self.pending_reset is not None:
-                self._perform_reset()
-            step += 1
-            frame_boundary = step % render_divider == 0
-            # The pad camera only produces an image on a rendered frame, so
-            # vision costs rendering even in a headless run.
-            render = frame_boundary and (self.vision_enabled or not ARGS.headless)
-            self.world.step(render=render)
-            if frame_boundary:
-                self._publish_environment()
-                if render:
-                    self.overlay.update(self.vehicle.state.position,
-                                        self.deck.world_from_pad(np.zeros(3)))
-                    self.viewport_follower.update(
-                        self.vehicle.state.position, self.deck.yaw, self.urban)
-        self.timeline.stop()
-        simulation_app.close()
+        try:
+            while simulation_app.is_running() and not self.stop_sim:
+                if self.pending_reset is not None:
+                    self._perform_reset()
+                step += 1
+                frame_boundary = step % render_divider == 0
+                # The pad camera only produces an image on a rendered frame, so
+                # vision costs rendering even in a headless run.
+                render = frame_boundary and (self.vision_enabled or not ARGS.headless)
+                self.world.step(render=render)
+                if frame_boundary:
+                    self._publish_environment()
+                    if render:
+                        self.overlay.update(self.vehicle.state.position,
+                                            self.deck.world_from_pad(np.zeros(3)))
+                        self.viewport_follower.update(
+                            self.vehicle.state.position, self.deck.yaw, self.urban)
+        except Exception as exc:
+            # Isaac's ROS bridge invalidates its context as soon as the process
+            # receives the stack's shutdown signal. A publisher can race that
+            # teardown by one frame; this is a clean exit, not a simulator crash.
+            if "context is invalid" not in str(exc):
+                raise
+        finally:
+            self.timeline.stop()
+            simulation_app.close()
 
 
 def main():

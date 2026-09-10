@@ -47,15 +47,15 @@ class GatewayConfig:
     # local frame is pinned wherever its EKF happened to initialise -- the
     # spawn point -- so without these two the gateway cannot tell the frames
     # apart, and it mixes a PX4-local position with a world-frame deck pose.
-    # Time constant of the constant-velocity track the entry climb is aimed
-    # at. Only the lorry's broadcast noise is filtered; the pad-relative
-    # state the policy flies on is never touched. 0 flies the raw broadcast.
+    # Time constants for the cooperative deck track and the covariance-aware
+    # pad-relative navigation filter.
     deck_track_tau_s: float
     pad_track_tau_s: float
     map_latitude_deg: float
     map_longitude_deg: float
     map_altitude_m: float
     gnss_enabled: bool
+    gnss_dr_enter_quality: float
     battery: BatteryConfig
 
     @property
@@ -120,6 +120,7 @@ class GatewayConfig:
             map_longitude_deg=float((urban.get("origin") or {}).get("longitude", 0.0)),
             map_altitude_m=float((urban.get("origin") or {}).get("altitude", 0.0)),
             gnss_enabled=bool(gnss.get("enabled", False)),
+            gnss_dr_enter_quality=float(gnss.get("dr_enter_quality", 0.45)),
             battery=BatteryConfig.from_mapping(data),
         )
 
@@ -134,4 +135,3 @@ def load_yaml(path: str | Path) -> dict[str, Any]:
 
 def load_gateway_config(path: str | Path, target: str | None = None) -> GatewayConfig:
     return GatewayConfig.from_mapping(load_yaml(path), target=target)
-

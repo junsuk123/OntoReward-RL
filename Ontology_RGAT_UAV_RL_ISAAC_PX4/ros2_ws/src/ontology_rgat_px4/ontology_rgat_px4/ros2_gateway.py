@@ -118,6 +118,7 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             self.last_command_seq = -1
             self.pending_state_ack = -1
             self.tx_seq = 0
+            self.start_ns = now_ns()
             self.prestream = 0
             self.offboard_requested = False
             self.offboard_enabled = cfg.target == "sitl"
@@ -126,6 +127,7 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             self.pending_reset_seq = -1
             self.pad_position_enu: np.ndarray | None = None
             self.pad_pose_time_ns = 0
+            self.marker_pose_rejections = 0
             # Continuity across a camera/PX4 position handover; see
             # _blend_position_source.
             self._last_source_was_optical: bool | None = None
@@ -241,8 +243,8 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                                      self._on_deck_truth, sensor_qos)
             self.create_subscription(Odometry, "/landing_uav0/state/odom_truth",
                                      self._on_uav_truth, sensor_qos)
-            # The drone's own receiver, as a receiver reports it, plus the error
-            # the simulator wants injected downstream of PX4's estimator.
+            # Receiver observables plus simulator-only truth used for scoring.
+            # The navigation error itself has already crossed HIL_GPS.
             self.create_subscription(String, "/landing_uav0/gnss/status",
                                      self._on_gnss_status, sensor_qos)
             self.create_subscription(BatteryStatus, _topic(cfg, "out", "battery_status"),
@@ -571,13 +573,22 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             estimated_velocity = velocity + (
                 np.zeros(3) if self.gnss_injected_into_px4 else self.gnss_velocity_offset)
             fallback_position = estimated_position - self.deck_position_enu
-            policy_position = self._blend_position_source(
-                use_pad_pose, self.pad_position_enu, fallback_position, stamp)
             # Velocity always comes from the flight stack's estimator, whatever
             # is providing position: the marker solve is not differentiated
             # here, so there is no optical velocity to prefer.
             policy_velocity = estimated_velocity - self.deck_velocity_enu
-            self._track_pad_relative(policy_position, policy_velocity)
+            raw_policy_position = self._blend_position_source(
+                use_pad_pose, self.pad_position_enu, fallback_position, stamp)
+            self._track_pad_relative(
+                raw_policy_position, policy_velocity,
+                stamp_ns=int(msg.timestamp) * 1000, optical=use_pad_pose)
+            # When the marker is absent, propagate its last reliable solve with
+            # relative velocity and let GNSS correct it only at a rate justified
+            # by the two receivers' covariance. This is the actual navigation
+            # estimate, not merely an entry-setpoint smoother.
+            policy_position = (raw_policy_position if use_pad_pose
+                               else self.pad_track_position.copy())
+            self._last_policy_position = policy_position.copy()
             self.sample.position_enu = tuple(float(x) for x in policy_position)
             self.sample.velocity_enu = tuple(float(x) for x in policy_velocity)
             self.sample.position_world_enu = tuple(float(x) for x in estimated_position)
@@ -600,7 +611,9 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                 and (cfg.pad_is_static or deck_fresh)
             )
             self.sample.extra["position_source"] = (
-                "uav_pose_in_pad" if use_pad_pose else "px4_ekf_minus_deck_gnss")
+                "vision_imu_fused" if use_pad_pose else "imu_dr_gnss_bounded")
+            self.sample.extra["position_fusion_residual_m"] = float(
+                np.linalg.norm(raw_policy_position - policy_position))
             # How much of the last source change has not yet been faded out. A
             # consumer reading position_source alone would think the handover
             # was instantaneous; it is not, and this says by how much.
@@ -860,8 +873,39 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                 [msg.pose.position.x, msg.pose.position.y, msg.pose.position.z], dtype=float
             )
             if np.isfinite(position).all():
+                stamp = now_ns()
+                # Planar PnP can occasionally choose a mirrored/remote branch
+                # with a finite, low-reprojection solution. During continuous
+                # tracking the vehicle cannot move metres between camera
+                # frames, so reject that innovation instead of re-anchoring DR
+                # to a catastrophic but numerically valid pose. After a genuine
+                # outage the freshness window expires and reacquisition remains
+                # possible from any position.
+                previous_fresh = (
+                    self.pad_position_enu is not None
+                    and (stamp - self.pad_pose_time_ns) * 1e-9 <= cfg.state_timeout_s)
+                innovation = (float(np.linalg.norm(position - self.pad_position_enu))
+                              if previous_fresh else 0.0)
+                # A 90-degree downward camera cannot see a target whose lateral
+                # displacement is many times its solved height. This image-
+                # geometry gate also protects first acquisition, where there is
+                # no previous pose for an innovation check.
+                z = float(position[2])
+                radial = float(np.linalg.norm(position[:2]))
+                geometrically_possible = (
+                    -0.25 <= z <= cfg.max_altitude_m
+                    and radial <= 1.8 * max(z, 0.5) + 0.5)
+                if (not geometrically_possible
+                        or (previous_fresh and innovation > 0.75)):
+                    self.marker_pose_rejections += 1
+                    self.sample.marker_quality = 0.0
+                    self.sample.extra["marker_pose_rejected"] = True
+                    self.sample.extra["marker_pose_innovation_m"] = innovation
+                    return
                 self.pad_position_enu = position
-                self.pad_pose_time_ns = now_ns()
+                self.pad_pose_time_ns = stamp
+                self.sample.extra["marker_pose_rejected"] = False
+                self.sample.extra["marker_pose_rejections"] = self.marker_pose_rejections
 
         def _on_deck_odom(self, msg) -> None:
             """What the lorry broadcasts about itself over its V2V link.
@@ -890,8 +934,9 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             self.deck_time_ns = now_ns()
 
         def _track_pad_relative(self, position: np.ndarray,
-                                velocity: np.ndarray) -> None:
-            """A steadier pad-relative pose, for the entry setpoint only.
+                                velocity: np.ndarray, *, stamp_ns: int,
+                                optical: bool = False) -> None:
+            """Fuse marker, inertial propagation and relative GNSS position.
 
             The measured pad-relative position is the difference of two fixes
             in the same canyon, so most of the error is common-mode and what is
@@ -900,13 +945,17 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             chases that wander -- it was flying at 1.8 m/s while trying to hold
             station, which is real motion in pursuit of noise.
 
-            Predicting on the measured relative velocity and correcting gently
-            toward the measured position leaves a deck moving at a steady speed
-            tracked without lag, and takes the wander out of the setpoint. Only
-            the entry climb reads this; `sample.position_enu` is untouched,
-            because flying the raw differential is the experiment.
+            A live marker solve is authoritative and also re-anchors the DR
+            state. Without it, relative velocity predicts the pose and the
+            difference of the two GNSS positions only bounds drift. Its update
+            time constant grows with combined receiver variance, so a 20 m
+            canyon fix cannot pull the controller tens of metres during a short
+            marker outage while a good fix still recentres it promptly.
             """
-            stamp = now_ns()
+            # Velocity is metres per *simulated* second. Isaac/PX4 run slower
+            # than wall time under lockstep rendering, so integrating with
+            # now_ns() over-propagates DR by the real-time-factor inverse.
+            stamp = int(stamp_ns)
             if self.pad_track_ns == 0:
                 self.pad_track_position = np.asarray(position, dtype=float).copy()
                 self.pad_track_ns = stamp
@@ -914,10 +963,31 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             dt = (stamp - self.pad_track_ns) * 1e-9
             self.pad_track_ns = stamp
             if not 0.0 < dt < 1.0:
+                # A renderer/DDS stall is not evidence that a noisy absolute
+                # fix suddenly became correct. Keep the last DR anchor; a live
+                # optical sample may still re-seat it safely below.
+                if optical:
+                    self.pad_track_position = np.asarray(position, dtype=float).copy()
+                return
+            if optical:
                 self.pad_track_position = np.asarray(position, dtype=float).copy()
                 return
             predicted = self.pad_track_position + np.asarray(velocity, dtype=float) * dt
-            gain = min(dt / max(cfg.pad_track_tau_s, 1e-3), 1.0)
+            uav_sigma = _finite_or(self.gnss.get("sigma_xy_m", 99.9), 99.9)
+            combined_sigma = math.hypot(uav_sigma, max(self.deck_sigma_xy_m, 0.0))
+            quality = _finite_or(self.gnss.get("quality", 0.0), 0.0)
+            if (not bool(self.gnss.get("valid", False))
+                    or quality <= cfg.gnss_dr_enter_quality):
+                # High-uncertainty canyon regime: pure short-term DR. Applying
+                # even a tiny gain to a 20--70 m outlier over every high-rate
+                # callback caused metres of systematic pull during one landing.
+                gain = 0.0
+            else:
+                reference_sigma = 1.5
+                tau = max(cfg.pad_track_tau_s, 1e-3) * max(
+                    1.0, (combined_sigma / reference_sigma) ** 2)
+                tau = min(tau, 600.0)
+                gain = min(dt / tau, 1.0)
             self.pad_track_position = predicted + gain * (position - predicted)
 
         def _track_deck(self, position: np.ndarray, velocity: np.ndarray) -> None:
@@ -976,12 +1046,11 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                 self.uav_truth_velocity_enu = velocity
 
         def _on_gnss_status(self, msg) -> None:
-            """The drone's receiver, and the error to inject downstream of it.
+            """Receive policy-safe observables and scoring-only GNSS truth.
 
-            The observables are forwarded to the policy; the error vector is
-            applied to PX4's estimate here and never leaves the gateway, since
-            no receiver knows its own error and no consumer may act as if it
-            did.
+            HIL_GPS normally applies the measurement upstream of PX4. The
+            downstream offset path below remains only for explicit legacy runs
+            with ``inject_into_px4: false``.
             """
             try:
                 payload = json.loads(msg.data)
@@ -1048,7 +1117,8 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             if cfg.pad_is_static:
                 return True
             if self.deck_time_ns == 0:
-                if not self.warned_missing_deck:
+                if ((stamp - self.start_ns) * 1e-9 >= 2.0
+                        and not self.warned_missing_deck):
                     self.warned_missing_deck = True
                     self.get_logger().error(
                         "pad.motion is %r but no /landing_pad/state/odom has arrived; "
@@ -1083,7 +1153,8 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             if not cfg.gnss_enabled:
                 return open_sky_gnss_state()
             if self.gnss_time_ns == 0:
-                if not self.warned_missing_gnss:
+                if ((stamp - self.start_ns) * 1e-9 >= 2.0
+                        and not self.warned_missing_gnss):
                     self.warned_missing_gnss = True
                     self.get_logger().error(
                         "gnss.enabled is true but no /landing_uav0/gnss/status has "
@@ -1291,7 +1362,8 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             if self.land_detected_ns == 0:
                 self.sample.landed = False
                 self.sample.extra["land_detector"] = "missing"
-                if not self.warned_missing_land_detector:
+                if ((stamp - self.start_ns) * 1e-9 >= 2.0
+                        and not self.warned_missing_land_detector):
                     self.warned_missing_land_detector = True
                     self.get_logger().error(
                         f"no {_topic(cfg, 'out', 'vehicle_land_detected')} received; "

@@ -232,7 +232,11 @@ class ExternalStack:
     def _kill_group(pid: int) -> None:
         # A negative pid targets the process group created by start_new_session,
         # so Pegasus' PX4 child goes down with the simulator.
-        for sig, patience in ((signal.SIGTERM, 40), (signal.SIGKILL, 0)):
+        # Let rclpy/Isaac close their contexts and publishers before escalating.
+        # SIGTERM makes Isaac's bridge invalidate its context mid-frame, which
+        # produces alarming RCLError tracebacks on every otherwise clean run.
+        for sig, patience in ((signal.SIGINT, 40), (signal.SIGTERM, 40),
+                              (signal.SIGKILL, 0)):
             try:
                 os.killpg(pid, sig)
             except (ProcessLookupError, PermissionError):

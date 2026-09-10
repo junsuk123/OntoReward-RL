@@ -358,7 +358,10 @@ def test_the_two_receivers_share_a_sky_so_the_relative_fix_is_the_better_one(
     """The reason a drone can chase a lorry it cannot absolutely locate."""
     gnss = UrbanGnss(GnssConfig.from_mapping(system_config), layout)
     absolute, relative = [], []
-    for seed in range(8):
+    # Receiver-specific C/N0 noise can make a short seed window misleading:
+    # one receiver may catch an NLOS signal the other misses. Over a modest
+    # ensemble the shared geometry remains the dominant effect.
+    for seed in range(32):
         gnss.reset(seed, scale=1.0)
         uav, deck = _settle(gnss, _mid_block(layout.cfg, 6.0), _mid_block(layout.cfg))
         absolute.append(0.5 * (np.linalg.norm(uav.error_enu_m[:2])

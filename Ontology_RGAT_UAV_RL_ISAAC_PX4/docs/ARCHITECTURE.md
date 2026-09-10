@@ -163,10 +163,13 @@ geometry in `evaluation.sweeps.gnss_sweep`.
 
 **Where the error is applied.** The generic clean Pegasus GPS is replaced by
 `UrbanGnssSensor`, which converts the urban receiver solution and reported
-accuracy to MAVLink `HIL_GPS`. PX4 EKF2 therefore owns the navigation estimate:
-large EPH/EPV lowers the observation weight, rejected or invalid fixes make the
-filter propagate on IMU dead reckoning, and a recovered fix is fused back through
-the EKF instead of being added as a position step in the ROS gateway. The status
+accuracy to MAVLink `HIL_GPS`. Before that conversion, reflections detected by
+C/N0 or the OSM/3-D building shadow mask have their pseudorange variance
+inflated so LOS ranges dominate. PX4 EKF2 therefore owns the navigation
+estimate: large EPH/EPV makes a valid fix a weak, drift-bounding observation, a
+true loss of fix makes the filter propagate on IMU dead reckoning, and a stable
+recovery is fused back through the EKF instead of being added as a position step
+in the ROS gateway. The status
 topic still carries the receiver observables for the ontology, plus a simulator-
 only `truth` subobject; `injected_into_px4` prevents the gateway applying that
 error twice. `/fmu/out/estimator_status_flags`, `estimator_gps_status` and the
@@ -182,8 +185,12 @@ relative fix stays better than either absolute one. It is still metres out on a
 
 A moving deck with a stale broadcast makes `estimator_valid=false`; a degraded
 one does not, because a bad fix is a state to reason about and not a link fault.
-
-### Energy and learning contract
+For the pad-relative navigation state, a live marker directly anchors position.
+When it disappears, the gateway predicts from PX4 velocity and the cooperative
+vehicle's wheel-odometry velocity, then
+corrects toward differential GNSS with a time constant proportional to the
+combined receiver variance. Thus a good fix recentres quickly, while an urban
+20 m fix cannot create a position step or overpower short-term DR.
 
 ### Energy and learning contract
 
@@ -210,8 +217,8 @@ GNSS integrity, the suspect-signal fraction and the reported horizontal
 1-sigma are observable. The true error, the true NLOS count and the true sky
 view are not, and `tests/test_urban_gnss.py` enforces it.
 
-**Scoring.** Under a canyon fix the pad-relative pose the policy flies on is
-metres from the truth, so the terminal test and the touchdown metrics run on
+**Scoring.** The fused pad-relative pose can still drift away from truth during
+a long outage, so the terminal test and the touchdown metrics run on
 `env.truth_state` — the gateway's `truth` block built from the simulator-only
 `/landing_uav0/state/odom_truth` and deck truth streams — and nothing else does.
 PX4 odometry cannot be reused as truth now that it fuses the degraded HIL_GPS.

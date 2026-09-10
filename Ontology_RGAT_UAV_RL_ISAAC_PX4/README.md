@@ -84,21 +84,23 @@ biases agree with one another, so no consistency check sees anything wrong, and
 signal strength is the only evidence left. It is not an oracle either, because
 a few reflections come in nearly as strong as the direct path.
 
-The urban receiver replaces Pegasus' generic GPS on MAVLink `HIL_GPS`, including
-its reported EPH/EPV. PX4 EKF2 therefore performs the real GNSS/IMU fusion:
-degraded or rejected fixes fall back to inertial dead reckoning and good fixes
-are blended back according to their covariance. The gateway observes that
-estimate and does not add a second synthetic offset. `docs/ARCHITECTURE.md`,
-"GNSS", details the path and its diagnostic topics.
+The receiver first downweights reflections detected by C/N0 or the loaded 3-D
+building shadow map in its range solution,
+then replaces Pegasus' generic GPS on MAVLink `HIL_GPS`, including its reported
+EPH/EPV. PX4 EKF2 therefore performs the real GNSS/IMU fusion: uncertain but
+valid fixes become weak drift-bounding observations, a true loss of fix falls
+back to inertial dead reckoning, and consistently good fixes regain full weight.
+The gateway observes that estimate and does not add a second synthetic offset.
+`docs/ARCHITECTURE.md`, "GNSS", details the path and its diagnostic topics.
 
 ## Marker-based landing
 
 The pad carries printed ArUco tags, a downward camera on the vehicle sees them,
-and the pose is solved with OpenCV. While the pad is visible the policy flies on
-that pad-relative pose (`vision.pose_source_for_policy`); when it is not, the
-gateway falls back to the PX4 estimate and reports `marker_quality` 0, which is
-what lets the ontology reason about degraded perception instead of being handed
-a function of ground truth.
+and the pose is solved with OpenCV. While the pad is visible it anchors the
+pad-relative estimate. When it is not, the gateway propagates that anchor with
+PX4/deck relative velocity and applies the two GNSS positions only as a
+covariance-weighted drift correction. It also reports `marker_quality` 0, which
+lets the ontology reason about degraded perception without receiving truth.
 
 The pad uses two marker scales because one cannot cover a landing: a tag big
 enough to resolve from the entry altitude overflows the frame near touchdown,
@@ -106,11 +108,10 @@ and a tag small enough to survive touchdown is a few pixels from altitude.
 `config/system.yaml` therefore spreads four 0.62 m tags along the lorry's roof
 around one 0.18 m tag, and the solver uses whichever are visible.
 
-In the canyon this is not a redundancy but the primary sensor: the fallback
-pad-relative pose is the difference of two GNSS fixes and is metres wrong, so
-when the markers leave the frame the landing has nothing accurate left. The
-`GnssIntegrity` ontology node exists so the policy can tell the two situations
-apart -- they look identical in the pose alone.
+In the canyon this is not a redundancy but the primary absolute anchor. During
+a marker outage the inertial propagation stays continuous, while GNSS integrity
+controls how quickly the drift correction is trusted. The `GnssIntegrity`
+ontology node tells the policy which regime it is in; the pose alone cannot.
 
 ```bash
 # Dump annotated camera frames while the simulator runs.
@@ -374,12 +375,6 @@ python3 tools/calibrate_hover_thrust.py
   deck moves: the success radius, the episode length, the arena limits and the
   ontology schema all changed with the environment. A potential trained against
   the 13-node schema will not load, by design.
-- The GNSS error is injected downstream of PX4's estimator rather than into it.
-  Corrupting the EKF properly means patching Pegasus' GPS sensor to bias the
-  `HIL_GPS` it sends, which would also let the estimator's own rejection and
-  reversion logic respond to the canyon. That is the honest next step and it is
-  not done here; the consequence is that PX4's internal position estimate stays
-  clean while the policy's does not.
 - Satellites are frozen for the duration of an episode. Over fifteen seconds a
   MEO satellite moves well under a degree, so this is not a meaningful
   approximation at episode scale -- but it does mean an outage never clears by

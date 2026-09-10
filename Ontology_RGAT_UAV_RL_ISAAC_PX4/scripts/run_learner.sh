@@ -20,11 +20,17 @@ fi
 export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
 unset CYCLONEDDS_URI
 
+# ROS's setup.bash reads variables it has not set, which is fatal under
+# `set -u`: the script dies here and never reaches the exec below.
 # shellcheck disable=SC1091
+set +u
 source /opt/ros/humble/setup.bash
+set -u
 if [ -f "$ascii_ws/install/setup.bash" ]; then
   # shellcheck disable=SC1091
+  set +u
   source "$ascii_ws/install/setup.bash"
+  set -u
 fi
 
 entry=$1

@@ -25,6 +25,7 @@ import sys
 import os
 import shutil
 import subprocess
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -80,10 +81,24 @@ def main() -> int:
         if cfg.viz.rviz.enabled and not args.headless and shutil.which("rviz2"):
             rviz_script = Path(__file__).resolve().parents[1] / "scripts" / "run_rviz.sh"
             if rviz_script.is_file() and os.environ.get("DISPLAY"):
+                # Kept, not discarded: RViz failing is invisible otherwise, and
+                # it fails for environmental reasons -- a snap-packaged terminal
+                # poisoning its GTK paths, a missing display -- that say exactly
+                # what is wrong the moment anyone reads them.
+                rviz_log = Path("/tmp/ontology_rgat_stack") / "rviz.log"
+                rviz_log.parent.mkdir(parents=True, exist_ok=True)
                 rviz_process = subprocess.Popen(
                     [str(rviz_script)], cwd=str(rviz_script.parent.parent),
-                    stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
-                print("RViz 2 started with the landing ontology configuration.")
+                    stdout=rviz_log.open("wb"), stderr=subprocess.STDOUT)
+                # It dies within a second or so when it dies at all, so this
+                # catches it without making the caller wait for a window.
+                time.sleep(2.0)
+                if rviz_process.poll() is None:
+                    print("RViz 2 started with the landing ontology configuration.")
+                else:
+                    rviz_process = None
+                    print(f"WARNING: RViz 2 exited immediately; see {rviz_log}. "
+                          "The run continues without it.")
 
         if not args.no_smoke_test or args.smoke_test_only:
             # One expert episode costs about a minute and catches a broken link,

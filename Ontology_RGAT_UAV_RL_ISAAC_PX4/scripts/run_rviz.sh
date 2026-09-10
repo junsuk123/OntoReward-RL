@@ -11,11 +11,32 @@ ascii_ws=${ASCII_ROS2_WS:-$HOME/.local/share/ontology_rgat_uav_rl/ros2_ws}
 export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
 unset CYCLONEDDS_URI
 
+# Launched from a snap-packaged terminal -- VS Code's integrated one, which is
+# where this pipeline usually gets started -- the shell carries the snap's own
+# GTK and locale paths. RViz is a Qt/GTK application, so it follows them into
+# /snap/core20 and dies on `undefined symbol: __libc_pthread_init` before it
+# ever opens a window. None of these belong to a system binary, so drop them.
+unset GTK_PATH GTK_EXE_PREFIX GTK_IM_MODULE GTK_MODULES LOCPATH \
+      GDK_PIXBUF_MODULE_FILE GDK_PIXBUF_MODULEDIR GIO_MODULE_DIR \
+      GSETTINGS_SCHEMA_DIR GTK_DATA_PREFIX
+if [ -n "${LD_LIBRARY_PATH:-}" ]; then
+  LD_LIBRARY_PATH=$(printf '%s' "$LD_LIBRARY_PATH" | tr ':' '\n' \
+    | grep -v '^/snap/' | paste -sd: -)
+  export LD_LIBRARY_PATH
+fi
+
+# ROS's setup.bash reads variables it has not set, which is fatal under
+# `set -u`: the script dies here and never reaches the exec below, while
+# whatever launched it sees a process that started and exited cleanly.
 # shellcheck disable=SC1091
+set +u
 source /opt/ros/humble/setup.bash
+set -u
 if [ -f "$ascii_ws/install/setup.bash" ]; then
   # shellcheck disable=SC1091
+  set +u
   source "$ascii_ws/install/setup.bash"
+  set -u
 fi
 
 exec rviz2 -d "$workspace_root/rviz/ontology_rgat.rviz" "$@"

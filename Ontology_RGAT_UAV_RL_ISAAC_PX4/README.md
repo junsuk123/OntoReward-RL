@@ -114,6 +114,12 @@ a marker outage the inertial propagation stays continuous, while GNSS integrity
 controls how quickly the drift correction is trusted. The `GnssIntegrity`
 ontology node tells the policy which regime it is in; the pose alone cannot.
 
+RViz shows the live downward-camera stream on
+`/landing_uav0/perception/landing_camera/annotated`. Known pad markers are
+outlined and labelled by ID, while detection status, confidence, reprojection
+error, marker pixel scale and the solved pad-relative position are printed on
+the frame. Missed detections are published too, with a red status banner.
+
 ```bash
 # Dump annotated camera frames while the simulator runs.
 ONTOLOGY_RGAT_VISION_DEBUG_DIR=/tmp/frames ./scripts/run_isaac.sh
@@ -141,12 +147,17 @@ the touchdown metrics, and for nothing else. A link that carries no `truth`
 block falls back to the sensor, which is what the fixed-pad experiment always
 did.
 
-An episode is successful only after the vehicle has been airborne, PX4's land
-detector confirms touchdown, and the pad sensor stream is valid. Ground contact
-without those checks is recorded as an unsuccessful touchdown; battery
-depletion, attitude/flight-limit violations and timeouts are separate terminal
-outcomes. The vehicle is commanded to stop and its landed/disarmed state is
-confirmed before the next reset is accepted.
+An episode is successful only after the vehicle has been airborne, physical
+contact with the valid landing-pad surface is confirmed, and the touchdown
+limits are met. In simulation the roof contact sensor is authoritative because
+PX4's world-frame land detector cannot reliably classify a vehicle resting on a
+moving lorry; on a static pad or hardware the PX4 land detector remains the
+fallback. Contact immediately ends offboard control and requests disarm, and
+the landed/disarmed state is confirmed before the next reset is accepted.
+Contact with the road or outside the pad is recorded as an unsuccessful
+touchdown; battery depletion, attitude/flight-limit violations and timeouts are
+separate terminal outcomes. The deck uses a high-friction, zero-restitution
+contact material to suppress bounce and inertial sliding after touchdown.
 
 `run_pipeline.py` starts the live dashboard, the Isaac in-window overlay and,
 when a graphical ROS 2 session is available, RViz 2. Training progress is
@@ -194,9 +205,9 @@ The script clones dependencies into `external/` and builds `ros2_ws/`. Override
 paths/versions with environment variables shown by `--help`. It also applies
 `patches/px4-v1.14-publish-land-detected.patch`, which is required: stock PX4
 v1.14 does not publish `vehicle_land_detected`, `vehicle_command_ack` or
-`vehicle_thrust_setpoint` over uXRCE-DDS, and without the land detector the
-gateway cannot tell a hovering vehicle from a landed one, so touchdown is never
-detected.
+`vehicle_thrust_setpoint` over uXRCE-DDS. The physical pad contact signal covers
+moving-deck touchdown in simulation, but the PX4 land detector remains required
+for static-pad and hardware fallback and for complete flight-state telemetry.
 
 Every consumer of `/fmu/*` must use Fast DDS, because that is what the agent
 speaks. The run scripts export `RMW_IMPLEMENTATION=rmw_fastrtps_cpp` and clear

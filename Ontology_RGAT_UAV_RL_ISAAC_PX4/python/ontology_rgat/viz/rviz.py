@@ -12,7 +12,8 @@ Topics published under ``cfg.viz.rviz.namespace`` (default ``/landing_rl``):
 ``/uav_path``                ``nav_msgs/Path``, the trail in the **pad** frame
 ``/pad_path``                ``nav_msgs/Path``, the deck's own track in ``map``
 ``/scene``                   ``visualization_msgs/MarkerArray``: deck, success
-                             cylinder, wind and aerodynamic arrows, HUD text
+                             cylinder, wind/aero arrows, HUD and a persistent
+                             colour-coded landing-outcome banner
 ``/ontology``                ``visualization_msgs/MarkerArray``: the 14 ontology
                              nodes coloured by activation and the 34 relation
                              edges scaled by the potential's attention
@@ -66,6 +67,23 @@ def _risk_color(value: float) -> tuple[float, float, float]:
 def _support_color(value: float) -> tuple[float, float, float]:
     """Red at 0, green at 1: more of this node is better."""
     return _risk_color(1.0 - value)
+
+
+def _outcome_style(status: str):
+    """Return (headline, colour) for a terminal episode status.
+
+    ``None`` means the episode is still running.  An unconfirmed success is
+    deliberately amber rather than green: the geometric criterion may have
+    fired, but PX4 did not confirm that the vehicle reached a settled state.
+    """
+    status = str(status)
+    if status == "running":
+        return None
+    if status == "success":
+        return "LANDING SUCCESS", (0.10, 0.95, 0.28)
+    if status.startswith("unconfirmed_"):
+        return "RESULT UNCONFIRMED", (1.00, 0.62, 0.08)
+    return "LANDING FAILED", (0.96, 0.12, 0.10)
 
 
 class RvizPublisher:
@@ -231,7 +249,9 @@ class RvizPublisher:
         radius = 2.0 * float(self.cfg.criteria.xy)
         target.scale.x = target.scale.y = radius
         target.scale.z = 0.01
-        _rgba(target, (0.15, 0.75, 0.40), 0.35)
+        outcome = _outcome_style(info["status"])
+        target_rgb = outcome[1] if outcome is not None else (0.15, 0.75, 0.40)
+        _rgba(target, target_rgb, 0.48 if outcome is not None else 0.35)
         array.markers.append(target)
 
         # Where the vehicle is now, and how far it still has to fall.
@@ -268,6 +288,49 @@ class RvizPublisher:
             f"hover left={log.hover_seconds_left[-1]:5.1f}s"
             + (f"\nPhi={phi:+.3f}" if np.isfinite(phi) else ""))
         array.markers.append(text)
+
+        if outcome is not None:
+            headline, colour = outcome
+            truth = (info.get("diag", {}).get("ground_truth") or {})
+            touchdown = np.asarray(
+                truth.get("position", cur.meas.get("pos", pos)), dtype=float)
+            if touchdown.shape != (3,) or not np.isfinite(touchdown).all():
+                touchdown = np.asarray(cur.meas.get("pos", pos), dtype=float)
+            xy_error = float(np.linalg.norm(touchdown[:2]))
+
+            # A large fixed banner remains after the terminal sample, so the
+            # result stays visible until clear_trails() starts the next episode.
+            banner = self._marker("landing_outcome", 0, Marker.TEXT_VIEW_FACING,
+                                  pad_frame)
+            banner.pose.position.x = 0.0
+            banner.pose.position.y = 0.0
+            banner.pose.position.z = 2.8
+            banner.scale.z = 0.46
+            _rgba(banner, colour, 1.0)
+            banner.text = (
+                f"{headline}\n"
+                f"{str(info['status']).replace('_', ' ').upper()}\n"
+                f"TOUCHDOWN XY ERROR: {xy_error:.2f} m")
+            array.markers.append(banner)
+
+            # Mark the scored touchdown location and draw its miss distance to
+            # the pad centre. The result is scored on simulator truth in SITL;
+            # truth remains visualization/evaluation-only and never feeds the
+            # controller, ontology or reward input.
+            hit = self._marker("landing_outcome", 1, Marker.SPHERE, pad_frame)
+            hit.pose.position.x = float(touchdown[0])
+            hit.pose.position.y = float(touchdown[1])
+            hit.pose.position.z = max(float(touchdown[2]), 0.12)
+            hit.scale.x = hit.scale.y = hit.scale.z = 0.28
+            _rgba(hit, colour, 1.0)
+            array.markers.append(hit)
+
+            miss = self._marker("landing_outcome", 2, Marker.LINE_LIST, pad_frame)
+            miss.scale.x = 0.055
+            miss.points = [self._point(0.0, 0.0, 0.10),
+                           self._point(float(touchdown[0]), float(touchdown[1]), 0.10)]
+            _rgba(miss, colour, 0.95)
+            array.markers.append(miss)
         self.scene_pub.publish(array)
 
     # ------------------------------------------------------------- ontology

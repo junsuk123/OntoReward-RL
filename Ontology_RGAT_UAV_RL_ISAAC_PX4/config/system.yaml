@@ -3,6 +3,10 @@ system:
   control_hz: 50.0
   state_timeout_s: 0.5
   action_timeout_s: 0.25
+  # Rendering/vision callbacks can let more than 250 ms of PX4 simulated time
+  # pass between Python actions. Keep hardware's wall-clock deadman strict, but
+  # give lockstep SITL enough margin to avoid a false offboard-loss transition.
+  sitl_action_timeout_s: 1.0
   target: sitl
 
 network:
@@ -137,11 +141,19 @@ pad:
   deck_size_m: [6.20, 2.45]
   # Top of the box, above the road surface.
   deck_height_m: 3.20
+  # Rubberized landing surface. ``max`` friction combination is applied in
+  # Isaac so this roof value wins over the airframe's default material; zero
+  # restitution removes the bounce that otherwise becomes post-touchdown slip.
+  contact_material:
+    static_friction: 2.0
+    dynamic_friction: 1.6
+    restitution: 0.0
+    contact_min_force_n: 0.25
   start_position_enu_m: [0.0, 0.0, 0.0]
-  # Seeded per episode. 7-29 km/h: congested-to-flowing urban traffic, and the
-  # top of the range is already fast enough that PX4's own position controller
-  # only just holds the pad-relative entry pose behind it.
-  speed_range_m_s: [2.0, 8.0]
+  # Seeded per episode. The baseline is dense-city/yard speed so localization
+  # and reward learning, rather than an attitude-controller chase limit,
+  # determine the outcome. pad_scale sweeps retain faster stress cases.
+  speed_range_m_s: [1.0, 3.0]
   # Traffic. Every stop_interval_s the lorry meets a light or the queue ahead
   # of it and its speed dips by a drawn fraction of cruise; 1.0 is a full stop.
   stop_interval_s: 11.0
@@ -364,6 +376,11 @@ vision:
   # the frame. The difference is carried across the handover and faded out
   # over this long, so the estimate stays continuous. 0 restores the step.
   handover_tau_s: 0.6
+  # Fuse a camera reacquisition around the IMU-DR prediction. These bounds
+  # admit ordinary inter-frame motion but reject a planar-PnP branch jump.
+  pose_max_step_m: 0.75
+  pose_reacquire_error_m: 2.0
+  fusion_max_correction_m: 0.50
   camera:
     resolution: [800, 600]
     horizontal_fov_deg: 90.0

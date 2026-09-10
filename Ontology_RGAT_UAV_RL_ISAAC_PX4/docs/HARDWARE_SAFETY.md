@@ -113,5 +113,10 @@ so the configured PX4 offboard-loss behavior takes over. It stops the moment
 `armed` goes false, so a pilot disarm ends the run.
 
 The gateway deadman stops offboard setpoints after `system.action_timeout_s`
-(250 ms) without a fresh action. PX4 must be configured to react safely to
-offboard loss; the gateway cannot substitute for autopilot failsafes.
+(250 ms) of wall time without a fresh action on hardware. (SITL uses the common
+age of PX4 simulated and wall time so slow lockstep rendering or a DDS timestamp
+jump does not create a false timeout.) PX4
+must be configured to react safely to offboard loss; the gateway cannot
+substitute for autopilot failsafes. The simulator's roof-contact topic is not a
+hardware safety input: unless a real, independently validated pad switch is
+integrated, hardware touchdown continues to depend on PX4's land detector.

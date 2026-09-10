@@ -171,14 +171,27 @@ vehicle is:
   follows simply takes control back.
 
 The learner does not treat a raw height threshold as a successful landing. It
-requires an airborne transition, PX4's land-detector state and a valid
-sensor-derived pad stream. Ground contact without pad confirmation is logged
-as `ground_mislanding`; excessive tilt/closing speed is `unsafe_touchdown`,
-and energy exhaustion is `battery_depleted`. For every terminal outcome the
-gateway disables offboard control, requests landing/disarm, and the learner
-waits up to `cfg.external.outcome_settle_timeout` seconds for landed plus
-disarmed before issuing the next reset. An unconfirmed stop is marked
-`unconfirmed_*` rather than being silently reset.
+requires an airborne transition, a valid sensor-derived pad stream and an
+authoritative touchdown signal. In SITL that signal is the physical roof
+contact sensor; it is necessary on a moving lorry because PX4 observes world
+velocity rather than velocity relative to the deck. The sensor is armed only
+after PX4 reports airborne and the simulator confirms at least 0.5 m of roof
+clearance, which rejects contact bounce during takeoff, and then latches the
+next pad contact through bounce and disarm. A static-pad PX4 land-detector result is
+also accepted, and hardware continues to use that path when no physical pad
+switch is installed.
+
+Ground contact without pad confirmation is logged as `ground_mislanding`;
+excessive tilt/closing speed is `unsafe_touchdown`, and energy exhaustion is
+`battery_depleted`. A confirmed contact immediately disables offboard control
+and, in SITL, requests force-disarm because PX4 can reject an ordinary disarm
+while the moving roof still has world velocity. The vehicle therefore changes
+to a landed state and stops rather than continuing the policy. The learner waits up to
+`cfg.external.outcome_settle_timeout` seconds for landed plus disarmed before
+issuing the next reset. An unconfirmed stop is marked `unconfirmed_*` rather
+than being silently reset. The roof's configured static/dynamic friction is
+2.0/1.6 with maximum friction combination and zero restitution, suppressing
+bounce and inertial sliding on the truck.
 
 The learner's `sensor` state is the only input to control, semantics, rewards,
 R-GAT and PPO. `ground_truth` state is kept for validation and comparison
@@ -336,9 +349,19 @@ Two things a real extract needs watching for:
   changing odometry stream confirms the simulation loop is healthy.
 - `no /fmu/out/vehicle_land_detected received`: PX4 was built without
   `patches/px4-v1.14-publish-land-detected.patch`. The gateway reports
-  `extra.land_detector: "missing"` and holds `landed` at false rather than
-  guessing, so touchdown is never detected and every episode times out. Re-run
-  `scripts/bootstrap_px4_ros2.sh` and rebuild PX4.
+  `extra.land_detector: "missing"`. SITL can still confirm a moving-deck
+  touchdown from `/landing_uav0/perception/pad_contact`, but static-pad and
+  hardware fallback plus complete flight-state telemetry require the patch.
+  Re-run `scripts/bootstrap_px4_ros2.sh` and rebuild PX4.
+- `success` remains zero despite reaching the deck: inspect
+  `/landing_uav0/perception/pad_contact` and
+  `/landing_uav0/perception/pad_contact_force`, then check the state reply's
+  `extra.pad_contact` and `extra.touchdown_source`. A contact that occurs before
+  the armed UAV clears the roof is intentionally ignored as the initial parked
+  state; a later roof contact must latch with source `pad_contact`.
+- A baseline run that repeatedly misses a fast lorry: the default seeded range
+  is 1–3 m/s so localization/reward learning dominates ordinary runs;
+  `external.pad_scale` sweeps multiply it for the high-speed stress cases.
 - `extra.land_detector: "stale"`: the topic exists but has gone quiet within
   `system.state_timeout_s`. Usually the simulator is starved, not the detector.
 - `pad.motion is ... but no /landing_pad/state/odom has arrived`: do not run a
@@ -431,6 +454,22 @@ attached: the monitors export a PNG and a history CSV every `cfg.viz.live_every`
 episodes or epochs. While the run is up, the dashboard at
 `http://127.0.0.1:8770/` and RViz 2 (`./scripts/run_rviz.sh`) show the same data
 live.
+
+At the terminal sample RViz keeps a large outcome marker in the pad frame until
+the next episode starts. Green means a confirmed landing success, red means a
+failed landing/timeout, and amber means the geometric result was reached but
+the final PX4 landed/disarmed confirmation was not obtained. A coloured sphere
+marks the scored touchdown and a line to the pad origin shows the horizontal
+miss distance.
+
+The default RViz layout also opens **Landing camera (annotated detection)** on
+`/landing_uav0/perception/landing_camera/annotated`. Green outlines identify
+known pad tags; each outline carries its ArUco ID, and the header reports
+recognition state, confidence, reprojection error, largest tag size and the
+camera-derived UAV position in pad ENU. `PAD NOT DETECTED` in red means the
+camera is streaming but the board solve failed; an empty RViz display means the
+image topic itself is not arriving. This display is available only with
+`vision.mode: aruco`.
 
 The dashboard's 3D ontology panel is published on the same throttle,
 `cfg.viz.graph3d.every` control steps during an episode and epochs during R-GAT

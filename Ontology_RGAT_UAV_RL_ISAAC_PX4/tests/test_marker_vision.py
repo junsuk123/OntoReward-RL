@@ -125,6 +125,37 @@ def test_empty_view_reports_nothing():
     assert not obs.detected and obs.quality == 0.0
 
 
+def test_operator_frame_contains_successful_recognition_overlay():
+    image, _ = render_board_view((0.2, -0.1, 2.0))
+    obs, annotated = estimator().detect_annotated(image)
+
+    assert obs.detected
+    assert annotated.shape == (HEIGHT, WIDTH, 3)
+    assert annotated.dtype == np.uint8
+    # The input is grayscale; coloured green board outlines prove that the
+    # returned frame is the annotated RGB operator view, not the raw image.
+    channels = annotated.astype(np.int16)
+    green = ((channels[:, :, 1] > 170)
+             & (channels[:, :, 1] > channels[:, :, 0] + 50)
+             & (channels[:, :, 1] > channels[:, :, 2] + 50))
+    assert np.count_nonzero(green) > 100
+
+
+def test_operator_frame_reports_a_detection_miss_visually():
+    image = np.full((HEIGHT, WIDTH), 255, dtype=np.uint8)
+    obs, annotated = estimator().detect_annotated(image)
+
+    assert not obs.detected
+    assert annotated.shape == (HEIGHT, WIDTH, 3)
+    # Red status lettering must remain visible even when there are no corners
+    # to draw, otherwise an operator cannot distinguish a miss from no stream.
+    channels = annotated.astype(np.int16)
+    red = ((channels[:, :, 0] > 170)
+           & (channels[:, :, 0] > channels[:, :, 1] + 60)
+           & (channels[:, :, 0] > channels[:, :, 2] + 60))
+    assert np.count_nonzero(red) > 50
+
+
 def test_unknown_ids_are_ignored():
     image, camera_matrix = render_board_view((0.0, 0.0, 2.0))
     other = MarkerPoseEstimator(

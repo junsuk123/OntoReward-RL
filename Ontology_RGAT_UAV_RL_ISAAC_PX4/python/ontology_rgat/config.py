@@ -153,7 +153,7 @@ def default_config(mode: str = "quick", target: str = "sitl") -> Config:
     # ------------------------------------------------------- policy interface
     cfg.rl = {
         # pad-relative pose/velocity, attitude, rates, three semantic channels,
-        # deck velocity feed-forward, deck motion, reserve and energy margin,
+        # deck velocity/motion context, reserve and energy margin,
         # and the receiver's own account of itself.
         "obs_dim": 23,
         "act_dim": 4,                     # collective, roll, pitch, yaw rate

@@ -15,7 +15,13 @@ import numpy as np
 
 from .config import Config
 
-__all__ = ["PX4Bridge", "BridgeError", "GatewayRejected", "GatewayTimeout"]
+__all__ = ["PX4Bridge", "BridgeError", "GatewayRejected", "GatewayTimeout",
+           "pacing_anchor_us"]
+
+
+def pacing_anchor_us(deadline_us: int, observed_us: int) -> int:
+    """Re-anchor a fixed cadence when the consumer has already fallen behind."""
+    return max(int(deadline_us), int(observed_us))
 
 
 class BridgeError(RuntimeError):
@@ -350,9 +356,12 @@ class PX4Bridge:
                     f"{float(self.cfg.timeout):.2f} s of wall time; the simulator "
                     "has stalled.")
             state = self.validate_state(self.transact("state", {}, ("state",)))
-        # Fixed cadence: measure the next period from the deadline, so sampling
-        # jitter cannot accumulate into a drifting episode clock.
-        self.last_px4_time_us = deadline
+        # Fixed cadence while on time, but re-anchor when an expensive monitor
+        # or rendering callback let simulation advance past the deadline. If we
+        # retain the missed deadline, subsequent actions run at odometry rate
+        # until it catches up, under-counting a 20 s episode as only a few
+        # seconds and starving PX4's setpoint stream again on the next callback.
+        self.last_px4_time_us = pacing_anchor_us(deadline, int(state["px4_time_us"]))
         return state
 
     # ------------------------------------------------------------- commands

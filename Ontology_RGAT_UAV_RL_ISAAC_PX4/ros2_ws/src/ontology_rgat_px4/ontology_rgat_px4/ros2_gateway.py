@@ -55,13 +55,13 @@ def _load_ros_types():
     from px4_msgs.msg import VehicleAttitudeSetpoint, VehicleCommand, VehicleCommandAck
     from px4_msgs.msg import VehicleLandDetected, VehicleLocalPosition
     from px4_msgs.msg import VehicleOdometry, VehicleStatus, VehicleThrustSetpoint
-    from std_msgs.msg import Float32, String
+    from std_msgs.msg import Bool, Float32, String
     return (Node, PoseStamped, Vector3Stamped, Odometry, BatteryStatus,
             EstimatorGpsStatus, EstimatorStatusFlags, SensorGps,
             OffboardControlMode, TrajectorySetpoint,
             VehicleAttitudeSetpoint, VehicleCommand, VehicleCommandAck, VehicleLandDetected,
             VehicleLocalPosition, VehicleOdometry, VehicleStatus, VehicleThrustSetpoint,
-            Float32, String)
+            Bool, Float32, String)
 
 
 def _set_if_present(message: Any, name: str, value: Any) -> None:
@@ -76,6 +76,48 @@ def _finite_or(value: Any, fallback: float = 0.0) -> float:
     except (TypeError, ValueError):
         return float(fallback)
     return result if math.isfinite(result) else float(fallback)
+
+
+def advance_pad_contact_latch(latched: bool, armed_clear: bool,
+                              armed: bool, raw_contact: bool,
+                              px4_landed: bool = False,
+                              airborne_clearance: bool = True) -> tuple[bool, bool]:
+    """Latch only after both PX4 and the contact switch confirm takeoff."""
+    if not armed:
+        return bool(latched), bool(armed_clear)
+    if not raw_contact and not px4_landed and airborne_clearance:
+        armed_clear = True
+    elif armed_clear:
+        latched = True
+    return bool(latched), bool(armed_clear)
+
+
+def action_age_seconds(target: str, wall_now_ns: int, last_wall_ns: int,
+                       px4_time_us: int, last_px4_time_us: int) -> float:
+    """Use the safe common age across lockstep and DDS delivery in SITL.
+
+    Slow rendering makes wall age much larger than simulated age, while a DDS
+    backlog can make the newest delivered PX4 stamp jump far ahead of the stamp
+    present when an action was received. Either is a false timeout on its own;
+    a genuinely missing client advances both clocks past the limit.
+    """
+    wall_age = max(0.0, (wall_now_ns - last_wall_ns) * 1e-9)
+    if (target == "sitl" and px4_time_us > 0 and last_px4_time_us > 0
+            and px4_time_us >= last_px4_time_us):
+        sim_age = (px4_time_us - last_px4_time_us) * 1e-6
+        return min(wall_age, sim_age)
+    return wall_age
+
+
+def bounded_position_update(reference, measurement, max_correction_m: float) -> np.ndarray:
+    """Apply a finite optical correction without permitting a pose jump."""
+    result = np.asarray(reference, dtype=float).copy()
+    delta = np.asarray(measurement, dtype=float) - result
+    distance = float(np.linalg.norm(delta))
+    limit = max(0.0, float(max_correction_m))
+    if distance > limit and distance > 1e-9:
+        delta *= limit / distance
+    return result + delta
 
 
 def _topic(cfg: GatewayConfig, direction: str, name: str) -> str:
@@ -105,7 +147,7 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
      OffboardControlMode, TrajectorySetpoint,
      VehicleAttitudeSetpoint, VehicleCommand, VehicleCommandAck, VehicleLandDetected,
      VehicleLocalPosition, VehicleOdometry, VehicleStatus, VehicleThrustSetpoint,
-     Float32, String) = types
+     Bool, Float32, String) = types
 
     class NodeImpl(Node):
         def __init__(self):
@@ -115,6 +157,7 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             self.sample = VehicleSample()
             self.action = (0.0, 0.0, 0.0, 0.0)
             self.last_action_ns = 0
+            self.last_action_px4_time_us = 0
             self.last_command_seq = -1
             self.pending_state_ack = -1
             # Action/reset replies are asynchronous: odometry and Isaac's
@@ -190,6 +233,13 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             self.estimator_health_ns = 0
             self.estimator_healthy = False
             self.land_detected_ns = 0
+            self.px4_landed = False
+            self.pad_contact_raw = False
+            self.pad_contact_latched = False
+            # The vehicle begins each ordinary episode on the roof. A contact
+            # can only become touchdown after it has armed and cleared the roof.
+            self.pad_contact_armed_clear = False
+            self.pad_contact_ns = 0
             self.warned_missing_land_detector = False
             self.offboard_nav_state = int(getattr(VehicleStatus, "NAVIGATION_STATE_OFFBOARD", 14))
             self.mode_request_period = max(1, int(round(cfg.control_hz / 2.0)))
@@ -239,6 +289,8 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                                      self._on_aero_force, sensor_qos)
             self.create_subscription(Float32, "/landing_uav0/perception/marker_quality",
                                      self._on_marker_quality, sensor_qos)
+            self.create_subscription(Bool, "/landing_uav0/perception/pad_contact",
+                                     self._on_pad_contact, sensor_qos)
             self.create_subscription(PoseStamped, "/landing_uav0/perception/uav_pose_in_pad",
                                      self._on_pad_pose, sensor_qos)
             # The deck broadcasts its own state, the way a cooperative ground
@@ -287,6 +339,7 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             if kind == "action":
                 self.action = validate_action(msg)
                 self.last_action_ns = now_ns()
+                self.last_action_px4_time_us = int(self.sample.px4_time_us)
                 self.last_command_seq = seq
                 self.pending_state_ack = seq
                 self.pending_state_peer = self.udp.peer
@@ -341,7 +394,11 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                 self.reset_pub.publish(req)
                 self.action = (0.0, 0.0, 0.0, 0.0)
                 self.last_action_ns = 0
+                self.last_action_px4_time_us = 0
                 self.prestream = 0
+                # A previous terminal outcome deliberately disabled offboard.
+                # Reset starts a new, independently authorised SITL episode.
+                self.offboard_enabled = cfg.target == "sitl"
                 self.offboard_requested = False
                 self.last_mode_request_tick = -self.mode_request_period
                 self.goto_target_enu = None
@@ -350,6 +407,11 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                 self.pad_track_ns = 0
                 self.battery_armed = False
                 self.pending_battery_hover_s = None
+                self.pad_contact_raw = False
+                self.pad_contact_latched = False
+                self.pad_contact_armed_clear = False
+                self.pad_contact_ns = 0
+                self.sample.extra["pad_contact"] = False
                 self._publish_flight_state()
             elif kind == "goto":
                 self.safety.require_autonomous_climb()
@@ -371,6 +433,7 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                 # An action deadman must not cancel the climb that precedes it.
                 self.action = (0.0, 0.0, 0.0, 0.0)
                 self.last_action_ns = 0
+                self.last_action_px4_time_us = 0
                 self._send_ack(seq, "goto_started",
                                {"position": list(request.position_enu),
                                 "frame": request.frame,
@@ -403,6 +466,7 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                 self.offboard_enabled = False
                 self.offboard_requested = False
                 self.last_action_ns = 0
+                self.last_action_px4_time_us = 0
                 self._send_ack(seq, "offboard_disabled")
             elif kind in {"hello", "state"}:
                 if kind == "hello":
@@ -434,15 +498,22 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                     self.get_logger().warning(
                         "goto hold expired; releasing the setpoint stream")
             if self.last_action_ns:
-                age_s = (stamp - self.last_action_ns) * 1e-9
-                if age_s > cfg.action_timeout_s:
+                age_s = action_age_seconds(
+                    cfg.target, stamp, self.last_action_ns,
+                    int(self.sample.px4_time_us), self.last_action_px4_time_us)
+                timeout_s = (cfg.sitl_action_timeout_s
+                             if cfg.target == "sitl" else cfg.action_timeout_s)
+                if age_s > timeout_s:
                     if self.prestream:
                         self.get_logger().warning(
-                            "action deadman expired; yielding to PX4 offboard-loss failsafe")
+                            f"action deadman expired after {age_s:.3f}s "
+                            f"({cfg.target} limit {timeout_s:.3f}s); yielding to "
+                            "PX4 offboard-loss failsafe")
                     self.prestream = 0
                     self.offboard_requested = False
                     self.last_mode_request_tick = -self.mode_request_period
                     self.last_action_ns = 0
+                    self.last_action_px4_time_us = 0
             if self.last_action_ns:
                 self._publish_attitude_setpoint()
             elif self.goto_target_enu is not None:
@@ -595,8 +666,7 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             # relative velocity and let GNSS correct it only at a rate justified
             # by the two receivers' covariance. This is the actual navigation
             # estimate, not merely an entry-setpoint smoother.
-            policy_position = (raw_policy_position if use_pad_pose
-                               else self.pad_track_position.copy())
+            policy_position = self.pad_track_position.copy()
             self._last_policy_position = policy_position.copy()
             self.sample.position_enu = tuple(float(x) for x in policy_position)
             self.sample.velocity_enu = tuple(float(x) for x in policy_velocity)
@@ -658,8 +728,43 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             self._publish_flight_state()
 
         def _on_land(self, msg) -> None:
-            self.sample.landed = bool(msg.landed)
+            self.px4_landed = bool(msg.landed)
+            self.sample.extra["px4_landed"] = self.px4_landed
             self.land_detected_ns = now_ns()
+
+        def _on_pad_contact(self, msg) -> None:
+            was_latched = self.pad_contact_latched
+            self.pad_contact_raw = bool(msg.data)
+            self.pad_contact_ns = now_ns()
+            # Sticky until reset: contact can bounce for one frame exactly when
+            # motors stop, but touchdown has already physically occurred.
+            truth = self.sample.truth_position_enu
+            clearance = bool(truth is not None and float(truth[2]) >= 0.5)
+            self.pad_contact_latched, self.pad_contact_armed_clear = (
+                advance_pad_contact_latch(
+                    self.pad_contact_latched, self.pad_contact_armed_clear,
+                    self.sample.armed, self.pad_contact_raw, self.px4_landed,
+                    clearance))
+            if self.pad_contact_latched and not was_latched:
+                # Do not wait for the next learner sample to stop the motors.
+                # PX4's land detector observes world motion and can reject a
+                # normal disarm while the lorry is driving, so physical deck
+                # contact is the SITL-only authority for a forced disarm.
+                self.sample.landed = True
+                self.sample.extra["pad_contact"] = True
+                self.sample.extra["touchdown_source"] = "pad_contact"
+                if cfg.target == "sitl":
+                    self.goto_target_enu = None
+                    self.offboard_enabled = False
+                    self.offboard_requested = False
+                    self.prestream = 0
+                    self.last_action_ns = 0
+                    self.last_action_px4_time_us = 0
+                    self._vehicle_command(
+                        VehicleCommand.VEHICLE_CMD_COMPONENT_ARM_DISARM,
+                        0.0, 21196.0)
+                    self.get_logger().info(
+                        "physical pad touchdown: offboard stopped and SITL force-disarm requested")
 
         def _on_thrust_setpoint(self, msg) -> None:
             # PX4's own normalised body thrust. While its position controller
@@ -895,8 +1000,15 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                 previous_fresh = (
                     self.pad_position_enu is not None
                     and (stamp - self.pad_pose_time_ns) * 1e-9 <= cfg.state_timeout_s)
-                innovation = (float(np.linalg.norm(position - self.pad_position_enu))
-                              if previous_fresh else 0.0)
+                if previous_fresh:
+                    innovation = float(np.linalg.norm(position - self.pad_position_enu))
+                    innovation_limit = cfg.marker_pose_max_step_m
+                elif self.pad_track_ns:
+                    innovation = float(np.linalg.norm(position - self.pad_track_position))
+                    innovation_limit = cfg.marker_pose_reacquire_error_m
+                else:
+                    innovation = 0.0
+                    innovation_limit = float("inf")
                 # A 90-degree downward camera cannot see a target whose lateral
                 # displacement is many times its solved height. This image-
                 # geometry gate also protects first acquisition, where there is
@@ -926,7 +1038,7 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                 attitude_consistent = attitude_innovation_deg <= 12.0
                 if (not geometrically_possible
                         or not attitude_consistent
-                        or (previous_fresh and innovation > 0.20)):
+                        or innovation > innovation_limit):
                     self.marker_pose_rejections += 1
                     self.sample.marker_quality = 0.0
                     self.sample.extra["marker_pose_rejected"] = True
@@ -998,14 +1110,17 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             if not 0.0 < dt < 1.0:
                 # A renderer/DDS stall is not evidence that a noisy absolute
                 # fix suddenly became correct. Keep the last DR anchor; a live
-                # optical sample may still re-seat it safely below.
+                # optical sample may still correct it, but never jump it.
                 if optical:
-                    self.pad_track_position = np.asarray(position, dtype=float).copy()
-                return
-            if optical:
-                self.pad_track_position = np.asarray(position, dtype=float).copy()
+                    self.pad_track_position = bounded_position_update(
+                        self.pad_track_position, position,
+                        cfg.marker_fusion_max_correction_m)
                 return
             predicted = self.pad_track_position + np.asarray(velocity, dtype=float) * dt
+            if optical:
+                self.pad_track_position = bounded_position_update(
+                    predicted, position, cfg.marker_fusion_max_correction_m)
+                return
             uav_sigma = _finite_or(self.gnss.get("sigma_xy_m", 99.9), 99.9)
             combined_sigma = math.hypot(uav_sigma, max(self.deck_sigma_xy_m, 0.0))
             quality = _finite_or(self.gnss.get("quality", 0.0), 0.0)
@@ -1407,15 +1522,16 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                 cfg.protocol_version, self.tx_seq, ack_seq), peer=peer)
 
         def _refresh_land_detector(self, stamp: int) -> None:
-            """Never let a silent land detector read as a landed vehicle.
+            """Fuse PX4 landed state with the physical pad-contact switch.
 
             PX4 has to be built with vehicle_land_detected in dds_topics.yaml
             (see patches/px4-v1.14-publish-land-detected.patch). A default of
             "landed" silently disables touchdown detection for a whole run, so
-            report the outage instead of guessing.
+            report the outage instead of guessing. On a driving deck PX4's
+            world-frame motion test is insufficient, while physical roof
+            contact remains authoritative.
             """
             if self.land_detected_ns == 0:
-                self.sample.landed = False
                 self.sample.extra["land_detector"] = "missing"
                 if ((stamp - self.start_ns) * 1e-9 >= 2.0
                         and not self.warned_missing_land_detector):
@@ -1424,16 +1540,28 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                         f"no {_topic(cfg, 'out', 'vehicle_land_detected')} received; "
                         "rebuild PX4 with patches/px4-v1.14-publish-land-detected.patch"
                     )
-                return
-            if (stamp - self.land_detected_ns) * 1e-9 > cfg.state_timeout_s:
+            elif (stamp - self.land_detected_ns) * 1e-9 > cfg.state_timeout_s:
                 self.sample.extra["land_detector"] = "stale"
             else:
                 self.sample.extra["land_detector"] = "live"
-            # PX4 decides "landed" from world-frame motion. A vehicle sitting on
-            # a driving deck is moving, so the detector under-reports touchdown
-            # and the client must fall back to pad-relative altitude and closing
-            # speed. Say so rather than letting it look authoritative.
-            self.sample.extra["land_detector_authoritative"] = bool(cfg.pad_is_static)
+
+            contact_live = (self.pad_contact_ns > 0
+                            and (stamp - self.pad_contact_ns) * 1e-9
+                            <= cfg.state_timeout_s)
+            self.sample.extra["pad_contact_raw"] = bool(
+                contact_live and self.pad_contact_raw)
+            self.sample.extra["pad_contact"] = bool(self.pad_contact_latched)
+            self.sample.extra["px4_landed"] = bool(self.px4_landed)
+            self.sample.landed = bool(self.px4_landed or self.pad_contact_latched)
+
+            px4_authoritative = bool(
+                cfg.pad_is_static and self.sample.extra["land_detector"] == "live")
+            self.sample.extra["land_detector_authoritative"] = bool(
+                self.pad_contact_latched or px4_authoritative)
+            self.sample.extra["touchdown_source"] = (
+                "pad_contact" if self.pad_contact_latched
+                else "px4_land_detector" if self.px4_landed
+                else "none")
 
     return NodeImpl()
 

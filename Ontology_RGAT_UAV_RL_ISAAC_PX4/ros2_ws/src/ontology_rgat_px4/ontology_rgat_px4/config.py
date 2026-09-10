@@ -15,6 +15,7 @@ class GatewayConfig:
     control_hz: float
     state_timeout_s: float
     action_timeout_s: float
+    sitl_action_timeout_s: float
     target: str
     bind_host: str
     matlab_host: str
@@ -35,6 +36,9 @@ class GatewayConfig:
     # Seconds over which a camera/PX4 position handover is faded out, so
     # losing the pad from frame does not step the state the policy flies on.
     vision_handover_tau_s: float
+    marker_pose_max_step_m: float
+    marker_pose_reacquire_error_m: float
+    marker_fusion_max_correction_m: float
     pad_motion: str
     pad_deck_height_m: float
     world_xy_limit_m: float
@@ -85,6 +89,8 @@ class GatewayConfig:
             control_hz=float(system["control_hz"]),
             state_timeout_s=float(system["state_timeout_s"]),
             action_timeout_s=float(system["action_timeout_s"]),
+            sitl_action_timeout_s=float(system.get(
+                "sitl_action_timeout_s", system["action_timeout_s"])),
             target=resolved_target,
             bind_host=str(network["bind_host"]),
             matlab_host=str(network["matlab_host"]),
@@ -103,6 +109,11 @@ class GatewayConfig:
             estimator_warmup_s=float(px4["estimator_warmup_s"]),
             marker_pose_drives_policy=bool(vision.get("pose_source_for_policy", False)),
             vision_handover_tau_s=float(vision.get("handover_tau_s", 0.6)),
+            marker_pose_max_step_m=float(vision.get("pose_max_step_m", 0.75)),
+            marker_pose_reacquire_error_m=float(
+                vision.get("pose_reacquire_error_m", 2.0)),
+            marker_fusion_max_correction_m=float(
+                vision.get("fusion_max_correction_m", 0.5)),
             pad_motion=str(pad.get("motion", "static")).lower(),
             pad_deck_height_m=float(pad.get("deck_height_m", 0.0)),
             world_xy_limit_m=float(landing.get("world_xy_limit_m", 12.0)),

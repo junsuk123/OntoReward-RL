@@ -225,33 +225,137 @@ class MarkerPoseEstimator:
             aruco_dictionary(dictionary), _detector_parameters())
 
     def detect(self, image: np.ndarray) -> MarkerObservation:
-        if image is None or image.size == 0:
-            return MarkerObservation.missed()
-        gray = image if image.ndim == 2 else cv2.cvtColor(image[:, :, :3], cv2.COLOR_RGB2GRAY)
+        """Detect the pad without doing any visualization work."""
+        observation, _, _ = self._detect_details(image)
+        return observation
+
+    def detect_annotated(self, image: np.ndarray) -> tuple[MarkerObservation, np.ndarray]:
+        """Detect once and return the RGB frame annotated for an operator.
+
+        The overlay only contains quantities produced by the camera solve.  It
+        deliberately contains no simulator truth, so displaying or recording
+        this topic cannot leak privileged state into the experiment.
+        """
+        rgb = self._rgb8(image)
+        observation, markers, pose = self._detect_details(rgb)
+        return observation, self._annotate(rgb, observation, markers, pose)
+
+    @staticmethod
+    def _rgb8(image: np.ndarray) -> np.ndarray:
+        """Normalize Isaac/OpenCV camera output to contiguous ``rgb8``."""
+        if image is None or np.asarray(image).size == 0:
+            return np.zeros((1, 1, 3), dtype=np.uint8)
+        array = np.asarray(image)
+        if array.ndim == 2:
+            array = np.repeat(array[:, :, None], 3, axis=2)
+        elif array.ndim != 3 or array.shape[2] < 3:
+            raise ValueError(f"camera image must be HxW or HxWx3+, got {array.shape}")
+        else:
+            array = array[:, :, :3]
+        if np.issubdtype(array.dtype, np.floating):
+            scale = 255.0 if float(np.nanmax(array)) <= 1.0 else 1.0
+            array = np.nan_to_num(array, nan=0.0, posinf=255.0, neginf=0.0) * scale
+        return np.ascontiguousarray(np.clip(array, 0, 255).astype(np.uint8))
+
+    def _detect_details(self, image: np.ndarray):
+        if image is None or np.asarray(image).size == 0:
+            return MarkerObservation.missed(), [], None
+        rgb = self._rgb8(image)
+        gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
         corners, ids, _ = self.detector.detectMarkers(gray)
         if ids is None:
-            return MarkerObservation.missed()
+            return MarkerObservation.missed(), [], None
 
+        # Keep every ArUco candidate for operator diagnostics, but only known
+        # board IDs are allowed into the landing pose solve.
+        markers = [(quad.reshape(4, 2).astype(np.float64), int(marker_id))
+                   for quad, marker_id in zip(corners, ids.flatten())]
         object_points, image_points, seen, sides = [], [], [], []
-        for quad, marker_id in zip(corners, ids.flatten()):
+        for quad, marker_id in markers:
             marker_id = int(marker_id)
             if marker_id not in self.board:
                 continue
-            quad = quad.reshape(4, 2).astype(np.float64)
             object_points.append(self.board.object_points(marker_id))
             image_points.append(quad)
             seen.append(marker_id)
             sides.append(np.sqrt(abs(cv2.contourArea(quad.astype(np.float32)))))
         if not seen:
-            return MarkerObservation.missed()
+            return MarkerObservation.missed(), markers, None
 
         object_points = np.concatenate(object_points, axis=0)
         image_points = np.concatenate(image_points, axis=0)
         pose = self._solve(object_points, image_points)
         if pose is None:
-            return MarkerObservation.missed()
+            return MarkerObservation.missed(), markers, None
         rvec, tvec, reprojection = pose
-        return self._observation(rvec, tvec, reprojection, max(sides), tuple(sorted(seen)))
+        observation = self._observation(
+            rvec, tvec, reprojection, max(sides), tuple(sorted(seen)))
+        return observation, markers, (rvec, tvec)
+
+    def _annotate(self, rgb: np.ndarray, observation: MarkerObservation,
+                  markers, pose) -> np.ndarray:
+        """Draw board recognition and pose diagnostics without changing RGB."""
+        canvas = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+        height, width = canvas.shape[:2]
+
+        # A small reticle makes camera centring immediately visible even when
+        # the pad is temporarily out of frame.
+        centre = (width // 2, height // 2)
+        cv2.drawMarker(canvas, centre, (210, 210, 210), cv2.MARKER_CROSS,
+                       max(14, min(width, height) // 24), 1, cv2.LINE_AA)
+
+        for quad, marker_id in markers:
+            points = np.rint(quad).astype(np.int32).reshape((-1, 1, 2))
+            known = marker_id in self.board
+            colour = (60, 220, 60) if known else (0, 165, 255)
+            cv2.polylines(canvas, [points], True, colour, 3, cv2.LINE_AA)
+            anchor = tuple(points.reshape(-1, 2)[0])
+            label = f"PAD ID {marker_id}" if known else f"OTHER ID {marker_id}"
+            cv2.putText(canvas, label, (int(anchor[0]), max(18, int(anchor[1]) - 7)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 0), 4, cv2.LINE_AA)
+            cv2.putText(canvas, label, (int(anchor[0]), max(18, int(anchor[1]) - 7)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.55, colour, 2, cv2.LINE_AA)
+
+        if observation.detected:
+            status_colour = (55, 210, 55)
+            lines = [
+                "PAD DETECTED",
+                (f"IDs={','.join(str(value) for value in observation.marker_ids)}  "
+                 f"quality={observation.quality:.2f}  "
+                 f"reproj={observation.reprojection_px:.2f}px  "
+                 f"largest={observation.marker_pixels:.1f}px"),
+                ("UAV in pad ENU  "
+                 f"x={observation.position_pad_enu[0]:+.2f}  "
+                 f"y={observation.position_pad_enu[1]:+.2f}  "
+                 f"z={observation.position_pad_enu[2]:+.2f} m"),
+            ]
+            if pose is not None:
+                rvec, tvec = pose
+                cv2.drawFrameAxes(canvas, self.camera_matrix, self.distortion,
+                                  rvec, tvec, 0.18, 2)
+        else:
+            status_colour = (45, 45, 235)
+            visible = [marker_id for _, marker_id in markers]
+            lines = [
+                "PAD NOT DETECTED",
+                ("No ArUco marker in view" if not visible else
+                 "Rejected/non-pad IDs=" + ",".join(str(value) for value in visible)),
+            ]
+
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        font_scale = max(0.45, min(0.72, width / 1100.0))
+        line_height = max(22, int(31 * font_scale / 0.72))
+        panel_height = 12 + line_height * len(lines)
+        overlay = canvas.copy()
+        cv2.rectangle(overlay, (0, 0), (width, panel_height), (18, 18, 18), -1)
+        cv2.addWeighted(overlay, 0.76, canvas, 0.24, 0.0, canvas)
+        for index, line in enumerate(lines):
+            colour = status_colour if index == 0 else (245, 245, 245)
+            cv2.putText(canvas, line, (12, 10 + line_height * (index + 1) - 6),
+                        font, font_scale, colour, 2 if index == 0 else 1,
+                        cv2.LINE_AA)
+
+        return cv2.cvtColor(canvas, cv2.COLOR_BGR2RGB)
 
     def _solve(self, object_points, image_points):
         """Pick the pose supported by the image that also has the camera above the pad.

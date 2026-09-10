@@ -1,147 +1,300 @@
-# RViz 2 view for a live ontology-R-GAT landing.
-#
-#   RMW_IMPLEMENTATION=rmw_fastrtps_cpp rviz2 -d rviz/ontology_rgat.rviz
-#
-# The fixed frame is landing_pad, not map: the target rides a ground vehicle,
-# and the whole experiment is stated pad-relative, so a pad-fixed camera is the
-# frame the policy actually flies in. Switch Global Options/Fixed Frame to map
-# to watch the rover drive across the arena instead.
 Panels:
   - Class: rviz_common/Displays
+    Help Height: 70
     Name: Displays
     Property Tree Widget:
       Expanded:
         - /Global Options1
       Splitter Ratio: 0.5
-    Tree Height: 640
+    Tree Height: 276
   - Class: rviz_common/Views
+    Expanded:
+      - /Current View1
     Name: Views
+    Splitter Ratio: 0.5
 Visualization Manager:
   Class: ""
-  Name: root
+  Displays:
+    - Alpha: 0.3499999940395355
+      Cell Size: 0.5
+      Class: rviz_default_plugins/Grid
+      Color: 130; 130; 130
+      Enabled: true
+      Line Style:
+        Line Width: 0.029999999329447746
+        Value: Lines
+      Name: Grid
+      Normal Cell Count: 0
+      Offset:
+        X: 0
+        Y: 0
+        Z: 0
+      Plane: XY
+      Plane Cell Count: 20
+      Reference Frame: landing_pad
+      Value: true
+    - Class: rviz_default_plugins/TF
+      Enabled: true
+      Frame Timeout: 15
+      Frames:
+        All Enabled: true
+        landing_uav_base_link:
+          Value: true
+        map:
+          Value: true
+        map_ned:
+          Value: true
+      Marker Scale: 0.6000000238418579
+      Name: TF
+      Show Arrows: false
+      Show Axes: true
+      Show Names: true
+      Tree:
+        {}
+      Update Interval: 0
+      Value: true
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Name: Scene (deck, outcome, tolerance, wind, HUD)
+      Namespaces:
+        {}
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /landing_rl/scene
+      Value: true
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Name: Ontology attention
+      Namespaces:
+        {}
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /landing_rl/ontology
+      Value: true
+    - Alpha: 1
+      Buffer Length: 1
+      Class: rviz_default_plugins/Path
+      Color: 42; 120; 214
+      Enabled: true
+      Head Diameter: 0.30000001192092896
+      Head Length: 0.20000000298023224
+      Length: 0.30000001192092896
+      Line Style: Lines
+      Line Width: 0.019999999552965164
+      Name: UAV trail (pad frame)
+      Offset:
+        X: 0
+        Y: 0
+        Z: 0
+      Pose Color: 255; 85; 255
+      Pose Style: None
+      Radius: 0.029999999329447746
+      Shaft Diameter: 0.10000000149011612
+      Shaft Length: 0.10000000149011612
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /landing_rl/uav_path
+      Value: true
+    - Alpha: 1
+      Buffer Length: 1
+      Class: rviz_default_plugins/Path
+      Color: 235; 104; 52
+      Enabled: true
+      Head Diameter: 0.30000001192092896
+      Head Length: 0.20000000298023224
+      Length: 0.30000001192092896
+      Line Style: Lines
+      Line Width: 0.019999999552965164
+      Name: Deck track (world frame)
+      Offset:
+        X: 0
+        Y: 0
+        Z: 0
+      Pose Color: 255; 85; 255
+      Pose Style: None
+      Radius: 0.029999999329447746
+      Shaft Diameter: 0.10000000149011612
+      Shaft Length: 0.10000000149011612
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /landing_rl/pad_path
+      Value: true
+    - Angle Tolerance: 0.10000000149011612
+      Class: rviz_default_plugins/Odometry
+      Covariance:
+        Orientation:
+          Alpha: 0.5
+          Color: 255; 255; 127
+          Color Style: Unique
+          Frame: Local
+          Offset: 1
+          Scale: 1
+          Value: true
+        Position:
+          Alpha: 0.30000001192092896
+          Color: 204; 51; 204
+          Scale: 1
+          Value: true
+        Value: false
+      Enabled: true
+      Keep: 1
+      Name: Deck odometry (from Isaac)
+      Position Tolerance: 0.10000000149011612
+      Shape:
+        Alpha: 1
+        Axes Length: 1
+        Axes Radius: 0.10000000149011612
+        Color: 255; 25; 0
+        Head Length: 0.15000000596046448
+        Head Radius: 0.10000000149011612
+        Shaft Length: 0.4000000059604645
+        Shaft Radius: 0.05000000074505806
+        Value: Arrow
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /landing_pad/state/odom
+      Value: true
+    - Alpha: 1
+      Axes Length: 0.4000000059604645
+      Axes Radius: 0.029999999329447746
+      Class: rviz_default_plugins/Pose
+      Color: 255; 25; 0
+      Enabled: true
+      Head Length: 0.30000001192092896
+      Head Radius: 0.10000000149011612
+      Name: Camera pose solve (marker board)
+      Shaft Length: 1
+      Shaft Radius: 0.05000000074505806
+      Shape: Axes
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /landing_uav0/perception/uav_pose_in_pad
+      Value: true
+    - Class: rviz_default_plugins/Image
+      Enabled: true
+      Max Value: 1
+      Median window: 5
+      Min Value: 0
+      Name: Landing camera (annotated detection)
+      Normalize Range: false
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /landing_uav0/perception/landing_camera/annotated
+      Value: true
+  Enabled: true
   Global Options:
     Background Color: 48; 48; 48
     Fixed Frame: landing_pad
     Frame Rate: 30
-  Displays:
-    - Class: rviz_default_plugins/Grid
-      Name: Grid
-      Enabled: true
-      Cell Size: 0.5
-      Plane Cell Count: 20
-      Color: 130; 130; 130
-      Alpha: 0.35
-      Reference Frame: landing_pad
-    - Class: rviz_default_plugins/TF
-      Name: TF
-      Enabled: true
-      Show Axes: true
-      Show Names: true
-      Show Arrows: false
-      Marker Scale: 0.6
-    - Class: rviz_default_plugins/MarkerArray
-      Name: Scene (deck, tolerance, wind, HUD)
-      Enabled: true
-      Topic:
-        Value: /landing_rl/scene
-        Depth: 5
-        Durability Policy: Volatile
-        Reliability Policy: Reliable
-    - Class: rviz_default_plugins/MarkerArray
-      Name: Ontology attention
-      Enabled: true
-      Topic:
-        Value: /landing_rl/ontology
-        Depth: 5
-        Durability Policy: Volatile
-        Reliability Policy: Reliable
-    - Class: rviz_default_plugins/Path
-      Name: UAV trail (pad frame)
-      Enabled: true
-      Color: 42; 120; 214
-      Line Width: 0.02
-      Line Style: Lines
-      Topic:
-        Value: /landing_rl/uav_path
-        Depth: 5
-        Durability Policy: Volatile
-        Reliability Policy: Reliable
-    - Class: rviz_default_plugins/Path
-      Name: Deck track (world frame)
-      Enabled: true
-      Color: 235; 104; 52
-      Line Width: 0.02
-      Line Style: Lines
-      Topic:
-        Value: /landing_rl/pad_path
-        Depth: 5
-        Durability Policy: Volatile
-        Reliability Policy: Reliable
-    - Class: rviz_default_plugins/Odometry
-      Name: Deck odometry (from Isaac)
-      Enabled: false
-      Covariance:
-        Value: false
-      Keep: 1
-      Shape:
-        Shaft Length: 0.4
-        Head Length: 0.15
-      Topic:
-        Value: /landing_pad/state/odom
-        Depth: 5
-        Durability Policy: Volatile
-        Reliability Policy: Reliable
-    - Class: rviz_default_plugins/Pose
-      Name: Camera pose solve (marker board)
-      Enabled: false
-      Shape: Axes
-      Axes Length: 0.4
-      Axes Radius: 0.03
-      Topic:
-        Value: /landing_uav0/perception/uav_pose_in_pad
-        Depth: 5
-        Durability Policy: Volatile
-        Reliability Policy: Reliable
+  Name: root
   Tools:
     - Class: rviz_default_plugins/MoveCamera
     - Class: rviz_default_plugins/FocusCamera
     - Class: rviz_default_plugins/Measure
       Line color: 128; 128; 0
+  Transformation:
+    Current:
+      Class: rviz_default_plugins/TF
+  Value: true
   Views:
     Current:
       Class: rviz_default_plugins/Orbit
-      Name: Current View
-      Distance: 9.0
+      Distance: 9
+      Enable Stereo Rendering:
+        Stereo Eye Separation: 0.05999999865889549
+        Stereo Focal Distance: 1
+        Swap Stereo Eyes: false
+        Value: false
       Focal Point:
         X: 0
-        Y: -0.6
-        Z: 0.8
-      Pitch: 0.42
-      Yaw: 2.35
-      Near Clip Distance: 0.01
+        Y: -0.6000000238418579
+        Z: 0.800000011920929
+      Focal Shape Fixed Size: true
+      Focal Shape Size: 0.05000000074505806
+      Invert Z Axis: false
+      Name: Current View
+      Near Clip Distance: 0.009999999776482582
+      Pitch: 0.41999998688697815
+      Target Frame: <Fixed Frame>
+      Value: Orbit (rviz_default_plugins)
+      Yaw: 2.3499999046325684
     Saved:
       - Class: rviz_default_plugins/Orbit
-        Name: Ontology graph
-        Distance: 4.2
+        Distance: 4.199999809265137
+        Enable Stereo Rendering:
+          Stereo Eye Separation: 0.05999999865889549
+          Stereo Focal Distance: 1
+          Swap Stereo Eyes: false
+          Value: false
         Focal Point:
-          X: 1.6
-          Y: -2.6
-          Z: 1.6
-        Pitch: 0.05
-        Yaw: 3.14159
-        Near Clip Distance: 0.01
+          X: 1.600000023841858
+          Y: -2.5999999046325684
+          Z: 1.600000023841858
+        Focal Shape Fixed Size: true
+        Focal Shape Size: 0.05000000074505806
+        Invert Z Axis: false
+        Name: Ontology graph
+        Near Clip Distance: 0.009999999776482582
+        Pitch: 0.05000000074505806
+        Target Frame: <Fixed Frame>
+        Value: Orbit (rviz_default_plugins)
+        Yaw: 3.141590118408203
       - Class: rviz_default_plugins/Orbit
-        Name: Touchdown close-up
-        Distance: 2.0
+        Distance: 2
+        Enable Stereo Rendering:
+          Stereo Eye Separation: 0.05999999865889549
+          Stereo Focal Distance: 1
+          Swap Stereo Eyes: false
+          Value: false
         Focal Point:
           X: 0
           Y: 0
-          Z: 0.3
+          Z: 0.30000001192092896
+        Focal Shape Fixed Size: true
+        Focal Shape Size: 0.05000000074505806
+        Invert Z Axis: false
+        Name: Touchdown close-up
+        Near Clip Distance: 0.009999999776482582
         Pitch: 0.25
-        Yaw: 2.35
-        Near Clip Distance: 0.01
+        Target Frame: <Fixed Frame>
+        Value: Orbit (rviz_default_plugins)
+        Yaw: 2.3499999046325684
 Window Geometry:
   Displays:
     collapsed: false
-  Height: 1000
-  Width: 1600
+  Height: 1016
+  Hide Left Dock: false
+  Hide Right Dock: false
+  Landing camera (annotated detection):
+    collapsed: false
+  QMainWindow State: 000000ff00000000fd0000000100000000000001cb0000039efc0200000003fb00000048004c0061006e00640069006e0067002000630061006d006500720061002000280061006e006e006f0074006100740065006400200064006500740065006300740069006f006e0029010000003d000000f20000002800fffffffb000000100044006900730070006c006100790073010000013500000197000000c900fffffffb0000000a0056006900650077007301000002d200000109000000a400ffffff000001d40000039e00000004000000040000000800000008fc0000000100000002000000010000000a0054006f006f006c00730100000000ffffffff0000000000000000
+  Views:
+    collapsed: false
+  Width: 933
+  X: 987
+  Y: 27

@@ -323,6 +323,15 @@ Isaac publishes, under `/landing_uav0` (`isaac.namespace` + `vehicle_id`):
 - `/environment/wind`, `/environment/aero_force` (`geometry_msgs/Vector3Stamped`, ENU)
 - `/perception/marker_quality` (`std_msgs/Float32`, `[0,1]`)
 - `/perception/uav_pose_in_pad` (`geometry_msgs/PoseStamped`, pad-frame ENU)
+- `/perception/pad_contact` (`std_msgs/Bool`): physical UAV contact with the
+  deck, filtered by the quadrotor body and the yaw-corrected roof footprint
+- `/perception/pad_contact_force` (`std_msgs/Float32`, N): net contact force for
+  operator diagnostics
+- `/perception/landing_camera/annotated` (`sensor_msgs/Image`, `rgb8`): the
+  downward camera with detected board outlines/IDs and the solve's confidence,
+  reprojection error, pixel scale and pad-relative UAV position overlaid. A miss
+  is also published and labelled, so loss of recognition is visually distinct
+  from loss of the camera stream.
 - `/gnss/status` (`std_msgs/String`, JSON): both receivers' fixes. Observables at
   the top level, the simulator's truth under `truth` — the gateway forwards the
   first and keeps the second. A custom message would be tidier and would need a
@@ -365,6 +374,17 @@ single-tag pose — so the ontology consumes perception health rather than a
 function of ground truth. A miss publishes `0.0` and no pose, which is what
 makes the gateway fall back to the PX4 estimate.
 
+The same detector invocation produces the annotated operator image on
+`/landing_uav0/perception/landing_camera/annotated`; visualization does not run
+the detector a second time and the overlay contains no simulator truth.
+
+Accepted camera poses are fused around the IMU-DR prediction instead of
+replacing it. Inter-frame pose changes, post-outage reacquisition error and the
+maximum correction applied in one update are bounded by `vision.pose_max_step_m`,
+`vision.pose_reacquire_error_m` and `vision.fusion_max_correction_m`. This keeps
+a planar-PnP branch change from moving the controller by metres while preserving
+the camera as the authoritative local correction.
+
 The optional MAVLink gateway consumes `LOCAL_POSITION_NED`,
 `ATTITUDE_QUATERNION`, `HIGHRES_IMU`, `HEARTBEAT` and `EXTENDED_SYS_STATE`, and
 sends `SET_ATTITUDE_TARGET`. It has no reset and no perception input.
@@ -402,6 +422,10 @@ only), `quaternion_wxyz`, `angular_velocity`,
 | `offboard_active` | PX4 is actually in `OFFBOARD`, not merely asked |
 | `control_mapping` | `hover_thrust`, `collective_span`, `max_roll_pitch_rad`, `max_yaw_rate_rad_s` |
 | `land_detector` | `live`, `stale` or `missing` (PX4 built without the patch) |
+| `pad_contact_raw` | current, non-latched roof contact sample |
+| `pad_contact` | touchdown contact latched after the armed UAV first clears the roof |
+| `px4_landed` | unmodified PX4 land-detector result |
+| `touchdown_source` | `pad_contact`, `px4_land_detector` or `none` |
 | `px4_thrust` | PX4's own normalised body thrust, for hover calibration |
 | `px4_battery` | latest `[remaining_fraction, voltage]` received from PX4 |
 | `last_command` | `[command, result]` from the most recent `vehicle_command_ack` |
@@ -470,8 +494,13 @@ steps before they could land. If simulated time fails to advance within
 instead of hanging.
 
 The learner may pause briefly without malformed setpoints being repeated forever:
-after `system.action_timeout_s` (250 ms) the gateway stops publishing setpoints
-so PX4's configured offboard-loss failsafe takes control. A pending `goto` is
+the gateway stops publishing setpoints when the action deadman expires, so PX4's
+configured offboard-loss failsafe takes control. Hardware uses
+`system.action_timeout_s` (250 ms) of wall time. SITL uses
+`system.sitl_action_timeout_s` (1 s) and the smaller of wall and PX4 simulated
+action age. Slow lockstep rendering inflates wall age, while DDS backlog can
+jump a newly delivered PX4 timestamp; neither alone is a missing controller,
+whereas a real pause advances both clocks past the limit. A pending `goto` is
 not cancelled by that deadman — the climb precedes the first action — but does
 expire at its own `hold_s`.
 

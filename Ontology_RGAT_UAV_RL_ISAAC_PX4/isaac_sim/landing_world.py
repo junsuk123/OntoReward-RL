@@ -47,7 +47,8 @@ simulation_app.update()
 import rclpy
 from geometry_msgs.msg import PoseStamped, Vector3Stamped
 from nav_msgs.msg import Odometry
-from std_msgs.msg import Float32, String
+from sensor_msgs.msg import Image
+from std_msgs.msg import Bool, Float32, String
 from scipy.spatial.transform import Rotation
 from isaacsim.core.api import World
 from isaacsim.core.utils.viewports import set_camera_view
@@ -61,9 +62,10 @@ from pegasus.simulator.logic.backends.ros2_backend import ROS2Backend
 from pegasus.simulator.logic.dynamics import LinearDrag
 from pegasus.simulator.logic.interface.pegasus_interface import PegasusInterface
 from pegasus.simulator.logic.vehicles.multirotor import Multirotor, MultirotorConfig
-from isaacsim.core.api.materials import OmniPBR
+from isaacsim.core.api.materials import OmniPBR, PhysicsMaterial
+from isaacsim.sensors.physics import ContactSensor
 from isaacsim.sensors.camera import Camera
-from pxr import Gf, Sdf, UsdGeom, UsdPhysics, UsdShade
+from pxr import Gf, PhysxSchema, Sdf, UsdGeom, UsdPhysics, UsdShade
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from marker_vision import (
@@ -187,6 +189,7 @@ class DownwardCamera:
         self.debug_dir = os.environ.get("ONTOLOGY_RGAT_VISION_DEBUG_DIR", "")
         self.debug_every = int(os.environ.get("ONTOLOGY_RGAT_VISION_DEBUG_EVERY", "30"))
         self.frames = 0
+        self.annotated_rgb = None
 
     def attach(self, vehicle_prim_path: str) -> None:
         self.camera = Camera(
@@ -274,24 +277,21 @@ class DownwardCamera:
         if frame is None or frame.size == 0:
             if self.frames == 0:
                 carb.log_warn("Landing camera produced no frame; is rendering enabled?")
+            self.annotated_rgb = None
             self.frames += 1
             return None
         image = frame[:, :, :3]
-        observation = self.estimator.detect(image)
+        observation, self.annotated_rgb = self.estimator.detect_annotated(image)
         self.frames += 1
         if self.debug_dir and self.frames % max(1, self.debug_every) == 0:
-            self._dump(image, observation)
+            self._dump(self.annotated_rgb)
         return observation
 
-    def _dump(self, image, observation) -> None:
+    def _dump(self, annotated_rgb) -> None:
         import cv2
         path = Path(self.debug_dir)
         path.mkdir(parents=True, exist_ok=True)
-        canvas = cv2.cvtColor(np.ascontiguousarray(image), cv2.COLOR_RGB2BGR)
-        label = ("ids=%s q=%.2f" % (observation.marker_ids, observation.quality)
-                 if observation.detected else "no detection")
-        cv2.putText(canvas, label, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8,
-                    (0, 0, 255), 2)
+        canvas = cv2.cvtColor(annotated_rgb, cv2.COLOR_RGB2BGR)
         cv2.imwrite(str(path / f"frame_{self.frames:06d}.png"), canvas)
 
 
@@ -327,6 +327,13 @@ class LandingDeck:
         self.yaw_rate = 0.0
         self.physics_ok = False
         self._xform = None
+        material = (config.get("pad") or {}).get("contact_material", {}) or {}
+        self.static_friction = float(material.get("static_friction", 2.0))
+        self.dynamic_friction = float(material.get("dynamic_friction", 1.6))
+        self.restitution = float(material.get("restitution", 0.0))
+        self.contact_min_force_n = float(material.get("contact_min_force_n", 0.25))
+        self.contact_sensor = None
+        self._contact_warning = False
         # The lorry waits at the kerb until the drone is off its roof. PX4 is
         # booting and levelling its estimator on whatever this deck does, and a
         # vehicle that is carried off at cruise speed and yawed round a corner
@@ -359,9 +366,28 @@ class LandingDeck:
         try:
             rigid = UsdPhysics.RigidBodyAPI.Apply(stage.GetPrimAtPath(self.PRIM))
             rigid.CreateKinematicEnabledAttr(True)
-            UsdPhysics.CollisionAPI.Apply(stage.GetPrimAtPath(self.BODY))
+            body_prim = stage.GetPrimAtPath(self.BODY)
+            UsdPhysics.CollisionAPI.Apply(body_prim)
             mass = UsdPhysics.MassAPI.Apply(stage.GetPrimAtPath(self.PRIM))
             mass.CreateMassAttr(120.0)
+            self._apply_grip_material(body_prim)
+            # ContactSensor otherwise adds this API lazily and asks for a
+            # stop/play cycle. The world has not started yet, so author it now
+            # and the very first episode receives contact events.
+            # ContactSensor walks up to the rigid-body owner (the lorry root),
+            # while its immediate parent remains the roof collision shape.
+            report = PhysxSchema.PhysxContactReportAPI.Apply(
+                stage.GetPrimAtPath(self.PRIM))
+            report.CreateThresholdAttr().Set(self.contact_min_force_n)
+            self.contact_sensor = ContactSensor(
+                prim_path=self.BODY + "/pad_contact_sensor",
+                name="landing_pad_contact",
+                dt=float(CONFIG["isaac"]["physics_dt"]),
+                min_threshold=self.contact_min_force_n,
+                max_threshold=1.0e6,
+                radius=-1.0,
+            )
+            self.contact_sensor.add_raw_contact_data_to_frame()
             self.physics_ok = True
             self._build_lorry(stage)
         except Exception as exc:                            # noqa: BLE001
@@ -372,6 +398,58 @@ class LandingDeck:
                 f"could not make the landing deck a kinematic collider ({exc}); "
                 "the vehicle will fall through it")
         self.apply_pose()
+
+    def _apply_grip_material(self, body_prim) -> None:
+        """Give the painted roof rubber-like grip and no contact bounce."""
+        material = PhysicsMaterial(
+            prim_path="/World/PhysicsMaterials/LandingDeckGrip",
+            name="landing_deck_grip",
+            static_friction=self.static_friction,
+            dynamic_friction=self.dynamic_friction,
+            restitution=self.restitution,
+        )
+        # The maximum combine mode makes the roof coefficient win over the
+        # vehicle asset's default landing-gear material instead of averaging
+        # the grip back down. Restitution uses the minimum to suppress bounce.
+        physx_material = PhysxSchema.PhysxMaterialAPI.Apply(material.prim)
+        physx_material.CreateFrictionCombineModeAttr().Set("max")
+        physx_material.CreateRestitutionCombineModeAttr().Set("min")
+        binding = UsdShade.MaterialBindingAPI.Apply(body_prim)
+        binding.Bind(material.material,
+                     bindingStrength=UsdShade.Tokens.strongerThanDescendants,
+                     materialPurpose="physics")
+
+    def vehicle_contact(self, vehicle_position) -> tuple[bool, float]:
+        """Return physical roof contact and normal-force magnitude.
+
+        The sensor is attached to the roof collider. The local footprint gate
+        prevents a collision against a lorry side from being called a landing.
+        """
+        if self.contact_sensor is None:
+            return False, 0.0
+        try:
+            frame = self.contact_sensor.get_current_frame() or {}
+            in_contact = bool(frame.get("in_contact", False))
+            force = max(0.0, float(frame.get("force", 0.0)))
+            contacts = frame.get("contacts") or []
+            if contacts:
+                in_contact = in_contact and any(
+                    "quadrotor" in str(contact.get("body0", ""))
+                    or "quadrotor" in str(contact.get("body1", ""))
+                    for contact in contacts)
+        except Exception as exc:                         # pragma: no cover - Isaac runtime
+            if not self._contact_warning:
+                carb.log_error(f"landing-pad contact sensor unavailable: {exc}")
+                self._contact_warning = True
+            return False, 0.0
+
+        local = self.deck_local_from_world(vehicle_position)
+        half_length = 0.5 * float(self.cfg.deck_size_m[0])
+        half_width = 0.5 * float(self.cfg.deck_size_m[1])
+        over_roof = (abs(float(local[0])) <= half_length
+                     and abs(float(local[1])) <= half_width
+                     and -0.25 <= float(local[2]) <= 0.60)
+        return bool(in_contact and over_roof), force
 
     def _build_lorry(self, stage) -> None:
         """Draw the vehicle the pad is painted on, under the roof it lands on.
@@ -476,6 +554,13 @@ class LandingDeck:
     def pad_from_world(self, point) -> np.ndarray:
         """World ENU point expressed in the pad frame."""
         return np.asarray(point, dtype=float) - self.position
+
+    def deck_local_from_world(self, point) -> np.ndarray:
+        """World point in the yawing lorry's footprint coordinates."""
+        delta = self.pad_from_world(point)
+        c, s = math.cos(self.yaw), math.sin(self.yaw)
+        return np.array([c * delta[0] + s * delta[1],
+                         -s * delta[0] + c * delta[1], delta[2]])
 
     def world_from_pad(self, offset) -> np.ndarray:
         return self.position + np.asarray(offset, dtype=float)
@@ -798,6 +883,14 @@ class LandingWorld:
         self.force_pub = node.create_publisher(Vector3Stamped, ns + "/environment/aero_force", 10)
         self.marker_pub = node.create_publisher(Float32, ns + "/perception/marker_quality", 10)
         self.pad_pose_pub = node.create_publisher(PoseStamped, ns + "/perception/uav_pose_in_pad", 10)
+        self.pad_contact_pub = node.create_publisher(Bool, ns + "/perception/pad_contact", 1)
+        self.pad_contact_force_pub = node.create_publisher(
+            Float32, ns + "/perception/pad_contact_force", 1)
+        # Depth one prevents a slow/hidden RViz window from queuing full-size
+        # frames. The frame itself carries all recognition diagnostics, so no
+        # custom visualization message or cv_bridge dependency is needed.
+        self.marker_image_pub = node.create_publisher(
+            Image, ns + "/perception/landing_camera/annotated", 1)
         self.reset_ack_pub = node.create_publisher(String, "/landing_sim/reset_ack", 10)
         # The deck broadcasts its own state, the way a cooperative ground
         # vehicle would. The drone's own estimate of the pad still comes from
@@ -821,6 +914,7 @@ class LandingWorld:
         # can hold a disarmed multirotor in the air, and dropping it for the
         # second PX4 spends arming is the takeoff this start exists to avoid.
         self.autopilot_flying = False
+        self.last_pad_contact = False
 
         # A live 3D view of the episode inside the simulator window: the two
         # trails, the vector still to be closed and the success tolerance. Off
@@ -1206,10 +1300,24 @@ class LandingWorld:
             msg.header.frame_id = "map"
             msg.vector.x, msg.vector.y, msg.vector.z = (float(x) for x in vector)
             publisher.publish(msg)
+        self._publish_pad_contact()
         if self.vision_enabled:
             self._publish_marker_detection(stamp)
         else:
             self._publish_marker_proxy()
+
+    def _publish_pad_contact(self) -> None:
+        contact, force = self.deck.vehicle_contact(self.vehicle.state.position)
+        contact_msg = Bool()
+        contact_msg.data = bool(contact)
+        self.pad_contact_pub.publish(contact_msg)
+        force_msg = Float32()
+        force_msg.data = float(force if contact else 0.0)
+        self.pad_contact_force_pub.publish(force_msg)
+        if contact != self.last_pad_contact:
+            state = "ON" if contact else "OFF"
+            carb.log_info(f"Landing pad contact {state}: force={force:.2f} N")
+            self.last_pad_contact = contact
 
     def _publish_marker_proxy(self) -> None:
         """Analytic stand-in used when the camera is switched off.
@@ -1237,6 +1345,7 @@ class LandingWorld:
         to the PX4 estimate.
         """
         observation = self.camera.observe()
+        self._publish_annotated_camera(stamp)
         marker = Float32()
         if observation is None or not observation.detected:
             marker.data = 0.0
@@ -1270,6 +1379,23 @@ class LandingWorld:
         pose.pose.orientation.y = float(qy)
         pose.pose.orientation.z = float(qz)
         self.pad_pose_pub.publish(pose)
+
+    def _publish_annotated_camera(self, stamp) -> None:
+        """Publish the most recent operator view as a standard ROS ``rgb8`` image."""
+        image = self.camera.annotated_rgb
+        if image is None or image.size == 0:
+            return
+        image = np.ascontiguousarray(image, dtype=np.uint8)
+        msg = Image()
+        msg.header.stamp = stamp
+        msg.header.frame_id = "landing_camera_optical"
+        msg.height = int(image.shape[0])
+        msg.width = int(image.shape[1])
+        msg.encoding = "rgb8"
+        msg.is_bigendian = 0
+        msg.step = int(msg.width * 3)
+        msg.data = image.tobytes()
+        self.marker_image_pub.publish(msg)
 
     def run(self):
         self.timeline.play()

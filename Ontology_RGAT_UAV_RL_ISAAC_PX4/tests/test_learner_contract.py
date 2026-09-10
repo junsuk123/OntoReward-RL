@@ -14,7 +14,8 @@ import numpy as np
 import pytest
 
 from ontology_rgat.config import default_config
-from ontology_rgat.env import terminal_status, state_to_model, truth_state
+from ontology_rgat.env import (reconcile_touchdown, state_to_model,
+                               terminal_status, truth_state)
 from ontology_rgat.expert import expert_action
 from ontology_rgat.mathx import euler_to_quat, quat_to_euler_zyx, wrap_pi
 from ontology_rgat.rewards import manual_dense, proposed_pbrs, sparse_task
@@ -278,6 +279,49 @@ def test_unmatched_horizontal_speed_fails_the_landing(cfg):
     assert terminal_status(fast, cfg)[1] == "unsafe_touchdown"
 
 
+def test_roof_contact_is_authoritative_touchdown_on_a_moving_pad(cfg):
+    x = _state([0.05, -0.03, 0.09], vel=[0.1, 0.0, -0.2])
+    done, status, viol = terminal_status(x, cfg)
+    assert not done
+
+    state = {"landed": True, "extra": {
+        "land_detector_authoritative": True, "touchdown_source": "pad_contact"}}
+    done, status, confirmed = reconcile_touchdown(
+        done, status, viol, x, state, {"pad": {"valid": True}}, True)
+
+    assert done and confirmed and status == "success"
+
+
+def test_geometric_roof_threshold_waits_one_frame_for_contact(cfg):
+    x = _state([0.05, 0.0, 0.02], vel=[0.1, 0.0, -0.2])
+    done, status, viol = terminal_status(x, cfg)
+    assert done and status == "success"
+
+    state = {"landed": False, "extra": {"land_detector_authoritative": False}}
+    done, status, confirmed = reconcile_touchdown(
+        done, status, viol, x, state, {"pad": {"valid": True}}, True)
+
+    assert not done and not confirmed and status == "running"
+
+
+def test_below_the_lorry_without_roof_contact_is_a_mislanding(cfg):
+    x = _state([0.05, 0.0, -3.0], vel=[0.1, 0.0, -0.2])
+    done, status, viol = terminal_status(x, cfg)
+    state = {"landed": False, "extra": {"land_detector_authoritative": False}}
+    done, status, confirmed = reconcile_touchdown(
+        done, status, viol, x, state, {"pad": {"valid": True}}, True)
+
+    assert done and not confirmed and status == "ground_mislanding"
+
+
+def test_landing_roof_uses_high_grip_non_bouncing_material(cfg):
+    import yaml
+    with open(cfg.paths.system_yaml, encoding="utf-8") as handle:
+        material = yaml.safe_load(handle)["pad"]["contact_material"]
+    assert material["static_friction"] >= material["dynamic_friction"] >= 1.0
+    assert material["restitution"] == 0.0
+
+
 def test_losing_the_deck_is_a_mission_failure_not_a_crash(cfg):
     x = _state([cfg.sim.world_xy_limit + 1.0, 0.0, 3.0])
     done, status, _ = terminal_status(x, cfg)
@@ -365,9 +409,9 @@ def test_expert_descends_faster_when_the_energy_margin_is_thin(cfg):
             self.meas = {"pad_velocity": np.zeros(3)}
             self.sem = SemanticState(energy_margin=margin)
 
-    # Low, because above roughly 1.9 m the nominal profile already asks for the
-    # fastest descent cfg.criteria.vz permits and urgency has nothing to add.
-    x = _state([0.0, 0.0, 0.5], vel=[0.0, 0.0, 0.0])
+    # Above the flare, where reserve may shorten the approach without changing
+    # the deliberately conservative touchdown speed.
+    x = _state([0.0, 0.0, 3.0], vel=[0.0, 0.0, 0.0])
     comfortable = expert_action(x, cfg, Ctx(1.0))
     urgent = expert_action(x, cfg, Ctx(-0.5))
     # A lower collective command is a faster descent.
@@ -378,8 +422,24 @@ def test_expert_descends_faster_when_the_energy_margin_is_thin(cfg):
         assert a[0] >= -1.0
 
 
-def test_expert_fades_the_deck_velocity_lead_at_touchdown(cfg):
-    """A chase feed-forward must not become a permanent landing offset."""
+def test_expert_holds_height_until_pad_alignment_is_safe(cfg):
+    aligned = expert_action(_state([0.0, 0.0, 0.6], vel=[0.0, 0.0, 0.0]), cfg)
+    outside = expert_action(_state([1.2, 0.0, 0.6], vel=[0.0, 0.0, 0.0]), cfg)
+    assert aligned[0] < 0.0
+    assert outside[0] > 0.0
+
+
+def test_expert_flares_before_a_fast_touchdown(cfg):
+    fast = expert_action(
+        _state([0.0, 0.0, 1.5], vel=[0.0, 0.0, -1.0]), cfg)
+    settled = expert_action(
+        _state([0.0, 0.0, 1.5], vel=[0.0, 0.0, -0.2]), cfg)
+    assert fast[0] > settled[0]
+    assert fast[0] > 0.0
+
+
+def test_expert_does_not_double_count_deck_velocity(cfg):
+    """Relative velocity already contains deck motion."""
     class Ctx:
         meas = {"pad_velocity": np.array([3.0, 0.0, 0.0])}
         sem = SemanticState(energy_margin=1.0)
@@ -388,4 +448,12 @@ def test_expert_fades_the_deck_velocity_lead_at_touchdown(cfg):
     touchdown = expert_action(_state([0.0, 0.0, 0.0]), cfg, Ctx())
     approach = expert_action(_state([0.0, 0.0, 4.0]), cfg, Ctx())
     assert touchdown[2] == pytest.approx(stopped[2])
-    assert approach[2] > touchdown[2]
+    assert approach[2] == pytest.approx(touchdown[2])
+
+
+def test_expert_rotates_world_correction_through_current_yaw(cfg):
+    yaw0 = expert_action(_state([1.0, 0.0, 2.0], rpy=[0.0, 0.0, 0.0]), cfg)
+    yaw90 = expert_action(
+        _state([1.0, 0.0, 2.0], rpy=[0.0, 0.0, np.pi / 2.0]), cfg)
+    assert yaw0[2] < 0.0 and yaw0[1] == pytest.approx(0.0, abs=1e-9)
+    assert yaw90[1] < 0.0 and yaw90[2] == pytest.approx(0.0, abs=1e-9)

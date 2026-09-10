@@ -222,6 +222,30 @@ def terminal_status(x: np.ndarray, cfg: Config, has_been_airborne: bool = True,
     return False, "running", viol
 
 
+def reconcile_touchdown(done: bool, status: str, viol: float,
+                        x_truth: np.ndarray, state: dict[str, Any], diag: dict[str, Any],
+                        has_been_airborne: bool) -> tuple[bool, str, bool]:
+    """Require physical/authoritative contact without losing its first frame."""
+    extra = state.get("extra") or {}
+    authoritative = bool(extra.get("land_detector_authoritative", True))
+    pad_valid = bool(diag["pad"].get("valid", False))
+    confirmed = bool(state["landed"]) and authoritative and pad_valid
+
+    if done and status in {"success", "unsafe_touchdown"} and not confirmed:
+        # Geometry and the physics callback are sampled independently. Near
+        # the roof, wait for the contact callback instead of declaring a miss.
+        # Far below the roof is the road and is a genuine mislanding.
+        if float(x_truth[2]) < -0.25 or not pad_valid:
+            status = "ground_mislanding" if status == "success" else "unsafe_touchdown"
+        else:
+            done, status = False, "running"
+
+    if not done and has_been_airborne and confirmed:
+        done = True
+        status = "success" if viol <= 1.0 else "unsafe_touchdown"
+    return done, status, confirmed
+
+
 # ------------------------------------------------------------------- current
 @dataclass
 class Current:
@@ -329,20 +353,8 @@ class LandingEnv:
         x_truth = truth_state(x2, diag2)
         done, status, viol = terminal_status(x_truth, cfg, self.has_been_airborne,
                                              diag2["battery"]["depleted"])
-        pad_landing_confirmed = (
-            bool(s["landed"]) and self._land_detector_authoritative(s)
-            and bool(diag2["pad"].get("valid", False)))
-        if done and status in {"success", "unsafe_touchdown"} and not pad_landing_confirmed:
-            status = "ground_mislanding" if status == "success" else "unsafe_touchdown"
-        if (not done and self.has_been_airborne and bool(s["landed"])
-            and self._land_detector_authoritative(s)
-            and bool(diag2["pad"].get("valid", False))):
-            # PX4 decides "landed" from world-frame motion, so a vehicle sitting
-            # on a driving deck still looks airborne to it. Only trust the
-            # detector when the gateway says it can be trusted; otherwise
-            # pad-relative altitude in terminal_status is the touchdown test.
-            done = True
-            status = "success" if viol <= 1.0 else "unsafe_touchdown"
+        done, status, _ = reconcile_touchdown(
+            done, status, viol, x_truth, s, diag2, self.has_been_airborne)
         if not done and self.step_index >= cfg.sim.max_steps:
             done, status = True, "timeout"
 
@@ -353,6 +365,8 @@ class LandingEnv:
             "status": status, "reward_parts": parts, "diag": diag2, "viol": viol,
             "armed": bool(s["armed"]), "landed": bool(s["landed"]),
             "nav_state": s.get("nav_state", 0), "pad_speed": diag2["pad_speed"],
+            "touchdown_source": str((s.get("extra") or {}).get(
+                "touchdown_source", "none")),
             "battery_reserve": diag2["battery"]["reserve"],
             "energy_used_j": diag2["battery"]["energy_used_j"],
             "gnss_quality": diag2["gnss"]["quality"],
@@ -386,13 +400,6 @@ class LandingEnv:
         if math.isfinite(measured) and 0.0 < measured < 10.0 * dt:
             return measured
         return dt
-
-    @staticmethod
-    def _land_detector_authoritative(s: dict[str, Any]) -> bool:
-        extra = s.get("extra")
-        if isinstance(extra, dict) and "land_detector_authoritative" in extra:
-            return bool(extra["land_detector_authoritative"])
-        return True
 
     # -------------------------------------------------------------- teardown
     def close(self) -> None:

@@ -3,6 +3,7 @@ import socket
 
 import pytest
 
+from ontology_rgat.bridge import pacing_anchor_us
 from ontology_rgat_px4.protocol import (
     ProtocolError,
     VehicleSample,
@@ -12,6 +13,9 @@ from ontology_rgat_px4.protocol import (
     validate_goto,
 )
 from ontology_rgat_px4.udp_server import DatagramServer
+from ontology_rgat_px4.ros2_gateway import (action_age_seconds,
+                                            advance_pad_contact_latch,
+                                            bounded_position_update)
 
 
 def test_protocol_roundtrip():
@@ -36,6 +40,53 @@ def test_vehicle_sample_schema():
     assert message["frame"] == "ENU_FLU"
     assert message["ack_seq"] == 1
     assert len(message["quaternion_wxyz"]) == 4
+
+
+def test_pad_contact_only_latches_after_takeoff_clearance():
+    latched, clear = advance_pad_contact_latch(False, False, False, True)
+    assert not latched and not clear       # parked, disarmed contact
+    latched, clear = advance_pad_contact_latch(latched, clear, True, True, True)
+    assert not latched and not clear       # armed but not off the roof yet
+    latched, clear = advance_pad_contact_latch(latched, clear, True, False, True)
+    assert not latched and not clear       # one takeoff bounce is not airborne
+    latched, clear = advance_pad_contact_latch(
+        latched, clear, True, False, False, False)
+    assert not latched and not clear       # land flag alone precedes clearance
+    latched, clear = advance_pad_contact_latch(
+        latched, clear, True, False, False, True)
+    assert not latched and clear           # takeoff has physically cleared it
+    latched, clear = advance_pad_contact_latch(latched, clear, True, True, False)
+    assert latched and clear               # the next contact is touchdown
+    latched, clear = advance_pad_contact_latch(latched, clear, False, False)
+    assert latched and clear               # sticky through motor disarm/bounce
+
+
+def test_sitl_deadman_uses_px4_lockstep_time_but_hardware_uses_wall_time():
+    # One 20 ms simulated control period can take hundreds of wall milliseconds
+    # under a rendered/lockstep Isaac run and must not cancel offboard control.
+    assert action_age_seconds("sitl", 1_500_000_000, 1_000_000_000,
+                              2_020_000, 2_000_000) == pytest.approx(0.02)
+    assert action_age_seconds("hardware", 1_500_000_000, 1_000_000_000,
+                              2_020_000, 2_000_000) == pytest.approx(0.5)
+    # A newly delivered DDS batch can jump the PX4 stamp although this action
+    # was received only 20 ms ago; that is not an offboard-loss condition.
+    assert action_age_seconds("sitl", 1_020_000_000, 1_000_000_000,
+                              9_424_000, 2_000_000) == pytest.approx(0.02)
+    # When the client really stops, both clocks age and the smaller still trips.
+    assert action_age_seconds("sitl", 3_000_000_000, 1_000_000_000,
+                              4_000_000, 2_000_000) == pytest.approx(2.0)
+
+
+def test_control_pacing_reanchors_after_a_missed_deadline():
+    assert pacing_anchor_us(2_020_000, 2_016_000) == 2_020_000
+    assert pacing_anchor_us(2_020_000, 2_300_000) == 2_300_000
+
+
+def test_optical_position_update_is_bounded_around_dr_prediction():
+    corrected = bounded_position_update([1.0, 2.0, 3.0], [11.0, 2.0, 3.0], 0.5)
+    assert corrected == pytest.approx([1.5, 2.0, 3.0])
+    assert bounded_position_update([1.0, 2.0, 3.0], [1.1, 2.0, 3.0], 0.5) \
+        == pytest.approx([1.1, 2.0, 3.0])
 
 
 def test_offboard_command_is_versioned():

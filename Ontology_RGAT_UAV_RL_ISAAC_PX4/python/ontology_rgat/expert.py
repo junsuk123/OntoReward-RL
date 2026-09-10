@@ -32,8 +32,9 @@ def expert_action(x: np.ndarray, cfg: Config, cur=None) -> np.ndarray:
     chases a moving one: driving pad-relative position and velocity to zero *is*
     tracking the deck. Two additions the external backend needs:
 
-    * the deck's own velocity is fed forward, so the controller leads the target
-      instead of only reacting to error it has already accrued;
+    * the deck's own velocity is fed forward while approaching, so the
+      controller leads the target instead of only reacting to accrued error;
+      that lead fades below 2 m so touchdown converges to the deck centre;
     * the descent is compressed when the energy margin is thin, so the
       demonstrations the R-GAT dataset is labelled from actually contain
       successful low-reserve landings. Without this every low-battery episode is
@@ -52,9 +53,13 @@ def expert_action(x: np.ndarray, cfg: Config, cur=None) -> np.ndarray:
     az_cmd = 2.2 * (vz_des - v[2])
     collective = az_cmd / (cfg.sim.g * cfg.rl.collective_span)
 
-    # Horizontal PD on the pad-relative error, plus deck-velocity feed-forward.
-    ax = -1.15 * p[0] - 0.95 * v[0] + 0.55 * pad_vel[0]
-    ay = -1.15 * p[1] - 0.95 * v[1] + 0.55 * pad_vel[1]
+    # Horizontal PD on the pad-relative error, plus deck-velocity feed-forward
+    # for the chase. A constant velocity term necessarily creates a constant
+    # position lead (k_p p = k_ff v_pad); fading it on final approach removes
+    # the metre-scale touchdown offset while retaining high-altitude tracking.
+    lead_scale = float(np.clip(p[2] / 2.0, 0.0, 1.0))
+    ax = -1.15 * p[0] - 0.95 * v[0] + 0.55 * lead_scale * pad_vel[0]
+    ay = -1.15 * p[1] - 0.95 * v[1] + 0.55 * lead_scale * pad_vel[1]
     limit = cfg.rl.max_roll_pitch
     pitch_des = float(np.clip(ax / cfg.sim.g, -limit, limit))
     roll_des = float(np.clip(-ay / cfg.sim.g, -limit, limit))

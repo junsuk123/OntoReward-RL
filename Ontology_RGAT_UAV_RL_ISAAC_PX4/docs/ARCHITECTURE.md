@@ -178,10 +178,10 @@ raw GPS topic expose the actual fusion decision.
 **Two receivers.** The lorry has one too. What it broadcasts on
 `/landing_pad/state/odom` is its own fix — errors and all — with its reported
 accuracy in the pose covariance; the simulator's truth goes to
-`/landing_pad/state/odom_truth`, which only the scoring path reads. Because the
-two receivers share a constellation their errors are partly common-mode, so the
-relative fix stays better than either absolute one. It is still metres out on a
-2.45 m roof, which is the point.
+`/landing_pad/state/odom_truth`, which only the scoring path reads. The receivers
+share a constellation but independently apply map/C/N0 NLOS mitigation, keeping
+the nominal differential fix metre-scale while preserving severe low-integrity
+regions for the DR path. A 2.45 m roof still requires the optical final anchor.
 
 A moving deck with a stale broadcast makes `estimator_valid=false`; a degraded
 one does not, because a bad fix is a state to reason about and not a link fault.

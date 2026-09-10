@@ -63,16 +63,17 @@ one number per run.
   errors, exactly as a receiver solves it, and its own covariance is inflated by
   the post-fit residuals.
 
-Typical numbers at mid-block with the shipped configuration: 3-5 satellites
-NLOS out of 12, reported 1-sigma 7-16 m, horizontal error 3-20 m. At an
-intersection it recovers; above the roofline it is open sky.
+Typical synthetic mid-block numbers over the deterministic test seeds with the
+shipped configuration are about 19 tracked signals (12 LOS and 7 NLOS), 1.7 m
+reported horizontal sigma and 0.8 m horizontal error.  Open sky is about 1.0 m
+reported sigma and 0.6 m error.  More deeply shadowed parts of the loaded OSM
+city still cross the low-integrity threshold and exercise the DR path.
 
-Both the drone and the lorry carry a receiver and share the constellation, so
-the satellites they lose are correlated and their errors are partly
-common-mode -- which is why the *relative* fix stays better than either absolute
-one, and why the drone can chase a lorry it cannot absolutely locate. It is
-still metres out, on a roof 2.45 m wide, which is what makes the markers
-load-bearing rather than a convenience.
+Both the drone and the lorry carry a multi-constellation receiver and share the
+same satellite sky. Each uses the 3-D building map and C/N0 to suppress NLOS
+ranges; their differential fix consequently stays metre-scale in the nominal
+canyon instead of inheriting a tens-of-metres common bias. The markers remain
+the precise landing anchor on a roof only 2.45 m wide.
 
 What the policy is shown is only what a receiver publishes: satellite count,
 DOP, its own inflated covariance, mean C/N0 and the fraction of signals its

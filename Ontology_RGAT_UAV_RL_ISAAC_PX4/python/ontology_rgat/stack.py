@@ -166,6 +166,12 @@ class ExternalStack:
         log = self._launch("gateway", command)
         self._wait_for(lambda: _udp_port_bound(GATEWAY_PORT),
                        self.timeouts["gateway"], "PX4 gateway", log)
+        # Binding UDP only proves that the node process is alive.  Its ROS 2
+        # publishers can still be matching Isaac's subscriptions; a reset sent
+        # in that short window is valid UDP but is dropped by DDS before any
+        # subscriber exists.  One bounded discovery window avoids turning the
+        # first episode of a long run into a full stack restart.
+        time.sleep(1.0)
         print(f"Gateway listening on UDP {GATEWAY_PORT}.")
 
     def restart(self) -> None:

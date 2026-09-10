@@ -149,7 +149,7 @@ class GnssConfig:
         return cls(
             enabled=bool(gnss.get("enabled", True)),
             seed=int(gnss.get("seed", 17)),
-            n_satellites=int(gnss.get("n_satellites", 12)),
+            n_satellites=int(gnss.get("n_satellites", 24)),
             elevation_mask_deg=float(gnss.get("elevation_mask_deg", 7.0)),
             nlos_tracking_probability=float(gnss.get("nlos_tracking_probability", 0.60)),
             max_excess_path_m=float(gnss.get("max_excess_path_m", 60.0)),
@@ -404,14 +404,25 @@ class GnssReceiver:
         # with C/N0 catches strong reflections that a power-only detector misses.
         mitigated_nlos = (suspect | is_nlos
                           if cfg.map_aided_nlos_mitigation else suspect)
+        # If the shadow map leaves a solvable LOS-only constellation, exclude
+        # mapped NLOS ranges entirely. Keeping a tiny weight on them can make a
+        # poorly conditioned four-state solve worse, not better. Where fewer
+        # than four LOS satellites remain, retain all tracked signals with the
+        # variance inflation above so the receiver can still report a weak fix.
+        solve_mask = (~is_nlos if cfg.map_aided_nlos_mitigation
+                      and int((~is_nlos).sum()) >= MIN_SATELLITES
+                      else np.ones(used.size, dtype=bool))
         effective_sigma = sigma * np.where(
             mitigated_nlos, max(float(cfg.nlos_sigma_scale), 1.0), 1.0)
 
         # Weighted least squares, exactly as the receiver solves it: rows are
         # [-u, 1] because a pseudorange grows when the receiver moves away from
         # the satellite, and the fourth column is the receiver clock.
-        design = np.concatenate([-unit, np.ones((used.size, 1))], axis=1)
-        weight = 1.0 / effective_sigma**2
+        solve_unit = unit[solve_mask]
+        solve_error = error[solve_mask]
+        solve_sigma = effective_sigma[solve_mask]
+        design = np.concatenate([-solve_unit, np.ones((solve_unit.shape[0], 1))], axis=1)
+        weight = 1.0 / solve_sigma**2
         try:
             # Unweighted, so the reported DOP is the classical geometry figure
             # and not something in units of an assumed range accuracy.
@@ -419,8 +430,8 @@ class GnssReceiver:
             covariance = np.linalg.inv(design.T @ (weight[:, None] * design))
         except np.linalg.LinAlgError:                    # pragma: no cover - degenerate
             return self._outage(dt, int(tracked.sum()), int(nlos.sum()), sky_view)
-        solution = covariance @ (design.T @ (weight * error))
-        residual = error - design @ solution
+        solution = covariance @ (design.T @ (weight * solve_error))
+        residual = solve_error - design @ solution
         # The estimate keeps only a fraction of the vertical component: see
         # GnssConfig.vertical_blend.
         offset = np.asarray(solution[:3], dtype=float) * np.array(
@@ -434,8 +445,9 @@ class GnssReceiver:
         # a-posteriori variance factor is the receiver's only handle on
         # multipath, and it still understates a bias the satellites share --
         # which is exactly the urban failure mode worth reproducing.
+        solution_count = int(solve_mask.sum())
         variance_factor = (float(residual @ (weight * residual))
-                           / max(used.size - 4, 1)) if used.size > 4 else 1.0
+                           / max(solution_count - 4, 1)) if solution_count > 4 else 1.0
         inflation = math.sqrt(max(variance_factor, 1.0))
         sigma_xy = inflation * math.sqrt(max(covariance[0, 0] + covariance[1, 1], 0.0))
 
@@ -450,7 +462,8 @@ class GnssReceiver:
             sigma_xy_m=float(sigma_xy), sky_view=sky_view,
             cn0_mean_db=float(np.mean(cn0)),
             nlos_detected_fraction=float(np.mean(suspect)),
-            quality=self._integrity(used.size, hdop, sigma_xy, float(np.mean(suspect))),
+            quality=self._integrity(
+                solution_count, hdop, sigma_xy, float(np.mean(suspect))),
             error_enu_m=offset,
             velocity_error_enu_m_s=cfg.velocity_error_scale * offset,
         )

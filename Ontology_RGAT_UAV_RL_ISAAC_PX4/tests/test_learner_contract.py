@@ -376,3 +376,16 @@ def test_expert_descends_faster_when_the_energy_margin_is_thin(cfg):
     for z in (0.2, 1.0, 3.0, 4.8):
         a = expert_action(_state([0.0, 0.0, z]), cfg, Ctx(-3.0))
         assert a[0] >= -1.0
+
+
+def test_expert_fades_the_deck_velocity_lead_at_touchdown(cfg):
+    """A chase feed-forward must not become a permanent landing offset."""
+    class Ctx:
+        meas = {"pad_velocity": np.array([3.0, 0.0, 0.0])}
+        sem = SemanticState(energy_margin=1.0)
+
+    stopped = expert_action(_state([0.0, 0.0, 0.0]), cfg, None)
+    touchdown = expert_action(_state([0.0, 0.0, 0.0]), cfg, Ctx())
+    approach = expert_action(_state([0.0, 0.0, 4.0]), cfg, Ctx())
+    assert touchdown[2] == pytest.approx(stopped[2])
+    assert approach[2] > touchdown[2]

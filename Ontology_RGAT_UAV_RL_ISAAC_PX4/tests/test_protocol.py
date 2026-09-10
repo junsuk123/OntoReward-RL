@@ -1,4 +1,5 @@
 import json
+import socket
 
 import pytest
 
@@ -10,6 +11,7 @@ from ontology_rgat_px4.protocol import (
     validate_action,
     validate_goto,
 )
+from ontology_rgat_px4.udp_server import DatagramServer
 
 
 def test_protocol_roundtrip():
@@ -38,6 +40,34 @@ def test_vehicle_sample_schema():
 
 def test_offboard_command_is_versioned():
     assert decode(encode({"v": 1, "type": "enable_offboard", "seq": 9}))["seq"] == 9
+
+
+def test_async_reply_can_be_pinned_to_its_requesting_peer():
+    """A read-only probe must not steal a delayed flight-control reply."""
+    received = []
+    server = DatagramServer("127.0.0.1", 0, 1, received.append)
+    controller = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    controller.settimeout(0.2)
+    probe.settimeout(0.05)
+    endpoint = server.socket.getsockname()
+    try:
+        controller.sendto(encode({"v": 1, "type": "state", "seq": 1}), endpoint)
+        server.poll()
+        controller_peer = controller.getsockname()
+        probe.sendto(encode({"v": 1, "type": "state", "seq": 2}), endpoint)
+        server.poll()
+
+        server.send({"v": 1, "type": "ack", "seq": 3, "ack_seq": 1},
+                    peer=controller_peer)
+        reply, _ = controller.recvfrom(4096)
+        assert decode(reply)["ack_seq"] == 1
+        with pytest.raises(TimeoutError):
+            probe.recvfrom(4096)
+    finally:
+        controller.close()
+        probe.close()
+        server.close()
 
 
 def test_goto_is_a_versioned_command():

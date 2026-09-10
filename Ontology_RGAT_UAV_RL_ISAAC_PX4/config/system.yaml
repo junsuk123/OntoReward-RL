@@ -267,8 +267,10 @@ gnss:
   # consumed during PX4 boot and is not part of a learning episode.
   bootstrap_s: 15.0
   seed: 17
-  # One epoch of a GPS+Galileo receiver at mid latitude.
-  n_satellites: 12
+  # Multi-constellation GPS+Galileo+BeiDou receiver at mid latitude. Retaining
+  # enough LOS geometry after map-aided NLOS rejection is what makes metre/sub-
+  # metre urban positioning possible instead of repeatedly falling to 4-DOP.
+  n_satellites: 24
   elevation_mask_deg: 7.0
   # A receiver keeps far more blocked signals through reflections than it
   # drops; this is the fraction it keeps. Raising it makes the fix *worse*,
@@ -294,8 +296,9 @@ gnss:
   # Use the already-loaded OSM/3-D building model as a satellite shadow mask.
   # This catches strong NLOS reflections that C/N0 alone cannot distinguish.
   map_aided_nlos_mitigation: true
-  # C/N0-detected reflections get this much larger pseudorange sigma in the
-  # receiver WLS. They retain geometry but cannot drag the fix across a road.
+  # If too few map-confirmed LOS signals remain for an LOS-only solution,
+  # suspected/map-confirmed reflections get this much larger pseudorange sigma
+  # in the fallback WLS. They retain weak geometry without dominating the fix.
   nlos_sigma_scale: 10.0
   # How much of the integrity a fully suspect signal set costs.
   cn0_weight: 0.85

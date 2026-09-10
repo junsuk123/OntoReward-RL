@@ -117,6 +117,12 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             self.last_action_ns = 0
             self.last_command_seq = -1
             self.pending_state_ack = -1
+            # Action/reset replies are asynchronous: odometry and Isaac's
+            # reset acknowledgement arrive after the UDP receive callback has
+            # returned.  Remember the requesting endpoint so a concurrent
+            # read-only protocol probe cannot steal the flight controller's
+            # next reply by becoming DatagramServer.peer in the meantime.
+            self.pending_state_peer: tuple[str, int] | None = None
             self.tx_seq = 0
             self.start_ns = now_ns()
             self.prestream = 0
@@ -125,6 +131,7 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             self.last_velocity: np.ndarray | None = None
             self.last_velocity_ns = 0
             self.pending_reset_seq = -1
+            self.pending_reset_peer: tuple[str, int] | None = None
             self.pad_position_enu: np.ndarray | None = None
             self.pad_pose_time_ns = 0
             self.marker_pose_rejections = 0
@@ -282,6 +289,7 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                 self.last_action_ns = now_ns()
                 self.last_command_seq = seq
                 self.pending_state_ack = seq
+                self.pending_state_peer = self.udp.peer
                 # The first policy action ends the pre-episode position hold and
                 # starts the energy budget: the seeded reserve is the reserve at
                 # handover, so the climb PX4 flew to get here is not charged to
@@ -308,6 +316,7 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                     raise ProtocolError("gnss_scale must be finite and in [0,4]")
                 self.last_command_seq = seq
                 self.pending_reset_seq = seq
+                self.pending_reset_peer = self.udp.peer
                 # A disarmed vehicle is on the ground whatever the land detector
                 # says -- and before its first sample arrives it says "airborne"
                 # by design (see _refresh_land_detector), so without this the
@@ -634,8 +643,10 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             }
             if self.pending_state_ack >= 0:
                 seq = self.pending_state_ack
+                peer = self.pending_state_peer
                 self.pending_state_ack = -1
-                self._send_state(seq)
+                self.pending_state_peer = None
+                self._send_state(seq, peer=peer)
 
         def _on_status(self, msg) -> None:
             self.sample.nav_state = int(msg.nav_state)
@@ -895,17 +906,40 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                 geometrically_possible = (
                     -0.25 <= z <= cfg.max_altitude_m
                     and radial <= 1.8 * max(z, 0.5) + 0.5)
+                # A planar board can also return a low-reprojection pose on
+                # the wrong branch by tilting the camera and translating it
+                # sideways.  Attitude comes independently from PX4's IMU, so
+                # this is a real sensor-consistency check rather than access to
+                # simulator truth.  Compare quaternions without assuming a
+                # sign, since q and -q represent the same rotation.
+                o = msg.pose.orientation
+                marker_q = np.array([o.w, o.x, o.y, o.z], dtype=float)
+                imu_q = np.asarray(self.sample.quaternion_enu_flu_wxyz, dtype=float)
+                attitude_innovation_deg = 180.0
+                if (np.isfinite(marker_q).all() and np.isfinite(imu_q).all()
+                        and np.linalg.norm(marker_q) > 1e-9
+                        and np.linalg.norm(imu_q) > 1e-9):
+                    marker_q /= np.linalg.norm(marker_q)
+                    imu_q /= np.linalg.norm(imu_q)
+                    attitude_innovation_deg = math.degrees(2.0 * math.acos(
+                        float(np.clip(abs(np.dot(marker_q, imu_q)), 0.0, 1.0))))
+                attitude_consistent = attitude_innovation_deg <= 12.0
                 if (not geometrically_possible
-                        or (previous_fresh and innovation > 0.75)):
+                        or not attitude_consistent
+                        or (previous_fresh and innovation > 0.20)):
                     self.marker_pose_rejections += 1
                     self.sample.marker_quality = 0.0
                     self.sample.extra["marker_pose_rejected"] = True
                     self.sample.extra["marker_pose_innovation_m"] = innovation
+                    self.sample.extra["marker_attitude_innovation_deg"] = (
+                        attitude_innovation_deg)
                     return
                 self.pad_position_enu = position
                 self.pad_pose_time_ns = stamp
                 self.sample.extra["marker_pose_rejected"] = False
                 self.sample.extra["marker_pose_rejections"] = self.marker_pose_rejections
+                self.sample.extra["marker_attitude_innovation_deg"] = (
+                    attitude_innovation_deg)
 
         def _on_deck_odom(self, msg) -> None:
             """What the lorry broadcasts about itself over its V2V link.
@@ -938,12 +972,11 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                                 optical: bool = False) -> None:
             """Fuse marker, inertial propagation and relative GNSS position.
 
-            The measured pad-relative position is the difference of two fixes
-            in the same canyon, so most of the error is common-mode and what is
-            left is metres, wandering on the multipath correlation time. Aim a
-            position controller straight at it and the vehicle physically
-            chases that wander -- it was flying at 1.8 m/s while trying to hold
-            station, which is real motion in pursuit of noise.
+            The measured pad-relative position is the difference of two
+            independently map-mitigated fixes.  It is metre-scale in the
+            nominal canyon, but can still become a large, correlated outlier in
+            deeply shadowed regions. Aim a position controller straight at it
+            and the vehicle physically chases receiver error.
 
             A live marker solve is authoritative and also re-anchors the DR
             state. Without it, relative velocity predicts the pose and the
@@ -976,11 +1009,16 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             uav_sigma = _finite_or(self.gnss.get("sigma_xy_m", 99.9), 99.9)
             combined_sigma = math.hypot(uav_sigma, max(self.deck_sigma_xy_m, 0.0))
             quality = _finite_or(self.gnss.get("quality", 0.0), 0.0)
+            hil_mode = str(self.sample.extra.get("hil_gps_mode", "legacy"))
             if (not bool(self.gnss.get("valid", False))
-                    or quality <= cfg.gnss_dr_enter_quality):
+                    or quality <= cfg.gnss_dr_enter_quality
+                    or hil_mode in {"imu_dominant", "inertial_dead_reckoning"}):
                 # High-uncertainty canyon regime: pure short-term DR. Applying
                 # even a tiny gain to a 20--70 m outlier over every high-rate
                 # callback caused metres of systematic pull during one landing.
+                # Use the sensor adapter's hysteretic mode too: otherwise one
+                # marginal-quality epoch re-enables the correction while the
+                # upstream estimator is deliberately still IMU-dominant.
                 gain = 0.0
             else:
                 reference_sigma = 1.5
@@ -1318,7 +1356,9 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                 self.get_logger().warning("ignored malformed reset acknowledgement")
                 return
             if seq == self.pending_reset_seq:
+                peer = self.pending_reset_peer
                 self.pending_reset_seq = -1
+                self.pending_reset_peer = None
                 # Isaac draws the episode's starting reserve from the same seed
                 # as the entry pose, so energy is reproducible with the rest of
                 # the initial condition rather than being a second RNG.
@@ -1329,15 +1369,17 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                 self.battery_armed = False
                 self.battery_time_us = 0
                 self.sample.battery = self.battery.sample()
-                self._send_ack(seq, "reset_complete", payload)
+                self._send_ack(seq, "reset_complete", payload, peer=peer)
 
-        def _send_ack(self, ack_seq: int, status: str, detail: Any = None) -> None:
+        def _send_ack(self, ack_seq: int, status: str, detail: Any = None,
+                      peer: tuple[str, int] | None = None) -> None:
             self.tx_seq += 1
             self.udp.send({"v": cfg.protocol_version, "type": "ack", "seq": self.tx_seq,
                            "ack_seq": ack_seq, "time_ns": now_ns(), "status": status,
-                           "detail": detail})
+                           "detail": detail}, peer=peer)
 
-        def _send_state(self, ack_seq: int) -> None:
+        def _send_state(self, ack_seq: int,
+                        peer: tuple[str, int] | None = None) -> None:
             self.tx_seq += 1
             stamp = now_ns()
             if ((stamp - self.sample.timestamp_ns) * 1e-9 > cfg.state_timeout_s):
@@ -1349,7 +1391,20 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             self.sample.pad = self._pad_state(self._deck_is_fresh(stamp))
             self.sample.battery = self.battery.sample()
             self.sample.gnss = self._gnss_state(stamp)
-            self.udp.send(self.sample.to_message(cfg.protocol_version, self.tx_seq, ack_seq))
+            # Report the commanded fusion regime as well as PX4's raw flags.
+            # A valid low-quality fix remains weakly fused by EKF2 to bound
+            # drift, so cs_gps alone must not label that interval fully aided.
+            hil_mode = str(self.sample.extra.get("hil_gps_mode", "legacy"))
+            ekf = self.sample.extra.get("ekf_fusion") or {}
+            if hil_mode == "inertial_dead_reckoning" or bool(
+                    ekf.get("inertial_dead_reckoning", False)):
+                self.sample.extra["navigation_mode"] = "inertial_dead_reckoning"
+            elif hil_mode == "imu_dominant":
+                self.sample.extra["navigation_mode"] = "imu_dr_gnss_bounded"
+            elif bool(ekf.get("gps", False)):
+                self.sample.extra["navigation_mode"] = "gnss_aided"
+            self.udp.send(self.sample.to_message(
+                cfg.protocol_version, self.tx_seq, ack_seq), peer=peer)
 
         def _refresh_land_detector(self, stamp: int) -> None:
             """Never let a silent land detector read as a landed vehicle.

@@ -7,4 +7,6 @@ __pycache__/
 .venv/
 results/*
 !results/.gitkeep
+external/Micro-XRCE-DDS-Agent/
+external/PX4-Autopilot/
 

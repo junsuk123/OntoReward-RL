@@ -114,3 +114,23 @@ def yaw_enu_to_ned(yaw_enu: float) -> float:
     clockwise, so the two differ by a reflection about the 45 degree axis.
     """
     return math.atan2(math.cos(yaw_enu), math.sin(yaw_enu))
+
+
+# --------------------------------------------------------------- geodesy
+# WGS84 semi-major axis. The projection below is a local tangent plane, so the
+# flattening term would be noise against the metre-scale errors this
+# environment models. Deliberately the same formula as
+# isaac_sim/osm_city.project_to_local -- the simulator lays the city out with
+# it and the gateway reads PX4's origin back with it, so the two have to agree
+# to the metre or the deck lands in the wrong street. tests/test_frames.py
+# pins them against each other.
+WGS84_A = 6378137.0
+
+
+def geodetic_to_enu(latitude_deg: float, longitude_deg: float,
+                    lat0_deg: float, lon0_deg: float) -> np.ndarray:
+    """Where a lat/lon sits in the ENU frame pinned at (LAT0, LON0), in metres."""
+    east = math.radians(longitude_deg - lon0_deg) * WGS84_A * math.cos(
+        math.radians(lat0_deg))
+    north = math.radians(latitude_deg - lat0_deg) * WGS84_A
+    return np.array([east, north, 0.0], dtype=float)

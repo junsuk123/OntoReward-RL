@@ -12,6 +12,7 @@ from .battery import BatteryModel
 from .config import GatewayConfig, load_gateway_config
 from .frames import (
     enu_to_ned,
+    geodetic_to_enu,
     frd_to_flu,
     ned_to_enu,
     quat_enu_flu_to_ned_frd,
@@ -113,9 +114,27 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             self.pending_reset_seq = -1
             self.pad_position_enu: np.ndarray | None = None
             self.pad_pose_time_ns = 0
+            # Continuity across a camera/PX4 position handover; see
+            # _blend_position_source.
+            self._last_source_was_optical: bool | None = None
+            self._last_policy_position = np.zeros(3)
+            self._source_offset = np.zeros(3)
+            self._source_offset_ns = 0
             # The deck the pad rides on. A static pad is the same code path with
             # a zero twist, so there is no second branch to keep in step.
+            # PX4's local frame expressed in the world frame the city and the
+            # deck live in; see _update_world_origin.
+            self.world_from_px4 = np.zeros(3)
+            self.world_origin_known = False
+            # PX4's own world pose, before the canyon error is injected.
+            self.px4_world_position: np.ndarray | None = None
             self.deck_position_enu = np.zeros(3)
+            # A filtered copy of the above, used only to aim the entry climb;
+            # see _track_deck.
+            self.deck_track_position = np.zeros(3)
+            self.deck_track_ns = 0
+            self.pad_track_position = np.zeros(3)
+            self.pad_track_ns = 0
             self.deck_velocity_enu = np.zeros(3)
             self.deck_yaw = 0.0
             self.deck_yaw_rate = 0.0
@@ -163,6 +182,11 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             self.command_pub = self.create_publisher(
                 VehicleCommand, _topic(cfg, "in", "vehicle_command"), 10)
             self.reset_pub = self.create_publisher(String, "/landing_sim/reset", 10)
+            # Isaac holds the vehicle at its hover start until the autopilot is
+            # actually flying it; this is how it learns that. Latched depth so a
+            # simulator that comes up late still gets the current answer.
+            self.flight_pub = self.create_publisher(String, "/landing_sim/flight_state", 10)
+            self.published_armed: tuple[bool, bool] | None = None
 
             self.create_subscription(VehicleOdometry, _topic(cfg, "out", "vehicle_odometry"),
                                      self._on_odometry, qos)
@@ -239,6 +263,7 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                 self.goto_target_enu = None
                 if not self.battery_armed:
                     self._arm_battery()
+                self._publish_flight_state()
             elif kind == "reset":
                 self.safety.require_reset()
                 wind_scale = float(msg.get("wind_scale", 1.0))
@@ -257,7 +282,12 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                     raise ProtocolError("gnss_scale must be finite and in [0,4]")
                 self.last_command_seq = seq
                 self.pending_reset_seq = seq
-                if self.sample.landed:
+                # A disarmed vehicle is on the ground whatever the land detector
+                # says -- and before its first sample arrives it says "airborne"
+                # by design (see _refresh_land_detector), so without this the
+                # first reset after every gateway start put a parked PX4 into
+                # AUTO.LAND straight out of "Ready for takeoff".
+                if self.sample.landed or not self.sample.armed:
                     self._vehicle_command(VehicleCommand.VEHICLE_CMD_COMPONENT_ARM_DISARM, 0.0)
                 else:
                     # Cutting power to an airborne vehicle used to be harmless
@@ -281,14 +311,23 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                 self.last_mode_request_tick = -self.mode_request_period
                 self.goto_target_enu = None
                 self.goto_pad_relative = False
+                self.deck_track_ns = 0
+                self.pad_track_ns = 0
                 self.battery_armed = False
                 self.pending_battery_hover_s = None
+                self._publish_flight_state()
             elif kind == "goto":
                 self.safety.require_autonomous_climb()
                 request = validate_goto(msg)
                 if request.is_pad_relative and not self._deck_is_fresh(now_ns()):
                     raise ProtocolError(
                         "pad-relative goto needs a fresh /landing_pad/state/odom")
+                if request.is_pad_relative and not self.world_origin_known:
+                    # Flying it anyway would aim at a world-frame point in
+                    # PX4's local frame and put the vehicle a block away.
+                    raise ProtocolError(
+                        "pad-relative goto needs PX4's global origin; "
+                        "vehicle_local_position has not reported xy_global yet")
                 self.last_command_seq = seq
                 self.goto_target_enu = np.asarray(request.position_enu, dtype=float)
                 self.goto_pad_relative = request.is_pad_relative
@@ -344,7 +383,21 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             self._integrate_battery()
             if self.goto_target_enu is not None and stamp >= self.goto_deadline_ns:
                 self.goto_target_enu = None
-                self.get_logger().warning("goto hold expired; releasing the setpoint stream")
+                # The climb only ever expires when handover never came, because
+                # the first policy action clears the target. Simply going quiet
+                # here leaves an armed vehicle in the air with nothing
+                # commanding it, which is the fall the learner then reports as a
+                # failed reset. Put it down under PX4's own controller instead
+                # and let the reset retry from a vehicle that is on the deck.
+                self.offboard_requested = False
+                self.prestream = 0
+                if self.sample.armed:
+                    self._vehicle_command(VehicleCommand.VEHICLE_CMD_NAV_LAND)
+                    self.get_logger().warning(
+                        "goto hold expired without handover; commanding a landing")
+                else:
+                    self.get_logger().warning(
+                        "goto hold expired; releasing the setpoint stream")
             if self.last_action_ns:
                 age_s = (stamp - self.last_action_ns) * 1e-9
                 if age_s > cfg.action_timeout_s:
@@ -385,7 +438,11 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             # PX4 flies the episode entry pose itself: no teleport, so the
             # estimator never sees a jump it cannot explain.
             self._publish_offboard_mode(position=True)
-            target_ned = enu_to_ned(self._goto_world_target())
+            # Back out of the world frame: this is published as a *local*
+            # setpoint, so a world-frame target would be off by the distance
+            # between the two origins -- which is what sent the vehicle
+            # sideways the moment it lifted off the pad.
+            target_ned = enu_to_ned(self._goto_world_target() - self.world_from_px4)
             sp = TrajectorySetpoint()
             sp.timestamp = self._timestamp_us()
             sp.position = [float(x) for x in target_ned]
@@ -429,7 +486,15 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
 
         def _on_odometry(self, msg) -> None:
             try:
-                position = ned_to_enu(msg.position)
+                # Into the world frame the deck is broadcast in. Everything
+                # downstream differences the two, so this has to happen before
+                # any of it -- see _update_world_origin.
+                position = ned_to_enu(msg.position) + self.world_from_px4
+                # Kept before the canyon error is added: the entry setpoint is
+                # published into PX4's own frame, so it has to be built from
+                # the pose PX4 actually holds, not from the degraded copy the
+                # policy is handed.
+                self.px4_world_position = position.copy()
                 q_enu = quat_ned_frd_to_enu_flu(msg.q)
                 velocity = np.asarray(msg.velocity, dtype=float)
                 if velocity.shape != (3,) or not np.isfinite(velocity).all():
@@ -458,7 +523,13 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             # choice: with the camera enabled the policy lands on the marker it
             # can actually see, and falls back to the PX4 estimate the moment
             # the pad leaves the frame.
-            use_pad_pose = pad_pose_fresh and (
+            # The detector reports a miss on the same frame it loses the tags,
+            # a whole state_timeout_s before the pose it last solved goes
+            # stale. Waiting for staleness serves that frozen solve as if it
+            # were live, so the policy flies half a second of a pad-relative
+            # position that stopped tracking the moment the pad left the frame.
+            marker_live = self.sample.marker_quality > 0.0
+            use_pad_pose = pad_pose_fresh and marker_live and (
                 cfg.target == "hardware" or cfg.marker_pose_drives_policy)
             # Everything the policy sees is relative to the deck, because the
             # deck is the target and it moves. The camera already solves in the
@@ -476,12 +547,14 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             # than either absolute position does.
             estimated_position = position + self.gnss_offset
             estimated_velocity = velocity + self.gnss_velocity_offset
-            policy_position = (self.pad_position_enu if use_pad_pose
-                               else estimated_position - self.deck_position_enu)
+            fallback_position = estimated_position - self.deck_position_enu
+            policy_position = self._blend_position_source(
+                use_pad_pose, self.pad_position_enu, fallback_position, stamp)
             # Velocity always comes from the flight stack's estimator, whatever
             # is providing position: the marker solve is not differentiated
             # here, so there is no optical velocity to prefer.
             policy_velocity = estimated_velocity - self.deck_velocity_enu
+            self._track_pad_relative(policy_position, policy_velocity)
             self.sample.position_enu = tuple(float(x) for x in policy_position)
             self.sample.velocity_enu = tuple(float(x) for x in policy_velocity)
             self.sample.position_world_enu = tuple(float(x) for x in estimated_position)
@@ -505,6 +578,12 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             )
             self.sample.extra["position_source"] = (
                 "uav_pose_in_pad" if use_pad_pose else "px4_local_minus_deck_gnss")
+            # How much of the last source change has not yet been faded out. A
+            # consumer reading position_source alone would think the handover
+            # was instantaneous; it is not, and this says by how much.
+            self.sample.extra["source_handover_offset_m"] = float(
+                np.linalg.norm(self._decayed_offset(stamp)))
+            self.sample.extra["marker_live"] = bool(marker_live)
             self.sample.extra["control_source"] = (
                 "action" if self.last_action_ns
                 else "goto" if self.goto_target_enu is not None
@@ -526,6 +605,7 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             self.sample.nav_state = int(msg.nav_state)
             armed_value = getattr(msg, "ARMING_STATE_ARMED", 2)
             self.sample.armed = int(msg.arming_state) == int(armed_value)
+            self._publish_flight_state()
 
         def _on_land(self, msg) -> None:
             self.sample.landed = bool(msg.landed)
@@ -563,6 +643,47 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             self.sample.extra["heading_good_for_control"] = bool(
                 getattr(msg, "heading_good_for_control", False)
             )
+            self._update_world_origin(msg)
+
+        def _update_world_origin(self, msg) -> None:
+            """Where PX4's local frame sits in the simulator's world frame.
+
+            PX4 pins its local frame wherever the EKF initialised, which is the
+            spawn point -- on the roof of a lorry parked some way down the
+            block. The deck broadcasts its pose in the world frame the city is
+            laid out in, whose origin is the map datum. Those are two different
+            origins, and until this was worked out the gateway simply mixed
+            them: a goto was published as a *local* setpoint carrying a *world*
+            target, so the vehicle darted off by the distance between the two
+            the moment it left the pad, and the pad-relative state the policy
+            flew on carried the same constant error.
+
+            PX4 publishes the geodetic coordinates of its own origin, and the
+            map datum is configuration, so the offset is recoverable without
+            any privileged knowledge -- which is also how a real vehicle does
+            it: a cooperative lorry broadcasts a geodetic position and the
+            drone brings it into its own local frame.
+            """
+            if not bool(getattr(msg, "xy_global", False)):
+                return
+            latitude = float(getattr(msg, "ref_lat", float("nan")))
+            longitude = float(getattr(msg, "ref_lon", float("nan")))
+            if not (math.isfinite(latitude) and math.isfinite(longitude)):
+                return
+            if not (cfg.map_latitude_deg or cfg.map_longitude_deg):
+                # No datum configured: the world frame is PX4's own, which is
+                # what a single-vehicle setup with a pad at the origin had.
+                self.world_from_px4 = np.zeros(3)
+                self.world_origin_known = True
+                return
+            offset = geodetic_to_enu(latitude, longitude,
+                                     cfg.map_latitude_deg, cfg.map_longitude_deg)
+            if not self.world_origin_known:
+                self.get_logger().info(
+                    f"PX4 local frame is at world ENU ({offset[0]:.1f}, "
+                    f"{offset[1]:.1f}) m; deck poses will be brought into it.")
+            self.world_from_px4 = offset
+            self.world_origin_known = True
 
         def _estimator_is_healthy(self, stamp: int) -> bool:
             fresh = (stamp - self.estimator_health_ns) * 1e-9 <= cfg.state_timeout_s
@@ -576,6 +697,77 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
 
         def _on_marker_quality(self, msg) -> None:
             self.sample.marker_quality = float(np.clip(msg.data, 0.0, 1.0))
+
+        def _blend_position_source(self, use_pad_pose: bool,
+                                   optical, fallback: np.ndarray,
+                                   stamp: int) -> np.ndarray:
+            """Hand over between the camera and the PX4 estimate continuously.
+
+            The two sources do not agree: the marker solve is a direct optical
+            measurement of the pad-relative pose, the fallback is a difference
+            of two GNSS-derived positions, and in the canyon they can be metres
+            apart. Switching between them is therefore a step in the state the
+            policy flies on -- and it lands exactly when the pad leaves the
+            frame, which is when the controller can least afford to be kicked.
+            The policy would read that step as the deck jumping sideways and
+            haul the vehicle after it.
+
+            So the difference at the moment of the handover is carried and
+            faded out over ``vision_handover_tau_s``. The estimate stays
+            continuous, converges to whichever source is now authoritative, and
+            no step is ever presented as motion. Errors are not invented here:
+            the offset only ever shrinks, and it is reported so a consumer can
+            see when the state is still mid-handover.
+            """
+            source = np.asarray(optical if use_pad_pose else fallback, dtype=float)
+            tau = float(cfg.vision_handover_tau_s)
+            previous = self._last_source_was_optical
+            self._last_source_was_optical = bool(use_pad_pose)
+            if tau <= 0.0 or previous is None:
+                self._source_offset = np.zeros(3)
+                self._source_offset_ns = stamp
+                self._last_policy_position = source
+                return source
+            if previous != bool(use_pad_pose):
+                # Re-anchor on the state actually being flown, so the first
+                # sample after the handover equals the last one before it.
+                self._source_offset = self._decayed_offset(stamp) + (
+                    np.asarray(self._last_policy_position, dtype=float) - source)
+                self._source_offset_ns = stamp
+            blended = source + self._decayed_offset(stamp)
+            self._last_policy_position = blended
+            return blended
+
+        def _decayed_offset(self, stamp: int) -> np.ndarray:
+            """What is left of the handover step, decayed toward zero."""
+            offset = np.asarray(self._source_offset, dtype=float)
+            if not offset.any():
+                return np.zeros(3)
+            tau = float(cfg.vision_handover_tau_s)
+            age = max(0.0, (stamp - self._source_offset_ns) * 1e-9)
+            return offset * math.exp(-age / max(tau, 1e-6))
+
+        def _publish_flight_state(self) -> None:
+            """Tell Isaac when the autopilot takes the vehicle over.
+
+            Only on a change: this is a latch for the simulator's hover hold,
+            not telemetry, and the state sample already carries `armed` for
+            anything that wants it every tick.
+            """
+            armed = bool(self.sample.armed)
+            # Handover is the moment the policy takes the vehicle: the entry
+            # climb is over and the episode has begun. That is when the deck is
+            # allowed to pull away, so the climb happens over a lorry standing
+            # still and only the landing has to chase one.
+            handover = bool(self.last_action_ns)
+            state = (armed, handover)
+            if state == self.published_armed:
+                return
+            self.published_armed = state
+            message = String()
+            message.data = json.dumps({"v": cfg.protocol_version,
+                                       "armed": armed, "handover": handover})
+            self.flight_pub.publish(message)
 
         def _on_pad_pose(self, msg) -> None:
             position = np.array(
@@ -604,11 +796,78 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             self.deck_velocity_enu = velocity
             self.deck_yaw = float(yaw_from_quat_wxyz((o.w, o.x, o.y, o.z)))
             self.deck_yaw_rate = float(w.z)
+            self._track_deck(position, velocity)
             covariance = getattr(msg.pose, "covariance", None)
             if covariance is not None and len(covariance) >= 8:
                 variance = float(covariance[0]) + float(covariance[7])
                 self.deck_sigma_xy_m = math.sqrt(variance) if variance > 0.0 else 0.0
             self.deck_time_ns = now_ns()
+
+        def _track_pad_relative(self, position: np.ndarray,
+                                velocity: np.ndarray) -> None:
+            """A steadier pad-relative pose, for the entry setpoint only.
+
+            The measured pad-relative position is the difference of two fixes
+            in the same canyon, so most of the error is common-mode and what is
+            left is metres, wandering on the multipath correlation time. Aim a
+            position controller straight at it and the vehicle physically
+            chases that wander -- it was flying at 1.8 m/s while trying to hold
+            station, which is real motion in pursuit of noise.
+
+            Predicting on the measured relative velocity and correcting gently
+            toward the measured position leaves a deck moving at a steady speed
+            tracked without lag, and takes the wander out of the setpoint. Only
+            the entry climb reads this; `sample.position_enu` is untouched,
+            because flying the raw differential is the experiment.
+            """
+            stamp = now_ns()
+            if self.pad_track_ns == 0:
+                self.pad_track_position = np.asarray(position, dtype=float).copy()
+                self.pad_track_ns = stamp
+                return
+            dt = (stamp - self.pad_track_ns) * 1e-9
+            self.pad_track_ns = stamp
+            if not 0.0 < dt < 1.0:
+                self.pad_track_position = np.asarray(position, dtype=float).copy()
+                return
+            predicted = self.pad_track_position + np.asarray(velocity, dtype=float) * dt
+            gain = min(dt / max(cfg.pad_track_tau_s, 1e-3), 1.0)
+            self.pad_track_position = predicted + gain * (position - predicted)
+
+        def _track_deck(self, position: np.ndarray, velocity: np.ndarray) -> None:
+            """A steadier deck pose, for the entry setpoint only.
+
+            The broadcast carries the lorry's own canyon GNSS error, which is a
+            correlated process metres across that wanders on the order of a
+            metre a second. Handed straight to PX4's position controller at the
+            control rate, that is a setpoint which never stands still: the
+            vehicle chases the lorry's receiver noise and never settles inside
+            the entry tolerance, which reads as a drone that will not stop
+            drifting over a stationary lorry.
+
+            So the entry hold flies a constant-velocity track of the broadcast
+            rather than the broadcast itself -- predict on the reported twist,
+            correct gently toward the reported position. Because the prediction
+            carries the velocity, a lorry at a steady 8 m/s is followed with no
+            lag; only the noise is attenuated. This is what any real consumer of
+            a cooperative broadcast does, and it is deliberately *not* on the
+            path the policy sees: `sample.pad` and the pad-relative state still
+            carry the raw broadcast, because coping with it is the experiment.
+            """
+            stamp = now_ns()
+            if self.deck_track_ns == 0:
+                self.deck_track_position = position.copy()
+                self.deck_track_ns = stamp
+                return
+            dt = (stamp - self.deck_track_ns) * 1e-9
+            self.deck_track_ns = stamp
+            if not 0.0 < dt < 1.0:
+                # A gap this long means the track is stale rather than smooth.
+                self.deck_track_position = position.copy()
+                return
+            predicted = self.deck_track_position + velocity * dt
+            gain = min(dt / max(cfg.deck_track_tau_s, 1e-3), 1.0)
+            self.deck_track_position = predicted + gain * (position - predicted)
 
         def _on_deck_truth(self, msg) -> None:
             """The simulator's own deck pose. Scoring only, never control."""
@@ -762,6 +1021,8 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             plus a moving deck can put the vehicle.
             """
             target = np.asarray(self.goto_target_enu, dtype=float).copy()
+            deck = (self.deck_track_position if self.deck_track_ns
+                    else self.deck_position_enu)
             if self.goto_pad_relative:
                 # The offset is bounded against the pad-relative arena, because
                 # that is the frame it is expressed in. Clamping the sum against
@@ -771,14 +1032,58 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                 if offset > cfg.world_xy_limit_m > 0.0:
                     target[:2] *= cfg.world_xy_limit_m / offset
                 target[2] = float(min(max(target[2], 0.2), cfg.max_altitude_m))
-                target = target + self.deck_position_enu
+                # Fly the gap that was *measured*, not an absolute point.
+                #
+                # In this canyon the drone's own fix and the lorry's are each
+                # about twenty metres out, but they share a constellation, so
+                # better than eighty per cent of that is common-mode and their
+                # difference is good to a few metres. Adding the offset to the
+                # lorry's absolute broadcast throws that away: the setpoint
+                # inherits the lorry's full error and wanders with it, so the
+                # vehicle chases a point that never stands still -- while the
+                # entry tolerance, which is checked on the pad-relative state,
+                # reports it as a metre away and settling. That is the drift
+                # that keeps a handover from ever completing.
+                #
+                # Commanding the remaining pad-relative error instead cancels
+                # both absolute fixes exactly the way the state contract
+                # already does, and leaves the setpoint as steady as the
+                # differential measurement is.
+                here_world = (self.px4_world_position
+                              if self.px4_world_position is not None
+                              else np.asarray(self.sample.position_world_enu, dtype=float))
+                # Fly the climb on the simulator's own pad-relative pose when
+                # it has one. This is setup, not the experiment: it decides
+                # where the vehicle waits before an episode begins, and nothing
+                # on it reaches the policy, the reward or the log -- exactly
+                # like re-seating the vehicle between episodes.
+                #
+                # It has to be the true pose because of a circularity. The
+                # episode is supposed to open with the deck in frame, and the
+                # camera reaches three or four metres across at entry altitude.
+                # Flown on the GNSS fallback instead -- thirty metres out in
+                # this canyon -- the vehicle parks a block from the deck, never
+                # sees a marker, and so never gets the fix that would have let
+                # it fly there accurately. Truth breaks the loop; the policy
+                # still takes over on the raw measurement it will have to land
+                # on.
+                truth = self.sample.truth_position_enu
+                if truth is not None:
+                    here_pad = np.asarray(truth, dtype=float)
+                else:
+                    here_pad = (self.pad_track_position if self.pad_track_ns
+                                else np.asarray(self.sample.position_enu, dtype=float))
+                if np.isfinite(here_world).all() and np.isfinite(here_pad).all():
+                    target = here_world + (target - here_pad)
+                else:
+                    target = target + deck
             # And the result is bounded against the city, so no combination of
             # a legal offset and a moving deck can put the vehicle outside it.
             radial = float(math.hypot(target[0], target[1]))
             if radial > cfg.world_radius_m > 0.0:
                 target[:2] *= cfg.world_radius_m / radial
             ceiling = cfg.max_altitude_m + (
-                self.deck_position_enu[2] if self.goto_pad_relative else 0.0)
+                deck[2] if self.goto_pad_relative else 0.0)
             target[2] = float(min(max(target[2], 0.2), max(ceiling, 0.2)))
             return target
 

@@ -15,5 +15,9 @@ else
   printf 'ROS workspace is not built; run scripts/bootstrap_px4_ros2.sh.\n' >&2
   exit 1
 fi
+# The gateway runs from a mirror of ros2_ws/src, so it can be older than the
+# learner that is about to talk to it. That mismatch surfaces as a protocol
+# error minutes into a run, long after the cause; refuse here instead.
+"$workspace_root/scripts/sync_gateway.sh" --check
 exec ros2 run ontology_rgat_px4 ros2_gateway \
   --config "$workspace_root/config/system.yaml" "$@"

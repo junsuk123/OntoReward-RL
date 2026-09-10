@@ -24,6 +24,7 @@ is solved from whichever ones are currently visible.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Sequence
@@ -130,6 +131,23 @@ def intrinsics_from_fov(width: int, height: int, horizontal_fov_deg: float) -> n
     return np.array([[fx, 0.0, width / 2.0],
                      [0.0, fx, height / 2.0],
                      [0.0, 0.0, 1.0]], dtype=np.float64)
+
+
+def nadir_footprint_m(width: int, height: int, horizontal_fov_deg: float,
+                      altitude_m: float) -> tuple[float, float]:
+    """Half-extents of what a nadir camera sees on the ground, in metres.
+
+    Returned along the image axes: ``x`` is the wide one. Square pixels are
+    enforced when the camera is built, so the vertical half-angle follows from
+    the same focal length rather than from the aspect ratio of the FOV.
+
+    This is what decides whether an episode can start with the pad in frame:
+    at the entry altitude the short axis is only about three quarters of the
+    long one, so it is the short axis that has to hold the pad.
+    """
+    focal = (width / 2.0) / math.tan(math.radians(horizontal_fov_deg) / 2.0)
+    altitude = max(float(altitude_m), 0.0)
+    return (altitude * (width / 2.0) / focal, altitude * (height / 2.0) / focal)
 
 
 def matrix_to_quat_wxyz(r: np.ndarray) -> np.ndarray:

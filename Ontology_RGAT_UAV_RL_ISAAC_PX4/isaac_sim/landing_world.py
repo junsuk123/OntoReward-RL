@@ -67,6 +67,7 @@ from pxr import Gf, Sdf, UsdGeom, UsdPhysics, UsdShade
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from marker_vision import (
+    nadir_footprint_m,
     R_BODY_FROM_OPTICAL,
     MarkerBoard,
     MarkerPoseEstimator,
@@ -74,7 +75,7 @@ from marker_vision import (
     intrinsics_from_fov,
     texture_side_ratio,
 )
-from pad_motion import PadMotionConfig, PadTrajectory
+from pad_motion import PadMotionConfig, PadTrajectory, lorry_parts
 from urban_scene import UrbanConfig, UrbanLayout, UrbanScene
 from gnss import GnssConfig, UrbanGnss
 from live_overlay import LiveOverlay
@@ -293,6 +294,11 @@ class DownwardCamera:
         cv2.imwrite(str(path / f"frame_{self.frames:06d}.png"), canvas)
 
 
+# Only the hover hold uses this: it cancels the vehicle's weight so a disarmed
+# multirotor can wait in the air. Isaac owns the physics everywhere else.
+GRAVITY_M_S2 = 9.81
+
+
 class LandingDeck:
     """The ground vehicle the landing pad is bolted to.
 
@@ -320,6 +326,16 @@ class LandingDeck:
         self.yaw_rate = 0.0
         self.physics_ok = False
         self._xform = None
+        # The lorry waits at the kerb until the drone is off its roof. PX4 is
+        # booting and levelling its estimator on whatever this deck does, and a
+        # vehicle that is carried off at cruise speed and yawed round a corner
+        # while it does that fails preflight ("horizontal velocity unstable",
+        # "velocity estimate error") and then trips the in-flight mag check
+        # ("Compass needs calibration - Land now!") once it is finally armed --
+        # which hands the vehicle to a failsafe, out of offboard, in mid-climb.
+        # Landing on a moving deck is the experiment; taking off from one is
+        # not, so the lap starts when the drone is clear.
+        self.held = True
 
     @property
     def surface_z(self) -> float:
@@ -346,6 +362,7 @@ class LandingDeck:
             mass = UsdPhysics.MassAPI.Apply(stage.GetPrimAtPath(self.PRIM))
             mass.CreateMassAttr(120.0)
             self.physics_ok = True
+            self._build_lorry(stage)
         except Exception as exc:                            # noqa: BLE001
             # Worth continuing without: the episode ends on pad-relative
             # altitude, not on contact. Worth shouting about: nothing will hold
@@ -355,19 +372,99 @@ class LandingDeck:
                 "the vehicle will fall through it")
         self.apply_pose()
 
+    def _build_lorry(self, stage) -> None:
+        """Draw the vehicle the pad is painted on, under the roof it lands on.
+
+        Until now the deck was a bare slab hanging three metres over the road
+        with nothing beneath it: the pad moved like a lorry, occluded like a
+        lorry and was called one everywhere in the code, but the viewport showed
+        a floating plank.
+
+        The shape itself lives in ``pad_motion.lorry_parts`` so it can be
+        checked without a simulator; this only turns it into USD. Everything
+        hangs off the same kinematic body as the deck, so it drives, turns and
+        stops with it for free.
+        """
+        for part in lorry_parts(self.cfg.deck_size_m, self.cfg.deck_height_m):
+            path = f"{self.PRIM}/{part.name}"
+            if part.kind == "wheel":
+                prim = UsdGeom.Cylinder.Define(stage, path)
+                prim.CreateRadiusAttr(0.5 * part.size[0])
+                prim.CreateHeightAttr(part.size[1])
+                prim.CreateAxisAttr("Y")
+            else:
+                prim = UsdGeom.Cube.Define(stage, path)
+                prim.CreateSizeAttr(1.0)
+                UsdGeom.XformCommonAPI(prim).SetScale(
+                    Gf.Vec3f(*(float(v) for v in part.size)))
+            UsdGeom.XformCommonAPI(prim).SetTranslate(
+                Gf.Vec3d(*(float(v) for v in part.centre)))
+            prim.CreateDisplayColorAttr([Gf.Vec3f(*part.colour)])
+            if part.collider:
+                UsdPhysics.CollisionAPI.Apply(stage.GetPrimAtPath(path))
+
     def reset(self, seed: int, sim_time: float, speed_scale: float = 1.0) -> dict:
         info = self.trajectory.reset(seed, sim_time, speed_scale)
         self.position, self.velocity = self.trajectory.pose(sim_time)
         self.yaw = float(info["yaw_rad"])
         self.yaw_rate = 0.0
+        if self.held:
+            # The draw still happens -- the seed has to pick the same cruise
+            # speed whether or not the lorry is standing -- but a parked deck
+            # reports the twist it actually has. The policy feeds this forward,
+            # so handing it the speed the lorry has not started driving at yet
+            # would make it lead a target that is not moving.
+            self.velocity = np.zeros(3)
+            info["velocity_enu_m_s"] = self.velocity.tolist()
         self.apply_pose()
         info["surface_z_m"] = self.surface_z
+        info["held"] = bool(self.held)
         return info
 
     def advance(self, sim_time: float, dt: float) -> None:
+        if self.held:
+            # Pin the lap's own clock to the simulation clock so no distance,
+            # no lane wander and no traffic dip accrue while the lorry stands.
+            # Everything the trajectory reports is a function of sim_time - t0,
+            # so this freezes the pose exactly rather than approximately, and
+            # the lap resumes from where it stands the moment it is released.
+            self.trajectory.t0 = float(sim_time)
+            self.position, _ = self.trajectory.pose(sim_time)
+            self.velocity = np.zeros(3)
+            self.yaw_rate = 0.0
+            self.apply_pose()
+            return
         self.position, self.velocity = self.trajectory.pose(sim_time)
         self.yaw, self.yaw_rate = self.trajectory.step_heading(self.velocity, dt)
         self.apply_pose()
+
+    def release(self, sim_time: float) -> None:
+        """Pull away from the kerb, once, at the first episode reset.
+
+        One-way on purpose. The hold exists only so that PX4 boots and levels
+        its estimator on a stationary deck; from the first episode onward the
+        lorry drives continuously, which is what ``pad.route_start`` and the
+        pad-relative entry pose are built around.
+
+        The pull-away is smooth because a kinematic deck whose speed steps in
+        one physics tick shears whatever is resting on it -- and what is resting
+        on it here is the vehicle that is about to be armed. It is expressed as
+        a full stop in the traffic profile centred on this instant, so the lorry
+        accelerates away from the light it was waiting at using the same closed
+        form the rest of the lap uses. The seed still draws the cruise speed and
+        every light after this one; only the phase is re-anchored, and only
+        once.
+        """
+        if not self.held:
+            return
+        self.held = False
+        self.trajectory.pull_away(sim_time)
+
+    def park(self) -> None:
+        """Wait at the kerb again, so the next entry climb is over a still deck."""
+        self.held = True
+        self.velocity = np.zeros(3)
+        self.yaw_rate = 0.0
 
     def apply_pose(self) -> None:
         if self._xform is None:
@@ -580,6 +677,23 @@ class LandingWorld:
         # read the same layout object, so an outage always has a building in
         # the viewport to blame it on.
         self.urban = UrbanLayout(UrbanConfig.from_mapping(CONFIG))
+        # Put the world origin where it really is. The constellation's
+        # elevations depend on latitude, so "a real city" that sits at 0N 0E
+        # would still hand the receiver the wrong sky -- and PX4's home, and
+        # every lat/lon it reports, would be in the Gulf of Guinea.
+        if self.urban.cfg.latitude_deg or self.urban.cfg.longitude_deg:
+            self.pg.set_global_coordinates(
+                latitude=self.urban.cfg.latitude_deg,
+                longitude=self.urban.cfg.longitude_deg,
+                altitude=self.urban.cfg.altitude_m)
+            where = (f"{self.urban.cfg.latitude_deg:.5f}, "
+                     f"{self.urban.cfg.longitude_deg:.5f}")
+            if self.urban.extract_name:
+                carb.log_warn(f"City: {self.urban.extract_name} at {where} "
+                              f"({len(self.urban.buildings)} real footprints, "
+                              f"{self.urban.attribution})")
+            else:
+                carb.log_warn(f"World origin set to {where}.")
         UrbanScene(self.urban).spawn(self.world)
         gnss_cfg = GnssConfig.from_mapping(CONFIG)
         self.gnss = UrbanGnss(gnss_cfg, self.urban if self.urban.cfg.enabled else None)
@@ -621,7 +735,23 @@ class LandingWorld:
         # Replace Pegasus' still-air linear drag with the wind-relative model below.
         vehicle_cfg.drag = LinearDrag([0.0, 0.0, 0.0])
         vehicle_cfg.backends = [self.px4_backend, self.ros_backend]
-        clearance = [float(x) for x in isaac_cfg["spawn_position_enu_m"]]
+        # Where the vehicle waits before the autopilot has it. A hovering start
+        # skips the takeoff entirely: the episode is a landing, so climbing off
+        # the roof first only costs wall-clock and gives PX4 a chance to fail
+        # before the part being measured begins.
+        self.start_airborne = bool(isaac_cfg.get("start_airborne", False))
+        self.hover_start_pad_m = np.array(
+            [float(v) for v in isaac_cfg.get("hover_start_offset_pad_m", (0.0, 0.0, 4.5))],
+            dtype=float)
+        self.deck_clearance_pad_m = np.array(
+            [float(v) for v in isaac_cfg["spawn_position_enu_m"]], dtype=float)
+        # Only the hover hold prices weight with this; it is not the vehicle's
+        # inertia and nothing else reads it. An error here is a steady-state
+        # offset the PD closes, not a wrong flight model.
+        self.hover_hold_mass_kg = float(
+            (CONFIG.get("battery") or {}).get("vehicle_mass_kg", 1.5))
+        clearance = (self.hover_start_pad_m if self.start_airborne
+                     else self.deck_clearance_pad_m)
         spawn = self.deck.world_from_pad(clearance).tolist()
         self.vehicle = Multirotor(
             "/World/quadrotor",
@@ -670,6 +800,12 @@ class LandingWorld:
             Odometry, "/landing_pad/state/odom_truth", 10)
         self.gnss_pub = node.create_publisher(String, "/landing_uav0/gnss/status", 10)
         node.create_subscription(String, "/landing_sim/reset", self._on_reset_request, 10)
+        node.create_subscription(String, "/landing_sim/flight_state",
+                                 self._on_flight_state, 10)
+        # Held aloft until the autopilot is armed and flying it. Nothing else
+        # can hold a disarmed multirotor in the air, and dropping it for the
+        # second PX4 spends arming is the takeoff this start exists to avoid.
+        self.autopilot_flying = False
 
         # A live 3D view of the episode inside the simulator window: the two
         # trails, the vector still to be closed and the success tolerance. Off
@@ -738,6 +874,7 @@ class LandingWorld:
         # Wider and higher than the rover experiment's: the deck is a 6 m box
         # body rather than a 1.3 m tray, and the entry has to clear it.
         offset = np.array([1.8 * rng.normal(), 1.4 * rng.normal(), 4.0 + 1.8 * rng.random()])
+        offset = self._entry_within_camera(offset)
         # A Gaussian tail can put the entry point inside a facade -- about one
         # seed in three thousand on the outer lane -- and PX4 flies into it,
         # never reaches the pose and times out the reset. Pulling the offset
@@ -751,6 +888,11 @@ class LandingWorld:
         # condition -- geometry, wind, deck motion and energy -- is one seed.
         hover_seconds = float(rng.uniform(*self.battery_hover_range))
         reseated = self._seat_on_deck()
+        self.deck.park()
+        # The lorry does NOT pull away here. It waits until handover, so PX4
+        # flies the entry climb over a deck that is standing still and only the
+        # landing -- the part being measured -- has to track a moving one. See
+        # _on_flight_state.
         for backend in (self.px4_backend, self.ros_backend):
             backend.reset()
         self.wind.reset(req["seed"], self.world.current_time, req["wind_scale"])
@@ -789,6 +931,42 @@ class LandingWorld:
                       f"({self.gnss.uav.last.satellites_nlos} NLOS, "
                       f"q={self.gnss.uav.last.quality:.2f}) reseated={reseated}")
 
+    def _entry_within_camera(self, offset: np.ndarray) -> np.ndarray:
+        """Pull the entry point in until the pad is inside the camera frame.
+
+        Every episode is supposed to begin with the pad already in view, so the
+        policy starts from a marker fix rather than spending its first seconds
+        hunting for the deck on GNSS alone. The drawn offset does not respect
+        that on its own: at the entry altitude the camera's short axis reaches
+        about three quarters of its long one, and the Gaussian tails put the
+        deck outside both.
+
+        The direction that was drawn is kept and only the reach is shortened --
+        the same treatment ``clear_of_buildings`` gives a point inside a facade.
+        The budget is taken against the *short* axis, because the vehicle's yaw
+        at handover is not controlled and either image axis could be the one
+        pointing at the deck, and it leaves room for the entry tilt and for the
+        vehicle sitting a little off the point it was aimed at.
+        """
+        vision = CONFIG.get("vision") or {}
+        camera = vision.get("camera") or {}
+        width, height = (int(v) for v in camera.get("resolution", (800, 600)))
+        fov = float(camera.get("horizontal_fov_deg", 90.0))
+        altitude = float(offset[2])
+        _, half_short = nadir_footprint_m(width, height, fov, altitude)
+        # What the vehicle may be off by and still see the deck: the entry tilt
+        # swings the footprint, and it only has to hold the entry pose to
+        # within the handover tolerance.
+        tilt_m = altitude * math.tan(math.radians(float(
+            vision.get("entry_tilt_allowance_deg", 8.0))))
+        slack = float(vision.get("entry_fov_margin_m", 1.2))
+        allowed = max(0.35 * half_short, half_short - tilt_m - slack)
+        reach = float(math.hypot(offset[0], offset[1]))
+        if reach > allowed > 0.0:
+            offset = offset.copy()
+            offset[:2] *= allowed / reach
+        return offset
+
     def _seat_on_deck(self) -> bool:
         """Put a grounded vehicle back on the lorry's roof before the next episode.
 
@@ -814,21 +992,117 @@ class LandingWorld:
         grounded = float(state.position[2]) <= self.deck.surface_z + 1.0
         if not (tipped or grounded):
             return False
-        clearance = np.array([float(x) for x in CONFIG["isaac"]["spawn_position_enu_m"]])
+        # With an airborne start the vehicle goes back to the hover point, not
+        # onto the roof: the next episode is a landing, and putting it back on
+        # the deck would only make PX4 fly the takeoff again. The hover hold
+        # keeps it there until the autopilot is armed.
+        clearance = (self.hover_start_pad_m if self.start_airborne
+                     else self.deck_clearance_pad_m)
         spawn = self.deck.world_from_pad(clearance)
         moved = float(np.linalg.norm(np.asarray(state.position, dtype=float) - spawn))
         self.vehicle.set_world_pose(position=spawn, orientation=np.array([1.0, 0.0, 0.0, 0.0]))
-        self.vehicle.set_linear_velocity(np.zeros(3))
+        self.vehicle.set_linear_velocity(
+            np.asarray(self.deck.velocity, dtype=float) if self.start_airborne
+            else np.zeros(3))
         self.vehicle.set_angular_velocity(np.zeros(3))
+        where = "at the hover start" if self.start_airborne else "on the deck"
         if tipped:
-            carb.log_warn(f"Vehicle had tipped over; re-seated on the deck "
-                          f"({moved:.2f} m).")
+            carb.log_warn(f"Vehicle had tipped over; re-placed {where} ({moved:.2f} m).")
         elif moved > 0.5:
-            carb.log_info(f"Vehicle re-seated on the deck ({moved:.2f} m).")
+            carb.log_info(f"Vehicle re-placed {where} ({moved:.2f} m).")
         return True
+
+    def _on_flight_state(self, msg: String) -> None:
+        """Latch when the autopilot takes the vehicle over."""
+        try:
+            state = json.loads(msg.data)
+            if int(state.get("v", -1)) != int(CONFIG["system"]["protocol_version"]):
+                raise ValueError("protocol version mismatch")
+            flying = bool(state["armed"])
+            handover = bool(state.get("handover", False))
+        except (ValueError, TypeError, KeyError, json.JSONDecodeError) as exc:
+            carb.log_warn(f"Ignored malformed flight state: {exc}")
+            return
+        self.autopilot_flying = flying
+        if handover and self.deck.held:
+            carb.log_warn("Policy has the vehicle; the lorry pulls away.")
+            self.deck.release(self.world.current_time)
+
+    def _hold_hover_start(self, dt: float) -> None:
+        """Keep a disarmed vehicle parked at its hover start, on the deck's twist.
+
+        Only until PX4 arms. A multirotor with no autopilot has nothing holding
+        it up, so without this the airborne start is a free fall through the
+        seconds PX4 spends aligning its estimator and accepting an arm command.
+
+        It is held by force rather than by writing the pose, because the IMU is
+        differentiated from successive velocities: pinning the transform every
+        tick makes the accelerometer read a vehicle in free fall while GPS reads
+        one standing still, and PX4 refuses to arm on the contradiction
+        ("Preflight Fail: velocity estimate error"). Cancelling weight and
+        closing a PD onto the hover point instead means the vehicle really is
+        hovering, so every sensor agrees and the estimator aligns on a genuine
+        hover -- which is the state the episode is supposed to start from.
+
+        It is held *with* the deck, so the pad-relative pose the episode starts
+        from is the one the reset drew.
+        """
+        if self.autopilot_flying or not self.start_airborne:
+            return
+        state = self.vehicle.state
+        position = np.asarray(state.position, dtype=float)
+        velocity = np.asarray(state.linear_velocity, dtype=float)
+        target = self.deck.world_from_pad(self.hover_start_pad_m)
+        target_velocity = np.asarray(self.deck.velocity, dtype=float)
+        # Weight, plus a PD that is stiff enough to hold station against the
+        # wind this environment blows and soft enough not to ring at 250 Hz.
+        accel = (np.array([0.0, 0.0, GRAVITY_M_S2])
+                 + 4.0 * (target - position)
+                 + 3.5 * (target_velocity - velocity))
+        force_world = self.hover_hold_mass_kg * accel
+        force_body = Rotation.from_quat(state.attitude).inv().apply(force_world)
+        self.vehicle.apply_force(force_body.tolist(), body_part="/body")
+        # And hold it level. A disarmed multirotor has no rotors to stabilise
+        # attitude, so over the twenty-odd seconds PX4 spends aligning its
+        # estimator it tips under any residual torque and trips the attitude
+        # check before it will arm. Pinning the body rate is enough: the vehicle
+        # spawns level and, with no rate, it stays there.
+        self.vehicle.set_angular_velocity(np.zeros(3))
 
     def _advance_deck(self, dt: float) -> None:
         self.deck.advance(self.world.current_time, dt)
+        # After the deck, so the vehicle is held against the pose the deck has
+        # this tick rather than the one it had last tick.
+        self._hold_hover_start(dt)
+        self._report_deck_carry()
+
+    def _report_deck_carry(self) -> None:
+        """Say out loud when the deck drives out from under a parked vehicle.
+
+        The whole moving-deck design rests on the roof carrying whatever is
+        resting on it, so that a disarmed vehicle rides the lorry and the
+        pad-relative entry pose stays a few metres away. When it does not, every
+        reset fails identically -- PX4 flies at an entry point that is receding
+        at cruise speed -- and nothing upstream says why.
+        """
+        now = float(self.world.current_time)
+        if now - getattr(self, "_carry_report_t", -1e9) < 2.0:
+            return
+        self._carry_report_t = now
+        if self.start_airborne:
+            return                          # it never rides the roof by design
+        position = np.asarray(self.vehicle.state.position, dtype=float)
+        pad = self.deck.pad_from_world(position)
+        if pad[2] > 1.0:                    # airborne: nothing to be carried by
+            return
+        half_length = 0.5 * float(self.deck.cfg.deck_size_m[0])
+        if float(np.hypot(pad[0], pad[1])) <= half_length:
+            return
+        carb.log_warn(
+            f"vehicle is {np.hypot(pad[0], pad[1]):.1f} m from the deck centre "
+            f"(roof half-length {half_length:.1f} m) at pad z={pad[2]:.2f} m: it is "
+            f"not being carried, so the entry pose recedes at the lorry's speed "
+            f"({np.linalg.norm(self.deck.velocity[:2]):.1f} m/s)")
 
     def _apply_wind(self, dt: float) -> None:
         state = self.vehicle.state

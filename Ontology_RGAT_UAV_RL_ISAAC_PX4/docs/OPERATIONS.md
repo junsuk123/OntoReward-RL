@@ -13,6 +13,10 @@ and both GNSS receivers are all created at Isaac startup.
 # then stop and restart the agent, Isaac and the gateway
 ```
 
+When only the gateway has changed, `./scripts/sync_gateway.sh` re-mirrors and
+rebuilds that one package in a second, which is the whole of the bootstrap that
+a Python-only edit needs.
+
 | Piece | Why it has to be redone |
 |---|---|
 | `ros2_ws/src/ontology_rgat_px4` | The gateway runs from the ASCII mirror, which is a *copy*. Until the bootstrap re-mirrors it, the old gateway still reports world-frame position and no `pad`/`battery`, and `bridge.PX4Bridge` refuses it by design. |
@@ -75,12 +79,29 @@ $ASCII_ROS2_WS  (default /home/$USER/.local/share/ontology_rgat_uav_rl/ros2_ws)
 `scripts/stack_status.sh` source `$ASCII_ROS2_WS/install/local_setup.bash`. Two
 consequences:
 
-- Editing `ros2_ws/src/ontology_rgat_px4/**` changes nothing until the bootstrap
-  is re-run, because the mirror is a copy. `colcon build --symlink-install`
-  inside the mirror only symlinks within the mirror.
+- Editing `ros2_ws/src/ontology_rgat_px4/**` changes nothing until the mirror is
+  refreshed, because it is a copy. `colcon build --symlink-install` inside the
+  mirror only symlinks within the mirror.
 - `ROS workspace is not built` from `run_gateway.sh` usually means the mirror is
   missing or was built under a different `$USER`/`$ASCII_ROS2_WS`, not that
   `ros2_ws/` is empty.
+
+`scripts/sync_gateway.sh` owns both halves of that:
+
+```bash
+./scripts/sync_gateway.sh            # re-mirror and rebuild the gateway package
+./scripts/sync_gateway.sh --check    # report drift, change nothing
+```
+
+`run_gateway.sh` and `check_ros2_loopback.sh` run `--check` before they start a
+gateway and refuse if the mirror has fallen behind, printing what differs and
+the command that fixes it. That guard exists because the failure it prevents is
+so far from its cause: a stale gateway boots cleanly, and the mismatch only
+surfaces as a `BridgeError` several minutes into a run, after Isaac has come up
+and the stack has retried the reset twice. The check compares the repository
+against the package Python actually imports, so it also catches a mirror that
+was refreshed but never rebuilt, and it stays quiet on an ASCII path where the
+workspace is built in place and there is no copy to fall behind.
 
 Every consumer of `/fmu/*` must use Fast DDS, because that is what the agent
 speaks. The run scripts export `RMW_IMPLEMENTATION=rmw_fastrtps_cpp` and unset
@@ -269,6 +290,44 @@ collecting those steps takes about 41 s of lockstepped flight. Its 64-sample
 networks therefore remain on CPU because GPU placement would not materially
 change the end-to-end runtime.
 
+## The city the episode is flown in
+
+`urban.source` decides where the skyline comes from.
+
+- `synthetic` generates the block from `config/system.yaml`. Its geometry is
+  exactly known, which is why the occlusion tests use it, and it stays the
+  control condition.
+- `osm` builds it from a cached OpenStreetMap extract under `assets/city/`.
+  Fetch one with
+
+  ```bash
+  scripts/fetch_city.py --name seoul-myeongdong \
+      --latitude 37.5636 --longitude 126.9850 --radius 300
+  ```
+
+  then point `urban.extract` at the name and `urban.origin` at the same
+  latitude/longitude. The origin is not decoration: PX4's home, every lat/lon
+  on the wire and the constellation's elevations all come from it.
+
+The simulator only ever reads the cached file, so a run reproduces from the
+extract rather than from whatever Overpass returned that morning. Extracts are
+small enough to commit next to the results they produced. OpenStreetMap data is
+© OpenStreetMap contributors, ODbL 1.0, and the extract carries that
+attribution.
+
+Two things a real extract needs watching for:
+
+- **Heights.** Most OSM buildings outside the dense cores carry no height tag
+  at all -- 284 of 349 in the first Seoul extract. Those are drawn from
+  `urban.height_range_m`, seeded, because one default flattens the skyline into
+  a wall of equal blocks and the canyon stops varying along the lap. Mapped
+  heights are always used when present.
+- **The carriageway.** The lap is a rectangle imposed on the map, not a road
+  traced from it, so buildings within `urban.route_clearance_m` of the route
+  centreline are dropped. Check `sky_view_fraction` around the lap after
+  changing site or `map_heading_deg`: if it never varies there is no canyon to
+  measure, and if it reads 0.0 the route is inside a building.
+
 ## Failure diagnosis
 
 - UAV motionless while the run prints `R-GAT epoch`: this is the offline
@@ -286,15 +345,32 @@ change the end-to-end runtime.
   moving-target policy. Restart Isaac with the current `landing_world.py`; on
   hardware, start the cooperative UGV localization publisher. The gateway marks
   the state invalid instead of subtracting a stale target.
-- State lacks `position_frame`, `pad`, or `battery`: the source gateway or fake
-  predates the 20-observation/13-node contract. Re-run
-  `scripts/bootstrap_px4_ros2.sh`, stop the old gateway, and start the rebuilt
-  mirror. Editing the source tree alone does not update the ASCII build.
+- State lacks `position_frame`, `pad`, `battery` or `gnss`: the gateway or fake
+  predates the contract this learner speaks. For the ASCII mirror the fix is
+  `./scripts/sync_gateway.sh` with the stack stopped; editing the source tree
+  alone does not update the build. The launchers now refuse to start a gateway
+  that has drifted, so this should only be reachable from a fake gateway or a
+  hand-started `ros2 run`.
 - No `/fmu/out/*`: check the DDS agent and that PX4 `uxrce_dds_client` targets
   UDP port 8888. If the topics exist but read as empty, the client is almost
   certainly on a different RMW: the agent speaks Fast DDS, so every consumer
   needs `RMW_IMPLEMENTATION=rmw_fastrtps_cpp` and no `CYCLONEDDS_URI`. The run
   scripts set this; an interactive shell may not.
+- `Compass needs calibration - Land now!` / `Failsafe activated` mid-climb,
+  usually behind `Preflight Fail: horizontal velocity unstable` and
+  `velocity estimate error`: PX4 levelled its estimator while the lorry carried
+  it off. The lap is therefore held until the drone is more than a metre above
+  the roof (`LandingDeck.hold`/`release_when_clear`), and a reset that re-seats
+  the vehicle parks it again. If this returns, check that `_advance_deck` is
+  still releasing on vehicle altitude rather than on the clock: a deck that
+  drives while PX4 boots poisons the EKF, and the failsafe that follows takes
+  the vehicle out of offboard in mid-climb -- it flies up and then falls away
+  from the pad, which reads like a wind problem and is not one.
+- `goto hold expired without handover; commanding a landing`: the entry climb
+  ran out its `external.entry_timeout` before the learner sent an action. The
+  gateway now puts the vehicle down rather than going quiet under it, so the
+  reset retry starts from a vehicle on the deck. The cause is upstream --
+  arming refused, offboard never accepted, or an entry pose PX4 cannot reach.
 - `PX4 did not hold the entry pose`: the climb never converged. Check that the
   gateway logged no `goto hold expired`, that PX4 reached `OFFBOARD`
   (`nav_state` 14, or `extra.offboard_active`), and that `estimator_valid` is

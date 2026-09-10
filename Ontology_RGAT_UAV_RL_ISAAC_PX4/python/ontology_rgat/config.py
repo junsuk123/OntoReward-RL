@@ -381,8 +381,27 @@ def default_config(mode: str = "quick", target: str = "sitl") -> Config:
         # setpoint that is itself driving at 8 m/s, and the entry pose is a
         # starting condition rather than a landing.
         "entry_frame": "pad",
+        # Tight again, because the climb is flown and judged on the same
+        # simulator-side pose (bridge.entry_state): there is no receiver error
+        # between the setpoint and the check, so what is left is how well PX4
+        # holds station in the wind. It has to stay well inside the camera
+        # footprint -- a few metres at entry altitude -- or the episode cannot
+        # be guaranteed to open with the deck in frame.
         "entry_tolerance": 0.90,          # m
+        # Pad-relative, and measured on the simulator's own state rather than
+        # the receiver's (see bridge.entry_state), so this is the speed the
+        # vehicle actually has. PX4 holds station to about 0.1 m/s between
+        # gusts, so 0.60 is comfortable again now that the canyon's velocity
+        # error is no longer being counted as motion. A starting condition, not
+        # a landing criterion: cfg.criteria grades the episode and is unchanged.
         "entry_speed_tolerance": 0.60,    # m/s, pad-relative
+        # Hand over only once the deck is actually in the camera frame, so
+        # every episode opens on a marker fix rather than on a GNSS estimate
+        # that is tens of metres out in this canyon. The entry pose is drawn
+        # inside the footprint too, but the vehicle only has to hold it to
+        # within entry_tolerance, which is the size of the frame -- so the
+        # detector is asked rather than the geometry trusted.
+        "require_pad_in_view": True,
         "entry_settle": 0.5,              # s held inside tolerance
         "entry_timeout": 90.0,            # s; must outlast PX4's post-boot arm refusal
         "arm_retry": 2.0,                 # s between arm attempts during the climb

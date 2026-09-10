@@ -223,6 +223,55 @@ class PX4Bridge:
         return {"position": position, "frame": frame,
                 "yaw": float(detail.get("entry_yaw_enu_rad", 0.0))}
 
+    def pad_in_view(self, state: dict[str, Any]) -> bool:
+        """Is the deck actually in the camera frame right now?
+
+        Every episode is meant to begin with the pad already seen, so the
+        policy starts from a marker fix instead of opening on GNSS alone --
+        which in this canyon is tens of metres out. Geometry alone cannot
+        promise it: the entry pose is drawn inside the footprint, but the
+        vehicle only has to hold that pose to within the handover tolerance,
+        and the tolerance is the same size as the frame. So this asks the
+        detector rather than the arithmetic.
+
+        Off when the camera is not the pose source -- a run configured without
+        vision has no frame to be in -- and it is a *gate*, not a measurement:
+        the quality it reads is the same number the policy gets.
+        """
+        if not bool(self.cfg.require_pad_in_view):
+            return True
+        return float(state.get("marker_quality", 0.0)) > 0.0
+
+    @staticmethod
+    def entry_state(state: dict[str, Any]) -> tuple[np.ndarray, float]:
+        """Pad-relative pose and settling speed to decide handover on.
+
+        The two halves deliberately come from different places, because they
+        ask different questions.
+
+        Both come from the simulator, because the climb is flown on the
+        simulator's pose too (see the gateway's ``_goto_world_target``). A gate
+        read from a different signal than the one being flown is the mistake
+        this went through twice: judged on the measurement it timed out on the
+        receiver's velocity error, and judged on truth while flown on the
+        measurement it timed out on a position the vehicle had no way to reach.
+
+        None of it is part of the experiment. It decides when an episode may
+        begin and nothing else -- the policy, the reward and the log never see
+        it, exactly as with re-seating the vehicle between episodes or grading
+        it afterwards (``env.truth_state``). On hardware there is no truth
+        block and this falls back to the measured state.
+        """
+        truth = state.get("truth") if isinstance(state.get("truth"), dict) else {}
+        if truth.get("valid", False):
+            position = np.asarray(truth["position"], dtype=float).reshape(-1)
+            velocity = np.asarray(truth["velocity"], dtype=float).reshape(-1)
+            if (position.size == 3 and velocity.size == 3
+                    and np.isfinite(position).all() and np.isfinite(velocity).all()):
+                return position, float(np.linalg.norm(velocity))
+        return (np.asarray(state["position"], dtype=float),
+                float(np.linalg.norm(state["velocity"])))
+
     def wait_at_entry(self, target: np.ndarray) -> dict[str, Any]:
         """Hand over only once PX4 holds the entry pose."""
         started = time.monotonic()
@@ -244,9 +293,11 @@ class PX4Bridge:
                 settled_since = None
                 time.sleep(0.05)
                 continue
+            here, speed = self.entry_state(state)
             at_target = (
-                float(np.linalg.norm(state["position"] - target)) <= float(self.cfg.entry_tolerance)
-                and float(np.linalg.norm(state["velocity"])) <= float(self.cfg.entry_speed_tolerance))
+                float(np.linalg.norm(here - target)) <= float(self.cfg.entry_tolerance)
+                and speed <= float(self.cfg.entry_speed_tolerance)
+                and self.pad_in_view(state))
             if not at_target:
                 settled_since = None
             elif settled_since is None:
@@ -256,10 +307,12 @@ class PX4Bridge:
             time.sleep(0.02)
         if state is None:
             raise BridgeError("PX4 published no state while climbing to the entry pose.")
+        here, speed = self.entry_state(state)
         raise BridgeError(
             f"PX4 did not hold the entry pose within {float(self.cfg.entry_timeout):.1f} s "
-            f"(offset {float(np.linalg.norm(state['position'] - target)):.2f} m, "
-            f"speed {float(np.linalg.norm(state['velocity'])):.2f} m/s).")
+            f"(offset {float(np.linalg.norm(here - target)):.2f} m, "
+            f"speed {speed:.2f} m/s, "
+            f"marker quality {float(state.get('marker_quality', 0.0)):.2f}).")
 
     # ------------------------------------------------------------------- step
     def step(self, action: Iterable[float]) -> dict[str, Any]:

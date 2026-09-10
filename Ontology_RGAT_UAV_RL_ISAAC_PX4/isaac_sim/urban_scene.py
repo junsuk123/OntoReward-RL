@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Iterator
 
 import numpy as np
@@ -39,12 +40,22 @@ import numpy as np
 
 @dataclass(frozen=True)
 class Building:
-    """An axis-aligned block of a building, in world ENU metres."""
+    """One block of a building, in world ENU metres.
+
+    ``x0..y1`` is the footprint before rotation and ``yaw_rad`` turns it about
+    its own centre. The synthetic block leaves the yaw at zero and is therefore
+    axis-aligned exactly as before; real footprints imported from OpenStreetMap
+    carry the bearing their street actually runs at, which a bounding box would
+    throw away -- and with it the canyon, because a facade that has been
+    squared up to east-north no longer channels the sky or the wind the way the
+    real one does.
+    """
     x0: float
     x1: float
     y0: float
     y1: float
     height_m: float
+    yaw_rad: float = 0.0
 
     @property
     def center(self) -> tuple[float, float]:
@@ -74,10 +85,26 @@ class UrbanConfig:
     outer_rows: int
     row_spacing_m: float
     mid_block_gap: bool
+    # Where the skyline comes from: 'synthetic' is the generated block below,
+    # 'osm' is a cached extract of a real place (see isaac_sim/osm_city.py).
+    source: str = "synthetic"
+    extract: str = ""
+    # The real world is not aligned to the route rectangle, so the map turns
+    # under it: this is the bearing of the street the deck should drive along.
+    map_heading_deg: float = 0.0
+    import_radius_m: float = 160.0
+    route_clearance_m: float = 11.0
+    # Where on Earth the world origin is. PX4's home and the GNSS geometry are
+    # set from this, so 'a real country' means these numbers and not the
+    # buildings alone: the constellation's elevations depend on latitude.
+    latitude_deg: float = 0.0
+    longitude_deg: float = 0.0
+    altitude_m: float = 0.0
 
     @classmethod
     def from_mapping(cls, data: dict[str, Any]) -> "UrbanConfig":
         urban = (data.get("urban") or {}) if isinstance(data, dict) else {}
+        origin = (urban.get("origin") or {}) if isinstance(urban, dict) else {}
         size = tuple(float(v) for v in urban.get("block_size_m", (90.0, 60.0)))
         if len(size) != 2 or min(size) <= 0.0:
             raise ValueError("urban.block_size_m must be two positive lengths")
@@ -99,6 +126,14 @@ class UrbanConfig:
             outer_rows=int(urban.get("outer_rows", 1)),
             row_spacing_m=float(urban.get("row_spacing_m", 4.0)),
             mid_block_gap=bool(urban.get("mid_block_gap", True)),
+            source=str(urban.get("source", "synthetic")).lower(),
+            extract=str(urban.get("extract", "")),
+            map_heading_deg=float(urban.get("map_heading_deg", 0.0)),
+            import_radius_m=float(urban.get("import_radius_m", 160.0)),
+            route_clearance_m=float(urban.get("route_clearance_m", 11.0)),
+            latitude_deg=float(origin.get("latitude", 0.0)),
+            longitude_deg=float(origin.get("longitude", 0.0)),
+            altitude_m=float(origin.get("altitude", 0.0)),
         )
 
     @property
@@ -117,14 +152,23 @@ class UrbanLayout:
 
     def __init__(self, cfg: UrbanConfig):
         self.cfg = cfg
+        self.extract_name = ""
+        self.attribution = ""
         self._buildings: tuple[Building, ...] = tuple(self._generate())
         # The occlusion test runs once per satellite per receiver per update,
         # so the boxes are held as arrays and tested all at once.
-        box = np.array([[b.x0, b.x1, b.y0, b.y1, b.height_m] for b in self._buildings],
-                       dtype=float).reshape(-1, 5)
+        box = np.array([[b.x0, b.x1, b.y0, b.y1, b.height_m, b.yaw_rad]
+                        for b in self._buildings], dtype=float).reshape(-1, 6)
         self._lo = box[:, (0, 2)]
         self._hi = box[:, (1, 3)]
         self._height = box[:, 4]
+        # Oriented form, which is what the ray test actually uses: a box is
+        # tested in its own frame, so a rotated footprint costs one rotation of
+        # the ray rather than a separate code path.
+        self._centre = 0.5 * (self._lo + self._hi)
+        self._half = 0.5 * (self._hi - self._lo)
+        self._cos = np.cos(box[:, 5])
+        self._sin = np.sin(box[:, 5])
 
     # ------------------------------------------------------------ geometry
     @property
@@ -135,6 +179,46 @@ class UrbanLayout:
         cfg = self.cfg
         if not cfg.enabled:
             return
+        if cfg.source == "osm":
+            yield from self._from_extract()
+            return
+        yield from self._synthetic()
+
+    def _route_polyline(self, samples: int = 720) -> np.ndarray:
+        """The centreline the deck drives, as points, in world ENU.
+
+        Sampled from ``pad_motion.RoadRoute`` itself rather than rebuilt from
+        the same numbers here: the route the city is cut back from has to be
+        the route the lorry actually drives, and two copies of a rounded
+        rectangle are two things that can disagree.
+        """
+        from pad_motion import RoadRoute
+
+        route = RoadRoute(self.cfg.block_size_m[0], self.cfg.block_size_m[1],
+                          self.cfg.corner_radius_m)
+        arc = np.linspace(0.0, route.perimeter, int(samples), endpoint=False)
+        return np.array([route.at(float(s))[0][:2] for s in arc], dtype=float)
+
+    def _from_extract(self) -> Iterator[Building]:
+        """Real footprints, cut back from the carriageway the deck needs."""
+        from osm_city import buildings_from_extract, load_extract
+
+        root = Path(__file__).resolve().parents[1]
+        name = self.cfg.extract or "city"
+        extract = load_extract(root / "assets" / "city" / f"{name}.json")
+        self.extract_name = extract.name
+        self.attribution = extract.attribution
+        yield from buildings_from_extract(
+            extract,
+            heading_rad=math.radians(self.cfg.map_heading_deg),
+            height_range_m=self.cfg.height_range_m,
+            seed=self.cfg.seed,
+            keep_within_m=self.cfg.import_radius_m,
+            clear_of=self._route_polyline(),
+            clearance_m=self.cfg.route_clearance_m)
+
+    def _synthetic(self) -> Iterator[Building]:
+        cfg = self.cfg
         rng = np.random.default_rng(cfg.seed)
         lo, hi = cfg.height_range_m
         half_x, half_y = (0.5 * cfg.block_size_m[0], 0.5 * cfg.block_size_m[1])
@@ -206,17 +290,23 @@ class UrbanLayout:
         d = np.stack([ce * np.cos(az), ce * np.sin(az)], axis=1)        # [S, 2]
         if self._height.size == 0:
             return np.zeros(az.shape, dtype=bool), np.zeros(az.shape)
-        # Slab intersection in the horizontal plane, per satellite per box.
-        safe = np.where(np.abs(d) < 1e-12, 1e-12, d)[:, None, :]        # [S, 1, 2]
-        t_lo = (self._lo[None, :, :] - p[:2][None, None, :]) / safe
-        t_hi = (self._hi[None, :, :] - p[:2][None, None, :]) / safe
+        # Slab intersection in each box's own frame, per satellite per box.
+        # Rotating the ray costs two multiplies and keeps one exact test for
+        # both the axis-aligned synthetic block and a real, rotated skyline.
+        d_local = self._to_box_frame(d[:, None, :])                     # [S, B, 2]
+        p_local = self._to_box_frame(
+            (p[:2][None, :] - self._centre)[None, :, :])                # [1, B, 2]
+        half = self._half[None, :, :]
+        safe = np.where(np.abs(d_local) < 1e-12, 1e-12, d_local)
+        t_lo = (-half - p_local) / safe
+        t_hi = (half - p_local) / safe
         enter = np.maximum(np.minimum(t_lo, t_hi).max(axis=2), 0.0)     # [S, B]
         exit_ = np.maximum(t_lo, t_hi).min(axis=2)
         # A ray parallel to an axis never leaves that slab, so it only crosses
         # the box when it is already inside it.
-        parallel = np.abs(d) < 1e-12                                    # [S, 2]
-        inside = ((p[:2] >= self._lo) & (p[:2] <= self._hi))[None, :, :]
-        keep = np.where(parallel[:, None, :], inside, True).all(axis=2)
+        parallel = np.abs(d_local) < 1e-12                              # [S, B, 2]
+        inside = np.abs(p_local) <= half                                # [1, B, 2]
+        keep = np.where(parallel, inside, True).all(axis=2)
         crosses = keep & (exit_ > enter)
         # The ray only climbs, so its lowest point inside the footprint is at
         # the entry: testing that one point is exact, not a sample.
@@ -224,6 +314,16 @@ class UrbanLayout:
         hit = crosses & under
         distance = np.where(hit, enter, np.inf).min(axis=1)
         return np.any(hit, axis=1), np.where(np.isfinite(distance), distance, 0.0)
+
+    def _to_box_frame(self, vector):
+        """Rotate an ENU horizontal vector into every box's own frame.
+
+        VECTOR broadcasts against ``[.., B, 2]``; the result is that vector
+        expressed in each building's footprint axes.
+        """
+        x, y = vector[..., 0], vector[..., 1]
+        return np.stack([x * self._cos + y * self._sin,
+                         -x * self._sin + y * self._cos], axis=-1)
 
     def blocked(self, position, azimuth_rad: float, elevation_rad: float
                 ) -> tuple[bool, float]:
@@ -267,7 +367,8 @@ class UrbanLayout:
         p = np.asarray(position, dtype=float).reshape(3)
         if self._height.size == 0:
             return False
-        inside = np.all((p[:2] >= self._lo) & (p[:2] <= self._hi), axis=1)
+        local = self._to_box_frame((p[:2][None, :] - self._centre))
+        inside = np.all(np.abs(local) <= self._half, axis=1)
         return bool(np.any(inside & (p[2] <= self._height) & (p[2] >= 0.0)))
 
     def clear_of_buildings(self, point, toward, fallback_height_m: float = 3.0):
@@ -366,6 +467,15 @@ class UrbanScene:
             api.SetScale(Gf.Vec3f(float(width), float(depth), float(building.height_m)))
             cx, cy = building.center
             api.SetTranslate(Gf.Vec3d(float(cx), float(cy), 0.5 * building.height_m))
+            # Real footprints carry the bearing of the street they stand on, so
+            # the stage has to turn them the same way the occlusion test does.
+            api.SetRotate(Gf.Vec3f(0.0, 0.0, float(math.degrees(building.yaw_rad))))
+            # Enough tonal variation that the facades read as separate buildings
+            # from the air; a uniform grey city gives the camera no edges to
+            # resolve and the viewport no depth.
+            shade = 0.42 + 0.34 * ((index * 0.6180339887) % 1.0)
+            cube.CreateDisplayColorAttr(
+                [Gf.Vec3f(float(shade), float(shade * 0.97), float(shade * 0.92))])
             # Collidable: a policy that flies into a facade must hit it rather
             # than pass through and land as if the city were a painting.
             UsdPhysics.CollisionAPI.Apply(stage.GetPrimAtPath(path))

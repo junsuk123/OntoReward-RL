@@ -32,6 +32,9 @@ class GatewayConfig:
     offboard_prestream_count: int
     estimator_warmup_s: float
     marker_pose_drives_policy: bool
+    # Seconds over which a camera/PX4 position handover is faded out, so
+    # losing the pad from frame does not step the state the policy flies on.
+    vision_handover_tau_s: float
     pad_motion: str
     pad_deck_height_m: float
     world_xy_limit_m: float
@@ -40,6 +43,17 @@ class GatewayConfig:
     # lap of a city block, so the guard rail on a world-frame setpoint is the
     # city and not the pad-relative arena.
     world_radius_m: float
+    # The geodetic datum the simulator's world ENU frame is pinned at. PX4's
+    # local frame is pinned wherever its EKF happened to initialise -- the
+    # spawn point -- so without these two the gateway cannot tell the frames
+    # apart, and it mixes a PX4-local position with a world-frame deck pose.
+    # Time constant of the constant-velocity track the entry climb is aimed
+    # at. Only the lorry's broadcast noise is filtered; the pad-relative
+    # state the policy flies on is never touched. 0 flies the raw broadcast.
+    deck_track_tau_s: float
+    pad_track_tau_s: float
+    map_latitude_deg: float
+    map_longitude_deg: float
     gnss_enabled: bool
     battery: BatteryConfig
 
@@ -87,6 +101,7 @@ class GatewayConfig:
             offboard_prestream_count=int(px4["offboard_prestream_count"]),
             estimator_warmup_s=float(px4["estimator_warmup_s"]),
             marker_pose_drives_policy=bool(vision.get("pose_source_for_policy", False)),
+            vision_handover_tau_s=float(vision.get("handover_tau_s", 0.6)),
             pad_motion=str(pad.get("motion", "static")).lower(),
             pad_deck_height_m=float(pad.get("deck_height_m", 0.0)),
             world_xy_limit_m=float(landing.get("world_xy_limit_m", 12.0)),
@@ -98,6 +113,10 @@ class GatewayConfig:
                 "world_radius_m",
                 route_reach + float(landing.get("world_xy_limit_m", 12.0))
                 if route_reach > 0.0 else landing.get("world_xy_limit_m", 12.0))),
+            deck_track_tau_s=float(pad.get("broadcast_track_tau_s", 1.0)),
+            pad_track_tau_s=float(pad.get("entry_track_tau_s", 2.5)),
+            map_latitude_deg=float((urban.get("origin") or {}).get("latitude", 0.0)),
+            map_longitude_deg=float((urban.get("origin") or {}).get("longitude", 0.0)),
             gnss_enabled=bool(gnss.get("enabled", False)),
             battery=BatteryConfig.from_mapping(data),
         )

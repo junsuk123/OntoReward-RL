@@ -156,6 +156,68 @@ class PadMotionConfig:
         return self.mode == "static" or self.speed_max_m_s <= 0.0
 
 
+@dataclass(frozen=True)
+class LorryPart:
+    """One piece of the vehicle the pad is painted on, in the pad frame.
+
+    Pad frame: origin at the centre of the marker plane, +X the way the lorry
+    points, +Z up, so the road is at ``-deck_height_m`` and every part hangs
+    between the two. ``kind`` is ``'box'`` or ``'wheel'``; a wheel's ``size``
+    is ``(diameter, width, diameter)`` so one number pair describes both.
+    """
+    name: str
+    kind: str
+    size: tuple[float, float, float]
+    centre: tuple[float, float, float]
+    colour: tuple[float, float, float]
+    collider: bool = False
+
+
+def lorry_parts(deck_size_m, deck_height_m: float) -> tuple[LorryPart, ...]:
+    """The box lorry under the landing deck.
+
+    Kept here, next to the motion that drives it, rather than inline in the
+    USD: the shape has to agree with ``deck_size_m`` and ``deck_height_m`` --
+    the roof is the deck, the wheels have to reach the road -- and geometry
+    that only exists inside a draw call cannot be checked without a simulator.
+
+    Wheel radius is fixed at 0.5 m and the chassis at 1.05 m, which is an
+    ordinary 7.5 t box lorry; the deck height and footprint come from config
+    and everything else is placed off them.
+    """
+    length, width = (float(v) for v in deck_size_m)
+    road_z = -float(deck_height_m)
+    wheel_r, chassis_top = 0.50, road_z + 1.05
+    box_h = -chassis_top                       # rails up to the roof at z = 0
+    # Derived from the box, not fixed: at a hard 2.45 m the cab stood proud of
+    # the landing deck on the configured 3.20 m body, which would put a
+    # windscreen in the way of an approach that clipped the front of the roof.
+    cab_len, cab_h = 1.90, max(box_h - 0.35, 0.9 * box_h)
+    parts = [
+        # The cargo box: the landing deck is its lid, so it is exactly the
+        # deck footprint and a policy cannot fly through the lorry side-on.
+        LorryPart("cargo_box", "box", (length, width, box_h),
+                  (0.0, 0.0, chassis_top + 0.5 * box_h), (0.86, 0.87, 0.89), True),
+        # Lower than the box and ahead of it, so from the air the silhouette
+        # reads as a box lorry rather than as one long container.
+        LorryPart("cab", "box", (cab_len, width * 0.98, cab_h),
+                  (0.5 * (length + cab_len), 0.0, chassis_top + 0.5 * cab_h),
+                  (0.20, 0.34, 0.56)),
+        LorryPart("chassis", "box", (length + cab_len, width * 0.80, 0.22),
+                  (0.5 * cab_len, 0.0, chassis_top - 0.11), (0.12, 0.12, 0.14)),
+    ]
+    # Steering pair under the cab, two drive pairs under the box.
+    axles = (0.5 * length + 0.6, -0.10 * length, -0.34 * length)
+    for index, x in enumerate(axles):
+        for side, tag in ((-1.0, "l"), (1.0, "r")):
+            parts.append(LorryPart(
+                f"wheel_{index}_{tag}", "wheel",
+                (2.0 * wheel_r, 0.30, 2.0 * wheel_r),
+                (float(x), float(side * 0.5 * width), road_z + wheel_r),
+                (0.06, 0.06, 0.07)))
+    return tuple(parts)
+
+
 class RoadRoute:
     """The lap of the block, parameterised by arc length.
 
@@ -310,6 +372,32 @@ class PadTrajectory:
             "arc_length_m": self.s0,
             "lane_offset_m": self.lane_base,
         }
+
+    def pull_away(self, sim_time: float) -> None:
+        """Move off from a standing start, as if from a light.
+
+        A lorry that steps from rest to cruise in one physics tick shears the
+        vehicle parked on its roof and hands PX4 a deck twist that no real
+        traffic produces. ``_traffic`` already models a light as a Gaussian dip
+        in the cruise speed with a closed-form integral, so a full-depth stop
+        centred on this instant *is* the pull-away: speed rises from zero over
+        roughly ``2 * stop_sigma_s`` and the distance stays exact.
+
+        Only the phase is re-anchored. The seed still draws the cruise speed,
+        the lane, the wander and every light after this one.
+        """
+        if self.cfg.mode != "road" or self.speed <= 0.0:
+            return
+        # Carry the lap to where it stands before the clock is re-anchored,
+        # exactly as reset does, so the lorry pulls away from where it waited.
+        self.s0 = self.arc_length(sim_time)
+        self.t0 = float(sim_time)
+        self.stop_phase = 0.0
+        if self.stop_depths.size == 0:
+            self.stop_depths = np.ones(1)
+        else:
+            self.stop_depths = self.stop_depths.copy()
+            self.stop_depths[0] = 1.0
 
     def lane_now(self, sim_time: float) -> float:
         """Where across the carriageway the lorry is, excluding its wander.

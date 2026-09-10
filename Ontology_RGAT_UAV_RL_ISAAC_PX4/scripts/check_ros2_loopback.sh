@@ -21,6 +21,9 @@ if pgrep -f 'px4_sitl_default/bin/px4' >/dev/null 2>&1; then
   printf 'A live PX4 SITL is running; stop Isaac before the loopback check.\n' >&2
   exit 1
 fi
+# Checking a gateway that is not the one in this repository would pass or fail
+# for reasons that have nothing to do with the code being edited.
+"$workspace_root/scripts/sync_gateway.sh" --check
 log=/tmp/ontology_rgat_ros_gateway.log
 # setsid so the trap can take down ros2's gateway child too; killing only the
 # wrapper leaves the real gateway holding the UDP port for the next check.

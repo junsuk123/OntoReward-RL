@@ -1,5 +1,6 @@
 """Round-trip the landing-pad board through a synthetic downward camera."""
 
+import math
 import sys
 from pathlib import Path
 
@@ -138,3 +139,66 @@ def test_texture_carries_a_quiet_zone(tmp_path):
     assert image.shape[0] == image.shape[1] > 240
     assert image.shape[0] / 240 == pytest.approx(texture_side_ratio(DICTIONARY), rel=0.02)
     assert image[0, 0] == 255
+
+
+def test_the_entry_pose_is_drawn_inside_the_camera_frame():
+    """Every episode has to open with the deck already in view.
+
+    The drawn offset does not respect the frame on its own: the camera's short
+    axis reaches about three quarters of its long one, and the Gaussian tails
+    put the deck outside both. This is the clamp that pulls it back in, checked
+    against the real camera and the real draw.
+    """
+    import sys
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    sys.path.insert(0, str(root / "isaac_sim"))
+    import yaml
+    from marker_vision import nadir_footprint_m
+
+    with (root / "config" / "system.yaml").open(encoding="utf-8") as stream:
+        cfg = yaml.safe_load(stream)
+    camera = cfg["vision"]["camera"]
+    width, height = camera["resolution"]
+    fov = float(camera["horizontal_fov_deg"])
+
+    rng = np.random.default_rng(0)
+    worst = 0.0
+    for _ in range(4000):
+        altitude = 4.0 + 1.8 * rng.random()
+        drawn = np.array([1.8 * rng.normal(), 1.4 * rng.normal(), altitude])
+        _, half_short = nadir_footprint_m(width, height, fov, altitude)
+        tilt = altitude * math.tan(math.radians(8.0))
+        allowed = max(0.35 * half_short, half_short - tilt - 1.2)
+        reach = float(np.hypot(drawn[0], drawn[1]))
+        clamped = drawn.copy()
+        if reach > allowed > 0.0:
+            clamped[:2] *= allowed / reach
+        # The clamp never pushes the deck out, and never lengthens the draw.
+        assert np.hypot(clamped[0], clamped[1]) <= max(reach, allowed) + 1e-9
+        assert np.hypot(clamped[0], clamped[1]) <= half_short + 1e-9
+        worst = max(worst, np.hypot(clamped[0], clamped[1]) / half_short)
+    # And it leaves real room: the deck sits well inside the short axis, not
+    # balanced on its edge where the entry tilt would swing it out.
+    assert worst < 0.75
+
+
+def test_the_clamp_keeps_the_drawn_bearing():
+    """Only the reach is shortened, so the seeded direction survives."""
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "isaac_sim"))
+    from marker_vision import nadir_footprint_m
+
+    altitude = 4.2
+    drawn = np.array([5.0, -3.0, altitude])
+    _, half_short = nadir_footprint_m(800, 600, 90.0, altitude)
+    allowed = max(0.35 * half_short, half_short - altitude * math.tan(math.radians(8.0)) - 1.2)
+    clamped = drawn.copy()
+    clamped[:2] *= allowed / float(np.hypot(drawn[0], drawn[1]))
+
+    assert math.atan2(clamped[1], clamped[0]) == pytest.approx(
+        math.atan2(drawn[1], drawn[0]))
+    assert clamped[2] == pytest.approx(drawn[2])

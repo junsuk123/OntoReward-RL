@@ -10,6 +10,7 @@ or the whole result is a receiver reading its own error.
 """
 from __future__ import annotations
 
+import copy
 import dataclasses
 import math
 import os
@@ -37,7 +38,18 @@ def system_config():
 
 @pytest.fixture(scope="module")
 def layout(system_config):
-    return UrbanLayout(UrbanConfig.from_mapping(system_config))
+    """The synthetic block, whatever the shipped config is pointed at.
+
+    These tests check the occlusion model against a geometry whose answer is
+    known analytically -- facades parallel to the street, gaps exactly where
+    the config puts them. A real OpenStreetMap extract has neither, so running
+    them against `urban.source: osm` would only assert that Myeongdong happens
+    to be shaped like the synthetic block. The real city is covered by
+    test_osm_city.py instead.
+    """
+    synthetic = copy.deepcopy(system_config)
+    synthetic.setdefault("urban", {})["source"] = "synthetic"
+    return UrbanLayout(UrbanConfig.from_mapping(synthetic))
 
 
 def _mid_block(cfg: UrbanConfig, height: float = 3.2) -> list[float]:

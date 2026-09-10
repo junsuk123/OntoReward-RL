@@ -42,8 +42,17 @@ isaac:
   # and isaac_sim/urban_scene.py is the city.
   environment: Flat Plane
   robot_asset: Iris
-  # Clearance above the lorry roof, not above the road.
+  # Clearance above the lorry roof, not above the road. Used only when
+  # start_airborne is false.
   spawn_position_enu_m: [0.0, 0.0, 0.09]
+  # An airborne start would skip the entry climb entirely, but nothing holds a
+  # disarmed multirotor up: pinning its pose each tick makes the accelerometer
+  # read free fall while GPS reads a hover, and PX4 will not arm on the
+  # contradiction. Until that hold works, the vehicle starts on the deck and
+  # the lorry waits at the kerb until handover, so the climb is a few seconds
+  # over a stationary lorry rather than a chase across the block.
+  start_airborne: false
+  hover_start_offset_pad_m: [0.0, 0.0, 4.5]
   px4_autolaunch: true
   px4_dir: external/PX4-Autopilot
   px4_vehicle_model: gazebo-classic_iris
@@ -164,6 +173,18 @@ pad:
   # Only the open-field profiles are held inside this; the road route is
   # bounded by its own geometry.
   arena_radius_m: 8.0
+  # The lorry's broadcast carries its own canyon GNSS error, which wanders
+  # about a metre a second. Aiming PX4's position controller straight at it
+  # gives a setpoint that never stands still, so the entry climb flies a
+  # constant-velocity track of the broadcast instead -- no lag behind a
+  # steady lorry, just less noise. The policy still sees the raw broadcast:
+  # coping with it is the experiment. 0 restores the unfiltered setpoint.
+  broadcast_track_tau_s: 1.0
+  # Same idea one frame further in: the pad-relative measurement the
+  # entry setpoint is built from wanders by metres on the multipath
+  # correlation time, and a position controller aimed at it chases the
+  # wander at over a metre a second. Only the entry climb is filtered.
+  entry_track_tau_s: 2.5
 
 urban:
   # The city block. One consumer draws it (isaac_sim/urban_scene.py, into the
@@ -171,6 +192,32 @@ urban:
   # outage always has a building you can see in the viewport.
   enabled: true
   seed: 7
+  # 'osm' builds the city from a cached extract of a real place, fetched with
+  # scripts/fetch_city.py; 'synthetic' is the generated block, kept as the
+  # control condition because its geometry is exactly known.
+  source: osm
+  extract: seoul-myeongdong
+  # Where that extract's origin really is. PX4's home, every lat/lon on the
+  # wire and the constellation's elevations all come from this, so the country
+  # is as real as the buildings.
+  origin:
+    latitude: 37.5636
+    longitude: 126.9850
+    altitude: 25.0
+  # The real street grid does not point east-north, so the map turns under the
+  # route rather than the route being bent onto the map. Chosen by measuring
+  # sky view around the lap over four Seoul sites and four bearings: this one
+  # gives the widest swing (0.68 to 0.85), and a canyon that opens and closes
+  # around the lap is what makes GNSS degradation a sequence of outages and
+  # recoveries rather than one number per run.
+  map_heading_deg: 0.0
+  # How far out to import. Beyond about twice the block, a facade is too far to
+  # take a satellite the near ones have not already taken.
+  import_radius_m: 160.0
+  # Buildings this close to the route centreline are dropped: the lap is a
+  # rectangle imposed on a real map, not a road traced from it, so something
+  # has to give and an absent building is more honest than a moved one.
+  route_clearance_m: 9.0
   # The route rectangle the lorry laps, i.e. the street centrelines.
   block_size_m: [90.0, 60.0]
   corner_radius_m: 12.0
@@ -276,6 +323,13 @@ vision:
   # The policy flies on the detected pad-relative pose while the markers are
   # visible, and falls back to the PX4 estimate when they are not.
   pose_source_for_policy: true
+  # The two sources disagree -- the camera measures the pad-relative pose
+  # directly, the PX4 fallback differences two GNSS-derived positions -- so
+  # in the canyon they can be metres apart. Switching between them is a step
+  # in the state the policy flies on, arriving exactly when the pad leaves
+  # the frame. The difference is carried across the handover and faded out
+  # over this long, so the estimate stays continuous. 0 restores the step.
+  handover_tau_s: 0.6
   camera:
     resolution: [800, 600]
     horizontal_fov_deg: 90.0

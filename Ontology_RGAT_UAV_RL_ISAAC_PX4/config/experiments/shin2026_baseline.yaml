@@ -61,7 +61,9 @@ seeds:
   rgat_dataset_start: 70000
   evaluation_start: 5000
 training:
-  # Not reported by Shin et al.; explicit benchmark choices.
+  # Not reported by Shin et al.; explicit reference-budget choices. The outer
+  # run.sh applies the seminar deadline budget (800 total across selected arms)
+  # without changing this flight-contract config or invalidating checkpoints.
   episodes_quick: 8
   episodes_full: 40960
 rgat_design:

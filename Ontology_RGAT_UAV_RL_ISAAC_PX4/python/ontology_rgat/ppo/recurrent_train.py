@@ -414,8 +414,23 @@ def train_live(env_factory: Callable, model, method, seeds, output_dir,
         else:
             model.load_state_dict(saved["model"])
             optimizer.load_state_dict(saved["optimizer"])
-            curriculum.load_state_dict(saved["curriculum"])
             completed = int(saved["episode"])
+            saved_curriculum = dict(saved["curriculum"])
+            interval_changed = int(saved_curriculum["episodes_per_update"]) != int(
+                curriculum.episodes_per_update)
+            if (interval_changed and ppo.get(
+                    "allow_curriculum_interval_migration", False)):
+                for name in ("levels", "initial_level"):
+                    if int(saved_curriculum[name]) != int(getattr(curriculum, name)):
+                        raise ValueError(f"curriculum checkpoint mismatch for {name}")
+                curriculum.update(completed)
+                print(
+                    "Rescaled curriculum checkpoint interval from "
+                    f"{saved_curriculum['episodes_per_update']} to "
+                    f"{curriculum.episodes_per_update} episodes; continuing at "
+                    f"level {curriculum.level} (c={curriculum.c:.3f}).")
+            else:
+                curriculum.load_state_dict(saved_curriculum)
             if history_path.is_file():
                 with history_path.open(newline="", encoding="utf-8") as stream:
                     history = list(csv.DictReader(stream))

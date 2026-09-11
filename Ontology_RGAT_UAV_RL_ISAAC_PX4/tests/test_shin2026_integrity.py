@@ -14,7 +14,9 @@ sys.path.insert(0, str(ROOT / "isaac_sim"))
 from pad_motion import PadMotionConfig, PadTrajectory  # noqa: E402
 from ontology_rgat_px4.protocol import ProtocolError, validate_velocity_action
 
-from ontology_rgat.benchmarks.experiment import load_experiment, paired_seed_plan
+from ontology_rgat.benchmarks.experiment import (episodes_per_method,
+                                                 load_experiment,
+                                                 paired_seed_plan)
 from ontology_rgat.benchmarks.live_env import LiveShinEnvironment
 from ontology_rgat.benchmarks.px4_adapter import (actor_observation_from_state,
                                                   critic_observation_from_state)
@@ -25,6 +27,8 @@ from ontology_rgat.benchmarks.shin2026 import (ActorObservation,
                                                default_shin2026_config)
 from ontology_rgat.bridge import BridgeError
 from ontology_rgat.controllers import VelocityYawRateController
+from ontology_rgat.curriculum import (PlatformMotionCurriculum,
+                                      fitted_update_interval)
 from ontology_rgat.initialization import curriculum_motion_scale
 from ontology_rgat.estimation import LSTMRelativeStateEstimator
 from ontology_rgat.ppo.recurrent import ShinRecurrentActorCritic
@@ -161,6 +165,44 @@ def test_one_command_run_archives_an_incompatible_policy(tmp_path):
         "shin2026.incompatible-old-control*_training.csv"))) == 1
 
 
+def test_deadline_budget_rescales_a_compatible_curriculum_checkpoint(
+        tmp_path, capsys):
+    class TinyPolicy(torch.nn.Linear):
+        @property
+        def device(self):
+            return self.weight.device
+
+    model = TinyPolicy(1, 1)
+    optimizer = torch.optim.Adam(model.parameters(), lr=2e-4)
+    model_dir = tmp_path / "models"
+    model_dir.mkdir()
+    torch.save({
+        "format": "shin2026-recurrent-v1",
+        "method": "shin2026",
+        "episode": 48,
+        "config_hash": "same-flight-contract",
+        "model": model.state_dict(),
+        "optimizer": optimizer.state_dict(),
+        "curriculum": {
+            "levels": 80, "episodes_per_update": 512,
+            "initial_level": 1, "level": 1, "c": 0.0,
+        },
+        "reward_design_sha256": None,
+    }, model_dir / "shin2026.pt")
+
+    history = train_live(
+        lambda: pytest.fail("completed checkpoint must not open an environment"),
+        TinyPolicy(1, 1), "shin2026", range(48), model_dir,
+        config_hash="same-flight-contract",
+        ppo={"allow_curriculum_interval_migration": True},
+        curriculum_config={"levels": 80, "episodes_per_update": 5})
+
+    assert history == []
+    output = capsys.readouterr().out
+    assert "interval from 512 to 5" in output
+    assert "level 10 (c=0.114)" in output
+
+
 def test_velocity_gateway_protocol_rejects_bad_commands():
     assert validate_velocity_action({"command": [1.0, -2.0, 0.5, 0.1]}) == (
         1.0, -2.0, 0.5, 0.1)
@@ -201,6 +243,19 @@ def test_beginner_curriculum_keeps_the_ugv_moving_at_a_safe_fraction():
     assert curriculum_motion_scale(1.0, 0.35) == pytest.approx(1.0)
     with pytest.raises(ValueError):
         curriculum_motion_scale(0.0, 1.1)
+
+
+def test_deadline_budget_is_exact_and_preserves_all_curriculum_levels():
+    assert episodes_per_method(800, 2) == 400
+    assert episodes_per_method(800, 5) == 160
+    assert episodes_per_method(800, 1) == 800
+    with pytest.raises(ValueError, match="not divisible"):
+        episodes_per_method(801, 2)
+    assert fitted_update_interval(400, 80) == 5
+    assert fitted_update_interval(800, 80) == 10
+    curriculum = PlatformMotionCurriculum(levels=80, episodes_per_update=5)
+    assert curriculum.update(0) == pytest.approx(0.0)
+    assert curriculum.update(399) == pytest.approx(1.0)
 
 
 def test_airborne_terminal_is_staged_in_hover_instead_of_auto_land():

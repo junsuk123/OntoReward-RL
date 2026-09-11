@@ -43,6 +43,18 @@ def configuration_hash(config: dict) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+def episodes_per_method(total_episodes: int, method_count: int) -> int:
+    """Divide an exact run-wide training budget across paired methods."""
+    total = int(total_episodes)
+    count = int(method_count)
+    if total < 1 or count < 1:
+        raise ValueError("episode budget and method count must be positive")
+    if total % count:
+        raise ValueError(
+            f"total training budget {total} is not divisible by {count} methods")
+    return total // count
+
+
 def paired_seed_plan(methods, scenarios: dict[str, int], seed0=5000):
     unknown = set(methods) - set(METHODS)
     if unknown:

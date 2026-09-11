@@ -158,13 +158,22 @@ scenario outcomes. The curriculum view includes both platform difficulty and
 the current UAV action-envelope scale:
 
 ```bash
-../run.sh                         # publication-scale full run
+../run.sh                         # seminar deadline run, 800 training episodes total
 ../run.sh --mode quick --headless # smaller integration run
 ```
 
-Use `--mode full` for the configured publication-scale counts. This is a
-long-running real-time flight-stack experiment. `--use-running-stack` adopts a
-compatible active stack, and `--keep-stack` leaves a newly started stack alive.
+The outer `run.sh` keeps full-fidelity flight dynamics but applies a seminar
+budget: 800 training episodes total across selected methods, 40 empirical
+R-GAT-data flights, and five paired evaluation seeds per scenario and method.
+For the default two methods that is 400 training episodes each and 70 evaluation
+flights. This preview budget is not publication-scale statistical evidence.
+Pass explicit `--train-episodes`, `--eval-episodes`, and
+`--rgat-data-episodes` values to replace the deadline defaults. The 80-level
+curriculum is fitted to the shortened per-method count (an interval of five for
+400 episodes), and a compatible checkpoint is migrated to the corresponding
+level instead of being restarted. This remains a long-running real-time
+flight-stack experiment. `--use-running-stack` adopts a compatible active stack,
+and `--keep-stack` leaves a newly started stack alive.
 The dashboard port can be changed with `--dashboard-port`; `--no-dashboard`
 turns off only the HTTP view, not metric collection or result files.
 

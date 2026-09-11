@@ -4,6 +4,17 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 
+def fitted_update_interval(episodes: int, levels: int) -> int:
+    """Fit all curriculum levels into a shortened per-method budget."""
+    count = int(episodes)
+    level_count = int(levels)
+    if count < 1 or level_count < 1:
+        raise ValueError("episodes and curriculum levels must be positive")
+    if level_count == 1:
+        return count
+    return max(1, (count - 1) // (level_count - 1))
+
+
 @dataclass
 class PlatformMotionCurriculum:
     levels: int = 80

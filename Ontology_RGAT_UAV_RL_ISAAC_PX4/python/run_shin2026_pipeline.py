@@ -22,10 +22,12 @@ sys.path.insert(0, str(ROOT / "isaac_sim"))
 from config_loader import load_config as load_system_config
 from ontology_rgat import stack as stack_module
 from ontology_rgat.benchmarks.experiment import (METHODS, configuration_hash,
+                                                 episodes_per_method,
                                                  load_experiment, paired_seed_plan)
 from ontology_rgat.benchmarks.live_env import LiveShinEnvironment
 from ontology_rgat.cli import ensure_fastdds
 from ontology_rgat.config import default_config
+from ontology_rgat.curriculum import fitted_update_interval
 from ontology_rgat.evaluation.shin2026 import write_benchmark_outputs
 from ontology_rgat.perception import RosGrayscaleSource
 from ontology_rgat.ppo.recurrent import ShinRecurrentActorCritic
@@ -248,6 +250,8 @@ def main():
                         help="override empirical R-GAT training epochs")
     parser.add_argument("--train-episodes", type=int,
                         help="override episodes per method")
+    parser.add_argument("--total-train-episodes", type=int,
+                        help="divide this exact training budget across selected methods")
     parser.add_argument("--eval-episodes", type=int,
                         help="override episodes per scenario and method")
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
@@ -262,7 +266,10 @@ def main():
     args = parser.parse_args()
     if args.reward:
         args.methods = [args.reward]
+    if args.train_episodes is not None and args.total_train_episodes is not None:
+        parser.error("use either --train-episodes or --total-train-episodes, not both")
     for option, value in (("--train-episodes", args.train_episodes),
+                          ("--total-train-episodes", args.total_train_episodes),
                           ("--eval-episodes", args.eval_episodes),
                           ("--rgat-epochs", args.rgat_epochs)):
         if value is not None and value < 1:
@@ -303,8 +310,15 @@ def main():
     training_config = config.get("training") or {}
     configured_train_count = int(training_config.get(
         f"episodes_{args.mode}", 8 if args.mode == "quick" else 40960))
-    train_count = (args.train_episodes if args.train_episodes is not None
-                   else configured_train_count)
+    if args.total_train_episodes is not None:
+        try:
+            train_count = episodes_per_method(
+                args.total_train_episodes, len(args.methods))
+        except ValueError as exc:
+            parser.error(str(exc))
+    else:
+        train_count = (args.train_episodes if args.train_episodes is not None
+                       else configured_train_count)
     scenarios = dict(config.get("evaluation") or {})
     if args.eval_episodes is not None:
         scenarios = {name: args.eval_episodes for name in scenarios}
@@ -321,6 +335,7 @@ def main():
         "config": str(args.config.resolve()), "config_hash": config_hash,
         "system_config": str(args.system_config.resolve()), "mode": args.mode,
         "methods": args.methods, "training_episodes_per_method": train_count,
+        "training_episodes_total": train_count * len(args.methods),
         "evaluation": scenarios, "paired_seeds": True,
         "reward_design_id": getattr(potential, "design_id", None),
         "reward_design_sha256": getattr(potential, "sha256", None),
@@ -383,9 +398,20 @@ def main():
             models = {}
             training_by_method = {}
             curriculum_raw = dict(config.get("curriculum") or {})
+            curriculum_levels = int(curriculum_raw.get("levels", 80))
+            curriculum_interval = int(curriculum_raw.get(
+                "update_every_episodes", 512))
+            if args.total_train_episodes is not None:
+                curriculum_interval = fitted_update_interval(
+                    train_count, curriculum_levels)
+                ppo_config["allow_curriculum_interval_migration"] = True
+                print(
+                    f"Deadline budget: {train_count * len(args.methods)} total "
+                    f"training episodes = {train_count} per method; curriculum "
+                    f"updates every {curriculum_interval} episodes.")
             curriculum_config = {
-                "levels": int(curriculum_raw.get("levels", 80)),
-                "episodes_per_update": int(curriculum_raw.get("update_every_episodes", 512)),
+                "levels": curriculum_levels,
+                "episodes_per_update": curriculum_interval,
             }
 
             def train_requested(method):

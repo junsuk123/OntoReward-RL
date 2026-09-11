@@ -22,7 +22,7 @@ the same recurrent actor/critic and paired seed plan.
 # One command: stack startup, Shin PPO, actual rollout collection, controlled
 # R-GAT freeze, OntoReward PPO, live dashboard, paired scenario evaluation,
 # CSV tables, confidence intervals, and plots.
-../run.sh                         # publication-scale full run
+../run.sh                         # seminar run: 800 total training episodes
 ../run.sh --mode quick --headless # smaller integration run
 
 # CPU-only contract smoke tests (not flight results)
@@ -34,6 +34,16 @@ python python/run_shin2026_benchmark.py --methods shin2026 ontoreward --mode ful
 python python/run_shin2026_benchmark.py --methods shin2026 ontoreward --mode full --paired-seeds \
   --input-results results/shin2026/per_episode.csv
 ```
+
+The bare seminar command divides an exact 800-episode training budget across
+the selected methods (400 each for the default Shin/OntoReward pair), collects
+40 empirical R-GAT flights, and evaluates five paired seeds per scenario and
+method. It retains all seven scenarios but is a preliminary seminar benchmark,
+not the original publication-size sample. An explicit `--train-episodes`,
+`--eval-episodes`, or `--rgat-data-episodes` overrides the corresponding
+deadline default. The shortened curriculum still traverses all 80 levels; for
+400 episodes per method it advances every five episodes. Compatible checkpoints
+are rescaled and resumed rather than discarded.
 
 The PACMAN encoder/target and the paper's geometric controller are not publicly
 bundled here. Their Isaac/PX4 substitutes are explicitly marked as

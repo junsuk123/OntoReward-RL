@@ -41,14 +41,14 @@ pad:
   vehicle_dimensions_m: [0.720, 0.500, 0.345]
   vehicle_mass_kg: 75.0
   vehicle_payload_kg: 120.0
-  vehicle_max_speed_m_s: 2.0
+  vehicle_max_speed_m_s: 1.0
   # Imported URDF base_link is 0.31 m above the tyre contact plane.
   vehicle_visual_origin_from_road_m: [0.0, 0.0, 0.31]
   motion: waypoints
   deck_size_m: [1.60, 1.00]
   deck_height_m: 0.42
   start_position_enu_m: [-65.00, 131.00, 16.146]
-  speed_range_m_s: [0.60, 1.20]
+  speed_range_m_s: [0.25, 0.60]
   route_start: continue
   # Move during an idle/manual preview. Episode resets still park the UGV until
   # the policy handover, so takeoff and estimator initialisation remain safe.

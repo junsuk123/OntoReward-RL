@@ -74,7 +74,7 @@ pad:
   # Keep the campus carrier inside the RANGER MINI's practical low-speed
   # envelope. Paper-speed stress cases belong in a separate sweep, not in the
   # default visual/empirical-data run on this curved road.
-  vehicle_max_speed_m_s: 2.0
+  vehicle_max_speed_m_s: 1.0
   vehicle_visual_origin_from_road_m: [0.0, 0.0, 0.31]
   deck_height_m: 0.42
   # The centreline below is sampled from the S5_CarRoad_002 mesh itself.  Its
@@ -124,7 +124,7 @@ pad:
     - [-39.409, -78.040, 21.359]
     - [-40.592, -76.784, 21.359]
     - [-41.765, -75.569, 21.360]
-  speed_range_m_s: [0.5, 1.2]
+  speed_range_m_s: [0.25, 0.60]
   speed_step_perturbation_m_s: [-0.5, 0.5]
   yaw_rate_step_perturbation_deg_s: [-3.0, 3.0]
   motion_update_dt_s: 0.1

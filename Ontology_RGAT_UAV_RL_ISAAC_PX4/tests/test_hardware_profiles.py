@@ -81,6 +81,7 @@ def test_ranger_asset_was_generated_from_the_pinned_official_source(config):
     assert pad["vehicle_model"] == "agilex_ranger_mini_v3"
     assert pad["vehicle_mass_kg"] == pytest.approx(75.0)
     assert pad["vehicle_payload_kg"] == pytest.approx(120.0)
-    assert pad["vehicle_max_speed_m_s"] == pytest.approx(2.0)
+    assert pad["vehicle_max_speed_m_s"] == pytest.approx(1.0)
+    assert pad["speed_range_m_s"] == pytest.approx([0.25, 0.60])
     assert (ROOT / pad["vehicle_visual_usd"]).is_file()
     assert (ROOT / "assets/ranger_mini_v3/source/urdf/ranger_mini.xacro").is_file()

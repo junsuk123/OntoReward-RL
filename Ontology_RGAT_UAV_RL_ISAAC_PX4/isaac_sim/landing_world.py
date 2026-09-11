@@ -66,6 +66,7 @@ from pegasus.simulator.logic.backends.px4_mavlink_backend import (
     PX4MavlinkBackend,
     PX4MavlinkBackendConfig,
 )
+from pegasus.simulator.logic.backends.tools.px4_launch_tool import PX4LaunchTool
 from pegasus.simulator.logic.backends.ros2_backend import ROS2Backend
 from pegasus.simulator.logic.dynamics import LinearDrag
 from pegasus.simulator.logic.interface.pegasus_interface import PegasusInterface
@@ -89,6 +90,7 @@ from pad_motion import (BENCHMARK_SCENARIOS, PadMotionConfig, PadTrajectory,
 from urban_scene import UrbanConfig, UrbanLayout, UrbanScene
 from gnss import GnssConfig, UrbanGnss
 from px4_gnss import UrbanGnssSensor
+from px4_sitl_parameters import configured_px4_parameters, px4_rc_script
 from live_overlay import LiveOverlay
 from metasejong_scene import MetaSejongConfig, MetaSejongScene
 from view_geometry import paired_view_pose, street_offset_enu
@@ -98,6 +100,37 @@ from vn100_imu import Vn100Imu
 
 
 IDENTITY_QUAT = np.array([1.0, 0.0, 0.0, 0.0])
+
+
+class ParameterizedPX4LaunchTool(PX4LaunchTool):
+    """Pegasus launcher using a temporary rcS wrapper owned by this run."""
+
+    def __init__(self, px4_dir, vehicle_id, px4_model, parameters):
+        super().__init__(px4_dir, vehicle_id, px4_model)
+        wrapper = Path(self.root_fs.name) / "ontology_rgat_rcS"
+        wrapper.write_text(px4_rc_script(self.rc_script, parameters), encoding="utf-8")
+        self.rc_script = str(wrapper)
+
+
+class ParameterizedPX4MavlinkBackend(PX4MavlinkBackend):
+    """PX4 backend that applies configured parameters before flight starts."""
+
+    def __init__(self, config, parameters):
+        super().__init__(config)
+        self._startup_parameters = parameters
+
+    def start(self):
+        if self._is_running:
+            return
+        if self._connection is None:
+            self.re_initialize_interface()
+        self._is_running = True
+        if self.px4_autolaunch and self.px4_tool is None:
+            carb.log_info("Attempting to launch configured PX4 in background process")
+            self.px4_tool = ParameterizedPX4LaunchTool(
+                self.px4_dir, self._vehicle_id, self.px4_vehicle_model,
+                self._startup_parameters)
+            self.px4_tool.launch_px4()
 
 
 def _quat_wxyz_to_matrix(q):
@@ -904,7 +937,11 @@ class LandingWorld:
             "px4_dir": str(px4_dir),
             "px4_vehicle_model": isaac_cfg["px4_vehicle_model"],
         })
-        self.px4_backend = PX4MavlinkBackend(mavlink_cfg)
+        px4_cfg = CONFIG.get("px4") or {}
+        self.px4_sitl_parameters = configured_px4_parameters(
+            px4_cfg.get("sitl_parameters"))
+        self.px4_backend = ParameterizedPX4MavlinkBackend(
+            mavlink_cfg, self.px4_sitl_parameters)
         self.ros_backend = ROS2Backend(
             vehicle_id=int(isaac_cfg["vehicle_id"]),
             config={

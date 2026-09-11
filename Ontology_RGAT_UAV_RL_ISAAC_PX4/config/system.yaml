@@ -33,6 +33,15 @@ px4:
   max_yaw_rate_deg_s: 90.0
   offboard_prestream_count: 20
   estimator_warmup_s: 3.0
+  # Autonomous SITL has no RC transmitter or QGroundControl. Ignore those
+  # absent manual links, tolerate a short render/DDS scheduling pause, and
+  # fall back to a controlled hold if OFFBOARD really disappears. Isaac sends
+  # a temporary wrapper around PX4's stock rcS on every fresh boot.
+  sitl_parameters:
+    COM_RC_IN_MODE: 4
+    COM_RCL_EXCEPT: 4
+    COM_OF_LOSS_T: 5.0
+    COM_OBL_RC_ACT: 5
 
 isaac:
   vehicle_id: 0

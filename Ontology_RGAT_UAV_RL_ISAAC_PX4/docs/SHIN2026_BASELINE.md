@@ -71,10 +71,15 @@ truth. Semantic state remains reward-side in the primary experiment.
   `DICT_4X4_100`: four 0.32 m approach tags, four 0.12 m transition tags and
   37 0.04 m touchdown tags covering the 0.35 m success disk.
 - The paper's Table-I platform range is 0–8 m/s. The default Sejong S5
-  visualization/empirical profile is deliberately limited to a 0.5–1.2 m/s
-  draw and a 2.0 m/s carrier ceiling so the RANGER MINI follows the curved
+  visualization/empirical profile is deliberately limited to a 0.25–0.60 m/s
+  draw and a 1.0 m/s carrier ceiling so the RANGER MINI follows the curved
   campus road at a realistic low speed. This override is shared by every
   reward arm and must be reported with results; it is not an 8 m/s claim.
+- Autonomous SITL deliberately disables RC-stick input, exempts OFFBOARD from
+  RC-link loss, allows a 5 s OFFBOARD heartbeat grace period and selects Hold
+  as the true link-loss action. These PX4 parameters are applied by a temporary
+  wrapper around PX4's stock rcS on every simulator boot; they do not change the policy,
+  observation, reward or paired evaluation conditions.
 - Camera frame rate is 30 Hz because the paper does not report it.
 - PPO discount, learning rates, minibatch sizes, decision-head widths,
   training length, and checkpoint rule are not specified in the paper and must

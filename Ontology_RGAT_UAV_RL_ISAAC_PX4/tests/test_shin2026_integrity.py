@@ -23,6 +23,7 @@ from ontology_rgat.benchmarks.randomization import (sample_domain_randomization,
 from ontology_rgat.benchmarks.shin2026 import (ActorObservation,
                                                assert_actor_payload_safe,
                                                default_shin2026_config)
+from ontology_rgat.bridge import BridgeError
 from ontology_rgat.controllers import VelocityYawRateController
 from ontology_rgat.estimation import LSTMRelativeStateEstimator
 from ontology_rgat.ppo.recurrent import ShinRecurrentActorCritic
@@ -160,6 +161,34 @@ def test_ground_contact_is_stopped_before_the_next_airborne_episode():
     env.finish_episode()
 
     assert calls == ["stop"]
+
+
+def test_live_benchmark_restarts_owned_stack_after_reset_failure(monkeypatch):
+    from ontology_rgat import stack as stack_module
+
+    calls = []
+
+    def failed_reset(*_args, **_kwargs):
+        raise BridgeError("PX4 left OFFBOARD")
+
+    recovered_adapter = SimpleNamespace(
+        reset=lambda *_args, **_kwargs: ("actor", {"state": "ready"}))
+    env = LiveShinEnvironment.__new__(LiveShinEnvironment)
+    env.cfg = SimpleNamespace(external=SimpleNamespace(reset_recoveries=1))
+    env.bridge = SimpleNamespace(
+        cfg=SimpleNamespace(pad_scale=0.0),
+        close=lambda: calls.append("close"))
+    env.adapter = SimpleNamespace(reset=failed_reset)
+    env._connect = lambda: setattr(env, "adapter", recovered_adapter)
+    env._classify = lambda actor, state, command: (actor, state, command.tolist())
+    env.last_step = None
+    owned = SimpleNamespace(restart=lambda: calls.append("restart"))
+    monkeypatch.setattr(stack_module, "current", lambda: owned)
+
+    result = env.reset(7, scenario="circle")
+
+    assert calls == ["close", "restart"]
+    assert result[:2] == ("actor", {"state": "ready"})
 
 
 def test_pbrs_gamma_equals_ppo_gamma_and_terminal_potential_is_zero():

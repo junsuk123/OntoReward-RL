@@ -22,6 +22,8 @@ def test_overlay_deep_merges_system_configuration():
     assert config["pad"]["vehicle_dimensions_m"] == pytest.approx([0.720, 0.500, 0.345])
     assert config["pad"]["preview_motion"] is True
     assert config["pad"]["preview_speed_scale"] == pytest.approx(1.0)
+    assert config["pad"]["vehicle_max_speed_m_s"] == pytest.approx(1.0)
+    assert config["pad"]["speed_range_m_s"] == pytest.approx([0.25, 0.60])
     assert config["battery"]["enabled"] is False
     assert len(config["pad"]["route_waypoints_enu_m"]) == 44
     assert config["pad"]["arena_radius_m"] == 0.0
@@ -64,8 +66,8 @@ def test_shin_profile_uses_campus_plaza_and_fitted_platform():
     assert pad.carrier == "ugv"
     assert pad.deck_size_m == pytest.approx((1.5, 1.5))
     assert pad.deck_height_m == pytest.approx(0.42)
-    assert pad.vehicle_max_speed_m_s == pytest.approx(2.0)
-    assert (pad.speed_min_m_s, pad.speed_max_m_s) == pytest.approx((0.5, 1.2))
+    assert pad.vehicle_max_speed_m_s == pytest.approx(1.0)
+    assert (pad.speed_min_m_s, pad.speed_max_m_s) == pytest.approx((0.25, 0.60))
     assert pad.mode == "waypoints"
     assert pad.waypoint_loop is True
     assert pad.route_start == "continue"
@@ -78,6 +80,12 @@ def test_shin_profile_uses_campus_plaza_and_fitted_platform():
     assert (ROOT / pad.vehicle_visual_usd).is_file()
     assert config["isaac"]["start_airborne"] is True
     assert config["isaac"]["viewport_follow"]["focus"] == "pair"
+    assert config["px4"]["sitl_parameters"] == {
+        "COM_RC_IN_MODE": 4,
+        "COM_RCL_EXCEPT": 4,
+        "COM_OF_LOSS_T": 5.0,
+        "COM_OBL_RC_ACT": 5,
+    }
 
     half_length, half_width = (0.5 * value for value in pad.deck_size_m)
     # The texture adds one quiet-zone cell around a 4x4 tag, so the visible

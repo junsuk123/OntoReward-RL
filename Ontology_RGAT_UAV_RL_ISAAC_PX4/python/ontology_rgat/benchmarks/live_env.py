@@ -6,7 +6,7 @@ import math
 
 import numpy as np
 
-from ..bridge import PX4Bridge
+from ..bridge import BridgeError, PX4Bridge
 from ..controllers import VelocityYawRateController
 from ..mathx import quat_to_euler_zyx
 from .px4_adapter import (ShinPX4Adapter, critic_observation_from_state)
@@ -33,13 +33,17 @@ class LiveShinEnvironment:
 
     def __init__(self, cfg, image_source, *, horizon_steps=300):
         self.cfg = cfg
-        self.bridge = PX4Bridge(cfg)
-        self.adapter = ShinPX4Adapter(
-            self.bridge, image_source,
-            VelocityYawRateController(dt=float(cfg.sim.dt)))
+        self.image_source = image_source
+        self._connect()
         self.horizon_steps = int(horizon_steps)
         self.steps = 0
         self.last_step: LiveStep | None = None
+
+    def _connect(self):
+        self.bridge = PX4Bridge(self.cfg)
+        self.adapter = ShinPX4Adapter(
+            self.bridge, self.image_source,
+            VelocityYawRateController(dt=float(self.cfg.sim.dt)))
 
     def _classify(self, actor, state, command, *, timeout=False) -> LiveStep:
         critic = critic_observation_from_state(actor, state)
@@ -73,7 +77,22 @@ class LiveShinEnvironment:
         self.steps = 0
         # The same scalar scales platform speed and perturbations for every arm.
         self.bridge.cfg.pad_scale = float(np.clip(curriculum, 0.0, 1.0))
-        actor, state = self.adapter.reset(int(seed), scenario=scenario)
+        from .. import stack as stack_module
+
+        attempts = 1 + max(0, int(self.cfg.external.reset_recoveries))
+        for attempt in range(1, attempts + 1):
+            try:
+                actor, state = self.adapter.reset(int(seed), scenario=scenario)
+                break
+            except BridgeError as exc:
+                owned = stack_module.current()
+                if attempt == attempts or owned is None:
+                    raise
+                self.bridge.close()
+                print(f"WARNING: benchmark reset failed ({exc}). Restarting the "
+                      f"simulator and retrying ({attempt} of {attempts - 1}).")
+                owned.restart()
+                self._connect()
         self.last_step = self._classify(actor, state, np.zeros(4))
         return self.last_step
 

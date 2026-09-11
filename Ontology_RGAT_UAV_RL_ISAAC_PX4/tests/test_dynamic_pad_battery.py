@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "isaac_sim"))
 
 from pad_motion import (  # noqa: E402
-    PadMotionConfig, PadTrajectory, lorry_parts)
+    PadMotionConfig, PadTrajectory, lorry_parts, ugv_parts)
 
 
 @pytest.fixture(scope="module")
@@ -192,3 +192,73 @@ def test_the_lorry_follows_the_configured_deck(system_config):
     longer = {p.name: p for p in lorry_parts((cfg.deck_size_m[0] + 2.0,
                                               cfg.deck_size_m[1]), cfg.deck_height_m)}
     assert longer["cargo_box"].size[0] == pytest.approx(cfg.deck_size_m[0] + 2.0)
+
+
+def _waypoint_config():
+    return PadMotionConfig.from_mapping({
+        "pad": {
+            "carrier": "ugv",
+            "motion": "waypoints",
+            "deck_size_m": [1.6, 1.0],
+            "deck_height_m": 0.75,
+            "speed_range_m_s": [1.0, 1.0],
+            "route_start": "continue",
+            "route_waypoints_enu_m": [
+                [-2.0, 4.0, 1.0],
+                [2.0, 4.0, 1.2],
+                [2.0, 8.0, 1.4],
+            ],
+            "arena_radius_m": 0.0,
+        }
+    })
+
+
+def test_waypoint_ugv_follows_terrain_and_reverses_smoothly():
+    cfg = _waypoint_config()
+    trajectory = PadTrajectory(cfg)
+    trajectory.reset(seed=3, sim_time=0.0)
+    length = trajectory.waypoint_route.length
+
+    start, start_velocity = trajectory.pose(0.0)
+    reverse_time = trajectory._waypoint_parameters()[2]
+    end, end_velocity = trajectory.pose(reverse_time)
+    returning, return_velocity = trajectory.pose(1.5 * reverse_time)
+
+    assert start == pytest.approx([-2.0, 4.0, 1.75])
+    assert start_velocity == pytest.approx(np.zeros(3), abs=1e-12)
+    assert end == pytest.approx([2.0, 8.0, 2.15])
+    assert end_velocity == pytest.approx(np.zeros(3), abs=1e-12)
+    # It backs down the same narrow route rather than spinning for a U-turn.
+    assert np.dot(return_velocity, trajectory._waypoint_tangent) < 0.0
+
+    t, dt = 2.3, 1e-5
+    before, _ = trajectory.pose(t - dt)
+    after, _ = trajectory.pose(t + dt)
+    _, velocity = trajectory.pose(t)
+    assert (after - before) / (2.0 * dt) == pytest.approx(velocity, abs=1e-5)
+    assert returning[2] > 1.75  # the deck height follows the sloping road
+
+
+def test_waypoint_route_is_continuous_across_episode_reset():
+    trajectory = PadTrajectory(_waypoint_config())
+    trajectory.reset(seed=11, sim_time=0.0)
+    before, _ = trajectory.pose(7.25)
+    trajectory.reset(seed=12, sim_time=7.25)
+    after, _ = trajectory.pose(7.25)
+
+    assert after == pytest.approx(before, abs=1e-12)
+
+
+def test_compact_ugv_fits_under_its_audited_deck_footprint():
+    length, width, height = 1.6, 1.0, 0.75
+    parts = ugv_parts((length, width), height)
+    wheels = [part for part in parts if part.kind == "wheel"]
+
+    assert len(wheels) == 4
+    assert any(part.name == "ugv_body" and part.collider for part in parts)
+    for part in parts:
+        assert abs(part.centre[0]) + 0.5 * part.size[0] <= 0.5 * length + 1e-9
+        assert abs(part.centre[1]) + 0.5 * part.size[1] <= 0.5 * width + 1e-9
+        assert part.centre[2] + 0.5 * part.size[2] <= 1e-9
+    for wheel in wheels:
+        assert wheel.centre[2] - 0.5 * wheel.size[0] == pytest.approx(-height)

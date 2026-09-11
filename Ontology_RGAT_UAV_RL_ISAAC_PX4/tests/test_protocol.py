@@ -1,9 +1,10 @@
 import json
 import socket
+from types import SimpleNamespace
 
 import pytest
 
-from ontology_rgat.bridge import pacing_anchor_us
+from ontology_rgat.bridge import PX4Bridge, pacing_anchor_us
 from ontology_rgat_px4.protocol import (
     ProtocolError,
     VehicleSample,
@@ -80,6 +81,23 @@ def test_sitl_deadman_uses_px4_lockstep_time_but_hardware_uses_wall_time():
 def test_control_pacing_reanchors_after_a_missed_deadline():
     assert pacing_anchor_us(2_020_000, 2_016_000) == 2_020_000
     assert pacing_anchor_us(2_020_000, 2_300_000) == 2_300_000
+
+
+def test_physical_pad_contact_confirms_stop_when_lockstep_has_no_new_sample():
+    bridge = object.__new__(PX4Bridge)
+    bridge.cfg = SimpleNamespace(outcome_settle_timeout=0.01)
+    bridge.last_state = {
+        "landed": True,
+        "armed": True,
+        "extra": {"pad_contact": True, "land_detector_authoritative": True},
+    }
+    calls = []
+    bridge.disable_offboard = lambda: calls.append("offboard")
+    bridge.disarm = lambda: calls.append("disarm")
+    bridge.get_state = lambda: pytest.fail("contact should not need another sample")
+
+    assert bridge.stop_after_outcome()
+    assert calls == ["offboard", "disarm"]
 
 
 def test_optical_position_update_is_bounded_around_dr_prediction():

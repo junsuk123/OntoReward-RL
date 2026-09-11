@@ -7,7 +7,7 @@ flight-stack-in-the-loop system. The original directory is not modified.
 ## Data path
 
 ```text
-MATLAB ontology/R-GAT/PPO
+Python ontology/R-GAT/PPO
   <--- versioned UDP/JSON --->  ROS 2 gateway
                                   |  PX4 uXRCE-DDS (/fmu/in, /fmu/out)
                                   v
@@ -23,10 +23,66 @@ its own camera recovers from the markers. Isaac ground truth is used only for
 experiment telemetry and reset acknowledgement. ENU/FLU is the workspace
 convention; conversion to PX4 NED/FRD happens only in the gateway.
 
+## Visual system guide
+
+These are implementation-aligned explanatory schematics; the configuration
+and Python modules remain the authoritative source for exact topology and
+runtime values.
+
+### End-to-end system
+
+![End-to-end Ontology-RGAT UAV landing system on the Meta-Sejong compact UGV](docs/images/system_architecture-metasejong-v2.png)
+
+The control loop runs through Isaac Sim/Pegasus, PX4 SITL, the ROS 2 gateway
+and the Python learner. Policy input is restricted to observable sensor and
+estimator data; simulator truth crosses the boundary only for reset and
+terminal scoring. RViz 2 receives the annotated landing-camera image, fused
+navigation telemetry and the visual touchdown outcome.
+
+### Ontology R-GAT
+
+![Ontology R-GAT potential network](docs/images/rgat_network-v3.png)
+
+Each state populates a fixed 14-node, 38-edge semantic graph. Every node has an
+18-D feature (`value`, `1-value`, risk flag, bias and a 14-D node identity).
+Two 24-wide relational attention layers, with a residual around the second,
+read the `SafeLanding` goal node into the bounded potential
+`Phi(G) in [-1, 1]`. The graph drawing shows a representative subset of edges
+for readability; the implementation uses all four relation types and all 38
+edges.
+
+### Reward-function comparison
+
+![Manual, sparse and proposed PBRS reward functions](docs/images/reward_function-v2.png)
+
+The experiment compares the hand-weighted dense baseline, the sparse task
+reward and the proposed potential-based reward shaping (PBRS):
+
+```text
+r_proposed = r_sparse + 2.0 * (0.999 * Phi(s') - Phi(s))
+```
+
+At an absorbing terminal state `Phi(s') = 0`. The shaping discount is kept
+equal to PPO's `gamma = 0.999`, so the learned potential supplies denser credit
+without changing the sparse task's optimal policy.
+
+### PPO observation and semantic state
+
+![PPO observation and semantic-state representation](docs/images/rl_observation_state-v3.png)
+
+The PPO policy receives 23 normalized, measurable channels: 12 pad-relative
+kinematic channels, three landing-context channels, two UGV-velocity
+channels, three motion/energy channels and three GNSS self-assessment channels.
+Its actor and critic are separate `23 -> 64 -> 64` networks; the actor emits
+collective, roll, pitch and yaw-rate commands. Selected semantic values appear
+in the policy observation, while the complete 14-node ontology is the parallel
+state representation used to calculate `Phi(G)` for reward shaping.
+
 ## The environment: a lorry on a city street
 
 The pad is painted on the roof of a box lorry driving a lap of a city block, in
-lane, through stop-and-go traffic at 2-8 m/s. The block is built into the
+lane, through stop-and-go traffic at 1-3 m/s in the baseline configuration.
+The block is built into the
 Isaac stage procedurally (`isaac_sim/urban_scene.py`) rather than loaded as a
 canned environment, because the *same* geometry has to serve two consumers: the
 camera that renders it and the GNSS model that occludes satellites with it. A
@@ -285,6 +341,95 @@ ISAACSIM_PATH=/absolute/path/to/isaacsim ./scripts/run_isaac.sh
 # 3. PX4 gateway
 ./scripts/run_gateway.sh --target sitl --allow-arm
 ```
+
+### Meta-Sejong campus map
+
+An optional configuration runs the same PX4 UAV landing system in the 2025
+Meta-Sejong competition's Sejong University campus. The map remains subject to
+the competition distribution's proprietary licence, so its 1.2 GB asset tree
+is extracted from an image already installed on the machine and is ignored by
+Git:
+
+```bash
+./scripts/import_metasejong_map.sh
+# Recommended graphical demo: starts DDS, Isaac/PX4, the gateway and RViz,
+# then takes off to a stable 2.5 m hold above the moving UGV.
+./scripts/run_metasejong_demo.sh
+
+# Complete learning experiment: adds the ontology dataset, R-GAT potential,
+# manual/PBRS PPO training, paired evaluation, dashboard and figures.
+./scripts/run_metasejong_pipeline.sh --mode quick
+```
+
+The pipeline command is the full experiment rather than an indefinite hover.
+It repeatedly flies and resets the UAV while it collects ontology graphs,
+trains R-GAT and PPO, and evaluates the two learned policies. Quick mode still
+takes hours because PX4 runs flight episodes in real time; `--mode full` is the
+paper-scale run and takes days. Use `--smoke-test-only` to validate one complete
+learner-controlled flight before committing to a long run. Live progress is at
+`http://127.0.0.1:8770/`, in RViz, and under `results/live/`.
+
+Training is cumulative by default. Every execution appends newly seeded
+ontology graphs to `results/data/rgat_dataset_external.npz`, resumes the
+compatible R-GAT and PPO checkpoints under `results/models/`, and continues
+their epoch/episode histories and Adam optimizer state. Dataset progress is
+committed after each flight, R-GAT after each epoch, and PPO after each rollout
+update, using atomic replacement so an interrupted long run retains its last
+complete update. Evaluation reports the success count and a Wilson 95% interval
+alongside the rate; a small evaluation no longer presents 0% or 100% as an
+exact probability. If the accumulated R-GAT labels contain only successes or
+only failures, training stops before overwriting a model with a one-class fit.
+
+Press Ctrl-C in the demo terminal to request a PX4 landing and stop everything
+it started. The lower-level four-terminal equivalent remains available:
+
+```bash
+ISAACSIM_PATH=/absolute/path/to/isaacsim \
+  ./scripts/run_isaac.sh config/metasejong-demo.yaml
+./scripts/run_gateway.sh --config config/metasejong-demo.yaml \
+  --target sitl --allow-arm
+# 4. Live ROS view (the manual three-process startup does not launch it)
+./scripts/run_rviz.sh
+```
+
+`metasejong.scenario` selects `demo` (S1), `dongcheon` (S3), `jiphyeon` (S4),
+or `gwanggaeto` (S5). `METASEJONG_ASSET_ROOT` can point at a licensed external
+`resources/models` tree instead of extracting the Docker image.
+
+The S1 overlay hides its decorative tree group only in the transient Isaac
+stage, leaving the licensed USD unchanged, and starts the UGV waypoint shuttle
+during an idle manual preview at its normal configured speed. A learner reset
+still parks the UGV until policy handover. The visual-demo overlay disables the
+short, deliberately depleted research-episode battery budget so an unattended
+hover does not time out. `run_rviz.sh` is a separate fourth process for manual
+startup; the one-command Python pipeline launches it automatically.
+
+This is an environment adaptation, not a claim of compatibility with the
+competition task protocol. The competition robot is a Scout UGV with a Kinova
+manipulator and recycling-task scoring; this project remains a Pegasus/PX4 UAV
+landing system. The supplied S1 overlay disables the generated OSM buildings,
+canyon GNSS occluder model and route-centred arena clamp. Its moving target is
+a compact 1.60 x 1.00 m UGV: the original 2.45 m lorry is wider than the 2.26 m
+of usable pavement at the competition start. The UGV follows 44 terrain-height
+waypoints for 165.7 m, stops smoothly at the north end, and reverses down the
+same path instead of attempting a U-turn on the narrow branch.
+
+Audit the configured route directly against the licensed S1 USD road meshes
+without launching Isaac:
+
+```bash
+python tools/check_metasejong_route.py \
+  --plot docs/images/metasejong_s1_ugv_route.png
+```
+
+At 0.10 m audit resolution, the route has 1.13 m minimum edge clearance. The
+UGV deck's conservative swept half-diagonal is 0.94 m, leaving 0.19 m minimum
+margin, and every waypoint matches the road elevation. See the generated
+[S1 road and UGV route](docs/images/metasejong_s1_ugv_route.png).
+
+The S1 map can use roughly 2.6 GB of GPU memory in headless Isaac 5.1, while the
+original competition Docker server peaked near 6.7 GB on this machine. Run only
+one Isaac instance at a time on an 8 GB GPU.
 
 Calibrate the collective mapping once per airframe or Isaac version, with the
 stack running:

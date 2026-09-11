@@ -2,6 +2,16 @@
 set -euo pipefail
 workspace_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 ros2_runtime=${ASCII_ROS2_WS:-/home/${USER}/.local/share/ontology_rgat_uav_rl/ros2_ws}
+config_path=${GATEWAY_CONFIG:-$workspace_root/config/system.yaml}
+if [[ ${1:-} == --config ]]; then
+  if [[ $# -lt 2 ]]; then
+    printf '%s\n' '--config requires a YAML path.' >&2
+    exit 2
+  fi
+  config_path=$2
+  shift 2
+fi
+if [[ $config_path != /* ]]; then config_path="$workspace_root/$config_path"; fi
 unset CYCLONEDDS_URI
 export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
 set +u
@@ -20,4 +30,4 @@ fi
 # error minutes into a run, long after the cause; refuse here instead.
 "$workspace_root/scripts/sync_gateway.sh" --check
 exec ros2 run ontology_rgat_px4 ros2_gateway \
-  --config "$workspace_root/config/system.yaml" "$@"
+  --config "$config_path" "$@"

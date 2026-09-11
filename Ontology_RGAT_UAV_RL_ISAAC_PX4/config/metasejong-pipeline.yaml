@@ -1,0 +1,14 @@
+# Meta-Sejong overlay for the complete ontology -> R-GAT -> PPO experiment.
+extends: metasejong-demo.yaml
+
+pad:
+  # PX4 boots and calibrates on the roof, so the UGV must remain parked until
+  # the learner has completed the entry climb. Policy handover releases it for
+  # every episode; only the non-training demo uses idle-scene preview motion.
+  preview_motion: false
+  preview_speed_scale: 1.0
+
+battery:
+  # Unlike the indefinite viewing demo, research episodes restore the seeded
+  # 9--55 second reserve so BatteryReserve is a meaningful ontology feature.
+  enabled: true

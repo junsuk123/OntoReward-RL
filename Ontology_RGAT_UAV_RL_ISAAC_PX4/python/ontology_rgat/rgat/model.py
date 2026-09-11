@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import os
 from typing import Any
 
 import numpy as np
@@ -175,12 +176,16 @@ def save_potential(model: RGATPotential, cfg: Config, path: str | Path,
     """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    torch.save({
+    payload = {
         "format": "ontology_rgat.potential/1",
         "state_dict": {k: v.detach().cpu() for k, v in model.state_dict().items()},
         "schema": _schema(cfg),
         "history": history or {},
-    }, path)
+        "optimizer_state": getattr(model, "_optimizer_state", None),
+    }
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    torch.save(payload, temporary)
+    os.replace(temporary, path)
     return path
 
 
@@ -205,4 +210,5 @@ def load_potential(path: str | Path, cfg: Config, graph: OntologyGraph,
                 "Retrain rather than transferring the model.")
     model = build_potential(cfg, graph, device="cpu")
     model.load_state_dict(blob["state_dict"])
+    model._optimizer_state = blob.get("optimizer_state")
     return model.to(device), blob.get("history", {})

@@ -73,7 +73,8 @@ def main() -> int:
             print("Using the stack that is already running.")
         else:
             owned = ExternalStack(cfg, isaac_sim_path=args.isaac_sim_path,
-                                  headless=bool(args.headless))
+                                  headless=bool(args.headless),
+                                  config_path=cfg.paths.system_yaml)
             owned.start()
             # Let env.LandingEnv.reset cycle this simulator if PX4 stops arming.
             stack_module.current(owned)

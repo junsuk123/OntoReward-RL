@@ -61,30 +61,37 @@ def expert_action(x: np.ndarray, cfg: Config, cur=None) -> np.ndarray:
     # instead of a guaranteed road impact.
     if p[2] > 1.0 and (horizontal_error > 1.25 or relative_speed > 1.0):
         vz_des = 0.0
-    elif p[2] <= 1.0 and (horizontal_error > 0.25 or relative_speed > 0.30):
+    elif p[2] <= 1.0 and (horizontal_error > 0.28 or relative_speed > 0.30):
         vz_des = float(np.clip(0.8 * (0.8 - p[2]), 0.0, 0.35))
     elif p[2] <= 0.5:
         vz_des = max(vz_des, -0.08)
     elif p[2] <= 2.5:
         vz_des = max(vz_des, -0.15)
-    # Keep the delayed PX4/Isaac vertical loop damped; safety comes from
-    # beginning the low-speed flare early, not from a large feedback gain.
-    az_cmd = 2.2 * (vz_des - v[2])
-    collective = az_cmd / (cfg.sim.g * cfg.rl.collective_span)
+    # The imported campus renders below real time. A large velocity gain drove
+    # the delayed PX4 attitude/thrust loop from minimum to maximum collective,
+    # producing repeated 10 m oscillations and an all-negative dataset. Keep
+    # the expert inside a conservative thrust envelope; noisy demonstrations
+    # can still leave it and supply the required failure class.
+    az_cmd = 0.70 * (vz_des - v[2])
+    collective = float(np.clip(
+        az_cmd / (cfg.sim.g * cfg.rl.collective_span), -0.22, 0.22))
 
     # Horizontal PD on pad-relative error. This already tracks constant deck
     # velocity because v is UAV velocity minus deck velocity.
     # Near-critical damping is intentional: the kinematic lorry acquires its
     # seeded cruise velocity at handover, so an under-damped chase crosses the
     # narrow roof repeatedly and never opens the safe descent gate.
-    ax = -0.90 * p[0] - 2.10 * v[0]
-    ay = -0.90 * p[1] - 2.10 * v[1]
+    ax = -1.20 * p[0] - 1.50 * v[0]
+    ay = -1.20 * p[1] - 1.50 * v[1]
     cy, sy = np.cos(rpy[2]), np.sin(rpy[2])
     accel_forward = cy * ax + sy * ay
     accel_left = -sy * ax + cy * ay
     limit = cfg.rl.max_roll_pitch
-    pitch_des = float(np.clip(accel_forward / cfg.sim.g, -limit, limit))
-    roll_des = float(np.clip(-accel_left / cfg.sim.g, -limit, limit))
+    expert_tilt_limit = min(limit, np.deg2rad(12.0))
+    pitch_des = float(np.clip(
+        accel_forward / cfg.sim.g, -expert_tilt_limit, expert_tilt_limit))
+    roll_des = float(np.clip(
+        -accel_left / cfg.sim.g, -expert_tilt_limit, expert_tilt_limit))
 
     a = np.array([collective, roll_des / limit, pitch_des / limit,
                   -0.6 * rpy[2] / cfg.rl.max_yaw_rate])

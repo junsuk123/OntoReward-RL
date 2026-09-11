@@ -14,7 +14,6 @@ import sys
 from pathlib import Path
 
 import numpy as np
-import yaml
 
 
 def parse_args():
@@ -27,8 +26,10 @@ def parse_args():
 ARGS = parse_args()
 CONFIG_PATH = Path(ARGS.config).expanduser().resolve()
 WORKSPACE = CONFIG_PATH.parent.parent
-with CONFIG_PATH.open("r", encoding="utf-8") as stream:
-    CONFIG = yaml.safe_load(stream)
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from config_loader import load_config
+
+CONFIG = load_config(CONFIG_PATH)
 
 # SimulationApp must be constructed before importing Omniverse/Pegasus modules.
 from isaacsim import SimulationApp
@@ -67,7 +68,6 @@ from isaacsim.sensors.physics import ContactSensor
 from isaacsim.sensors.camera import Camera
 from pxr import Gf, PhysxSchema, Sdf, UsdGeom, UsdPhysics, UsdShade
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
 from marker_vision import (
     nadir_footprint_m,
     R_BODY_FROM_OPTICAL,
@@ -77,11 +77,13 @@ from marker_vision import (
     intrinsics_from_fov,
     texture_side_ratio,
 )
-from pad_motion import PadMotionConfig, PadTrajectory, lorry_parts
+from pad_motion import PadMotionConfig, PadTrajectory, lorry_parts, ugv_parts
 from urban_scene import UrbanConfig, UrbanLayout, UrbanScene
 from gnss import GnssConfig, UrbanGnss
 from px4_gnss import UrbanGnssSensor
 from live_overlay import LiveOverlay
+from metasejong_scene import MetaSejongConfig, MetaSejongScene
+from view_geometry import paired_view_pose, street_offset_enu
 
 
 IDENTITY_QUAT = np.array([1.0, 0.0, 0.0, 0.0])
@@ -389,7 +391,7 @@ class LandingDeck:
             )
             self.contact_sensor.add_raw_contact_data_to_frame()
             self.physics_ok = True
-            self._build_lorry(stage)
+            self._build_carrier(stage)
         except Exception as exc:                            # noqa: BLE001
             # Worth continuing without: the episode ends on pad-relative
             # altitude, not on contact. Worth shouting about: nothing will hold
@@ -451,20 +453,21 @@ class LandingDeck:
                      and -0.25 <= float(local[2]) <= 0.60)
         return bool(in_contact and over_roof), force
 
-    def _build_lorry(self, stage) -> None:
-        """Draw the vehicle the pad is painted on, under the roof it lands on.
+    def _build_carrier(self, stage) -> None:
+        """Draw the configured carrier underneath the landing surface.
 
         Until now the deck was a bare slab hanging three metres over the road
         with nothing beneath it: the pad moved like a lorry, occluded like a
         lorry and was called one everywhere in the code, but the viewport showed
         a floating plank.
 
-        The shape itself lives in ``pad_motion.lorry_parts`` so it can be
-        checked without a simulator; this only turns it into USD. Everything
-        hangs off the same kinematic body as the deck, so it drives, turns and
-        stops with it for free.
+        The shapes live next to their motion in ``pad_motion`` so they can be
+        checked without a simulator; this only turns the selected one into
+        USD. Everything hangs off the same kinematic body as the deck, so it
+        drives, turns and stops with it for free.
         """
-        for part in lorry_parts(self.cfg.deck_size_m, self.cfg.deck_height_m):
+        builder = ugv_parts if self.cfg.carrier == "ugv" else lorry_parts
+        for part in builder(self.cfg.deck_size_m, self.cfg.deck_height_m):
             path = f"{self.PRIM}/{part.name}"
             if part.kind == "wheel":
                 prim = UsdGeom.Cylinder.Define(stage, path)
@@ -706,21 +709,33 @@ class ViewportFollower:
         self.offset = np.asarray(
             view.get("offset_m", view.get("offset_enu_m", [-14.0, 0.0, 7.0])), dtype=float)
         self.look_at_offset = np.asarray(view.get("look_at_offset_enu_m", [0.0, 0.0, 0.0]), dtype=float)
+        self.focus = str(view.get("focus", "uav")).lower()
+        if self.focus not in ("uav", "pair"):
+            raise ValueError("isaac.viewport_follow.focus must be 'uav' or 'pair'")
+        self.pair_span_m = float(view.get("pair_span_m", 7.0))
+        if self.pair_span_m <= 0.0:
+            raise ValueError("isaac.viewport_follow.pair_span_m must be positive")
         self.smoothing = float(np.clip(view.get("smoothing", 0.18), 0.01, 1.0))
         self.eye: np.ndarray | None = None
         self._warned = False
 
     def update(self, vehicle_position: np.ndarray, street_heading_rad: float = 0.0,
-               layout=None) -> None:
+               layout=None, deck_position: np.ndarray | None = None) -> None:
         if not self.enabled:
             return
         position = np.asarray(vehicle_position, dtype=float).reshape(3)
-        desired_eye = position + self._offset_enu(street_heading_rad)
+        offset = self._offset_enu(street_heading_rad)
+        if self.focus == "pair" and deck_position is not None:
+            desired_eye, target, _ = paired_view_pose(
+                position, deck_position, offset, self.pair_span_m)
+        else:
+            target = position
+            desired_eye = target + offset
+        target = target + self.look_at_offset
         if self.eye is None:
             self.eye = desired_eye
         else:
             self.eye += self.smoothing * (desired_eye - self.eye)
-        target = position + self.look_at_offset
         # The offset can still point into a corner building on the outside of a
         # turn, so the layout gets the last word on where the camera may sit.
         eye = (self.eye if layout is None
@@ -737,10 +752,7 @@ class ViewportFollower:
         """The configured offset in world ENU."""
         if self.frame == "world":
             return self.offset
-        along = np.array([math.cos(street_heading_rad), math.sin(street_heading_rad), 0.0])
-        across = np.array([-along[1], along[0], 0.0])
-        return self.offset[0] * along + self.offset[1] * across + np.array(
-            [0.0, 0.0, self.offset[2]])
+        return street_offset_enu(self.offset, street_heading_rad)
 
 
 class LandingWorld:
@@ -758,6 +770,9 @@ class LandingWorld:
         if environment not in SIMULATION_ENVIRONMENTS:
             raise KeyError(f"unknown Pegasus environment: {environment}")
         self.pg.load_environment(SIMULATION_ENVIRONMENTS[environment])
+
+        self.metasejong = MetaSejongConfig.from_mapping(CONFIG, WORKSPACE)
+        MetaSejongScene(self.metasejong).spawn(self.world)
 
         # The city, and the sky it hides. Both the stage and the GNSS model
         # read the same layout object, so an outage always has a building in
@@ -938,7 +953,21 @@ class LandingWorld:
             self.camera.start()
             self.camera.aim_at_nadir(self.vehicle)
         self.wind.reset(int(CONFIG["wind"].get("seed", 49)), self.world.current_time)
-        self.deck.reset(int(CONFIG["wind"].get("seed", 49)), self.world.current_time)
+        pad_cfg = CONFIG.get("pad") or {}
+        preview_motion = bool(pad_cfg.get("preview_motion", False))
+        preview_scale = float(pad_cfg.get("preview_speed_scale", 1.0))
+        if not math.isfinite(preview_scale) or preview_scale < 0.0:
+            raise ValueError("pad.preview_speed_scale must be finite and non-negative")
+        self.deck.reset(
+            int(CONFIG["wind"].get("seed", 49)), self.world.current_time,
+            preview_scale if preview_motion else 1.0)
+        # A manually started simulator has no learner to send a policy
+        # handover, which previously made the UGV look broken because it stayed
+        # parked forever.  Preview motion applies only to this initial idle
+        # scene.  Every episode reset below still parks the deck and releases it
+        # only at policy handover, preserving the safe entry-climb contract.
+        if preview_motion:
+            self.deck.release(self.world.current_time)
         self.gnss.reset(int((CONFIG.get("gnss") or {}).get("seed", 17)))
         self.gnss_time = float(self.world.current_time)
         self.stop_sim = False
@@ -982,7 +1011,17 @@ class LandingWorld:
         # from the deck rather than an absolute point, because the deck moves.
         # Wider and higher than the rover experiment's: the deck is a 6 m box
         # body rather than a 1.3 m tray, and the entry has to clear it.
-        offset = np.array([1.8 * rng.normal(), 1.4 * rng.normal(), 4.0 + 1.8 * rng.random()])
+        # Scale the established 4.0--5.8 m entry-height distribution by the
+        # configured hover height. Imported maps can use a smaller marker deck
+        # that must be approached lower to retain the same pixel footprint;
+        # previously hover_start_offset_pad_m affected only start_airborne and
+        # was silently ignored by the normal flown entry.
+        reference_hover_m = 4.5
+        entry_x = 1.8 * rng.normal()
+        entry_y = 1.4 * rng.normal()
+        entry_height = (4.0 + 1.8 * rng.random()) * max(
+            float(self.hover_start_pad_m[2]), 0.5) / reference_hover_m
+        offset = np.array([entry_x, entry_y, entry_height])
         offset = self._entry_within_camera(offset)
         # A Gaussian tail can put the entry point inside a facade -- about one
         # seed in three thousand on the outer lane -- and PX4 flies into it,
@@ -1422,7 +1461,8 @@ class LandingWorld:
                         self.overlay.update(self.vehicle.state.position,
                                             self.deck.world_from_pad(np.zeros(3)))
                         self.viewport_follower.update(
-                            self.vehicle.state.position, self.deck.yaw, self.urban)
+                            self.vehicle.state.position, self.deck.yaw, self.urban,
+                            deck_position=self.deck.world_from_pad(np.zeros(3)))
         except Exception as exc:
             # Isaac's ROS bridge invalidates its context as soon as the process
             # receives the stack's shutdown signal. A publisher can race that

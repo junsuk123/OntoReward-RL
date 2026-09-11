@@ -8,6 +8,7 @@ with the change-of-variables correction in the log probability.
 from __future__ import annotations
 
 import math
+import os
 from pathlib import Path
 from typing import Any
 
@@ -122,13 +123,17 @@ def save_agent(agent: PPOAgent, cfg: Config, path: str | Path,
                history: dict[str, Any] | None = None) -> Path:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    torch.save({
+    payload = {
         "format": "ontology_rgat.ppo_agent/1",
         "state_dict": {k: v.detach().cpu() for k, v in agent.state_dict().items()},
         "schema": {"obs_dim": int(cfg.rl.obs_dim), "act_dim": int(cfg.rl.act_dim),
                    "hidden": int(cfg.ppo.hidden), "mu_scale": float(cfg.ppo.mu_scale)},
         "history": history or {},
-    }, path)
+        "optimizer_state": getattr(agent, "_optimizer_state", None),
+    }
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    torch.save(payload, temporary)
+    os.replace(temporary, path)
     return path
 
 
@@ -153,5 +158,6 @@ def load_agent(path: str | Path, cfg: Config,
                 "the policy.")
     agent = PPOAgent(cfg, device="cpu")
     agent.load_state_dict(blob["state_dict"])
+    agent._optimizer_state = blob.get("optimizer_state")
     agent.to(device)
     return agent, blob.get("history", {})

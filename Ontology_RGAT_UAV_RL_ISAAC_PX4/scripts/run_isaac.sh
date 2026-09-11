@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 workspace_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+config_path=${1:-$workspace_root/config/system.yaml}
+if [[ $# -gt 0 ]]; then shift; fi
+if [[ $config_path != /* ]]; then config_path="$workspace_root/$config_path"; fi
 isaacsim_path=${ISAACSIM_PATH:-}
 isaac_python=${ISAACSIM_PYTHON:-${isaacsim_path:+$isaacsim_path/python.sh}}
 if [[ -z "$isaac_python" || ! -x "$isaac_python" ]]; then
@@ -16,4 +19,4 @@ if [[ -n "$isaacsim_path" ]]; then
   export LD_LIBRARY_PATH="${LD_LIBRARY_PATH:-}:$isaacsim_path/exts/isaacsim.ros2.bridge/humble/lib"
 fi
 exec "$isaac_python" "$workspace_root/isaac_sim/landing_world.py" \
-  --config "$workspace_root/config/system.yaml" "${headless_arg[@]}"
+  --config "$config_path" "${headless_arg[@]}" "$@"

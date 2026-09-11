@@ -89,6 +89,7 @@ class ExternalStack:
     def __init__(self, cfg: Config, *, isaac_sim_path: str | None = None,
                  headless: bool | str = "auto",
                  gateway_args: str = "--target sitl --allow-arm",
+                 config_path: str | Path | None = None,
                  log_dir: str | Path | None = None,
                  agent_timeout: float = 30.0, isaac_timeout: float = 600.0,
                  gateway_timeout: float = 60.0):
@@ -98,6 +99,11 @@ class ExternalStack:
         self.isaac_sim_path = isaac_sim_path or os.environ.get("ISAACSIM_PATH", "")
         self.headless = self._resolve_headless(headless)
         self.gateway_args = gateway_args
+        self.config_path = (Path(config_path).expanduser().resolve()
+                            if config_path is not None
+                            else (self.root / "config" / "system.yaml").resolve())
+        if not self.config_path.is_file():
+            raise StackError(f"Stack configuration does not exist: {self.config_path}")
         self.log_dir = Path(log_dir) if log_dir else Path("/tmp/ontology_rgat_stack")
         self.log_dir.mkdir(parents=True, exist_ok=True)
         self.timeouts = {"agent": agent_timeout, "isaac": isaac_timeout,
@@ -150,7 +156,10 @@ class ExternalStack:
                 raise StackError("Isaac Sim was asked for a window but DISPLAY is not "
                                  "set. Run from a graphical session, or pass --headless.")
             print(f"Isaac Sim will open a window on DISPLAY {display}.")
-        log = self._launch("isaac", [str(self.root / "scripts" / "run_isaac.sh")], env)
+        log = self._launch(
+            "isaac",
+            [str(self.root / "scripts" / "run_isaac.sh"), str(self.config_path)],
+            env)
         # PX4 is launched by Pegasus once the world is loaded, so its banner is
         # the only signal that the whole simulator is up.
         print("Waiting for Isaac Sim and PX4 (first boot can take minutes)...")
@@ -162,7 +171,8 @@ class ExternalStack:
         if _udp_port_bound(GATEWAY_PORT):
             print(f"Gateway already listening on UDP {GATEWAY_PORT}; adopting it.")
             return
-        command = [str(self.root / "scripts" / "run_gateway.sh")] + shlex.split(self.gateway_args)
+        command = [str(self.root / "scripts" / "run_gateway.sh"),
+                   "--config", str(self.config_path)] + shlex.split(self.gateway_args)
         log = self._launch("gateway", command)
         self._wait_for(lambda: _udp_port_bound(GATEWAY_PORT),
                        self.timeouts["gateway"], "PX4 gateway", log)

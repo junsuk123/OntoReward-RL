@@ -63,22 +63,39 @@ def _collect_episode(agent: PPOAgent, reward_mode: str, potential, seed: int,
 
 
 def train_ppo(reward_mode: str, potential, cfg: Config, *,
+              initial_agent: PPOAgent | None = None,
+              initial_history: dict[str, Any] | None = None,
               on_episode: Callable[[PPOHistory], None] | None = None,
               on_update: Callable[[PPOHistory], None] | None = None,
+              checkpoint: Callable[[PPOAgent, PPOHistory], None] | None = None,
               verbose: bool = True) -> tuple[PPOAgent, PPOHistory]:
     """Train one PPO arm and return the agent with its history."""
     device = torch.device(str(cfg.device.ppo))
-    agent = PPOAgent(cfg, device=device)
+    agent = (initial_agent.to(device) if initial_agent is not None
+             else PPOAgent(cfg, device=device))
     actor_opt = torch.optim.Adam(agent.actor.parameters(), lr=float(cfg.ppo.actor_lr),
                                  betas=(0.9, 0.999), eps=1e-8)
     critic_opt = torch.optim.Adam(agent.critic.parameters(), lr=float(cfg.ppo.critic_lr),
                                   betas=(0.9, 0.999), eps=1e-8)
+    optimizer_state = getattr(agent, "_optimizer_state", None)
+    if optimizer_state:
+        actor_opt.load_state_dict(optimizer_state["actor"])
+        critic_opt.load_state_dict(optimizer_state["critic"])
+        for optimizer in (actor_opt, critic_opt):
+            for values in optimizer.state.values():
+                for key, value in values.items():
+                    if isinstance(value, torch.Tensor):
+                        values[key] = value.to(device)
     history = PPOHistory.empty()
-    total = int(cfg.ppo.train_episodes)
+    for key, value in dict(initial_history or {}).items():
+        if key in history and isinstance(value, list):
+            history[key] = list(value)
+    completed = len(history["episode"])
+    total = completed + int(cfg.ppo.train_episodes)
     log_std_lo, log_std_hi = cfg.ppo.log_std_bounds
 
-    episode = 0
-    iteration = 0
+    episode = completed
+    iteration = max(history["iteration"], default=0)
     while episode < total:
         iteration += 1
         first_of_iteration = episode + 1
@@ -161,8 +178,12 @@ def train_ppo(reward_mode: str, potential, cfg: Config, *,
                            ("entropy", float(np.mean(entropies))),
                            ("policy_std", std_now)):
             history[key][span] = [value] * (episode - first_of_iteration + 1)
+        agent._optimizer_state = {
+            "actor": actor_opt.state_dict(), "critic": critic_opt.state_dict()}
         if on_update is not None:
             on_update(history)
+        if checkpoint is not None:
+            checkpoint(agent, history)
         if verbose:
             window = slice(first_of_iteration - 1, episode)
             print(f"PPO {reward_mode:<8} iter {iteration:3d} | "

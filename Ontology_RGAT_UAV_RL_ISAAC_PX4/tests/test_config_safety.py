@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pytest
 
+from ontology_rgat.cli import base_parser, config_from_args
 from ontology_rgat_px4.config import load_gateway_config
 from ontology_rgat_px4.safety import (
     HARDWARE_ARM_PHRASE,
@@ -19,6 +20,27 @@ def test_configuration_loads():
     assert cfg.control_hz == 50.0
     assert cfg.namespace == "/fmu"
     assert cfg.gnss_dr_enter_quality == 0.45
+
+
+def test_gateway_loads_metasejong_overlay_with_the_simulator_datum():
+    cfg = load_gateway_config(ROOT / "config" / "metasejong-demo.yaml")
+
+    assert cfg.pad_motion == "waypoints"
+    assert cfg.pad_deck_height_m == pytest.approx(0.75)
+    assert cfg.map_latitude_deg == pytest.approx(37.5503)
+    assert cfg.map_longitude_deg == pytest.approx(127.0736)
+    assert cfg.map_altitude_m == pytest.approx(30.0)
+    farthest_waypoint_m = (151.0**2 + 198.0**2) ** 0.5
+    assert cfg.world_radius_m == pytest.approx(farthest_waypoint_m + 30.0)
+
+
+def test_learner_selects_the_same_metasejong_pipeline_yaml():
+    path = ROOT / "config" / "metasejong-pipeline.yaml"
+    args = base_parser("test").parse_args(["--system-config", str(path)])
+
+    cfg = config_from_args(args)
+
+    assert Path(cfg.paths.system_yaml) == path.resolve()
 
 
 def test_sitl_reset_and_arm_gate():

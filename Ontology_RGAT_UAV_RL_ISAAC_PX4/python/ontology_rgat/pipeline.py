@@ -18,10 +18,10 @@ from .config import Config
 from .evaluation.compare import LABELS, compare_policies, write_table
 from .evaluation.plots import make_plots
 from .evaluation.sweeps import battery_sweep, gnss_sweep, pad_sweep, wind_sweep
-from .ppo.networks import save_agent
+from .ppo.networks import load_agent, save_agent
 from .ppo.train import train_ppo
-from .rgat.dataset import generate_dataset, save_dataset
-from .rgat.model import save_potential
+from .rgat.dataset import generate_dataset, load_dataset, merge_datasets, save_dataset
+from .rgat.model import load_potential, save_potential
 from .rgat.train import train_potential
 from .viz.dashboard import Dashboard
 from .viz.live import STORE, DatasetMonitor, EpisodeMonitor, PPOMonitor, RGATMonitor
@@ -39,6 +39,8 @@ def run_all(cfg: Config) -> dict[str, Any]:
     np.random.seed(cfg.seed)
     started = time.perf_counter()
     results_dir = Path(cfg.paths.results)
+    data_path = Path(cfg.paths.data) / "rgat_dataset_external.npz"
+    potential_path = Path(cfg.paths.models) / "rgat_model_external.pt"
 
     dashboard = Dashboard(cfg).start()
     rviz = RvizPublisher.create(cfg) if cfg.viz.realtime else None
@@ -56,20 +58,52 @@ def run_all(cfg: Config) -> dict[str, Any]:
 
         _banner(2, "Isaac/PX4 R-GAT dataset generation")
         STORE.stage("dataset", f"{cfg.rgat.data_episodes} expert episodes")
-        dataset = generate_dataset(cfg, monitor=DatasetMonitor(cfg),
-                                   episode_monitor=episode_monitor)
-        save_dataset(dataset, Path(cfg.paths.data) / "rgat_dataset_external.npz")
+        previous_dataset = None
+        episode_offset = 0
+        if data_path.is_file() and data_path.with_suffix(".graph.pkl").is_file():
+            previous_dataset = load_dataset(data_path)
+            old_meta = np.asarray(previous_dataset["meta"])
+            episode_offset = int(np.max(old_meta[:, 0])) if old_meta.size else 0
+            print(f"Continuing cumulative ontology dataset: "
+                  f"{len(previous_dataset['y'])} samples from {episode_offset} episodes.")
+        new_dataset = generate_dataset(
+            cfg, monitor=DatasetMonitor(cfg), episode_monitor=episode_monitor,
+            episode_offset=episode_offset,
+            checkpoint=lambda batch: save_dataset(
+                merge_datasets(previous_dataset, batch), data_path))
+        dataset = merge_datasets(previous_dataset, new_dataset)
+        save_dataset(dataset, data_path)
+        positive = int(np.count_nonzero(np.asarray(dataset["y"]) > 0.0))
+        total_samples = int(len(dataset["y"]))
+        print(f"Cumulative dataset committed: {total_samples} samples, "
+              f"{100.0 * positive / max(total_samples, 1):.1f}% positive.")
+        if positive == 0 or positive == total_samples:
+            raise RuntimeError(
+                "R-GAT needs both successful and failed landing labels; the cumulative "
+                "dataset has only one class. The dataset was saved, but model "
+                "checkpoints were not overwritten.")
 
         _banner(3, "R-GAT potential training")
         print("The simulator remains online, but the UAV stays landed during this "
               "offline neural-network training stage.")
         STORE.stage("rgat", f"{cfg.rgat.epochs} epochs")
         rgat_monitor = RGATMonitor(cfg, graph=dataset["graph"])
+        previous_potential = None
+        previous_rgat_history = None
+        if potential_path.is_file():
+            previous_potential, previous_rgat_history = load_potential(
+                potential_path, cfg, dataset["graph"])
+            print(f"Warm-starting R-GAT from {potential_path.name} "
+                  f"({len(previous_rgat_history.get('train_loss', []))} prior epochs).")
+        def update_rgat(epoch, history, target, prediction, model):
+            rgat_monitor.update(epoch, history, target, prediction, model)
+            save_potential(model, cfg, potential_path, dict(history))
+
         potential, rgat_history = train_potential(
-            dataset, cfg,
-            on_epoch=lambda e, h, yt, yp, m: rgat_monitor.update(e, h, yt, yp, m))
-        save_potential(potential, cfg, Path(cfg.paths.models) / "rgat_model_external.pt",
-                       dict(rgat_history))
+            dataset, cfg, initial_model=previous_potential,
+            initial_history=previous_rgat_history,
+            on_epoch=update_rgat)
+        save_potential(potential, cfg, potential_path, dict(rgat_history))
         # The potential drives the RViz attention overlay and the dashboard's
         # 3D graph view from here on.
         if rviz is not None:
@@ -85,10 +119,20 @@ def run_all(cfg: Config) -> dict[str, Any]:
             _banner(step, f"PPO {mode} on PX4")
             STORE.stage(f"ppo_{mode}", f"{cfg.ppo.train_episodes} episodes")
             monitor = PPOMonitor(cfg, mode)
+            checkpoint_path = Path(cfg.paths.models) / checkpoint
+            previous_agent = None
+            previous_history = None
+            if checkpoint_path.is_file():
+                previous_agent, previous_history = load_agent(checkpoint_path, cfg)
+                print(f"Warm-starting {label} PPO from {checkpoint} "
+                      f"({len(previous_history.get('episode', []))} prior episodes).")
             agent, history = train_ppo(
                 mode, potential if mode == "proposed" else None, cfg,
-                on_episode=monitor.update, on_update=monitor.refresh)
-            save_agent(agent, cfg, Path(cfg.paths.models) / checkpoint, dict(history))
+                initial_agent=previous_agent, initial_history=previous_history,
+                on_episode=monitor.update, on_update=monitor.refresh,
+                checkpoint=lambda model, h, path=checkpoint_path: save_agent(
+                    model, cfg, path, dict(h)))
+            save_agent(agent, cfg, checkpoint_path, dict(history))
             agents[label] = agent
             histories[label] = history
 
@@ -126,6 +170,12 @@ def run_all(cfg: Config) -> dict[str, Any]:
             "figures": [str(p) for p in figures],
             "rgat_val_loss": rgat_history["val_loss"][-1] if rgat_history["val_loss"] else None,
             "rgat_device": rgat_history.get("device"),
+            "cumulative_dataset_samples": total_samples,
+            "cumulative_dataset_positive_fraction": positive / max(total_samples, 1),
+            "cumulative_rgat_epochs": len(rgat_history.get("train_loss", [])),
+            "cumulative_ppo_episodes": {
+                label: len(history.get("episode", []))
+                for label, history in histories.items()},
         }
         (results_dir / "run_summary.json").write_text(json.dumps(summary, indent=2))
         STORE.stage("done", f"{elapsed / 60:.1f} min")

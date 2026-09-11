@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -80,7 +81,18 @@ class GatewayConfig:
         gnss = data.get("gnss", {}) or {}
         block = [float(v) for v in pad.get(
             "route_size_m", urban.get("block_size_m", (0.0, 0.0)))]
-        route_reach = 0.5 * math.hypot(*block) if len(block) == 2 else 0.0
+        waypoints = pad.get("route_waypoints_enu_m", ())
+        if str(pad.get("motion", "static")).lower() == "waypoints" and waypoints:
+            # Imported-world routes use absolute world coordinates rather than
+            # a rectangle centred at [0, 0]. The safety radius must contain
+            # those coordinates or it turns every legal setpoint into a command
+            # toward the world origin.
+            route_reach = max(
+                math.hypot(float(point[0]), float(point[1]))
+                for point in waypoints if len(point) >= 2
+            )
+        else:
+            route_reach = 0.5 * math.hypot(*block) if len(block) == 2 else 0.0
         resolved_target = target or system["target"]
         if resolved_target not in {"sitl", "hardware"}:
             raise ValueError("target must be 'sitl' or 'hardware'")
@@ -136,12 +148,36 @@ class GatewayConfig:
         )
 
 
-def load_yaml(path: str | Path) -> dict[str, Any]:
-    with Path(path).expanduser().open("r", encoding="utf-8") as stream:
+def _merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    result = deepcopy(base)
+    for key, value in override.items():
+        if isinstance(value, dict) and isinstance(result.get(key), dict):
+            result[key] = _merge(result[key], value)
+        else:
+            result[key] = deepcopy(value)
+    return result
+
+
+def load_yaml(path: str | Path, _seen: set[Path] | None = None) -> dict[str, Any]:
+    """Load a gateway YAML and recursively merge its optional ``extends``."""
+    config_path = Path(path).expanduser().resolve()
+    seen = set() if _seen is None else set(_seen)
+    if config_path in seen:
+        raise ValueError(f"cyclic config extends chain at {config_path}")
+    seen.add(config_path)
+    with config_path.open("r", encoding="utf-8") as stream:
         data = yaml.safe_load(stream)
     if not isinstance(data, dict):
-        raise ValueError(f"configuration root must be a mapping: {path}")
-    return data
+        raise ValueError(f"configuration root must be a mapping: {config_path}")
+    parent = data.pop("extends", None)
+    if parent is None:
+        return data
+    if not isinstance(parent, str) or not parent.strip():
+        raise ValueError(f"extends must be a non-empty path: {config_path}")
+    parent_path = Path(parent).expanduser()
+    if not parent_path.is_absolute():
+        parent_path = config_path.parent / parent_path
+    return _merge(load_yaml(parent_path, seen), data)
 
 
 def load_gateway_config(path: str | Path, target: str | None = None) -> GatewayConfig:

@@ -447,7 +447,17 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             elif kind == "disarm":
                 self.last_command_seq = seq
                 if self.sample.landed:
-                    self._vehicle_command(VehicleCommand.VEHICLE_CMD_COMPONENT_ARM_DISARM, 0.0)
+                    # On a moving deck PX4's world-frame land detector can
+                    # remain airborne even though the physical roof-contact
+                    # latch has authoritatively ended the SITL episode.  The
+                    # callback's first forced command can be overwritten in
+                    # the uORB queue by this immediate learner command, so the
+                    # learner command must carry the same force token too.
+                    force = (21196.0 if cfg.target == "sitl"
+                             and self.pad_contact_latched else 0.0)
+                    self._vehicle_command(
+                        VehicleCommand.VEHICLE_CMD_COMPONENT_ARM_DISARM,
+                        0.0, force)
                     self._send_ack(seq, "disarm_requested")
                 else:
                     # PX4 refuses to disarm in flight, and it is right to. End

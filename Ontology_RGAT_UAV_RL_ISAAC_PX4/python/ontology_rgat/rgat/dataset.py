@@ -10,10 +10,11 @@ from ..config import Config
 from ..env import run_episode
 from ..expert import PolicySpec
 
-__all__ = ["generate_dataset", "save_dataset", "load_dataset"]
+__all__ = ["generate_dataset", "merge_datasets", "save_dataset", "load_dataset"]
 
 
-def generate_dataset(cfg: Config, *, monitor=None, episode_monitor=None) -> dict[str, Any]:
+def generate_dataset(cfg: Config, *, monitor=None, episode_monitor=None,
+                     episode_offset: int = 0, checkpoint=None) -> dict[str, Any]:
     """Fly perturbed expert episodes and label every sampled graph.
 
     The label is the episode's outcome discounted back to the sample, so the
@@ -28,7 +29,10 @@ def generate_dataset(cfg: Config, *, monitor=None, episode_monitor=None) -> dict
     """
     episodes = int(cfg.rgat.data_episodes)
     print(f"Generating {episodes} external behavior episodes...")
-    rng = np.random.default_rng(cfg.seed + 404)
+    # Continue the severity stream across executions as well as the episode
+    # seeds.  Otherwise every appended batch would replay the same disturbance
+    # schedule even though its episode identifiers were cumulative.
+    rng = np.random.default_rng(cfg.seed + 404 + int(episode_offset))
     lo, hi = (float(v) for v in cfg.rgat.noise_range)
 
     features: list[np.ndarray] = []
@@ -36,7 +40,8 @@ def generate_dataset(cfg: Config, *, monitor=None, episode_monitor=None) -> dict
     meta: list[tuple[int, int, float, float]] = []
     template = None
 
-    for episode in range(1, episodes + 1):
+    for local_episode in range(1, episodes + 1):
+        episode = int(episode_offset) + local_episode
         severity = float(np.exp(np.log(lo) + (np.log(hi) - np.log(lo)) * rng.random()))
         policy = PolicySpec("expert_noisy", noise_std=severity, deterministic=False,
                             rng=np.random.default_rng(cfg.seed + 5000 + episode))
@@ -57,7 +62,15 @@ def generate_dataset(cfg: Config, *, monitor=None, episode_monitor=None) -> dict
             template = log.graph_template
         if monitor is not None:
             monitor.update(episode, log.metrics["success"], severity, count)
-        print(f"  ep {episode:3d}/{episodes} | success={int(log.metrics['success'])} | "
+        if checkpoint is not None:
+            checkpoint({
+                "X": np.asarray(features, dtype=np.float32),
+                "y": np.asarray(labels, dtype=np.float32),
+                "meta": np.asarray(meta, dtype=np.float64),
+                "graph": template,
+            })
+        print(f"  ep {local_episode:3d}/{episodes} (cumulative {episode}) | "
+              f"success={int(log.metrics['success'])} | "
               f"noise={severity:.2f} | samples={count}")
 
     if monitor is not None:
@@ -71,15 +84,42 @@ def generate_dataset(cfg: Config, *, monitor=None, episode_monitor=None) -> dict
             "graph": template}
 
 
+def merge_datasets(previous: dict[str, Any] | None,
+                   current: dict[str, Any]) -> dict[str, Any]:
+    """Append a compatible rollout batch to the cumulative ontology dataset."""
+    if previous is None:
+        return current
+    old_x = np.asarray(previous["X"], dtype=np.float32)
+    new_x = np.asarray(current["X"], dtype=np.float32)
+    if old_x.ndim != 3 or new_x.ndim != 3 or old_x.shape[1:] != new_x.shape[1:]:
+        raise ValueError(
+            f"cannot resume R-GAT dataset: old feature shape {old_x.shape} and "
+            f"new feature shape {new_x.shape} are incompatible")
+    return {
+        "X": np.concatenate((old_x, new_x), axis=0),
+        "y": np.concatenate((np.asarray(previous["y"], dtype=np.float32),
+                              np.asarray(current["y"], dtype=np.float32))),
+        "meta": np.concatenate((np.asarray(previous["meta"], dtype=np.float64),
+                                 np.asarray(current["meta"], dtype=np.float64)), axis=0),
+        "graph": current.get("graph") or previous["graph"],
+    }
+
+
 def save_dataset(dataset: dict[str, Any], path: str | Path) -> Path:
     """Write the arrays as ``.npz`` plus the graph template beside them."""
     import pickle
 
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    np.savez_compressed(path, X=dataset["X"], y=dataset["y"], meta=dataset["meta"])
-    with path.with_suffix(".graph.pkl").open("wb") as handle:
+    archive_tmp = path.with_suffix(path.suffix + ".tmp")
+    with archive_tmp.open("wb") as handle:
+        np.savez_compressed(handle, X=dataset["X"], y=dataset["y"], meta=dataset["meta"])
+    archive_tmp.replace(path)
+    graph_path = path.with_suffix(".graph.pkl")
+    graph_tmp = graph_path.with_suffix(graph_path.suffix + ".tmp")
+    with graph_tmp.open("wb") as handle:
         pickle.dump(dataset["graph"], handle)
+    graph_tmp.replace(graph_path)
     return path
 
 

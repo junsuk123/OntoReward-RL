@@ -11,7 +11,8 @@ from ..config import Config
 from ..env import run_episode
 from ..expert import PolicySpec
 
-__all__ = ["evaluate_policy", "compare_policies", "write_table", "METRIC_FIELDS"]
+__all__ = ["evaluate_policy", "compare_policies", "write_table", "wilson_interval",
+           "METRIC_FIELDS"]
 
 # Reported name -> field in EpisodeLog.metrics. Beyond the fixed-pad metrics
 # this carries horizontal touchdown speed relative to the moving deck, the deck
@@ -27,6 +28,17 @@ METRIC_FIELDS = (
 )
 RATE_METRICS = {"Success", "Unsafe", "Timeout", "Depleted"}
 LABELS = ("Manual", "Ontology-RGAT")
+
+
+def wilson_interval(successes: int, total: int, z: float = 1.96) -> tuple[float, float]:
+    """Binomial confidence interval that remains meaningful near 0% and 100%."""
+    if total <= 0:
+        return 0.0, 1.0
+    p = float(successes) / float(total)
+    denominator = 1.0 + z * z / total
+    centre = (p + z * z / (2.0 * total)) / denominator
+    radius = z * np.sqrt(p * (1.0 - p) / total + z * z / (4.0 * total * total))
+    return float(centre - radius / denominator), float(centre + radius / denominator)
 
 
 def write_table(rows: Sequence[dict[str, Any]], path: str | Path) -> Path:
@@ -109,6 +121,11 @@ def compare_policies(baseline_agent, proposed_agent, potential, cfg: Config, *,
             key = f"{name}Rate" if name in RATE_METRICS else f"Mean{name}"
             row[key] = float(values[label][:, index].mean())
         row["Episodes"] = int(values[label].shape[0])
+        successes = int(np.count_nonzero(values[label][:, 0] > 0.5))
+        low, high = wilson_interval(successes, row["Episodes"])
+        row["SuccessCount"] = successes
+        row["SuccessCI95Low"] = low
+        row["SuccessCI95High"] = high
         summary.append(row)
 
     # Paired differences, proposed minus manual, with a normal-approximation

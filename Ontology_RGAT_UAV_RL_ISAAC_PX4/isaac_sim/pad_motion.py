@@ -16,12 +16,10 @@ exact rather than finite-differenced. Heading is integrated under a rate limit,
 because a real deck steers rather than snapping to its velocity, and because
 every closed-form profile has cusps where the velocity direction reverses.
 
-``road`` is the mode the urban experiment runs: a lorry driving a lap of the
-city block, in lane, through traffic. It is built as a rounded rectangle
-parameterised by arc length, so the route is exactly the road drawn in
-``urban_scene.UrbanScene`` and both the position and the velocity stay closed
-form through the corners. The three older profiles are kept because ``static``
-is the fixed-pad control condition the earlier results were measured against.
+``road`` is the mode the generated urban experiment runs: a lorry driving a
+rounded-rectangle lap. ``waypoints`` follows a surveyed 3-D polyline and
+reverses smoothly at its ends, for imported worlds whose road is neither flat
+nor a loop. Both modes report an analytic velocity.
 """
 
 from __future__ import annotations
@@ -35,12 +33,14 @@ import numpy as np
 
 _erf = np.vectorize(math.erf)
 
-MODES = ("static", "constant", "circular", "lissajous", "road")
+MODES = ("static", "constant", "circular", "lissajous", "road", "waypoints")
+CARRIERS = ("lorry", "ugv")
 
 
 @dataclass(frozen=True)
 class PadMotionConfig:
     mode: str
+    carrier: str
     start_position_enu_m: tuple[float, float, float]
     deck_height_m: float
     deck_size_m: tuple[float, float]
@@ -59,6 +59,11 @@ class PadMotionConfig:
     # model obstructions the camera never sees.
     route_size_m: tuple[float, float]
     route_corner_radius_m: float
+    route_waypoints_enu_m: tuple[tuple[float, float, float], ...]
+    # Fixed-time acceleration/deceleration at each end of a waypoint shuttle.
+    # Tying the ramp to total route length made a campus-scale route need
+    # several minutes merely to become visibly mobile.
+    waypoint_ramp_s: float
     # Where on the lap an episode begins. 'continue' leaves the lorry where it
     # is and only reseeds how it drives from there; 'seeded' draws a fresh
     # point on the route, which makes the whole initial condition a function of
@@ -83,6 +88,9 @@ class PadMotionConfig:
         mode = str(pad.get("motion", "static")).lower()
         if mode not in MODES:
             raise ValueError(f"pad.motion must be one of {MODES}, got {mode!r}")
+        carrier = str(pad.get("carrier", "lorry")).lower()
+        if carrier not in CARRIERS:
+            raise ValueError(f"pad.carrier must be one of {CARRIERS}, got {carrier!r}")
         low, high = (float(v) for v in pad.get("speed_range_m_s", (0.0, 0.0)))
         if not 0.0 <= low <= high:
             raise ValueError("pad.speed_range_m_s must be non-negative and ordered")
@@ -95,6 +103,21 @@ class PadMotionConfig:
             "route_size_m", urban.get("block_size_m", (90.0, 60.0))))
         if len(route) != 2 or min(route) <= 0.0:
             raise ValueError("pad.route_size_m must be two positive lengths")
+        waypoints = tuple(
+            tuple(float(component) for component in point)
+            for point in pad.get("route_waypoints_enu_m", ())
+        )
+        if mode == "waypoints":
+            if len(waypoints) < 2 or any(len(point) != 3 for point in waypoints):
+                raise ValueError(
+                    "pad.route_waypoints_enu_m must contain at least two XYZ points"
+                )
+            if any(np.linalg.norm(np.subtract(a, b)) < 1e-6
+                   for a, b in zip(waypoints[:-1], waypoints[1:])):
+                raise ValueError("consecutive route waypoints must be distinct")
+        waypoint_ramp_s = float(pad.get("waypoint_ramp_s", 4.0))
+        if not math.isfinite(waypoint_ramp_s) or waypoint_ramp_s <= 0.0:
+            raise ValueError("pad.waypoint_ramp_s must be positive and finite")
         stops = tuple(float(v) for v in pad.get("stop_depth_range", (0.35, 1.0)))
         if len(stops) != 2 or not 0.0 <= stops[0] <= stops[1] <= 1.0:
             raise ValueError("pad.stop_depth_range must be ordered inside [0,1]")
@@ -125,6 +148,7 @@ class PadMotionConfig:
             raise ValueError("pad.stop_interval_s must be at least 4x pad.stop_sigma_s")
         return cls(
             mode=mode,
+            carrier=carrier,
             start_position_enu_m=start,
             deck_height_m=float(pad.get("deck_height_m", 0.0)),
             deck_size_m=tuple(float(v) for v in pad.get("deck_size_m", (1.3, 0.9))),
@@ -142,6 +166,8 @@ class PadMotionConfig:
             route_start=route_start,
             route_corner_radius_m=float(pad.get("route_corner_radius_m",
                                                 urban.get("corner_radius_m", 12.0))),
+            route_waypoints_enu_m=waypoints,
+            waypoint_ramp_s=waypoint_ramp_s,
             lane_centres_m=lanes,
             lane_wander_m=float(pad.get("lane_wander_m", 0.18)),
             lane_wander_hz=float(pad.get("lane_wander_hz", 0.09)),
@@ -218,6 +244,46 @@ def lorry_parts(deck_size_m, deck_height_m: float) -> tuple[LorryPart, ...]:
     return tuple(parts)
 
 
+def ugv_parts(deck_size_m, deck_height_m: float) -> tuple[LorryPart, ...]:
+    """Compact four-wheel carrier for narrow imported-world roads.
+
+    The marker deck remains the separate top collider built by
+    :class:`LandingDeck`; these parts provide the body and wheels underneath.
+    Dimensions are derived from the configured deck so the carrier cannot
+    protrude beyond the footprint used by route-clearance checks.
+    """
+    length, width = (float(v) for v in deck_size_m)
+    height = float(deck_height_m)
+    road_z = -height
+    wheel_r = min(0.22, 0.28 * height, 0.22 * width)
+    wheel_width = min(0.18, 0.18 * width)
+    body_bottom = road_z + 0.55 * wheel_r
+    body_top = -0.12
+    body_height = max(body_top - body_bottom, 0.15)
+    body_width = max(width - 2.0 * wheel_width, 0.55 * width)
+    parts = [
+        LorryPart(
+            "ugv_body", "box", (0.82 * length, body_width, body_height),
+            (0.0, 0.0, body_bottom + 0.5 * body_height),
+            (0.16, 0.23, 0.30), True,
+        ),
+        LorryPart(
+            "ugv_sensor_box", "box", (0.34 * length, 0.58 * body_width, 0.18),
+            (-0.12 * length, 0.0, -0.21), (0.30, 0.38, 0.44), False,
+        ),
+    ]
+    axle_x = 0.30 * length
+    for index, x in enumerate((-axle_x, axle_x)):
+        for side, tag in ((-1.0, "l"), (1.0, "r")):
+            parts.append(LorryPart(
+                f"ugv_wheel_{index}_{tag}", "wheel",
+                (2.0 * wheel_r, wheel_width, 2.0 * wheel_r),
+                (x, side * (0.5 * width - 0.5 * wheel_width), road_z + wheel_r),
+                (0.04, 0.04, 0.05),
+            ))
+    return tuple(parts)
+
+
 class RoadRoute:
     """The lap of the block, parameterised by arc length.
 
@@ -272,6 +338,33 @@ class RoadRoute:
         return np.array([-tangent[1], tangent[0]])
 
 
+class WaypointRoute:
+    """Arc-length parameterisation of an absolute 3-D waypoint polyline."""
+
+    def __init__(self, points):
+        self.points = np.asarray(points, dtype=float)
+        if (self.points.ndim != 2 or self.points.shape[0] < 2
+                or self.points.shape[1] != 3):
+            raise ValueError("waypoint route requires at least two XYZ points")
+        delta = np.diff(self.points, axis=0)
+        self.segment_lengths = np.linalg.norm(delta, axis=1)
+        if np.any(self.segment_lengths < 1e-6):
+            raise ValueError("waypoint route contains a zero-length segment")
+        self.tangents = delta / self.segment_lengths[:, None]
+        self.edges = np.cumsum(self.segment_lengths)
+        self.length = float(self.edges[-1])
+
+    def at(self, distance: float) -> tuple[np.ndarray, np.ndarray]:
+        s = float(np.clip(distance, 0.0, self.length))
+        index = min(int(np.searchsorted(self.edges, s, side="right")),
+                    len(self.segment_lengths) - 1)
+        start = 0.0 if index == 0 else float(self.edges[index - 1])
+        fraction = (s - start) / float(self.segment_lengths[index])
+        point = self.points[index] + fraction * (
+            self.points[index + 1] - self.points[index])
+        return point, self.tangents[index]
+
+
 class PadTrajectory:
     """Where the deck is, how fast, and which way it is pointing."""
 
@@ -286,6 +379,13 @@ class PadTrajectory:
         self._yaw_initialised = False
         self.route = RoadRoute(cfg.route_size_m[0], cfg.route_size_m[1],
                                cfg.route_corner_radius_m)
+        self.waypoint_route = (
+            WaypointRoute(cfg.route_waypoints_enu_m)
+            if cfg.route_waypoints_enu_m else None
+        )
+        # Seconds into the forward-and-reverse shuttle cycle.
+        self.waypoint_phase = 0.0
+        self._waypoint_tangent = np.array([1.0, 0.0, 0.0])
         # Road-mode episode draw: where on the lap the lorry starts, when the
         # traffic ahead of it stops, how hard, and when it changes lane.
         self.s0 = 0.0
@@ -307,6 +407,7 @@ class PadTrajectory:
         """
         rng = np.random.default_rng(int(seed) + 977)
         cfg = self.cfg
+        carried_waypoint = self._waypoint_progress(sim_time)
         # Where the lorry has got to so far -- along the road and across it --
         # read before the clock and the lane draw are overwritten.
         carried = self.arc_length(sim_time)
@@ -345,6 +446,11 @@ class PadTrajectory:
             float(rng.choice(others)) - self.lane_base
             if others and rng.random() < cfg.lane_change_probability else 0.0)
         seeded_phase = float(rng.uniform(0.0, 2.0 * math.pi))
+        if cfg.mode == "waypoints":
+            self.waypoint_phase = (
+                self._waypoint_phase_for(*carried_waypoint)
+                if cfg.route_start == "continue" and self._driven else 0.0
+            )
         if cfg.route_start == "continue" and self._driven:
             # Advance the phase by the time that has passed, so the wander picks
             # up exactly where it was rather than snapping back to its own t=0.
@@ -358,7 +464,10 @@ class PadTrajectory:
         self._driven = True
         self._yaw_initialised = False
         position, velocity = self.pose(sim_time)
-        self.yaw = self._velocity_heading(velocity, fallback=self.heading0)
+        fallback = self.heading0
+        if cfg.mode == "waypoints":
+            fallback = math.atan2(self._waypoint_tangent[1], self._waypoint_tangent[0])
+        self.yaw = self._velocity_heading(velocity, fallback=fallback)
         self._yaw_initialised = True
         return {
             "mode": cfg.mode,
@@ -461,6 +570,12 @@ class PadTrajectory:
                 # keeps the open-field profiles inside their circle would only
                 # be able to do harm here.
                 return position, np.array([velocity_xy[0], velocity_xy[1], 0.0])
+            elif cfg.mode == "waypoints":
+                point, tangent, speed = self._waypoint_pose(t)
+                position = np.asarray(point, dtype=float).copy()
+                position[2] += cfg.deck_height_m
+                self._waypoint_tangent = np.asarray(tangent, dtype=float)
+                return position, speed * self._waypoint_tangent
             elif cfg.mode == "lissajous":
                 ax, ay = cfg.lissajous_amplitude_m
                 fx, fy = cfg.lissajous_frequency_hz
@@ -486,6 +601,80 @@ class PadTrajectory:
             position[1] *= cfg.arena_radius_m / radial
             velocity = np.zeros(3)
         return position, velocity
+
+    def _waypoint_parameters(self) -> tuple[float, float, float]:
+        """Return ``(ramp, acceleration, one-way duration)``."""
+        if self.waypoint_route is None or self.speed <= 0.0:
+            return 0.0, 0.0, math.inf
+        length = self.waypoint_route.length
+        ramp = min(float(self.cfg.waypoint_ramp_s), 0.49 * length / self.speed)
+        acceleration = self.speed / ramp
+        leg_time = length / self.speed + ramp
+        return ramp, acceleration, leg_time
+
+    def _waypoint_forward(self, elapsed: float) -> tuple[float, float]:
+        """Distance and non-negative speed through one trapezoidal leg."""
+        if self.waypoint_route is None or self.speed <= 0.0:
+            return 0.0, 0.0
+        ramp, acceleration, leg_time = self._waypoint_parameters()
+        t = float(np.clip(elapsed, 0.0, leg_time))
+        distance_ramp = 0.5 * self.speed * ramp
+        if t < ramp:
+            return 0.5 * acceleration * t * t, acceleration * t
+        if t <= leg_time - ramp:
+            return distance_ramp + self.speed * (t - ramp), self.speed
+        remaining = leg_time - t
+        return (self.waypoint_route.length - 0.5 * acceleration * remaining * remaining,
+                acceleration * remaining)
+
+    def _waypoint_progress(self, sim_time: float) -> tuple[float, float]:
+        """Current route distance and direction, used to preserve reset pose."""
+        if self.waypoint_route is None or self.speed <= 0.0:
+            return 0.0, 1.0
+        _, _, leg_time = self._waypoint_parameters()
+        phase = (self.waypoint_phase + float(sim_time) - self.t0) % (2.0 * leg_time)
+        if phase <= leg_time:
+            distance, _ = self._waypoint_forward(phase)
+            return distance, 1.0
+        distance_from_end, _ = self._waypoint_forward(phase - leg_time)
+        return self.waypoint_route.length - distance_from_end, -1.0
+
+    def _waypoint_phase_for(self, distance: float, direction: float) -> float:
+        """Invert the trapezoid after a reseed changes the cruise speed."""
+        if self.waypoint_route is None or self.speed <= 0.0:
+            return 0.0
+        ramp, acceleration, leg_time = self._waypoint_parameters()
+        length = self.waypoint_route.length
+        d = float(np.clip(distance if direction >= 0.0 else length - distance,
+                          0.0, length))
+        distance_ramp = 0.5 * self.speed * ramp
+        if d < distance_ramp:
+            elapsed = math.sqrt(2.0 * d / acceleration)
+        elif d <= length - distance_ramp:
+            elapsed = ramp + (d - distance_ramp) / self.speed
+        else:
+            elapsed = leg_time - math.sqrt(2.0 * (length - d) / acceleration)
+        return elapsed if direction >= 0.0 else leg_time + elapsed
+
+    def _waypoint_pose(self, t: float) -> tuple[np.ndarray, np.ndarray, float]:
+        """Position, forward tangent and signed speed on a smooth shuttle.
+
+        A fixed-time trapezoidal profile eases the carrier at both ends. On the
+        return leg the signed speed is negative while the forward tangent is
+        retained, so a UGV reverses instead of attempting a narrow-road U-turn.
+        """
+        if self.waypoint_route is None:
+            raise RuntimeError("waypoints mode has no route")
+        _, _, leg_time = self._waypoint_parameters()
+        phase = (self.waypoint_phase + float(t)) % (2.0 * leg_time)
+        if phase <= leg_time:
+            distance, signed_speed = self._waypoint_forward(phase)
+        else:
+            distance_from_end, speed = self._waypoint_forward(phase - leg_time)
+            distance = self.waypoint_route.length - distance_from_end
+            signed_speed = -speed
+        point, tangent = self.waypoint_route.at(distance)
+        return point, tangent, signed_speed
 
     # ------------------------------------------------------------ road mode
     def _road_pose(self, t: float) -> tuple[np.ndarray, np.ndarray]:
@@ -555,7 +744,11 @@ class PadTrajectory:
         cfg = self.cfg
         if not cfg.heading_follows_velocity or cfg.is_static:
             return self.yaw, 0.0
-        target = self._velocity_heading(velocity, fallback=self.yaw)
+        if self.cfg.mode == "waypoints":
+            target = math.atan2(float(self._waypoint_tangent[1]),
+                                float(self._waypoint_tangent[0]))
+        else:
+            target = self._velocity_heading(velocity, fallback=self.yaw)
         error = math.atan2(math.sin(target - self.yaw), math.cos(target - self.yaw))
         if dt <= 0.0:
             return self.yaw, 0.0

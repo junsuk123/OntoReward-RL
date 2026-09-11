@@ -77,6 +77,8 @@ def _autocast(device: torch.device, precision: str):
 
 def train_potential(dataset: dict[str, Any], cfg: Config, *,
                     graph: OntologyGraph | None = None,
+                    initial_model: RGATPotential | None = None,
+                    initial_history: dict[str, Any] | None = None,
                     on_epoch: Callable[[int, TrainHistory, np.ndarray, np.ndarray,
                                         RGATPotential], None] | None = None,
                     verbose: bool = True) -> tuple[RGATPotential, TrainHistory]:
@@ -105,7 +107,8 @@ def train_potential(dataset: dict[str, Any], cfg: Config, *,
         print(f"R-GAT training on {'the GPU' if device.type == 'cuda' else 'the CPU'}"
               f" ({device.type}): {why}.")
 
-    model = build_potential(cfg, graph, device=device)
+    model = (initial_model.to(device) if initial_model is not None
+             else build_potential(cfg, graph, device=device))
     forward = model
     if cfg.device.compile and device.type == "cuda":
         try:
@@ -127,11 +130,23 @@ def train_potential(dataset: dict[str, Any], cfg: Config, *,
 
     optimizer = torch.optim.Adam(model.parameters(), lr=float(cfg.rgat.lr),
                                  betas=(0.9, 0.999), eps=1e-8)
+    optimizer_state = getattr(model, "_optimizer_state", None)
+    if optimizer_state:
+        optimizer.load_state_dict(optimizer_state)
+        for values in optimizer.state.values():
+            for key, value in values.items():
+                if isinstance(value, torch.Tensor):
+                    values[key] = value.to(device)
     precision = str(cfg.device.rgat_precision)
-    history = TrainHistory(train_loss=[], val_loss=[], epoch_seconds=[],
-                           device=device.type, device_reason=why,
-                           samples=int(n), train_samples=int(train_idx.numel()),
-                           val_samples=int(val_idx.numel()))
+    previous = dict(initial_history or {})
+    history = TrainHistory(
+        train_loss=list(previous.get("train_loss", [])),
+        val_loss=list(previous.get("val_loss", [])),
+        epoch_seconds=list(previous.get("epoch_seconds", [])),
+        device=device.type, device_reason=why,
+        samples=int(n), train_samples=int(train_idx.numel()),
+        val_samples=int(val_idx.numel()))
+    completed_epochs = len(history["train_loss"])
 
     for epoch in range(1, int(cfg.rgat.epochs) + 1):
         started = time.perf_counter()
@@ -168,13 +183,16 @@ def train_potential(dataset: dict[str, Any], cfg: Config, *,
         history["train_loss"].append(train_loss)
         history["val_loss"].append(val_loss)
         history["epoch_seconds"].append(elapsed)
+        model._optimizer_state = optimizer.state_dict()
+        cumulative_epoch = completed_epochs + epoch
         if on_epoch is not None:
             # The live model goes with the losses: the attention read-out is
             # only interesting while it is still moving.
-            on_epoch(epoch, history, val_target.cpu().numpy(),
+            on_epoch(cumulative_epoch, history, val_target.cpu().numpy(),
                      val_pred.cpu().numpy(), model)
         if verbose:
-            print(f"R-GAT epoch {epoch:3d}/{cfg.rgat.epochs} | "
+            print(f"R-GAT epoch {cumulative_epoch:3d} "
+                  f"(+{epoch}/{cfg.rgat.epochs} this run) | "
                   f"train {train_loss:.4f} | val {val_loss:.4f} | {elapsed:.2f} s")
 
     return model.float().cpu(), history

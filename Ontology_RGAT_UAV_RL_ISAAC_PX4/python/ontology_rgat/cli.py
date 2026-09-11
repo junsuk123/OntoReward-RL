@@ -38,6 +38,9 @@ def base_parser(description: str) -> argparse.ArgumentParser:
                         help="quick is for smoke tests and iteration; full is the "
                              "paper-scale sweep")
     parser.add_argument("--target", default="sitl", choices=("sitl", "hardware"))
+    parser.add_argument(
+        "--system-config", default=None,
+        help="simulator/gateway YAML; defaults to config/system.yaml")
     parser.add_argument("--seed", type=int, default=None)
     parser.add_argument("--rgat-device", default=None, choices=("auto", "cuda", "cpu"),
                         help="override cfg.device.rgat")
@@ -55,6 +58,11 @@ def base_parser(description: str) -> argparse.ArgumentParser:
 
 def config_from_args(args: argparse.Namespace) -> Config:
     cfg = default_config(args.mode, args.target)
+    if getattr(args, "system_config", None):
+        config_path = Path(args.system_config).expanduser().resolve()
+        if not config_path.is_file():
+            raise ValueError(f"system configuration does not exist: {config_path}")
+        cfg.paths.system_yaml = str(config_path)
     if args.seed is not None:
         cfg.seed = int(args.seed)
     if args.rgat_device:

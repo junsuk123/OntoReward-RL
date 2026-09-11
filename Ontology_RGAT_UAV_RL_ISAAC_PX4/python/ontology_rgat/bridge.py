@@ -375,11 +375,24 @@ class PX4Bridge:
 
     def stop_after_outcome(self, timeout: float | None = None) -> bool:
         """Stop control and confirm PX4 has landed before the next reset."""
+        # A moving deck's physical contact latch is the authoritative landing
+        # signal.  Keep it before disabling offboard: after the forced disarm,
+        # PX4 lockstep can stop producing odometry before a newer
+        # ``armed=false`` sample reaches the gateway.  Requiring that newer
+        # sample downgraded a physically confirmed, safely disarmed landing to
+        # ``unconfirmed_success`` even though PX4 logged the disarm.
+        extra = ((self.last_state or {}).get("extra") or {})
+        contact_confirmed = bool(
+            (self.last_state or {}).get("landed", False)
+            and extra.get("pad_contact", False)
+            and extra.get("land_detector_authoritative", False))
         try:
             self.disable_offboard()
         except BridgeError:
             pass
         self.disarm()
+        if contact_confirmed:
+            return True
         deadline = time.monotonic() + float(
             timeout if timeout is not None else self.cfg.outcome_settle_timeout)
         while time.monotonic() < deadline:

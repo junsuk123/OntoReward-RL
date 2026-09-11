@@ -348,6 +348,7 @@ def default_config(mode: str = "quick", target: str = "sitl") -> Config:
             "pad_frame": "landing_pad",
             "body_frame": "uav_body",
             "trail_length": 900,
+            "publish_rate_hz": 10.0,      # visual traffic; the controller remains 50 Hz
             "publish_ontology_graph": True,
             "graph_origin_pad_m": [0.0, -2.6, 1.6],
             "graph_scale_m": 0.42,

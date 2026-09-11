@@ -36,8 +36,8 @@ truth. Semantic state remains reward-side in the primary experiment.
 ## Directly reproduced from the paper
 
 - Initial altitude 2–8 m, lateral offsets −3–3 m, yaw misalignment −60–60°,
-  platform speed 0–8 m/s, initial yaw rate 0°/s, per-step speed perturbation
-  −0.5–0.5 m/s, and yaw-rate perturbation −3–3°/s (Table I).
+  initial yaw rate 0°/s, and the per-step speed/yaw-rate perturbation interfaces
+  from Table I. The road-safe speed override is documented below.
 - 512×320 grayscale camera, 90° horizontal FOV, 60° downward pitch; actor
   proprioception is three body-velocity and four quaternion values.
 - Six-keypoint interface, 512-dimensional image embedding, 512-dimensional
@@ -67,7 +67,14 @@ truth. Semantic state remains reward-side in the primary experiment.
 - No official PACMAN-compatible code and weights are bundled. The included
   six-keypoint CNN is an independently implemented approximation and is never
   labeled PACMAN. The current simulated board is also an ArUco approximation,
-  not Park et al.'s exact hexagonal target.
+  not Park et al.'s exact hexagonal target. The S5 road profile uses
+  `DICT_4X4_100`: four 0.32 m approach tags, four 0.12 m transition tags and
+  37 0.04 m touchdown tags covering the 0.35 m success disk.
+- The paper's Table-I platform range is 0–8 m/s. The default Sejong S5
+  visualization/empirical profile is deliberately limited to a 0.5–1.2 m/s
+  draw and a 2.0 m/s carrier ceiling so the RANGER MINI follows the curved
+  campus road at a realistic low speed. This override is shared by every
+  reward arm and must be reported with results; it is not an 8 m/s claim.
 - Camera frame rate is 30 Hz because the paper does not report it.
 - PPO discount, learning rates, minibatch sizes, decision-head widths,
   training length, and checkpoint rule are not specified in the paper and must

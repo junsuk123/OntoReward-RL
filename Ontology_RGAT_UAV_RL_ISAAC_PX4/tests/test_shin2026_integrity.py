@@ -2,6 +2,7 @@ import math
 from pathlib import Path
 import sys
 import json
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -14,6 +15,7 @@ from pad_motion import PadMotionConfig, PadTrajectory  # noqa: E402
 from ontology_rgat_px4.protocol import ProtocolError, validate_velocity_action
 
 from ontology_rgat.benchmarks.experiment import paired_seed_plan
+from ontology_rgat.benchmarks.live_env import LiveShinEnvironment
 from ontology_rgat.benchmarks.px4_adapter import (actor_observation_from_state,
                                                   critic_observation_from_state)
 from ontology_rgat.benchmarks.randomization import (sample_domain_randomization,
@@ -121,6 +123,43 @@ def test_reward_mode_does_not_change_trajectory_seed():
     a = sample_initial_condition(7)
     b = sample_initial_condition(7)
     np.testing.assert_array_equal(a["relative_position_m"], b["relative_position_m"])
+
+
+def test_airborne_terminal_is_staged_in_hover_instead_of_auto_land():
+    """A tilt failure can be terminal while the airframe is still flying."""
+    calls = []
+    bridge = SimpleNamespace(
+        last_state={"landed": False, "extra": {"pad_contact": False}},
+        hold_for_next_airborne_reset=lambda: calls.append("hold"),
+        stop_after_outcome=lambda: calls.append("stop"),
+        land_and_wait=lambda: calls.append("land"),
+    )
+    env = LiveShinEnvironment.__new__(LiveShinEnvironment)
+    env.bridge = bridge
+    env.cfg = SimpleNamespace(external={"start_airborne": True})
+    env.last_step = SimpleNamespace(crash=True)
+
+    env.finish_episode()
+
+    assert calls == ["hold"]
+
+
+def test_ground_contact_is_stopped_before_the_next_airborne_episode():
+    calls = []
+    bridge = SimpleNamespace(
+        last_state={"landed": True, "extra": {"pad_contact": False}},
+        hold_for_next_airborne_reset=lambda: calls.append("hold"),
+        stop_after_outcome=lambda: calls.append("stop"),
+        land_and_wait=lambda: calls.append("land"),
+    )
+    env = LiveShinEnvironment.__new__(LiveShinEnvironment)
+    env.bridge = bridge
+    env.cfg = SimpleNamespace(external={"start_airborne": True})
+    env.last_step = SimpleNamespace(crash=True)
+
+    env.finish_episode()
+
+    assert calls == ["stop"]
 
 
 def test_pbrs_gamma_equals_ppo_gamma_and_terminal_potential_is_zero():

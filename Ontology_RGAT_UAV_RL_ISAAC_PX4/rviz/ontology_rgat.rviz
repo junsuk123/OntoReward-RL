@@ -74,10 +74,10 @@ Visualization Manager:
         landing_outcome: true
         scene: true
       Topic:
-        Depth: 5
+        Depth: 1
         Durability Policy: Volatile
         History Policy: Keep Last
-        Reliability Policy: Reliable
+        Reliability Policy: Best Effort
         Value: /landing_rl/scene
       Value: true
     - Class: rviz_default_plugins/MarkerArray
@@ -88,10 +88,10 @@ Visualization Manager:
         ontology_label: true
         ontology_node: true
       Topic:
-        Depth: 5
+        Depth: 1
         Durability Policy: Volatile
         History Policy: Keep Last
-        Reliability Policy: Reliable
+        Reliability Policy: Best Effort
         Value: /landing_rl/ontology
       Value: true
     - Alpha: 1
@@ -115,11 +115,11 @@ Visualization Manager:
       Shaft Diameter: 0.10000000149011612
       Shaft Length: 0.10000000149011612
       Topic:
-        Depth: 5
+        Depth: 1
         Durability Policy: Volatile
         Filter size: 10
         History Policy: Keep Last
-        Reliability Policy: Reliable
+        Reliability Policy: Best Effort
         Value: /landing_rl/uav_path
       Value: true
     - Alpha: 1
@@ -132,7 +132,7 @@ Visualization Manager:
       Length: 0.30000001192092896
       Line Style: Lines
       Line Width: 0.019999999552965164
-      Name: Deck track (world frame)
+      Name: Deck track (pad-relative)
       Offset:
         X: 0
         Y: 0
@@ -143,11 +143,11 @@ Visualization Manager:
       Shaft Diameter: 0.10000000149011612
       Shaft Length: 0.10000000149011612
       Topic:
-        Depth: 5
+        Depth: 1
         Durability Policy: Volatile
         Filter size: 10
         History Policy: Keep Last
-        Reliability Policy: Reliable
+        Reliability Policy: Best Effort
         Value: /landing_rl/pad_path
       Value: true
     - Angle Tolerance: 0.10000000149011612
@@ -182,11 +182,11 @@ Visualization Manager:
         Shaft Radius: 0.05000000074505806
         Value: Arrow
       Topic:
-        Depth: 5
+        Depth: 1
         Durability Policy: Volatile
         Filter size: 10
         History Policy: Keep Last
-        Reliability Policy: Reliable
+        Reliability Policy: Best Effort
         Value: /landing_pad/state/odom
       Value: true
     - Alpha: 1
@@ -202,11 +202,11 @@ Visualization Manager:
       Shaft Radius: 0.05000000074505806
       Shape: Axes
       Topic:
-        Depth: 5
+        Depth: 1
         Durability Policy: Volatile
         Filter size: 10
         History Policy: Keep Last
-        Reliability Policy: Reliable
+        Reliability Policy: Best Effort
         Value: /landing_uav0/perception/uav_pose_in_pad
       Value: true
     - Class: rviz_default_plugins/Image
@@ -217,16 +217,16 @@ Visualization Manager:
       Name: Landing camera (annotated detection)
       Normalize Range: false
       Topic:
-        Depth: 5
+        Depth: 1
         Durability Policy: Volatile
         History Policy: Keep Last
-        Reliability Policy: Reliable
+        Reliability Policy: Best Effort
         Value: /landing_uav0/perception/landing_camera/annotated
       Value: true
   Enabled: true
   Global Options:
     Background Color: 48; 48; 48
-    Fixed Frame: landing_pad
+    Fixed Frame: map
     Frame Rate: 30
   Name: root
   Tools:
@@ -257,7 +257,7 @@ Visualization Manager:
       Name: Current View
       Near Clip Distance: 0.009999999776482582
       Pitch: 0.41999998688697815
-      Target Frame: <Fixed Frame>
+      Target Frame: landing_pad
       Value: Orbit (rviz_default_plugins)
       Yaw: 2.3499999046325684
     Saved:
@@ -278,7 +278,7 @@ Visualization Manager:
         Name: Ontology graph
         Near Clip Distance: 0.009999999776482582
         Pitch: 0.05000000074505806
-        Target Frame: <Fixed Frame>
+        Target Frame: landing_pad
         Value: Orbit (rviz_default_plugins)
         Yaw: 3.141590118408203
       - Class: rviz_default_plugins/Orbit
@@ -298,7 +298,7 @@ Visualization Manager:
         Name: Touchdown close-up
         Near Clip Distance: 0.009999999776482582
         Pitch: 0.25
-        Target Frame: <Fixed Frame>
+        Target Frame: landing_pad
         Value: Orbit (rviz_default_plugins)
         Yaw: 2.3499999046325684
 Window Geometry:

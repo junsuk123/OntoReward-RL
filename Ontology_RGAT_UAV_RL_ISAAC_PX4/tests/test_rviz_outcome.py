@@ -1,9 +1,13 @@
 from types import SimpleNamespace
+from pathlib import Path
 
 import numpy as np
 
 from ontology_rgat.viz.rviz import _outcome_style
 from ontology_rgat.viz.rviz import RvizPublisher
+
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_rviz_outcome_colours_are_unambiguous():
@@ -19,6 +23,15 @@ def test_rviz_outcome_colours_are_unambiguous():
     assert timeout == "LANDING FAILED" and timeout_red == red
     assert uncertain == "RESULT UNCONFIRMED"
     assert amber[0] > amber[1] > amber[2]
+
+
+def test_rviz_keeps_map_fixed_and_follows_the_landing_pad():
+    profile = (ROOT / "rviz" / "ontology_rgat.rviz").read_text(encoding="utf-8")
+    assert "Fixed Frame: map" in profile
+    assert profile.count("Target Frame: landing_pad") == 3
+    assert "Name: Deck track (pad-relative)" in profile
+    assert profile.count("Depth: 1") == 7
+    assert profile.count("Reliability Policy: Best Effort") == 7
 
 
 class _Message:

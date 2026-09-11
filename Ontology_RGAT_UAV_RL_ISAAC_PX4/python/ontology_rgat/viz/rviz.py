@@ -100,7 +100,10 @@ class RvizPublisher:
         self.node = node
         self.m = modules
         ns = str(self.opt.namespace).rstrip("/")
-        qos = 10
+        # RViz is an operator display, not an experiment data path. Keep only
+        # the newest frame so a busy GPU/UI cannot accumulate seconds of old
+        # paths and then reject them after the TF cache has moved on.
+        qos = modules.get("viz_qos", 10)
         self.uav_path_pub = node.create_publisher(modules["Path"], ns + "/uav_path", qos)
         self.pad_path_pub = node.create_publisher(modules["Path"], ns + "/pad_path", qos)
         self.scene_pub = node.create_publisher(modules["MarkerArray"], ns + "/scene", qos)
@@ -128,6 +131,8 @@ class RvizPublisher:
             from visualization_msgs.msg import Marker, MarkerArray
             from tf2_ros import TransformBroadcaster
             from geometry_msgs.msg import PoseStamped
+            from rclpy.qos import (DurabilityPolicy, HistoryPolicy, QoSProfile,
+                                   ReliabilityPolicy)
         except Exception as exc:                       # pragma: no cover - env dependent
             print(f"RViz 2 publishing disabled: ROS 2 is not importable ({exc}).")
             return None
@@ -138,11 +143,15 @@ class RvizPublisher:
         except Exception as exc:                       # pragma: no cover - env dependent
             print(f"RViz 2 publishing disabled: cannot create a node ({exc}).")
             return None
+        viz_qos = QoSProfile(
+            history=HistoryPolicy.KEEP_LAST, depth=1,
+            reliability=ReliabilityPolicy.BEST_EFFORT,
+            durability=DurabilityPolicy.VOLATILE)
         publisher = cls(cfg, node, {
             "rclpy": rclpy, "Point": Point, "TransformStamped": TransformStamped,
             "Path": Path, "PoseStamped": PoseStamped, "String": String,
             "Marker": Marker, "MarkerArray": MarkerArray,
-            "TransformBroadcaster": TransformBroadcaster})
+            "TransformBroadcaster": TransformBroadcaster, "viz_qos": viz_qos})
         publisher.potential = potential
         print(f"RViz 2 topics live under {cfg.viz.rviz.namespace}.")
         return publisher
@@ -463,6 +472,10 @@ class RvizPublisher:
         RViz still needs the physical flight, paths and operator status, all of
         which are already present in the gateway state returned after a step.
         """
+        publish_rate = max(float(getattr(self.opt, "publish_rate_hz", 10.0)), 0.1)
+        period = max(1, int(round(1.0 / max(float(dt) * publish_rate, 1e-9))))
+        if int(step) % period and str(status) == "running":
+            return
         pad = state.get("pad") if isinstance(state.get("pad"), dict) else {}
         truth = (state.get("truth")
                  if isinstance(state.get("truth"), dict) else {})

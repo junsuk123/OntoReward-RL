@@ -92,13 +92,14 @@ class LiveShinEnvironment:
                 if (self.bridge.last_state.get("landed", False)
                         or extra.get("pad_contact", False)):
                     self.bridge.stop_after_outcome()
-                elif self.last_step is not None and self.last_step.crash:
-                    # A ground/tilt crash is not an airborne staging state.
-                    # Complete PX4's landing/disarm before the next physical
-                    # hover; otherwise the following reset tries to hold a
-                    # grounded, failsafe-controlled vehicle in OFFBOARD.
-                    self.bridge.land_and_wait()
                 elif bool(self.cfg.external.get("start_airborne", False)):
+                    # A tilt threshold can terminate the measured episode while
+                    # the vehicle is still physically airborne. Sending that
+                    # case to AUTO.LAND left PX4 descending through the next
+                    # reset and eventually made every arm request fail. PX4's
+                    # position controller can recover the attitude in flight;
+                    # stage it at a bounded hover and only use the landed branch
+                    # above after genuine ground/deck contact.
                     self.bridge.hold_for_next_airborne_reset()
                 else:
                     self.bridge.land_and_wait()

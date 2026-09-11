@@ -108,7 +108,11 @@ class RvizPublisher:
         self.pad_path_pub = node.create_publisher(modules["Path"], ns + "/pad_path", qos)
         self.scene_pub = node.create_publisher(modules["MarkerArray"], ns + "/scene", qos)
         self.graph_pub = node.create_publisher(modules["MarkerArray"], ns + "/ontology", qos)
-        self.telemetry_pub = node.create_publisher(modules["String"], ns + "/telemetry", qos)
+        # The simulator-side ROS node also observes telemetry and requests a
+        # reliable endpoint. Keep this small JSON stream reliable; only the
+        # replaceable visual frames above use best-effort/depth-one QoS.
+        self.telemetry_pub = node.create_publisher(
+            modules["String"], ns + "/telemetry", 10)
         self.tf = modules["TransformBroadcaster"](node)
         self.potential = None
         self._uav_trail: list[tuple[float, float, float]] = []

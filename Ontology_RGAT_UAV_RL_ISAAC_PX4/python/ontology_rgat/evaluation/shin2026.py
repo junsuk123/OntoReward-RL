@@ -74,8 +74,14 @@ def paired_bootstrap(records: list[dict], baseline="shin2026", draws=10000,
                     and metric in index[(baseline, scenario, value)]], dtype=float)
                 if not differences.size:
                     continue
-                selections = rng.integers(0, differences.size, size=(draws, differences.size))
-                bootstrap = differences[selections].mean(axis=1)
+                # Full mode has 10,000 paired random-walk episodes. Allocating
+                # draws x pairs at once would require ~800 MB per metric.
+                bootstrap = np.empty(draws, dtype=float)
+                for start in range(0, draws, 256):
+                    stop = min(start + 256, draws)
+                    selections = rng.integers(
+                        0, differences.size, size=(stop - start, differences.size))
+                    bootstrap[start:stop] = differences[selections].mean(axis=1)
                 output.append({
                     "baseline": baseline, "method": method, "scenario": scenario,
                     "metric": metric, "pairs": int(differences.size),

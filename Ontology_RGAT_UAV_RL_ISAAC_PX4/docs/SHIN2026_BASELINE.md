@@ -93,23 +93,30 @@ legacy wind/energy/GNSS ontology remains a separate extended experiment.
 only an immutable `controlled_landing` artifact with explicit
 `rgat_distillation` provenance.
 
-## Implementation status and remaining execution work
+## One-command execution and implementation status
 
-The repository currently supplies and tests the benchmark contracts, raw-image
-transport, recurrent actor/estimator/asymmetric critic, PPO objective, reward
-modes, velocity command path, exact reset/random-walk distributions, curriculum
-state, paired plans, statistics, and report generation. The CPU smoke mode
-executes forward, loss, backward, and optimizer steps for the shared recurrent
-backbone.
+The live pipeline starts or adopts DDS, Isaac Sim, Pegasus/PX4, and the ROS
+gateway; prepares and freezes a controlled R-GAT reward artifact when missing;
+trains every requested reward arm through the same recurrent PPO loop; runs the
+paired evaluation plan; and produces checkpoints, per-episode data, confidence
+intervals, tables, and figures:
 
-It does **not** yet connect these components into a live Isaac/PX4 rollout and
-checkpoint-training loop. Table-II samples are implemented deterministically,
-but controller-gain, force/torque, and appearance samples are not yet applied
-to PX4/Isaac at episode reset. The scenario-specific trajectory generators for
-linear-acceleration wave, zigzag, U-turn, and vertical heave are also not yet
-wired. Consequently, the supplied CLI plans paired runs and summarizes genuine
-episode records; it does not claim to have trained policies or flown the paper's
-evaluation suite. These are blocking items before publishing benchmark results.
+```bash
+./scripts/run_shin2026_benchmark.sh --mode quick --headless
+```
+
+Use `--mode full` for the configured publication-scale counts. This is a
+long-running real-time flight-stack experiment. `--use-running-stack` adopts a
+compatible active stack, and `--keep-stack` leaves a newly started stack alive.
+
+The R-GAT bootstrap dataset is an OntoReward design choice because Shin et al.
+do not define an ontology or its training set. Its artifact records provenance
+as `synthetic_table_i_semantic_bootstrap`; it is not presented as part of the
+Shin baseline. The paper names its six test maneuvers but does not publish their
+equations, so those generators are recorded as approximations. Table-II samples
+are deterministic, but controller-gain, force/torque, and visual-appearance
+application to PX4/Isaac remains incomplete. Resolve that limitation before
+claiming a complete Table-II or bit-exact reproduction.
 
 ## Reproducibility and outputs
 
@@ -134,7 +141,7 @@ python python/run_shin2026_benchmark.py --methods shin2026 ontoreward --mode ful
 python python/run_shin2026_benchmark.py --methods shin2026 ontoreward --mode full --paired-seeds --input-results results/shin2026/per_episode.csv
 ```
 
-The runner's smoke mode is not a simulator flight and its values must not be
-reported as benchmark results. Invoking it without `--smoke-test`,
-`--plan-only`, or `--input-results` currently writes the plan and explains that
-episode collection is still required.
+The utility runner's smoke mode is not a simulator flight and its values must
+not be reported as benchmark results. Use `run_shin2026_benchmark.sh` for live
+training and benchmarking; use `run_shin2026_benchmark.py` only for CPU smoke,
+planning, or re-analysis.

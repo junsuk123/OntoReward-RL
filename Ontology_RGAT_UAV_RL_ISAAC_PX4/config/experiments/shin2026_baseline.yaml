@@ -7,9 +7,24 @@ paper:
 camera: {resolution: [512, 320], grayscale: true, horizontal_fov_deg: 90, pitch_down_deg: 60}
 estimator: {image_embedding: 512, lstm_hidden: 512, latent_dimension: 256, output_dimension: 6}
 control: {dt_seconds: 0.1, horizon_steps: 300, action: velocity_yaw_rate}
-ppo: {gamma: 0.99, auxiliary_estimation_coefficient: 1.0, asymmetric_critic: true}
+ppo:
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip: 0.2
+  learning_rate: 0.0002
+  epochs: 5
+  sequence_length: 32
+  entropy_coef: 0.003
+  value_coef: 0.5
+  grad_clip: 5.0
+  auxiliary_estimation_coefficient: 1.0
+  asymmetric_critic: true
 curriculum: {enabled: true, levels: 80, update_every_episodes: 512}
 reward:
   terminal: {success: 10.0, failure: -10.0}
   active_perception: {enabled: true, alpha: 0.1, beta: 1.0, tau: 0.01}
-seeds: {training: [42, 43, 44, 45, 46], evaluation_start: 5000}
+seeds: {model_initialization: 42, training_start: 20000, evaluation_start: 5000}
+training:
+  # Not reported by Shin et al.; explicit benchmark choices.
+  episodes_quick: 8
+  episodes_full: 40960

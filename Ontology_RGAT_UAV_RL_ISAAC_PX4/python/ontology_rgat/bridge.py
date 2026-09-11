@@ -172,7 +172,7 @@ class PX4Bridge:
                     "action scaling matches the policy.")
 
     # ------------------------------------------------------------------ reset
-    def reset(self, seed: int) -> dict[str, Any]:
+    def reset(self, seed: int, scenario: str = "training_random_walk") -> dict[str, Any]:
         """Reseed the episode and hand back the first valid state.
 
         The entry pose is flown by PX4, never teleported: Pegasus cannot reset
@@ -185,7 +185,8 @@ class PX4Bridge:
         ack = self.transact("reset", {"seed": float(seed),
                                       "wind_scale": float(self.cfg.wind_scale),
                                       "pad_scale": float(self.cfg.pad_scale),
-                                      "gnss_scale": float(self.cfg.gnss_scale)},
+                                      "gnss_scale": float(self.cfg.gnss_scale),
+                                      "scenario": str(scenario)},
                             ("ack",))
         # Kept whether or not the entry pose is flown: it carries the seeded
         # entry offset and starting energy, which is what makes an episode
@@ -385,6 +386,21 @@ class PX4Bridge:
 
     def disarm(self) -> None:
         self.transact("disarm", {}, ("ack",))
+
+    def land_and_wait(self, timeout: float | None = None) -> bool:
+        """End an unfinished episode and wait until PX4 reports landed."""
+        self.disable_offboard()
+        # The gateway translates an in-air disarm request into NAV_LAND.
+        self.disarm()
+        deadline = time.monotonic() + float(
+            timeout if timeout is not None else self.cfg.outcome_settle_timeout)
+        while time.monotonic() < deadline:
+            state = self.get_state()
+            if bool(state.get("landed", False)):
+                self.disarm()
+                return True
+            time.sleep(0.05)
+        return False
 
     def stop_after_outcome(self, timeout: float | None = None) -> bool:
         """Stop control and confirm PX4 has landed before the next reset."""

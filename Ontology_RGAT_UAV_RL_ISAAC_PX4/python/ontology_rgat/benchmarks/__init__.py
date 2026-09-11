@@ -3,9 +3,10 @@
 from .shin2026 import (ActorObservation, CriticObservation, RewardSignals,
                        ShinBenchmarkConfig, assert_actor_payload_safe,
                        default_shin2026_config)
+from .live_env import LiveShinEnvironment, LiveStep
 
 __all__ = [
     "ActorObservation", "CriticObservation", "RewardSignals",
     "ShinBenchmarkConfig", "assert_actor_payload_safe",
-    "default_shin2026_config",
+    "default_shin2026_config", "LiveShinEnvironment", "LiveStep",
 ]

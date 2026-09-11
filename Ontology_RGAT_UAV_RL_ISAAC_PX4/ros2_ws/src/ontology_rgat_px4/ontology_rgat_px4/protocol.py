@@ -8,6 +8,10 @@ from typing import Any, Iterable
 
 
 MAX_DATAGRAM = 32_768
+BENCHMARK_SCENARIOS = {
+    "training_random_walk", "straight_8mps", "linear_acceleration_wave",
+    "circle", "zigzag", "u_turn", "vertical_heave_boat",
+}
 
 
 class ProtocolError(ValueError):

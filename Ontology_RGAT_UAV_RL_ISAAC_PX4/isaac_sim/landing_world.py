@@ -84,7 +84,8 @@ from marker_vision import (
     intrinsics_from_fov,
     texture_side_ratio,
 )
-from pad_motion import PadMotionConfig, PadTrajectory, lorry_parts, ugv_parts
+from pad_motion import (BENCHMARK_SCENARIOS, PadMotionConfig, PadTrajectory,
+                        lorry_parts, ugv_parts)
 from urban_scene import UrbanConfig, UrbanLayout, UrbanScene
 from gnss import GnssConfig, UrbanGnss
 from px4_gnss import UrbanGnssSensor
@@ -564,8 +565,9 @@ class LandingDeck:
             f"[landing-pad] loaded official {self.cfg.vehicle_model} visual: {asset}")
         return True
 
-    def reset(self, seed: int, sim_time: float, speed_scale: float = 1.0) -> dict:
-        info = self.trajectory.reset(seed, sim_time, speed_scale)
+    def reset(self, seed: int, sim_time: float, speed_scale: float = 1.0,
+              scenario: str = "training_random_walk") -> dict:
+        info = self.trajectory.reset(seed, sim_time, speed_scale, scenario)
         self.position, self.velocity = self.trajectory.pose(sim_time)
         self.yaw = float(info["yaw_rad"])
         self.yaw_rate = 0.0
@@ -1086,9 +1088,13 @@ class LandingWorld:
             gnss_scale = float(req.get("gnss_scale", 1.0))
             if not math.isfinite(gnss_scale) or not 0.0 <= gnss_scale <= 4.0:
                 raise ValueError("gnss_scale outside [0,4]")
+            scenario = str(req.get("scenario", "training_random_walk"))
+            if scenario not in BENCHMARK_SCENARIOS:
+                raise ValueError(f"unknown benchmark scenario {scenario!r}")
             self.pending_reset = {"seq": int(req["seq"]), "seed": int(req.get("seed", 0)),
                                   "wind_scale": scale, "pad_scale": pad_scale,
-                                  "gnss_scale": gnss_scale}
+                                  "gnss_scale": gnss_scale,
+                                  "scenario": scenario}
             self.startup_render_released = True
         except (ValueError, TypeError, KeyError, json.JSONDecodeError) as exc:
             carb.log_warn(f"Ignored malformed reset request: {exc}")
@@ -1152,7 +1158,8 @@ class LandingWorld:
         self.wind.reset(req["seed"], self.world.current_time, req["wind_scale"])
         self.wind_sensor.reset(req["seed"], self.world.current_time)
         deck = self.deck.reset(req["seed"], self.world.current_time,
-                               req.get("pad_scale", 1.0))
+                               req.get("pad_scale", 1.0),
+                               req.get("scenario", "training_random_walk"))
         entry_yaw_enu = (self.deck.yaw + math.radians(float(rpy_deg[2]))
                          if str(benchmark.get("profile", "")).lower() == "shin2026"
                          else math.radians(float(rpy_deg[2])))

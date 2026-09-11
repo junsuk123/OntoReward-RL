@@ -145,7 +145,8 @@ def main() -> int:
         "scenarios": scenarios, "planned_runs": len(plan),
         "paper_doi": "10.1109/LRA.2026.3674011",
         "claim": "methodological-interface reproduction; see docs/SHIN2026_BASELINE.md",
-        "execution_status": "planning/smoke/analysis only; live rollout trainer not wired",
+        "execution_status": ("utility mode: planning/smoke/analysis; "
+                             "use scripts/run_shin2026_benchmark.sh for live execution"),
     }
     (args.results_dir / "manifest.json").write_text(
         json.dumps(manifest, indent=2), encoding="utf-8")

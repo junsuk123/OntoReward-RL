@@ -19,6 +19,10 @@ estimation target, terminal scoring, and evaluation. All five reward modes use
 the same recurrent actor/critic and paired seed plan.
 
 ```bash
+# One command: stack startup, controlled R-GAT freeze, recurrent training,
+# paired scenario evaluation, CSV tables, confidence intervals, and plots.
+./scripts/run_shin2026_benchmark.sh --mode quick --headless
+
 # CPU-only contract smoke tests (not flight results)
 ./scripts/run_metasejong_pipeline.sh --experiment shin2026 --reward shin2026 --mode quick --smoke-test
 ./scripts/run_metasejong_pipeline.sh --experiment shin2026 --reward ontoreward --mode quick --smoke-test
@@ -33,11 +37,10 @@ The PACMAN encoder/target and the paper's geometric controller are not publicly
 bundled here. Their Isaac/PX4 substitutes are explicitly marked as
 approximations in [the benchmark protocol](docs/SHIN2026_BASELINE.md). The
 existing 23-channel cooperative urban experiment below remains unchanged and
-is not used for the primary controlled comparison. The current benchmark CLI
-validates/plans the controlled experiment and analyzes real episode records;
-the live recurrent rollout/training loop and remaining Table-II/scenario wiring
-are listed explicitly in that protocol and must be completed before reporting
-flight results.
+is not used for the primary controlled comparison. The live command checkpoints
+after each training episode and writes evaluation records incrementally. The
+protocol lists remaining simulator-randomization limitations that must be
+resolved before claiming a bit-exact reproduction.
 
 ## Data path
 

@@ -36,6 +36,10 @@ _erf = np.vectorize(math.erf)
 MODES = ("static", "constant", "circular", "lissajous", "road", "waypoints",
          "random_walk")
 CARRIERS = ("lorry", "ugv")
+BENCHMARK_SCENARIOS = (
+    "training_random_walk", "straight_8mps", "linear_acceleration_wave",
+    "circle", "zigzag", "u_turn", "vertical_heave_boat",
+)
 
 
 @dataclass(frozen=True)
@@ -456,8 +460,10 @@ class PadTrajectory:
         self._driven = False
         self.random_walk_position = np.zeros((1, 3))
         self.random_walk_velocity = np.zeros((1, 3))
+        self.benchmark_scenario = "training_random_walk"
 
-    def reset(self, seed: int, sim_time: float, speed_scale: float = 1.0) -> dict[str, Any]:
+    def reset(self, seed: int, sim_time: float, speed_scale: float = 1.0,
+              scenario: str = "training_random_walk") -> dict[str, Any]:
         """Draw this episode's deck motion from the episode seed.
 
         SPEED_SCALE multiplies the drawn speed, which is what an evaluation
@@ -467,6 +473,9 @@ class PadTrajectory:
         """
         rng = np.random.default_rng(int(seed) + 977)
         cfg = self.cfg
+        if scenario not in BENCHMARK_SCENARIOS:
+            raise ValueError(f"unknown benchmark platform scenario {scenario!r}")
+        self.benchmark_scenario = scenario
         carried_waypoint = self._waypoint_progress(sim_time)
         # Where the lorry has got to so far -- along the road and across it --
         # read before the clock and the lane draw are overwritten.
@@ -524,7 +533,7 @@ class PadTrajectory:
         self._driven = True
         self._yaw_initialised = False
         if cfg.mode == "random_walk":
-            self._prepare_random_walk(rng)
+            self._prepare_benchmark_motion(rng, max(float(speed_scale), 0.0))
         position, velocity = self.pose(sim_time)
         fallback = self.heading0
         if cfg.mode == "waypoints":
@@ -542,29 +551,59 @@ class PadTrajectory:
             "route_start": cfg.route_start,
             "arc_length_m": self.s0,
             "lane_offset_m": self.lane_base,
+            "benchmark_scenario": self.benchmark_scenario,
         }
 
-    def _prepare_random_walk(self, rng, samples: int = 6001) -> None:
-        """Seed a Table-I random walk at its 0.1 s control period."""
+    def _prepare_benchmark_motion(self, rng, scale: float,
+                                  samples: int = 6001) -> None:
+        """Precompute paper-defined random walk or documented test approximation."""
         cfg = self.cfg
         dt = cfg.motion_update_dt_s
         if dt <= 0.0:
             raise ValueError("pad.motion_update_dt_s must be positive")
-        dv = rng.uniform(*cfg.speed_step_range_m_s, size=samples - 1)
-        dw = rng.uniform(*cfg.yaw_rate_step_range_rad_s, size=samples - 1)
         speeds = np.empty(samples)
         yaw_rates = np.empty(samples)
         headings = np.empty(samples)
-        speeds[0], yaw_rates[0], headings[0] = self.speed, 0.0, self.heading0
-        for index in range(1, samples):
-            speeds[index] = np.clip(speeds[index - 1] + dv[index - 1],
-                                    cfg.speed_min_m_s, cfg.speed_max_m_s)
-            yaw_rates[index] = np.clip(yaw_rates[index - 1] + dw[index - 1],
-                                       -cfg.yaw_rate_limit_rad_s,
-                                       cfg.yaw_rate_limit_rad_s)
-            headings[index] = headings[index - 1] + yaw_rates[index] * dt
+        scenario = self.benchmark_scenario
+        time_axis = np.arange(samples) * dt
+        headings[:] = self.heading0
+        yaw_rates[:] = 0.0
+        if scenario == "training_random_walk":
+            dv = scale * rng.uniform(*cfg.speed_step_range_m_s, size=samples - 1)
+            dw = scale * rng.uniform(*cfg.yaw_rate_step_range_rad_s, size=samples - 1)
+            speeds[0], yaw_rates[0] = self.speed, 0.0
+            for index in range(1, samples):
+                speeds[index] = np.clip(speeds[index - 1] + dv[index - 1],
+                                        cfg.speed_min_m_s, scale * cfg.speed_max_m_s)
+                yaw_rates[index] = np.clip(yaw_rates[index - 1] + dw[index - 1],
+                                           -cfg.yaw_rate_limit_rad_s,
+                                           cfg.yaw_rate_limit_rad_s)
+                headings[index] = headings[index - 1] + yaw_rates[index] * dt
+        elif scenario == "straight_8mps":
+            speeds[:] = 8.0
+        elif scenario == "linear_acceleration_wave":
+            speeds[:] = 4.0 * (1.0 + np.sin(0.5 * time_axis))
+        elif scenario == "circle":
+            speeds[:] = 6.0
+            yaw_rates[:] = 6.0 / 8.0
+            headings[:] = self.heading0 + yaw_rates * time_axis
+        elif scenario == "zigzag":
+            speeds[:] = 6.0
+            headings[:] = self.heading0 + np.where(
+                (np.floor(time_axis / 3.0).astype(int) % 2) == 0,
+                math.radians(45.0), -math.radians(45.0))
+        elif scenario == "u_turn":
+            speeds[:] = 6.0
+            turn_time = np.clip(time_axis - 5.0, 0.0, 5.0)
+            headings[:] = self.heading0 + math.pi * turn_time / 5.0
+            yaw_rates[(time_axis >= 5.0) & (time_axis <= 10.0)] = math.pi / 5.0
+        elif scenario == "vertical_heave_boat":
+            speeds[:] = 4.0
         velocity = np.c_[speeds * np.cos(headings), speeds * np.sin(headings),
                          np.zeros(samples)]
+        if scenario == "vertical_heave_boat":
+            velocity[:, 2] = 0.4 * np.cos(0.8 * time_axis)
+        self.speed = float(speeds[0])
         position = np.zeros((samples, 3))
         position[1:] = np.cumsum(velocity[:-1] * dt, axis=0)
         self.random_walk_position = position
@@ -688,7 +727,9 @@ class PadTrajectory:
                 if index + 1 < len(self.random_walk_position):
                     offset += fraction * (self.random_walk_position[index + 1] - offset)
         position = self.start + offset
-        position[2] = self.start[2] + cfg.deck_height_m
+        if not (cfg.mode == "random_walk"
+                and self.benchmark_scenario == "vertical_heave_boat"):
+            position[2] = self.start[2] + cfg.deck_height_m
         # Never let a profile drive the deck out of the arena the drone is
         # allowed to follow it into.
         radial = math.hypot(position[0], position[1])

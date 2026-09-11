@@ -1,6 +1,7 @@
 import math
 from pathlib import Path
 import sys
+import json
 
 import numpy as np
 import pytest
@@ -22,9 +23,12 @@ from ontology_rgat.benchmarks.shin2026 import (ActorObservation,
                                                default_shin2026_config)
 from ontology_rgat.controllers import VelocityYawRateController
 from ontology_rgat.estimation import LSTMRelativeStateEstimator
+from ontology_rgat.ppo.recurrent import ShinRecurrentActorCritic
+from ontology_rgat.ppo.recurrent_train import update_episode
 from ontology_rgat.reward_modes import (OntoRewardPBRS, ShinReward,
                                         ShinRewardConfig, FrozenControlledPotential,
-                                        active_perception_reward)
+                                        active_perception_reward,
+                                        prepare_controlled_rgat_artifact)
 
 
 def _actor_payload():
@@ -137,6 +141,27 @@ def test_controlled_potential_rejects_legacy_or_unfrozen_artifact(tmp_path):
         FrozenControlledPotential(artifact)
 
 
+def test_controlled_potential_accepts_only_frozen_rgat_profile(tmp_path):
+    artifact = tmp_path / "reward.json"
+    artifact.write_text(json.dumps({
+        "profile": "controlled_landing", "frozen": True,
+        "provenance": "rgat_distillation", "design_id": "test",
+        "weights": {"lateral_error": .25, "altitude_error": .25,
+                    "relative_horizontal_speed": .25,
+                    "relative_vertical_speed": .25},
+    }), encoding="utf-8")
+    potential = FrozenControlledPotential(artifact)
+    assert potential({"estimated_relative_state": np.zeros(6)}) == 0.0
+
+
+def test_controlled_rgat_preparation_writes_loadable_frozen_artifact(tmp_path):
+    path, metadata = prepare_controlled_rgat_artifact(
+        tmp_path / "controlled.json", mode="quick", samples=64, epochs=1)
+    potential = FrozenControlledPotential(path)
+    assert metadata["provenance"] == "rgat_distillation"
+    assert potential.design_id == metadata["design_id"]
+
+
 def test_shin_active_reward_uses_training_only_estimation_target():
     cfg = ShinRewardConfig()
     assert active_perception_reward(0.0, cfg) == 0.0
@@ -193,6 +218,47 @@ def test_table_i_platform_random_walk_is_seeded_and_bounded():
     speed = np.linalg.norm(first.random_walk_velocity[:, :2], axis=1)
     assert np.all(speed >= 0.0) and np.all(speed <= 8.0)
     assert np.max(np.abs(np.diff(speed))) <= 0.5 + 1e-10
+
+
+@pytest.mark.parametrize("scenario", ["straight_8mps", "linear_acceleration_wave",
+                                       "circle", "zigzag", "u_turn",
+                                       "vertical_heave_boat"])
+def test_named_benchmark_motion_scenarios_are_deterministic(scenario):
+    cfg = PadMotionConfig.from_mapping({"pad": {
+        "motion": "random_walk", "speed_range_m_s": [0.0, 8.0],
+        "arena_radius_m": 300.0,
+    }})
+    first, second = PadTrajectory(cfg), PadTrajectory(cfg)
+    first.reset(12, 0.0, scenario=scenario)
+    second.reset(12, 0.0, scenario=scenario)
+    np.testing.assert_allclose(first.pose(2.0)[0], second.pose(2.0)[0])
+    if scenario == "straight_8mps":
+        assert np.linalg.norm(first.pose(2.0)[1]) == pytest.approx(8.0)
+    if scenario == "vertical_heave_boat":
+        assert first.pose(2.0)[0][2] != pytest.approx(first.pose(0.0)[0][2])
+
+
+def test_recurrent_ppo_update_supports_truncated_sequences():
+    torch.manual_seed(7)
+    model = ShinRecurrentActorCritic(image_embedding=8, lstm_hidden=16,
+                                     latent_dim=12, actor_hidden=8,
+                                     critic_hidden=8)
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
+    rows = []
+    for index in range(3):
+        rows.append({
+            "image": np.zeros((32, 32), dtype=np.uint8),
+            "proprioception": np.array([0, 0, 0, 1, 0, 0, 0], dtype=np.float32),
+            "truth": np.zeros(6, dtype=np.float32),
+            "pre_squash": np.zeros(4, dtype=np.float32),
+            "action": np.zeros(4, dtype=np.float32),
+            "log_prob": -3.676, "value": 0.0, "reward": float(index == 2),
+            "done": float(index == 2),
+            "hidden_h": np.zeros((1, 1, 16), dtype=np.float32),
+            "hidden_c": np.zeros((1, 1, 16), dtype=np.float32),
+        })
+    metrics = update_episode(model, optimizer, rows, epochs=1, sequence_length=2)
+    assert all(np.isfinite(value) for value in metrics.values())
 
 
 def test_benchmark_dimensions_and_modes():

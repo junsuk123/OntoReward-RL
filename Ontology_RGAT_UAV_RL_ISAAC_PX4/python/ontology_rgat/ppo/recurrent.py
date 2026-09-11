@@ -131,6 +131,7 @@ def recurrent_ppo_loss(model: ShinRecurrentActorCritic, batch: dict,
     """One differentiable recurrent minibatch objective and named telemetry."""
     output = model(batch["images"], batch["proprioception"],
                    true_relative_state=batch["true_relative_state"],
+                   hidden=batch.get("initial_hidden"),
                    episode_start=batch.get("episode_start"))
     log_prob = model.log_prob(batch["pre_squash_action"], batch["action"],
                               output.action_mean, output.action_std)

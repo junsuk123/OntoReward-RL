@@ -97,6 +97,8 @@ def train_potential(dataset: dict[str, Any], cfg: Config, *,
         raise ValueError("dataset X and y disagree on the number of samples")
     if X_all.shape[0] == 0:
         raise ValueError("the R-GAT dataset is empty; the rollout stage produced nothing")
+    if not np.isfinite(X_all).all() or not np.isfinite(y_all).all():
+        raise ValueError("the R-GAT dataset contains non-finite features or labels")
 
     batch_size = int(cfg.rgat.batch_size)
     device, why = select_device(cfg, batch_size)
@@ -121,12 +123,30 @@ def train_potential(dataset: dict[str, Any], cfg: Config, *,
     y = torch.as_tensor(y_all, device=device)
     n = X.shape[0]
     generator = torch.Generator(device="cpu").manual_seed(cfg.seed + 303)
-    order = torch.randperm(n, generator=generator)
-    n_train = max(1, int(round((1.0 - cfg.rgat.val_fraction) * n)))
-    train_idx = order[:n_train].to(device)
-    val_idx = order[n_train:].to(device)
-    if val_idx.numel() == 0:
-        val_idx = train_idx
+    split_unit = "sample"
+    if bool(dataset.get("split_by_episode", False)):
+        meta = np.asarray(dataset.get("meta"), dtype=np.float64)
+        if meta.shape != (n, 4):
+            raise ValueError("episode-level R-GAT split requires [samples,4] metadata")
+        episode_ids = torch.as_tensor(meta[:, 0], dtype=torch.float64)
+        episodes = torch.unique(episode_ids, sorted=True)
+        if episodes.numel() < 2:
+            raise ValueError("episode-level R-GAT split requires at least two rollouts")
+        episodes = episodes[torch.randperm(episodes.numel(), generator=generator)]
+        n_train_episodes = int(round(
+            (1.0 - cfg.rgat.val_fraction) * episodes.numel()))
+        n_train_episodes = min(max(1, n_train_episodes), episodes.numel() - 1)
+        train_mask = torch.isin(episode_ids, episodes[:n_train_episodes])
+        train_idx = torch.nonzero(train_mask, as_tuple=False).squeeze(1).to(device)
+        val_idx = torch.nonzero(~train_mask, as_tuple=False).squeeze(1).to(device)
+        split_unit = "episode"
+    else:
+        order = torch.randperm(n, generator=generator)
+        n_train = max(1, int(round((1.0 - cfg.rgat.val_fraction) * n)))
+        train_idx = order[:n_train].to(device)
+        val_idx = order[n_train:].to(device)
+        if val_idx.numel() == 0:
+            val_idx = train_idx
 
     optimizer = torch.optim.Adam(model.parameters(), lr=float(cfg.rgat.lr),
                                  betas=(0.9, 0.999), eps=1e-8)
@@ -145,7 +165,7 @@ def train_potential(dataset: dict[str, Any], cfg: Config, *,
         epoch_seconds=list(previous.get("epoch_seconds", [])),
         device=device.type, device_reason=why,
         samples=int(n), train_samples=int(train_idx.numel()),
-        val_samples=int(val_idx.numel()))
+        val_samples=int(val_idx.numel()), split_unit=split_unit)
     completed_epochs = len(history["train_loss"])
 
     for epoch in range(1, int(cfg.rgat.epochs) + 1):
@@ -164,8 +184,13 @@ def train_potential(dataset: dict[str, Any], cfg: Config, *,
                 pred = forward(X.index_select(0, idx))
                 target = y.index_select(0, idx)
                 loss = ((pred - target) ** 2).mean() + cfg.rgat.output_l2 * (pred ** 2).mean()
+            if not torch.isfinite(loss):
+                raise FloatingPointError(
+                    f"non-finite R-GAT loss at epoch {completed_epochs + epoch}; "
+                    "enable stable_softmax or reduce the learning rate")
             loss.float().backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), float(cfg.ppo.grad_clip))
+            torch.nn.utils.clip_grad_norm_(
+                model.parameters(), float(cfg.ppo.grad_clip), error_if_nonfinite=True)
             optimizer.step()
             running += loss.detach().float()
             batches += 1
@@ -176,6 +201,9 @@ def train_potential(dataset: dict[str, Any], cfg: Config, *,
             val_target = y.index_select(0, val_idx)
             val_loss = float(((val_pred - val_target) ** 2).mean())
         train_loss = float(running / max(batches, 1))
+        if not np.isfinite(train_loss) or not np.isfinite(val_loss):
+            raise FloatingPointError(
+                f"non-finite R-GAT metric at epoch {completed_epochs + epoch}")
         if device.type == "cuda":
             torch.cuda.synchronize()
         elapsed = time.perf_counter() - started

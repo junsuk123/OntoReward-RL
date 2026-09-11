@@ -96,13 +96,21 @@ only an immutable `controlled_landing` artifact with explicit
 ## One-command execution and implementation status
 
 The live pipeline starts or adopts DDS, Isaac Sim, Pegasus/PX4, and the ROS
-gateway; prepares and freezes a controlled R-GAT reward artifact when missing;
-trains every requested reward arm through the same recurrent PPO loop; runs the
-paired evaluation plan; and produces checkpoints, per-episode data, confidence
-intervals, tables, and figures. It also serves `http://127.0.0.1:8770/` while
-running. That dashboard uses a MATLAB-figure visual language and exposes the
-actor information boundary, method progress, estimator/PPO diagnostics, live
-reward components, curriculum, visibility, and paired scenario outcomes:
+gateway, then executes these dependent stages:
+
+1. train or resume the recurrent `shin2026` PPO policy;
+2. fly that trained policy on a disjoint seed range in Isaac/Pegasus/PX4;
+3. train R-GAT on the resulting estimator features and contact outcomes, then
+   distill and freeze the controlled potential;
+4. train the requested OntoReward/ablation policies;
+5. run the paired evaluation plan and produce checkpoints, per-episode data,
+   confidence intervals, tables, and figures.
+
+It also serves `http://127.0.0.1:8770/` while running. That dashboard uses a
+MATLAB-figure visual language and exposes the actor information boundary,
+method progress, actual R-GAT flight/sample/contact counts, estimator/PPO
+diagnostics, live reward components, curriculum, visibility, and paired
+scenario outcomes:
 
 ```bash
 ../run.sh                         # publication-scale full run
@@ -115,23 +123,41 @@ compatible active stack, and `--keep-stack` leaves a newly started stack alive.
 The dashboard port can be changed with `--dashboard-port`; `--no-dashboard`
 turns off only the HTTP view, not metric collection or result files.
 
-The R-GAT bootstrap dataset is an OntoReward design choice because Shin et al.
-do not define an ontology or its training set. Its artifact records provenance
-as `synthetic_table_i_semantic_bootstrap`; it is not presented as part of the
-Shin baseline. The paper names its six test maneuvers but does not publish their
-equations, so those generators are recorded as approximations. Table-II samples
-are deterministic, but controller-gain, force/torque, and visual-appearance
+The R-GAT dataset is an explicit OntoReward design choice because Shin et al.
+do not define an ontology or its training set. Quick/full mode collects 8/400
+held-out flights by default; `--rgat-data-episodes N` overrides that count. For
+each sampled control step, its graph contains four bounded costs computed only
+from the recurrent visual estimator's six-state prediction. Its target is the
+actual terminal pad-contact outcome (`+1` or `-1`) discounted back to that step.
+Simulator truth is therefore used for the allowed terminal label, never as an
+R-GAT input. Training refuses data without both successful and failed episodes
+instead of fabricating a missing class.
+
+The dataset, sidecar manifest, episode metrics, and reward artifact are written
+under `results/shin2026/<mode>/data` and `models`. They record the experiment
+configuration hash, source-policy checkpoint hash, sample/episode/contact
+counts, and dataset digest. Only the empirical format
+`ontology_rgat.controlled_reward/2` is loadable; the retired synthetic format is
+rejected. R-GAT uses a segment-maximum-subtracted softmax and a lower learning
+rate, stops immediately on non-finite losses or gradients, and JSON output
+disallows NaN. Validation holds out complete flight episodes, so adjacent
+frames from one trajectory cannot leak across the train/validation boundary.
+
+The paper names its six test maneuvers but does not publish their equations, so
+those generators are recorded as approximations. Table-II samples are
+deterministic, but controller-gain, force/torque, and visual-appearance
 application to PX4/Isaac remains incomplete. Resolve that limitation before
 claiming a complete Table-II or bit-exact reproduction.
 
 ## Reproducibility and outputs
 
 Every run writes a resolved configuration hash, method list, scenario counts,
-and paired seed plan. Record the Git commit, Isaac Sim/Pegasus/PX4/PyTorch
-versions, GPU, wall-clock training duration, and frozen reward-design ID with
-published results. `run_shin2026_benchmark.py --input-results` produces all
-specified CSVs, paired bootstrap confidence intervals, plots, and a Markdown
-publication table. It never fabricates missing flight results.
+paired seed plan, R-GAT data provenance, and source-policy lineage. Record the
+Git commit, Isaac Sim/Pegasus/PX4/PyTorch versions, GPU, wall-clock training
+duration, and frozen reward-design ID with published results.
+`run_shin2026_benchmark.py --input-results` produces all specified CSVs, paired
+bootstrap confidence intervals, plots, and a Markdown publication table. It
+never fabricates missing flight results.
 
 CPU interface smoke test:
 

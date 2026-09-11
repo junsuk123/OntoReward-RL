@@ -25,11 +25,13 @@ Policy observations contain only measurable
 sensor/estimator values; simulator truth is isolated to reset, terminal reward,
 and evaluation scoring.
 
-R-GAT learns context-dependent safe-landing structure from a 14-node ontology.
-Its counterfactual attributions are distilled once per execution into eight
-bounded reward coefficients that sum to one. Those coefficients are saved and
-frozen before PPO, making the proposed reward auditable and identical throughout
-training and evaluation.
+In the default Shin-2026 benchmark, R-GAT learns safe-landing structure from
+held-out, actual Isaac/Pegasus/PX4 rollouts by a trained recurrent Shin policy.
+Graph inputs come from the policy's six-state visual estimate; labels are the
+discounted physical pad-contact outcome recorded by the simulator. Truth never
+enters an R-GAT graph. Four counterfactual attributions are distilled into
+bounded coefficients that sum to one and are frozen before OntoReward PPO. The
+separate cooperative urban profile retains its 14-node/eight-weight ontology.
 
 An experiment passes only when both independent criteria pass:
 
@@ -48,10 +50,11 @@ From the repository root:
 
 The root entry point defaults to the publication-scale Shin/OntoReward run. It
 starts DDS, Isaac Sim, Pegasus, PX4, the ROS gateway and MATLAB-style dashboard;
-prepares the frozen controlled R-GAT reward; trains the recurrent PPO arms;
-runs paired scenario evaluation; and exports checkpoints, CSV tables,
-confidence intervals and publication figures. It is independent of the current
-working directory and forwards all benchmark options:
+trains the Shin recurrent PPO baseline; collects a held-out real-flight R-GAT
+dataset; trains and freezes the controlled R-GAT reward; trains OntoReward PPO;
+runs paired scenario evaluation; and exports checkpoints, provenance, CSV
+tables, confidence intervals and publication figures. It is independent of the
+current working directory and forwards all benchmark options:
 
 ```bash
 ./run.sh --mode quick --headless

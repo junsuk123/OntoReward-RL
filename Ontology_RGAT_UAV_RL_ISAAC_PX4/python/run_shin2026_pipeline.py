@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -24,7 +25,11 @@ from ontology_rgat.perception import RosGrayscaleSource
 from ontology_rgat.ppo.recurrent import ShinRecurrentActorCritic
 from ontology_rgat.ppo.recurrent_train import collect_episode, train_live
 from ontology_rgat.reward_modes import (FrozenControlledPotential,
-                                        prepare_controlled_rgat_artifact)
+                                        episode_rollout_dataset,
+                                        load_rollout_dataset,
+                                        merge_rollout_datasets,
+                                        prepare_controlled_rgat_artifact,
+                                        save_rollout_dataset)
 from ontology_rgat.stack import ExternalStack
 from ontology_rgat.viz.dashboard import Dashboard
 from ontology_rgat.viz.live import BenchmarkMonitor, STORE
@@ -75,6 +80,102 @@ def _build_model(config, device):
     ).to(torch_device)
 
 
+def _sha256_file(path):
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _collect_empirical_rgat_data(*, cfg, camera, model, config, config_hash,
+                                 checkpoint_path, results_dir, mode, monitor,
+                                 episodes_override=None):
+    """Fly a trained Shin policy and checkpoint an empirical R-GAT dataset."""
+    design = dict(config.get("rgat_design") or {})
+    configured_count = design.get(
+        f"episodes_{mode}", 8 if mode == "quick" else 400)
+    count = int(episodes_override if episodes_override is not None
+                else configured_count)
+    if count < 2:
+        raise ValueError("empirical R-GAT collection needs at least two episodes")
+    stride = int(design.get("sample_stride", 3))
+    gamma = float(design.get("outcome_discount", (config.get("ppo") or {}).get(
+        "gamma", .99)))
+    seed_start = int((config.get("seeds") or {}).get("rgat_dataset_start", 70000))
+    seeds = list(range(seed_start, seed_start + count))
+    checkpoint_sha = _sha256_file(checkpoint_path)
+    data_dir = Path(results_dir) / "data"
+    dataset_path = data_dir / "rgat_design_rollouts.npz"
+    episode_path = data_dir / "rgat_design_episodes.csv"
+    dataset = None
+    dataset_manifest = None
+    episode_rows = []
+    completed_seeds: list[int] = []
+    if dataset_path.is_file() and dataset_path.with_suffix(".manifest.json").is_file():
+        try:
+            dataset, dataset_manifest = load_rollout_dataset(
+                dataset_path, config_hash=config_hash,
+                source_checkpoint_sha256=checkpoint_sha)
+            completed_seeds = [int(seed) for seed in
+                               dataset_manifest.get("completed_seeds", [])]
+            if not set(completed_seeds).issubset(seeds):
+                raise ValueError("R-GAT rollout cache uses a different requested seed range")
+            if episode_path.is_file():
+                with episode_path.open(newline="", encoding="utf-8") as stream:
+                    episode_rows = list(csv.DictReader(stream))
+            print(f"Resuming empirical R-GAT data: {len(completed_seeds)}/{count} "
+                  f"episodes, {len(dataset['y'])} samples.")
+        except (OSError, ValueError, KeyError, json.JSONDecodeError) as exc:
+            print(f"Ignoring incompatible R-GAT rollout cache: {exc}")
+            dataset = None
+            dataset_manifest = None
+            completed_seeds = []
+            episode_rows = []
+
+    pending = [(index, seed) for index, seed in enumerate(seeds, start=1)
+               if seed not in completed_seeds]
+    if pending:
+        monitor.stage("R-GAT data", "actual Shin-policy Isaac/PX4 rollouts")
+        with LiveShinEnvironment(cfg, camera, horizon_steps=300) as env:
+            for index, seed in pending:
+                curriculum = 1.0 if count == 1 else (index - 1) / (count - 1)
+                torch.manual_seed(seed)
+                rows, metric = collect_episode(
+                    env, model, "shin2026", seed, curriculum=curriculum,
+                    deterministic=False, gamma=gamma, monitor=monitor,
+                    phase="R-GAT data")
+                batch = episode_rollout_dataset(
+                    rows, metric, episode=index, seed=seed, gamma=gamma,
+                    sample_stride=stride)
+                dataset = merge_rollout_datasets(dataset, batch)
+                completed_seeds.append(seed)
+                metric.update({
+                    "method": "rgat_design_shin2026", "episode": index,
+                    "scenario": "training_random_walk", "curriculum": curriculum,
+                    "rgat_samples": len(batch["y"]),
+                })
+                episode_rows.append(metric)
+                _write_csv(episode_path, episode_rows)
+                dataset_manifest = save_rollout_dataset(
+                    dataset, dataset_path, config_hash=config_hash,
+                    source_checkpoint_sha256=checkpoint_sha,
+                    completed_seeds=completed_seeds)
+                STORE.set(
+                    rgat_dataset_episodes=dataset_manifest["episodes"],
+                    rgat_dataset_samples=dataset_manifest["samples"],
+                    rgat_dataset_successes=dataset_manifest["successful_episodes"])
+                print(f"R-GAT data episode {index}/{count} | "
+                      f"contact={int(metric['paper_success'])} | "
+                      f"samples={len(batch['y'])} | c={curriculum:.3f}")
+    if dataset is None or dataset_manifest is None:
+        raise RuntimeError("empirical R-GAT dataset collection produced no data")
+    print(f"Empirical R-GAT dataset: {dataset_manifest['samples']} samples from "
+          f"{dataset_manifest['episodes']} actual flights; physical contacts "
+          f"{dataset_manifest['successful_episodes']}/{dataset_manifest['episodes']}.")
+    return dataset, dataset_manifest, dataset_path, checkpoint_sha
+
+
 def main():
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument("--methods", nargs="+", choices=METHODS,
@@ -91,7 +192,11 @@ def main():
     parser.add_argument("--reward-design", type=Path,
                         help="defaults inside RESULTS_DIR/models")
     parser.add_argument("--no-prepare-reward-design", action="store_true",
-                        help="require an existing controlled R-GAT artifact")
+                        help="require an existing empirical controlled R-GAT artifact")
+    parser.add_argument("--rgat-data-episodes", type=int,
+                        help="override actual Shin-policy rollouts for R-GAT design")
+    parser.add_argument("--rgat-epochs", type=int,
+                        help="override empirical R-GAT training epochs")
     parser.add_argument("--train-episodes", type=int,
                         help="override episodes per method")
     parser.add_argument("--eval-episodes", type=int,
@@ -107,6 +212,13 @@ def main():
     args = parser.parse_args()
     if args.reward:
         args.methods = [args.reward]
+    for option, value in (("--train-episodes", args.train_episodes),
+                          ("--eval-episodes", args.eval_episodes),
+                          ("--rgat-epochs", args.rgat_epochs)):
+        if value is not None and value < 1:
+            parser.error(f"{option} must be at least 1")
+    if args.rgat_data_episodes is not None and args.rgat_data_episodes < 2:
+        parser.error("--rgat-data-episodes must be at least 2")
     if args.results_dir is None:
         args.results_dir = ROOT / "results/shin2026" / args.mode
     if args.reward_design is None:
@@ -116,22 +228,25 @@ def main():
     config_hash = configuration_hash(config)
     needs_potential = any(name.startswith("ontoreward") for name in args.methods)
     potential = None
-    if needs_potential:
-        if not args.reward_design.is_file():
-            if args.no_prepare_reward_design:
-                parser.error(
-                    "OntoReward requires a frozen controlled_landing R-GAT artifact: "
-                    f"{args.reward_design}. The legacy urban artifact is intentionally rejected.")
-            print("Preparing the missing controlled OntoReward R-GAT artifact...")
-            prepare_controlled_rgat_artifact(
-                args.reward_design, mode=args.mode,
-                seed=int((config.get("seeds") or {}).get("model_initialization", 42)))
-        potential = FrozenControlledPotential(args.reward_design)
+    artifact_error = None
+    if needs_potential and args.reward_design.is_file():
+        try:
+            potential = FrozenControlledPotential(
+                args.reward_design, expected_config_hash=config_hash)
+            print(f"Using empirical frozen R-GAT reward design {potential.design_id}.")
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            artifact_error = str(exc)
+            print(f"Existing reward artifact is not reusable: {exc}")
+    if needs_potential and potential is None and args.no_prepare_reward_design:
+        parser.error(
+            "OntoReward requires a finite empirical Isaac/PX4 R-GAT artifact at "
+            f"{args.reward_design}: {artifact_error or 'file not found'}")
 
     training_config = config.get("training") or {}
     configured_train_count = int(training_config.get(
         f"episodes_{args.mode}", 8 if args.mode == "quick" else 40960))
-    train_count = args.train_episodes or configured_train_count
+    train_count = (args.train_episodes if args.train_episodes is not None
+                   else configured_train_count)
     scenarios = dict(config.get("evaluation") or {})
     if args.eval_episodes is not None:
         scenarios = {name: args.eval_episodes for name in scenarios}
@@ -196,25 +311,82 @@ def main():
             stack_module.current(owned)
         with RosGrayscaleSource() as camera:
             models = {}
-            training_rows = []
+            training_by_method = {}
             curriculum_raw = dict(config.get("curriculum") or {})
             curriculum_config = {
                 "levels": int(curriculum_raw.get("levels", 80)),
                 "episodes_per_update": int(curriculum_raw.get("update_every_episodes", 512)),
             }
-            for method in args.methods:
+
+            def train_requested(method):
                 monitor.stage("training", f"recurrent PPO · {method}")
                 # Identical initialization is part of the paired comparison.
                 torch.manual_seed(model_seed)
                 model = _build_model(config, args.device)
+                method_potential = potential if method.startswith("ontoreward") else None
                 history = train_live(
                     lambda: LiveShinEnvironment(cfg, camera, horizon_steps=300),
                     model, method, range(training_seed0, training_seed0 + train_count),
                     args.results_dir / "models", config_hash=config_hash,
-                    potential=potential, ppo=ppo_config,
+                    potential=method_potential, ppo=ppo_config,
                     curriculum_config=curriculum_config, monitor=monitor)
                 models[method] = model
-                training_rows.extend(history)
+                training_by_method[method] = history
+                return model
+
+            if needs_potential and potential is None:
+                # Reward design is learned only after a trained Shin policy has
+                # generated real camera/PX4 trajectories and physical outcomes.
+                if "shin2026" in args.methods:
+                    source_model = train_requested("shin2026")
+                    source_checkpoint = args.results_dir / "models/shin2026.pt"
+                else:
+                    monitor.stage("design-source training", "Shin recurrent PPO")
+                    torch.manual_seed(model_seed)
+                    source_model = _build_model(config, args.device)
+                    source_dir = args.results_dir / "models/rgat_design_source"
+                    train_live(
+                        lambda: LiveShinEnvironment(cfg, camera, horizon_steps=300),
+                        source_model, "shin2026",
+                        range(training_seed0, training_seed0 + train_count),
+                        source_dir, config_hash=config_hash, potential=None,
+                        ppo=ppo_config, curriculum_config=curriculum_config,
+                        monitor=None)
+                    source_checkpoint = source_dir / "shin2026.pt"
+                dataset, dataset_manifest, dataset_path, source_sha = (
+                    _collect_empirical_rgat_data(
+                        cfg=cfg, camera=camera, model=source_model, config=config,
+                        config_hash=config_hash, checkpoint_path=source_checkpoint,
+                        results_dir=args.results_dir, mode=args.mode,
+                        monitor=monitor,
+                        episodes_override=args.rgat_data_episodes))
+                monitor.stage("R-GAT training", "empirical discounted outcomes")
+                _, design_metadata = prepare_controlled_rgat_artifact(
+                    args.reward_design, dataset, config_hash=config_hash,
+                    source_checkpoint_sha256=source_sha,
+                    dataset_path=dataset_path, mode=args.mode, seed=model_seed,
+                    epochs=args.rgat_epochs)
+                potential = FrozenControlledPotential(
+                    args.reward_design, expected_config_hash=config_hash)
+                manifest.update(
+                    reward_design_id=potential.design_id,
+                    reward_design_sha256=potential.sha256,
+                    rgat_dataset=dataset_manifest,
+                    rgat_design=design_metadata)
+                manifest_path.write_text(
+                    json.dumps(manifest, indent=2), encoding="utf-8")
+                STORE.set(
+                    reward_design_id=potential.design_id,
+                    reward_design_sha256=potential.sha256,
+                    rgat_dataset_episodes=dataset_manifest["episodes"],
+                    rgat_dataset_samples=dataset_manifest["samples"],
+                    rgat_dataset_successes=dataset_manifest["successful_episodes"])
+
+            for method in args.methods:
+                if method not in models:
+                    train_requested(method)
+            training_rows = [row for method in args.methods
+                             for row in training_by_method[method]]
             _write_csv(args.results_dir / "training_curves.csv", training_rows)
 
             evaluation_rows = []

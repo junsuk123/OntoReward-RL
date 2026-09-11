@@ -253,7 +253,11 @@ def train_live(env_factory: Callable, model, method, seeds, output_dir,
         if saved.get("method") != method or saved.get("config_hash") != config_hash:
             raise ValueError(f"checkpoint method/config mismatch: {checkpoint_path}")
         expected_design = getattr(potential, "sha256", None)
-        if saved.get("reward_design_sha256") != expected_design:
+        # The Shin arm never consumes the ontology potential. Older baseline
+        # checkpoints may nevertheless carry the run-level artifact hash, so
+        # only reward-shaped arms are coupled to a particular design artifact.
+        if (method.startswith("ontoreward") and
+                saved.get("reward_design_sha256") != expected_design):
             raise ValueError(f"checkpoint reward-design mismatch: {checkpoint_path}")
         model.load_state_dict(saved["model"])
         optimizer.load_state_dict(saved["optimizer"])

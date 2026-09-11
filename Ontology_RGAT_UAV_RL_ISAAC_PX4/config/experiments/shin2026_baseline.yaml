@@ -23,8 +23,19 @@ curriculum: {enabled: true, levels: 80, update_every_episodes: 512}
 reward:
   terminal: {success: 10.0, failure: -10.0}
   active_perception: {enabled: true, alpha: 0.1, beta: 1.0, tau: 0.01}
-seeds: {model_initialization: 42, training_start: 20000, evaluation_start: 5000}
+seeds:
+  model_initialization: 42
+  training_start: 20000
+  rgat_dataset_start: 70000
+  evaluation_start: 5000
 training:
   # Not reported by Shin et al.; explicit benchmark choices.
   episodes_quick: 8
   episodes_full: 40960
+rgat_design:
+  # Actual held-out flights by the trained Shin policy. Graph inputs use its
+  # recurrent visual estimates; labels use the observed physical-contact result.
+  episodes_quick: 8
+  episodes_full: 400
+  sample_stride: 3
+  outcome_discount: 0.99

@@ -13,7 +13,7 @@ import pytest
 torch = pytest.importorskip("torch")
 
 from ontology_rgat.config import default_config
-from ontology_rgat.rgat.layers import RelationalGraphAttention
+from ontology_rgat.rgat.layers import RelationalGraphAttention, segment_softmax
 from ontology_rgat.rgat.model import build_potential
 from ontology_rgat.rgat.topology import Topology
 from ontology_rgat.semantic import SemanticState, build_ontology_graph
@@ -115,6 +115,15 @@ def test_wirgat_normalises_within_each_relation(setup):
         # denominator floor rather than subtracting a per-segment maximum.
         np.testing.assert_allclose(totals[occupied].numpy(),
                                    np.ones(int(occupied.sum())), atol=1e-7)
+
+
+def test_stable_segment_softmax_stays_finite_for_extreme_attention_logits():
+    logits = torch.tensor([[1000.0, 999.0, -1000.0, 1000.0]])
+    segments = torch.tensor([0, 0, 1, 1])
+    weights = segment_softmax(logits, segments, 2, stable=True)
+    assert torch.isfinite(weights).all()
+    np.testing.assert_allclose(weights[0, :2].sum().numpy(), 1.0, atol=1e-7)
+    np.testing.assert_allclose(weights[0, 2:].sum().numpy(), 1.0, atol=1e-7)
 
 
 def test_multi_head_mean_equals_single_head_when_heads_are_tied(setup):

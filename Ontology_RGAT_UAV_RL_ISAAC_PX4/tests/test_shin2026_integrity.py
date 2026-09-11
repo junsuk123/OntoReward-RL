@@ -28,7 +28,11 @@ from ontology_rgat.ppo.recurrent_train import update_episode
 from ontology_rgat.reward_modes import (OntoRewardPBRS, ShinReward,
                                         ShinRewardConfig, FrozenControlledPotential,
                                         active_perception_reward,
-                                        prepare_controlled_rgat_artifact)
+                                        episode_rollout_dataset,
+                                        load_rollout_dataset,
+                                        merge_rollout_datasets,
+                                        prepare_controlled_rgat_artifact,
+                                        save_rollout_dataset)
 
 
 def _actor_payload():
@@ -144,21 +148,86 @@ def test_controlled_potential_rejects_legacy_or_unfrozen_artifact(tmp_path):
 def test_controlled_potential_accepts_only_frozen_rgat_profile(tmp_path):
     artifact = tmp_path / "reward.json"
     artifact.write_text(json.dumps({
+        "format": "ontology_rgat.controlled_reward/2",
         "profile": "controlled_landing", "frozen": True,
         "provenance": "rgat_distillation", "design_id": "test",
+        "dataset_provenance": "isaac_px4_shin2026_rollouts",
+        "dataset_config_hash": "cfg",
         "weights": {"lateral_error": .25, "altitude_error": .25,
                     "relative_horizontal_speed": .25,
                     "relative_vertical_speed": .25},
     }), encoding="utf-8")
-    potential = FrozenControlledPotential(artifact)
+    potential = FrozenControlledPotential(artifact, expected_config_hash="cfg")
     assert potential({"estimated_relative_state": np.zeros(6)}) == 0.0
 
 
+def test_controlled_potential_rejects_synthetic_bootstrap_artifact(tmp_path):
+    artifact = tmp_path / "reward.json"
+    artifact.write_text(json.dumps({
+        "format": "ontology_rgat.controlled_reward/2",
+        "profile": "controlled_landing", "frozen": True,
+        "provenance": "rgat_distillation",
+        "dataset_provenance": "synthetic_table_i_semantic_bootstrap",
+    }), encoding="utf-8")
+    with pytest.raises(ValueError, match="actual Isaac/PX4"):
+        FrozenControlledPotential(artifact)
+
+
+def test_rgat_rollout_graph_uses_estimate_and_physical_outcome_not_truth():
+    rows = [
+        {"estimate": np.array([2.125, 0, -4, 4, 0, -1.5]),
+         "truth": np.full(6, 999.0)},
+        {"estimate": np.zeros(6), "truth": np.full(6, -999.0)},
+    ]
+    success = episode_rollout_dataset(
+        rows, {"paper_success": 1.0}, episode=3, seed=12,
+        gamma=.5, sample_stride=1)
+    # First feature channel of the four cost nodes is the bounded visual estimate.
+    np.testing.assert_allclose(success["X"][0, :4, 0], [.5, .5, .5, .5])
+    np.testing.assert_allclose(success["y"], [.5, 1.0])
+    failure = episode_rollout_dataset(
+        rows, {"paper_success": 0.0}, episode=4, seed=13,
+        gamma=.5, sample_stride=1)
+    np.testing.assert_allclose(failure["y"], [-.5, -1.0])
+
+
+def test_empirical_rgat_dataset_round_trip_checks_provenance(tmp_path):
+    rows = [{"estimate": np.zeros(6)}, {"estimate": np.ones(6)}]
+    dataset = episode_rollout_dataset(
+        rows, {"paper_success": 1.0}, episode=1, seed=70)
+    path = tmp_path / "rollouts.npz"
+    manifest = save_rollout_dataset(
+        dataset, path, config_hash="cfg", source_checkpoint_sha256="policy",
+        completed_seeds=[70])
+    loaded, restored = load_rollout_dataset(
+        path, config_hash="cfg", source_checkpoint_sha256="policy")
+    np.testing.assert_array_equal(loaded["X"], dataset["X"])
+    assert restored["dataset_sha256"] == manifest["dataset_sha256"]
+    with pytest.raises(ValueError, match="configuration mismatch"):
+        load_rollout_dataset(
+            path, config_hash="other", source_checkpoint_sha256="policy")
+
+
 def test_controlled_rgat_preparation_writes_loadable_frozen_artifact(tmp_path):
+    rows = [{"estimate": np.asarray([x, 0, -2, .1, 0, -.1])}
+            for x in np.linspace(.1, 2.0, 16)]
+    success = episode_rollout_dataset(
+        rows, {"paper_success": 1.0}, episode=1, seed=10, sample_stride=2)
+    failure = episode_rollout_dataset(
+        rows[::-1], {"paper_success": 0.0}, episode=2, seed=11, sample_stride=2)
+    dataset = merge_rollout_datasets(success, failure)
+    dataset_path = tmp_path / "rollouts.npz"
+    save_rollout_dataset(
+        dataset, dataset_path, config_hash="cfg",
+        source_checkpoint_sha256="checkpoint", completed_seeds=[10, 11])
     path, metadata = prepare_controlled_rgat_artifact(
-        tmp_path / "controlled.json", mode="quick", samples=64, epochs=1)
-    potential = FrozenControlledPotential(path)
+        tmp_path / "controlled.json", dataset, config_hash="cfg",
+        source_checkpoint_sha256="checkpoint", dataset_path=dataset_path,
+        mode="quick", epochs=1)
+    potential = FrozenControlledPotential(path, expected_config_hash="cfg")
     assert metadata["provenance"] == "rgat_distillation"
+    assert metadata["dataset_provenance"] == "isaac_px4_shin2026_rollouts"
+    assert metadata["validation_split"] == "held-out rollout episodes"
     assert potential.design_id == metadata["design_id"]
 
 

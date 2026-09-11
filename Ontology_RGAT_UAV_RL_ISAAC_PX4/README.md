@@ -19,9 +19,9 @@ estimation target, terminal scoring, and evaluation. All five reward modes use
 the same recurrent actor/critic and paired seed plan.
 
 ```bash
-# One command: stack startup, controlled R-GAT freeze, recurrent training,
-# live dashboard, paired scenario evaluation, CSV tables, confidence intervals,
-# and plots.
+# One command: stack startup, Shin PPO, actual rollout collection, controlled
+# R-GAT freeze, OntoReward PPO, live dashboard, paired scenario evaluation,
+# CSV tables, confidence intervals, and plots.
 ../run.sh                         # publication-scale full run
 ../run.sh --mode quick --headless # smaller integration run
 
@@ -40,12 +40,14 @@ bundled here. Their Isaac/PX4 substitutes are explicitly marked as
 approximations in [the benchmark protocol](docs/SHIN2026_BASELINE.md). The
 existing 23-channel cooperative urban experiment below remains unchanged and
 is not used for the primary controlled comparison. The live command checkpoints
-after each training episode and writes evaluation records incrementally. The
-dashboard at `http://127.0.0.1:8770/` automatically selects the benchmark view:
+after each training episode and writes the held-out real-flight R-GAT dataset
+after every collection episode. Synthetic controlled-R-GAT artifacts and
+artifacts containing NaN are rejected. The dashboard at
+`http://127.0.0.1:8770/` automatically selects the benchmark view:
 MATLAB-style plots show each reward arm's return/success, recurrent PPO losses,
-six-state estimator errors, curriculum, current reward decomposition, visibility,
-and paired scenario success. Use `--dashboard-port PORT` to change the port or
-`--no-dashboard` to disable it. The
+six-state estimator errors, R-GAT flight-data counts, curriculum, current reward
+decomposition, visibility, and paired scenario success. Use
+`--dashboard-port PORT` to change the port or `--no-dashboard` to disable it. The
 protocol lists remaining simulator-randomization limitations that must be
 resolved before claiming a bit-exact reproduction.
 

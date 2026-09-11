@@ -381,6 +381,9 @@ function tiles(state){
     if(latest){add('target visible',latest.in_fov?'yes':'no');
       add('position error',Number(latest.position_error).toFixed(3)+' m');}
     if(s.current_curriculum!==undefined)add('curriculum c',Number(s.current_curriculum).toFixed(3));
+    if(s.rgat_dataset_episodes!==undefined){
+      add('R-GAT flight data',`${s.rgat_dataset_episodes} ep / ${s.rgat_dataset_samples||0} samples`);
+      add('R-GAT contacts',`${s.rgat_dataset_successes||0} / ${s.rgat_dataset_episodes}`);}
     if(s.config_hash)add('config hash',String(s.config_hash).slice(0,10));
     if(s.reward_design_id)add('reward design',String(s.reward_design_id).slice(0,16));
     document.getElementById('tiles').innerHTML=out.join('');return;

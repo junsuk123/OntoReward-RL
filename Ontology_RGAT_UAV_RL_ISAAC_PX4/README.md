@@ -237,6 +237,13 @@ relations the potential leans on -- markers against GNSS as the pad leaves the
 frame, for one -- can be read off while the run is still going. Attention is
 learned importance, not causal proof.
 
+The reward panel makes the learned potential operational rather than merely
+showing its attention graph. It displays the configured PBRS equation, a
+`Phi(s)`/`Phi(s')` shaping surface and the current transition on that surface.
+During PPO it also plots `r_sparse`, the R-GAT shaping term, final reward and
+both potentials step by step. Manual PPO appears with a zero shaping term;
+the proposed arm shows the complete R-GAT reward decomposition.
+
 Each episode starts in the air. Isaac draws the entry pose from the same
 distribution as the original simulator but does **not** teleport the vehicle:
 PX4 flies there under its own position controller, and the policy takes over

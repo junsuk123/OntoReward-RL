@@ -3,9 +3,10 @@ from __future__ import annotations
 
 from .dashboard import Dashboard
 from .graph3d import GraphPublisher, graph_payload, layout_3d
-from .live import STORE, DatasetMonitor, EpisodeMonitor, LiveStore, PPOMonitor, RGATMonitor
+from .live import (STORE, DatasetMonitor, EpisodeMonitor, LiveStore, PPOMonitor,
+                   RGATMonitor, RewardMonitor)
 from .rviz import RvizPublisher
 
 __all__ = ["STORE", "Dashboard", "DatasetMonitor", "EpisodeMonitor", "GraphPublisher",
-           "LiveStore", "PPOMonitor", "RGATMonitor", "RvizPublisher", "graph_payload",
-           "layout_3d"]
+           "LiveStore", "PPOMonitor", "RGATMonitor", "RewardMonitor", "RvizPublisher",
+           "graph_payload", "layout_3d"]

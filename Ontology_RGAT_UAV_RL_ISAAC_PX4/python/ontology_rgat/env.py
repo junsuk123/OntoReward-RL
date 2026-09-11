@@ -370,7 +370,8 @@ class LandingEnv:
                               potential, cfg)
         self.done, self.status = done, status
         info = {
-            "status": status, "reward_parts": parts, "diag": diag2, "viol": viol,
+            "status": status, "reward_mode": reward_mode,
+            "reward_parts": parts, "diag": diag2, "viol": viol,
             "armed": bool(s["armed"]), "landed": bool(s["landed"]),
             "nav_state": s.get("nav_state", 0), "pad_speed": diag2["pad_speed"],
             "touchdown_source": str((s.get("extra") or {}).get(
@@ -437,11 +438,14 @@ class EpisodeLog:
     x: list[np.ndarray] = field(default_factory=list)
     a: list[np.ndarray] = field(default_factory=list)
     r: list[float] = field(default_factory=list)
+    reward_base: list[float] = field(default_factory=list)
+    reward_shape: list[float] = field(default_factory=list)
     wind: list[np.ndarray] = field(default_factory=list)
     aero_force: list[np.ndarray] = field(default_factory=list)
     aero_mag: list[float] = field(default_factory=list)
     tilt: list[float] = field(default_factory=list)
     phi: list[float] = field(default_factory=list)
+    phi_next: list[float] = field(default_factory=list)
     pad_pos: list[np.ndarray] = field(default_factory=list)
     pad_vel: list[np.ndarray] = field(default_factory=list)
     pad_speed: list[float] = field(default_factory=list)
@@ -495,6 +499,9 @@ def run_episode(policy, reward_mode: str, potential, seed: int, cfg: Config,
             log.x.append(x_before)
             log.a.append(np.asarray(action, dtype=float))
             log.r.append(r)
+            parts = info["reward_parts"] or {}
+            log.reward_base.append(float(parts.get("base", r)))
+            log.reward_shape.append(float(parts.get("shape", 0.0)))
             log.wind.append(diag_before["mean_wind_i"])
             log.aero_force.append(diag_before["aero_force_i"])
             log.aero_mag.append(diag_before["aero_force_mag"])
@@ -514,8 +521,8 @@ def run_episode(policy, reward_mode: str, potential, seed: int, cfg: Config,
             log.energy_margin.append(cur.sem.energy_margin)
             log.tilt.append(cur.sem.tilt)
             log.graph_x.append(cur.graph.X)
-            log.phi.append(float(info["reward_parts"].get("phi0", np.nan))
-                           if info["reward_parts"] else float("nan"))
+            log.phi.append(float(parts.get("phi0", np.nan)))
+            log.phi_next.append(float(parts.get("phi1", np.nan)))
 
             steps = k
             status = info["status"]

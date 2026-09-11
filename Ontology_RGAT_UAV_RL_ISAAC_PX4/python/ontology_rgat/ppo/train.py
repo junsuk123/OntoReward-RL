@@ -31,7 +31,7 @@ class PPOHistory(dict):
 
 
 def _collect_episode(agent: PPOAgent, reward_mode: str, potential, seed: int,
-                     cfg: Config) -> dict[str, Any]:
+                     cfg: Config, reward_monitor=None) -> dict[str, Any]:
     """One stochastic on-policy rollout with value and log-probability traces."""
     from ..env import LandingEnv
 
@@ -52,6 +52,11 @@ def _collect_episode(agent: PPOAgent, reward_mode: str, potential, seed: int,
             O[k], U[k], A[k] = cur.obs, u, a
             R[k], V[k], LP[k], D[k] = r, value, logp, float(done)
             status = info["status"]
+            if (reward_monitor is not None
+                    and ((k + 1) % int(cfg.sim.monitor_every) == 0 or done)):
+                reward_monitor.update(
+                    step=k + 1, t=env.t, mode=reward_mode, reward=r,
+                    parts=info["reward_parts"] or {}, status=status)
             if done:
                 break
         n = k + 1
@@ -68,6 +73,7 @@ def train_ppo(reward_mode: str, potential, cfg: Config, *,
               on_episode: Callable[[PPOHistory], None] | None = None,
               on_update: Callable[[PPOHistory], None] | None = None,
               checkpoint: Callable[[PPOAgent, PPOHistory], None] | None = None,
+              reward_monitor=None,
               verbose: bool = True) -> tuple[PPOAgent, PPOHistory]:
     """Train one PPO arm and return the agent with its history."""
     device = torch.device(str(cfg.device.ppo))
@@ -103,7 +109,12 @@ def train_ppo(reward_mode: str, potential, cfg: Config, *,
         buffered = 0
         while buffered < cfg.ppo.rollout_steps and episode < total:
             episode += 1
-            tr = _collect_episode(agent, reward_mode, potential, 20000 + episode, cfg)
+            if reward_monitor is not None:
+                reward_monitor.reset(reward_mode, episode)
+            monitor_args = ({"reward_monitor": reward_monitor}
+                            if reward_monitor is not None else {})
+            tr = _collect_episode(
+                agent, reward_mode, potential, 20000 + episode, cfg, **monitor_args)
             adv, ret = compute_gae(tr["R"], tr["V"], tr["D"], tr["last_value"], cfg)
             tr["adv"], tr["ret"] = adv, ret
             buffer.append(tr)

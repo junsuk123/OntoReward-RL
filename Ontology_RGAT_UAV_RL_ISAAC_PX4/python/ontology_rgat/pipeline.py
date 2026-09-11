@@ -24,7 +24,8 @@ from .rgat.dataset import generate_dataset, load_dataset, merge_datasets, save_d
 from .rgat.model import load_potential, save_potential
 from .rgat.train import train_potential
 from .viz.dashboard import Dashboard
-from .viz.live import STORE, DatasetMonitor, EpisodeMonitor, PPOMonitor, RGATMonitor
+from .viz.live import (STORE, DatasetMonitor, EpisodeMonitor, PPOMonitor,
+                       RGATMonitor, RewardMonitor)
 from .viz.rviz import RvizPublisher
 
 __all__ = ["run_all"]
@@ -45,6 +46,7 @@ def run_all(cfg: Config) -> dict[str, Any]:
     dashboard = Dashboard(cfg).start()
     rviz = RvizPublisher.create(cfg) if cfg.viz.realtime else None
     episode_monitor = EpisodeMonitor(cfg, rviz=rviz) if cfg.viz.realtime else None
+    reward_monitor = RewardMonitor(cfg)
     try:
         _banner(1, "External stack connectivity")
         STORE.stage("connectivity")
@@ -130,6 +132,7 @@ def run_all(cfg: Config) -> dict[str, Any]:
                 mode, potential if mode == "proposed" else None, cfg,
                 initial_agent=previous_agent, initial_history=previous_history,
                 on_episode=monitor.update, on_update=monitor.refresh,
+                reward_monitor=reward_monitor,
                 checkpoint=lambda model, h, path=checkpoint_path: save_agent(
                     model, cfg, path, dict(h)))
             save_agent(agent, cfg, checkpoint_path, dict(history))

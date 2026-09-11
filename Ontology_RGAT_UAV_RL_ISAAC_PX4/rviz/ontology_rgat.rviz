@@ -38,11 +38,17 @@ Visualization Manager:
       Frame Timeout: 15
       Frames:
         All Enabled: true
+        landing_pad:
+          Value: true
         landing_uav_base_link:
+          Value: true
+        landing_uav_base_link_frd:
           Value: true
         map:
           Value: true
         map_ned:
+          Value: true
+        uav_body:
           Value: true
       Marker Scale: 0.6000000238418579
       Name: TF
@@ -50,14 +56,23 @@ Visualization Manager:
       Show Axes: true
       Show Names: true
       Tree:
-        {}
+        map:
+          landing_pad:
+            uav_body:
+              {}
+          landing_uav_base_link:
+            landing_uav_base_link_frd:
+              {}
+          map_ned:
+            {}
       Update Interval: 0
       Value: true
     - Class: rviz_default_plugins/MarkerArray
       Enabled: true
       Name: Scene (deck, outcome, tolerance, wind, HUD)
       Namespaces:
-        {}
+        landing_outcome: true
+        scene: true
       Topic:
         Depth: 5
         Durability Policy: Volatile
@@ -69,7 +84,9 @@ Visualization Manager:
       Enabled: true
       Name: Ontology attention
       Namespaces:
-        {}
+        ontology_edge: true
+        ontology_label: true
+        ontology_node: true
       Topic:
         Depth: 5
         Durability Policy: Volatile
@@ -209,7 +226,7 @@ Visualization Manager:
   Enabled: true
   Global Options:
     Background Color: 48; 48; 48
-    Fixed Frame: map
+    Fixed Frame: landing_pad
     Frame Rate: 30
   Name: root
   Tools:

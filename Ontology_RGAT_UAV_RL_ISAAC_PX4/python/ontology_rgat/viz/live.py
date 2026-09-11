@@ -26,7 +26,7 @@ from typing import Any, Iterable, Sequence
 import numpy as np
 
 __all__ = ["LiveStore", "DatasetMonitor", "RGATMonitor", "PPOMonitor",
-           "EpisodeMonitor", "STORE"]
+           "RewardMonitor", "EpisodeMonitor", "STORE"]
 
 
 class LiveStore:
@@ -344,6 +344,32 @@ class PPOMonitor(_Monitor):
         plt.close(fig)
 
 
+class RewardMonitor:
+    """Live decomposition of the R-GAT potential-shaped PPO reward."""
+
+    def __init__(self, cfg, store: LiveStore | None = None):
+        self.cfg = cfg
+        self.store = store or STORE
+
+    def reset(self, mode: str, episode: int) -> None:
+        self.store.replace("reward", [])
+        self.store.set(reward_mode=str(mode), reward_episode=int(episode))
+
+    def update(self, *, step: int, t: float, mode: str, reward: float,
+               parts: dict[str, Any], status: str) -> None:
+        phi = parts.get("phi0")
+        phi_next = parts.get("phi1")
+        self.store.append("reward", {
+            "step": int(step), "t": float(t), "mode": str(mode),
+            "status": str(status), "reward": float(reward),
+            "base": float(parts.get("base", reward)),
+            "shape": float(parts.get("shape", 0.0)),
+            "phi": float(phi) if phi is not None else None,
+            "phi_next": float(phi_next) if phi_next is not None else None,
+            "shaped": str(mode).lower() == "proposed",
+        })
+
+
 class EpisodeMonitor:
     """Per-step episode telemetry, fanned out to RViz 2 and the dashboard.
 
@@ -378,6 +404,14 @@ class EpisodeMonitor:
             "z": float(log.x[-1][2]),
             "xy_error": float(np.linalg.norm(log.x[-1][0:2])),
             "reward": float(log.r[-1]), "tilt_deg": float(np.degrees(log.tilt[-1])),
+            "reward_base": float(log.reward_base[-1]),
+            "reward_shape": float(log.reward_shape[-1]),
+            "base": float(log.reward_base[-1]),
+            "shape": float(log.reward_shape[-1]),
+            "mode": str(info.get("reward_mode", "episode")),
+            "shaped": str(info.get("reward_mode", "")).lower() == "proposed",
+            "phi_next": (float(log.phi_next[-1])
+                         if np.isfinite(log.phi_next[-1]) else None),
             "aero_n": float(log.aero_mag[-1]),
             "wind_speed": float(np.linalg.norm(log.wind[-1])),
             "wind_risk": float(cur.sem.wind_risk),

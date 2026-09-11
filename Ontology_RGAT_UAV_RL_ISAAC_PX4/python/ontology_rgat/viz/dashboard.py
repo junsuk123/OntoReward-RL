@@ -73,6 +73,18 @@ font-size:11px;color:var(--muted);margin-top:10px}
 .relbar b{font-variant-numeric:tabular-nums;font-weight:600;color:var(--ink)}
 .relbar em{font-style:normal;opacity:.75}
 .note{font-size:11px;color:var(--muted);margin-top:8px}
+.reward-formula{font:600 18px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace;
+text-align:center;padding:8px 10px;border:1px solid var(--line);border-radius:8px;
+background:var(--bg);margin-bottom:10px}
+.reward-values{display:grid;grid-template-columns:repeat(auto-fit,minmax(125px,1fr));gap:7px;
+margin-bottom:10px}
+.reward-values div{border-left:3px solid var(--accent);padding:4px 8px;background:var(--bg)}
+.reward-values b{display:block;font-variant-numeric:tabular-nums;font-size:16px}
+.reward-values span{font-size:10px;color:var(--muted);text-transform:uppercase}
+.reward-grid{display:grid;grid-template-columns:minmax(260px,.8fr) minmax(360px,1.4fr);gap:14px}
+.reward-grid h3{font-size:11px;color:var(--muted);font-weight:600;margin:0 0 4px}
+.reward-grid canvas{height:220px}
+@media(max-width:820px){.reward-grid{grid-template-columns:1fr}}
 </style></head><body>
 <header><h1>Ontology-RGAT &middot; Isaac Sim + PX4</h1>
 <span id="stage">connecting</span><span id="detail"></span><span id="age"></span></header>
@@ -82,6 +94,9 @@ const PALETTE=['#1a59bf','#d96619','#0d8c4d','#7333a6','#c0392b','#0e7c86'];
 const CARDS=[
  {id:'tiles',title:null},
  {id:'graph3d',kind:'graph',title:'Learned ontology graph (3D, R-GAT attention)'},
+ {id:'rgat_reward',kind:'reward',title:'R-GAT-shaped RL reward / R-GAT 보상함수',
+  series:['reward','episode'],x:'t',y:['reward','base','shape','phi','phi_next'],
+  labels:['final reward','sparse/base','PBRS shaping','Phi(s)','Phi(s next)']},
  {id:'ppo_return',title:'PPO episode return',series:['ppo_manual','ppo_proposed'],
   x:'episode',y:'return',smooth:20},
  {id:'ppo_success',title:'PPO moving success rate',series:['ppo_manual','ppo_proposed'],
@@ -112,11 +127,11 @@ const CARDS=[
   labels:['actual','reported 1-sigma']},
 ];
 const LABELS={ppo_manual:'Manual',ppo_proposed:'Ontology-RGAT',rgat:'R-GAT',
- dataset:'expert',episode:'episode'};
+ dataset:'expert',episode:'episode',reward:'live'};
 const root=document.getElementById('root');
 for(const c of CARDS){
   const el=document.createElement('section');
-  el.className='card'+((c.id==='tiles'||c.kind==='graph')?' wide':'')
+  el.className='card'+((c.id==='tiles'||c.kind==='graph'||c.kind==='reward')?' wide':'')
     +(c.kind==='graph'?' g3d':'');
   el.id='card-'+c.id;
   if(c.id==='tiles'){el.innerHTML='<div class="tiles" id="tiles"></div>';}
@@ -133,6 +148,20 @@ for(const c of CARDS){
       colour are the channel's current activation; edge width and opacity are the
       second R-GAT layer's attention, which is learned importance and not causal
       proof. Self-loops are not drawn.</div>`;}
+  else if(c.kind==='reward'){el.innerHTML=`<h2>${c.title}</h2>
+    <div class="reward-formula">r<sub>R-GAT</sub> = r<sub>sparse</sub>
+      + &lambda;[&gamma;&Phi;<sub>R-GAT</sub>(G<sub>s&prime;</sub>)
+      &minus; &Phi;<sub>R-GAT</sub>(G<sub>s</sub>)]</div>
+    <div class="reward-values" id="reward-values"></div>
+    <div class="reward-grid"><div><h3>PBRS shaping surface over learned potentials</h3>
+      <canvas id="cv-rgat_reward_surface"></canvas></div>
+      <div><h3>Live reward decomposition during PPO</h3>
+      <canvas id="cv-rgat_reward"></canvas><div class="legend" id="lg-rgat_reward"></div>
+      </div></div>
+    <div class="note">The surface is F(s,s&prime;)=&lambda;(&gamma;&Phi;(s&prime;)&minus;&Phi;(s)).
+      The moving point is the current R-GAT transition. At terminal states
+      &Phi;(s&prime;)=0. Shaping changes learning feedback while preserving the
+      sparse task optimum because its &gamma; equals PPO &gamma;.</div>`;}
   else{el.innerHTML=`<h2>${c.title}</h2><canvas id="cv-${c.id}"></canvas>
     <div class="legend" id="lg-${c.id}"></div>`;}
   root.appendChild(el);
@@ -149,7 +178,9 @@ function draw(card,state){
   const line=css.getPropertyValue('--line').trim();
   const muted=css.getPropertyValue('--muted').trim();
   const lines=[];const yKeys=Array.isArray(card.y)?card.y:[card.y];
-  for(const s of card.series){
+  const sources=(card.kind==='reward'&&(state.series.reward||[]).length)
+    ?['reward']:card.series;
+  for(const s of sources){
     const rows=state.series[s]||[];if(!rows.length)continue;
     for(const key of yKeys){
       const xs=[],ys=[];
@@ -208,6 +239,55 @@ function tiles(state){
   const st=last('episode','status');if(st)add('episode status',st);
   const z=last('episode','z');if(z!==null)add('altitude',z.toFixed(2)+' m');
   document.getElementById('tiles').innerHTML=out.join('');
+}
+function rewardSurface(state,last){
+  const cv=document.getElementById('cv-rgat_reward_surface');if(!cv)return;
+  const dpr=window.devicePixelRatio||1,w=cv.clientWidth,h=cv.clientHeight;
+  cv.width=w*dpr;cv.height=h*dpr;
+  const g=cv.getContext('2d');g.setTransform(dpr,0,0,dpr,0,0);g.clearRect(0,0,w,h);
+  const s=state.scalars||{},lambda=Number(s.reward_lambda??2),gamma=Number(s.reward_gamma??0.999);
+  const pad={l:39,r:10,t:8,b:30},pw=w-pad.l-pad.r,ph=h-pad.t-pad.b,n=48;
+  const peak=Math.max(lambda*(1+gamma),1e-6);
+  for(let iy=0;iy<n;iy++)for(let ix=0;ix<n;ix++){
+    const phi=-1+2*(ix+.5)/n,phi1=1-2*(iy+.5)/n;
+    const q=Math.max(-1,Math.min(1,lambda*(gamma*phi1-phi)/peak));
+    const a=Math.abs(q),base=245-95*a;
+    g.fillStyle=q>=0?`rgb(${base},${225-35*a},${245-8*a})`
+      :`rgb(${245-8*a},${220-25*a},${base})`;
+    g.fillRect(pad.l+ix*pw/n,pad.t+iy*ph/n,pw/n+1,ph/n+1);
+  }
+  const css=getComputedStyle(document.body),ink=css.getPropertyValue('--ink').trim();
+  g.strokeStyle=ink;g.lineWidth=1;g.strokeRect(pad.l,pad.t,pw,ph);
+  g.fillStyle=ink;g.font='10px sans-serif';g.textAlign='center';
+  g.fillText('-1',pad.l,h-15);g.fillText('0',pad.l+pw/2,h-15);g.fillText('1',pad.l+pw,h-15);
+  g.fillText('learned Phi(s)',pad.l+pw/2,h-3);g.textAlign='right';
+  g.fillText('1',pad.l-5,pad.t+4);g.fillText('0',pad.l-5,pad.t+ph/2+3);
+  g.fillText('-1',pad.l-5,pad.t+ph+3);
+  g.save();g.translate(10,pad.t+ph/2);g.rotate(-Math.PI/2);g.textAlign='center';
+  g.fillText('learned Phi(s next)',0,0);g.restore();
+  if(last&&Number.isFinite(last.phi)&&Number.isFinite(last.phi_next)){
+    const x=pad.l+(last.phi+1)*pw/2,y=pad.t+(1-last.phi_next)*ph/2;
+    g.fillStyle='#ffd23f';g.strokeStyle='#16181d';g.lineWidth=2;
+    g.beginPath();g.arc(x,y,6,0,Math.PI*2);g.fill();g.stroke();
+  }
+}
+function rewardPanel(state){
+  const live=state.series.reward||[],fallback=state.series.episode||[];
+  const rows=live.length?live:fallback,last=rows.length?rows[rows.length-1]:null;
+  const s=state.scalars||{},box=document.getElementById('reward-values');
+  const fmt=v=>Number.isFinite(v)?Number(v).toFixed(4):'--';
+  const item=(label,value)=>`<div><b>${value}</b><span>${label}</span></div>`;
+  box.innerHTML=[
+    item('mode',last?last.mode:(s.reward_mode||'waiting')),
+    item('final reward r',fmt(last&&last.reward)),
+    item('sparse / base',fmt(last&&last.base)),
+    item('PBRS shaping F',fmt(last&&last.shape)),
+    item('Phi(s)',fmt(last&&last.phi)),
+    item('Phi(s next)',fmt(last&&last.phi_next)),
+    item('lambda',fmt(Number(s.reward_lambda??2))),
+    item('gamma',fmt(Number(s.reward_gamma??0.999))),
+  ].join('');
+  rewardSurface(state,last);
 }
 // ------------------------------------------------------------ 3D ontology
 // Hand-rolled: the page has to work with no network, so there is no three.js
@@ -439,6 +519,7 @@ async function tick(){
       lastRevision=state.revision;lastAt=Date.now();
       tiles(state);
       for(const c of CARDS)if(c.id!=='tiles'&&c.kind!=='graph')draw(c,state);
+      rewardPanel(state);
       const gs=state.graph||null;
       const stamp=gs?`${gs.source||'graph'}${gs.attention?'':' (schema only, '
         +'the R-GAT has not been trained yet)'}`
@@ -512,6 +593,11 @@ class Dashboard:
         opt = self.cfg.viz.dashboard
         if not opt.enabled:
             return None
+        self.store.set(
+            reward_lambda=float(self.cfg.reward.pbrs["lambda"]),
+            reward_gamma=float(self.cfg.reward.pbrs.gamma),
+            reward_formula="r_sparse + lambda * (gamma * Phi(s') - Phi(s))",
+        )
         handler = type("BoundHandler", (_Handler,), {"store": self.store})
         try:
             self.server = ThreadingHTTPServer((str(opt.host), int(opt.port)), handler)

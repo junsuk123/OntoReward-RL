@@ -479,6 +479,12 @@ survives the SSH forward the rest of the dashboard uses. Before stage 3 finishes
 there is no trained model to ask, and the panel says so: it draws the schema
 with uniform edges and labels itself *schema only*.
 
+The adjacent **R-GAT-shaped RL reward** panel is available immediately: its
+surface visualizes `lambda * (gamma * Phi(s') - Phi(s))` over the bounded
+potential range. During manual and proposed PPO it is updated from the live
+control loop with base reward, shaping, final reward, `Phi(s)` and `Phi(s')`;
+the yellow point on the surface is the current proposed-policy transition.
+
 ## Reproducibility
 
 Archive `config/system.yaml`, PX4 ULog, gateway JSONL log, Isaac version, Pegasus

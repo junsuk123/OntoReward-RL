@@ -1,3 +1,4 @@
+import dataclasses
 import math
 import sys
 from pathlib import Path
@@ -247,6 +248,24 @@ def test_waypoint_route_is_continuous_across_episode_reset():
     after, _ = trajectory.pose(7.25)
 
     assert after == pytest.approx(before, abs=1e-12)
+
+
+def test_closed_waypoint_route_keeps_driving_forward_through_seam():
+    cfg = dataclasses.replace(_waypoint_config(), waypoint_loop=True)
+    trajectory = PadTrajectory(cfg)
+    trajectory.reset(seed=11, sim_time=0.0)
+    ramp, _, _ = trajectory._waypoint_parameters()
+    seam_time = ramp + (
+        trajectory.waypoint_route.length - 0.5 * trajectory.speed * ramp
+    ) / trajectory.speed
+
+    before, before_velocity = trajectory.pose(seam_time - 1e-4)
+    after, after_velocity = trajectory.pose(seam_time + 1e-4)
+
+    assert np.linalg.norm(after - before) < 1e-3
+    assert np.linalg.norm(before_velocity) == pytest.approx(trajectory.speed)
+    assert np.linalg.norm(after_velocity) == pytest.approx(trajectory.speed)
+    assert np.dot(before_velocity, after_velocity) > 0.0
 
 
 def test_ranger_mini_v3_matches_official_dimensions_and_urdf_wheels():

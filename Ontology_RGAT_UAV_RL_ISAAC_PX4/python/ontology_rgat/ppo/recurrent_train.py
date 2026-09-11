@@ -111,12 +111,15 @@ def collect_episode(env, model: ShinRecurrentActorCritic, method: str, seed: int
                 "hidden_c": hidden[1].cpu().numpy(),
             })
             if monitor is not None:
+                status = ("success" if following.physical_contact
+                          else "failure" if following.terminal else "running")
                 monitor.step(
                     index=len(rows), dt=env.cfg.sim.dt, method=method,
                     reward=reward, reward_parts=parts, estimate=next_estimate,
                     truth=following.critic.true_relative_state,
                     in_fov=following.pad_in_fov,
-                    estimation_loss=estimation_loss)
+                    estimation_loss=estimation_loss, state=following.state,
+                    scenario=scenario, status=status)
             hidden = output.hidden
             step, output = following, next_output
             if following.terminal:

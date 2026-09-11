@@ -8,7 +8,10 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import shutil
+import subprocess
 import sys
+import time
 
 import torch
 
@@ -33,6 +36,7 @@ from ontology_rgat.reward_modes import (FrozenControlledPotential,
 from ontology_rgat.stack import ExternalStack
 from ontology_rgat.viz.dashboard import Dashboard
 from ontology_rgat.viz.live import BenchmarkMonitor, STORE
+from ontology_rgat.viz.rviz import RvizPublisher
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -86,6 +90,33 @@ def _sha256_file(path):
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _start_rviz(enabled: bool) -> tuple[subprocess.Popen | None, object | None]:
+    """Open the repository RViz layout and retain its diagnostic log."""
+    if not enabled:
+        return None, None
+    script = ROOT / "scripts/run_rviz.sh"
+    if not os.environ.get("DISPLAY"):
+        print("WARNING: DISPLAY is unset; continuing without the RViz 2 window.")
+        return None, None
+    if not script.is_file() or shutil.which("rviz2") is None:
+        print("WARNING: RViz 2 is unavailable; continuing without its window.")
+        return None, None
+    log_path = Path("/tmp/ontology_rgat_stack/rviz.log")
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    stream = log_path.open("wb")
+    process = subprocess.Popen(
+        [str(script)], cwd=str(ROOT), stdout=stream, stderr=subprocess.STDOUT)
+    # Environment/Qt loader errors surface immediately. Do not let a broken
+    # optional window abort a publication-scale flight run.
+    time.sleep(2.0)
+    if process.poll() is not None:
+        stream.close()
+        print(f"WARNING: RViz 2 exited immediately; see {log_path}.")
+        return None, None
+    print("RViz 2 opened with the landing camera and flight layout.")
+    return process, stream
 
 
 def _collect_empirical_rgat_data(*, cfg, camera, model, config, config_hash,
@@ -208,6 +239,7 @@ def main():
     parser.add_argument("--isaac-sim-path")
     parser.add_argument("--isaac-timeout", type=float)
     parser.add_argument("--no-dashboard", action="store_true")
+    parser.add_argument("--no-rviz", action="store_true")
     parser.add_argument("--dashboard-port", type=int)
     args = parser.parse_args()
     if args.reward:
@@ -289,7 +321,8 @@ def main():
     ppo_config = dict(config.get("ppo") or {})
     cfg.reward.pbrs.gamma = float(ppo_config.get("gamma", .99))
     cfg.reward.pbrs["lambda"] = float(ppo_config.get("shaping_lambda", 1.0))
-    monitor = BenchmarkMonitor(STORE)
+    rviz_publisher = RvizPublisher.create(cfg) if not args.no_rviz else None
+    monitor = BenchmarkMonitor(STORE, rviz=rviz_publisher)
     monitor.configure(
         methods=args.methods, mode=args.mode, config_hash=config_hash,
         training_total=train_count * len(args.methods),
@@ -297,6 +330,8 @@ def main():
         reward_design_id=getattr(potential, "design_id", None),
         reward_design_sha256=getattr(potential, "sha256", None))
     dashboard = Dashboard(cfg, STORE).start()
+    rviz_process, rviz_log = _start_rviz(
+        cfg.viz.rviz.enabled and not args.no_rviz and not args.headless)
     owned = None
     stack_module.current(None)
     try:
@@ -439,6 +474,16 @@ def main():
         stack_module.current(None)
         if owned is not None and not args.keep_stack:
             owned.stop()
+        if rviz_process is not None and rviz_process.poll() is None:
+            rviz_process.terminate()
+            try:
+                rviz_process.wait(timeout=5.0)
+            except subprocess.TimeoutExpired:
+                rviz_process.kill()
+        if rviz_log is not None:
+            rviz_log.close()
+        if rviz_publisher is not None:
+            rviz_publisher.close()
         if dashboard is not None:
             dashboard.stop()
 

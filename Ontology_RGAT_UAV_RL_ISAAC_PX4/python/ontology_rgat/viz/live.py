@@ -405,8 +405,9 @@ class BenchmarkMonitor:
     a back door for simulator truth to enter the deployed policy.
     """
 
-    def __init__(self, store: LiveStore | None = None):
+    def __init__(self, store: LiveStore | None = None, rviz=None):
         self.store = store or STORE
+        self.rviz = rviz
         self.methods: tuple[str, ...] = ()
         self.training_total = 0
         self.evaluation_total = 0
@@ -460,6 +461,8 @@ class BenchmarkMonitor:
     def reset_episode(self, *, method: str, phase: str, seed: int,
                       scenario: str, curriculum: float) -> None:
         self.store.replace("benchmark_step", [])
+        if self.rviz is not None:
+            self.rviz.clear_trails()
         self.store.set(
             benchmark_phase=str(phase), current_method=str(method),
             current_seed=int(seed), current_scenario=str(scenario),
@@ -467,7 +470,8 @@ class BenchmarkMonitor:
 
     def step(self, *, index: int, dt: float, method: str, reward: float,
              reward_parts: dict[str, Any], estimate, truth, in_fov: bool,
-             estimation_loss: float) -> None:
+             estimation_loss: float, state: dict[str, Any] | None = None,
+             scenario: str = "", status: str = "running") -> None:
         estimate = np.asarray(estimate, dtype=float)
         truth = np.asarray(truth, dtype=float)
         parts = reward_parts or {}
@@ -488,6 +492,10 @@ class BenchmarkMonitor:
                     "phi", "phi_next"):
             point[key] = float(parts.get(key, 0.0))
         self.store.append("benchmark_step", point)
+        if self.rviz is not None and state is not None:
+            self.rviz.publish_benchmark_step(
+                state=state, method=method, scenario=scenario, step=index,
+                dt=dt, in_fov=in_fov, status=status)
 
     def restore_training(self, method: str, history: Sequence[dict[str, Any]]) -> None:
         rows = [self._plain(dict(row)) for row in history]

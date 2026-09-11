@@ -72,6 +72,10 @@ class PadMotionConfig:
     route_size_m: tuple[float, float]
     route_corner_radius_m: float
     route_waypoints_enu_m: tuple[tuple[float, float, float], ...]
+    # A broad campus road can be a closed loop.  In that case the last point
+    # joins the first and the UGV keeps driving forward instead of stopping at
+    # the seam and reversing around the entire route.
+    waypoint_loop: bool
     # Fixed-time acceleration/deceleration at each end of a waypoint shuttle.
     # Tying the ramp to total route length made a campus-scale route need
     # several minutes merely to become visibly mobile.
@@ -224,6 +228,7 @@ class PadMotionConfig:
             route_corner_radius_m=float(pad.get("route_corner_radius_m",
                                                 urban.get("corner_radius_m", 12.0))),
             route_waypoints_enu_m=waypoints,
+            waypoint_loop=bool(pad.get("waypoint_loop", False)),
             waypoint_ramp_s=waypoint_ramp_s,
             lane_centres_m=lanes,
             lane_wander_m=float(pad.get("lane_wander_m", 0.18)),
@@ -768,6 +773,10 @@ class PadTrajectory:
         """Current route distance and direction, used to preserve reset pose."""
         if self.waypoint_route is None or self.speed <= 0.0:
             return 0.0, 1.0
+        if self.cfg.waypoint_loop:
+            distance, _ = self._waypoint_loop_forward(
+                self.waypoint_phase + float(sim_time) - self.t0)
+            return distance, 1.0
         _, _, leg_time = self._waypoint_parameters()
         phase = (self.waypoint_phase + float(sim_time) - self.t0) % (2.0 * leg_time)
         if phase <= leg_time:
@@ -782,6 +791,12 @@ class PadTrajectory:
             return 0.0
         ramp, acceleration, leg_time = self._waypoint_parameters()
         length = self.waypoint_route.length
+        if self.cfg.waypoint_loop:
+            # Resume at cruise speed after an episode boundary.  The modulo
+            # term chooses a time whose accumulated distance is exactly the
+            # carried point even when the newly seeded cruise speed changed.
+            distance_ramp = 0.5 * self.speed * ramp
+            return ramp + ((float(distance) - distance_ramp) % length) / self.speed
         d = float(np.clip(distance if direction >= 0.0 else length - distance,
                           0.0, length))
         distance_ramp = 0.5 * self.speed * ramp
@@ -802,6 +817,11 @@ class PadTrajectory:
         """
         if self.waypoint_route is None:
             raise RuntimeError("waypoints mode has no route")
+        if self.cfg.waypoint_loop:
+            distance, signed_speed = self._waypoint_loop_forward(
+                self.waypoint_phase + float(t))
+            point, tangent = self.waypoint_route.at(distance)
+            return point, tangent, signed_speed
         _, _, leg_time = self._waypoint_parameters()
         phase = (self.waypoint_phase + float(t)) % (2.0 * leg_time)
         if phase <= leg_time:
@@ -812,6 +832,20 @@ class PadTrajectory:
             signed_speed = -speed
         point, tangent = self.waypoint_route.at(distance)
         return point, tangent, signed_speed
+
+    def _waypoint_loop_forward(self, elapsed: float) -> tuple[float, float]:
+        """Distance and speed on a closed route with a single smooth launch."""
+        if self.waypoint_route is None or self.speed <= 0.0:
+            return 0.0, 0.0
+        ramp, acceleration, _ = self._waypoint_parameters()
+        t = max(0.0, float(elapsed))
+        if t < ramp:
+            distance = 0.5 * acceleration * t * t
+            speed = acceleration * t
+        else:
+            distance = 0.5 * self.speed * ramp + self.speed * (t - ramp)
+            speed = self.speed
+        return distance % self.waypoint_route.length, speed
 
     # ------------------------------------------------------------ road mode
     def _road_pose(self, t: float) -> tuple[np.ndarray, np.ndarray]:

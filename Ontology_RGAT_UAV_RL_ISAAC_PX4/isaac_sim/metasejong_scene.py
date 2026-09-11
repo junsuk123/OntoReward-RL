@@ -37,6 +37,10 @@ SCENARIOS = {
         "usd": "playground/S5/SejongUniv_S5.usd",
         "eye": (-21.52438, -99.7126, 25.0),
         "target": (-42.10069, -76.20936, 21.7482),
+        # S5 authors the decorative trees under the same group structure as
+        # S1.  Besides opening the view around the loop, disabling this group
+        # avoids invalid collision meshes in several imported tree instances.
+        "vegetation": ("S5/_3_Prop/Tree",),
     },
 }
 

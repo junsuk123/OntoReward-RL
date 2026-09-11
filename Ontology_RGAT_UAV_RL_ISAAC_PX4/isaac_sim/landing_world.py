@@ -391,6 +391,9 @@ class LandingDeck:
         thickness = 0.08
         body = UsdGeom.Cube.Define(stage, self.BODY)
         body.CreateSizeAttr(1.0)
+        # A dark, matte platform makes each marker's white quiet zone readable
+        # in both the Isaac viewport and the downward grayscale camera.
+        body.CreateDisplayColorAttr([Gf.Vec3f(0.10, 0.18, 0.24)])
         # A unit cube scaled to the deck, so the collider is an exact box and
         # the marker plane sits at the parent's origin (pad-frame z = 0).
         UsdGeom.XformCommonAPI(body).SetScale(

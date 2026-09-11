@@ -9,14 +9,41 @@ isaac:
   # hover while PX4 aligns instead of balancing it on a platform only 1.5 m
   # wide; the seeded Table-I entry pose is still flown before data collection.
   start_airborne: true
+  # The campus scene is substantially heavier than Flat Plane. Keep physics
+  # and the PX4 HIL loop at full rate while rendering a deterministic GUI
+  # subset, as in the validated Meta-Sejong pipeline profile.
+  gui_rendering_dt: 0.05
+  gui_viewport_resolution: [960, 540]
+  startup_rendering_dt: 0.5
+  startup_max_sim_s: 30.0
   viewport_follow:
-    frame: world
+    frame: street
+    offset_m: [-10.0, 4.5, 9.0]
+    focus: pair
+    pair_span_m: 7.0
+    smoothing: 0.22
+
+# Use the broad plaza/loop beside Gwanggaeto Hall instead of an empty Flat
+# Plane. The benchmark still samples exactly the same pad-relative Table-I
+# initial condition; changing its world-space anchor does not alter the task.
+metasejong:
+  enabled: true
+  scenario: gwanggaeto
+  asset_root: external/metasejong/resources/models
+  scale: 0.01
+  prim_path: /World/metasejong
+  hide_vegetation: true
 
 # Shin et al.'s benchmark randomizes a moving platform in an open arena. The
 # retained urban experiment remains available through system.yaml, but its OSM
 # buildings must not occupy this profile's random-walk origin or trajectories.
 urban:
   enabled: false
+  source: synthetic
+  origin:
+    latitude: 37.5503
+    longitude: 127.0736
+    altitude: 30.0
 
 landing:
   max_time_s: 30.0
@@ -31,13 +58,74 @@ benchmark:
     platform_yaw_misalignment_deg: [-60.0, 60.0]
 
 pad:
-  motion: random_walk
-  route_start: seeded
+  # The paper uses a 1.5 x 1.5 m platform. Mount that platform on the supplied
+  # RANGER MINI visual instead of shrinking the inherited box lorry into two
+  # overlapping cubes.
+  carrier: ugv
+  vehicle_model: agilex_ranger_mini_v3
+  vehicle_visual_usd: assets/ranger_mini_v3/ranger_mini_v3.usd
+  vehicle_dimensions_m: [0.720, 0.500, 0.345]
+  vehicle_mass_kg: 75.0
+  vehicle_payload_kg: 120.0
+  # This is the simulation platform's Table-V capability, not a claim about
+  # the physical RANGER MINI's rated speed.
+  vehicle_max_speed_m_s: 8.0
+  vehicle_visual_origin_from_road_m: [0.0, 0.0, 0.31]
+  deck_height_m: 0.42
+  # The centreline below is sampled from the S5_CarRoad_002 mesh itself.  Its
+  # Z coordinates are the rendered asphalt surface, so the carrier neither
+  # cuts across the plaza/building nor floats above the road.  It begins on the
+  # broad north-east side of the loop, close to the map's authored camera.
+  start_position_enu_m: [-41.765, -75.569, 21.360]
+  motion: waypoints
+  route_start: continue
+  waypoint_loop: true
+  waypoint_ramp_s: 4.0
+  route_waypoints_enu_m:
+    - [-41.765, -75.569, 21.360]
+    - [-43.005, -74.348, 21.362]
+    - [-44.422, -73.171, 21.368]
+    - [-46.045, -71.911, 21.376]
+    - [-48.000, -70.460, 21.387]
+    - [-50.542, -68.582, 21.402]
+    - [-53.985, -66.555, 21.405]
+    - [-57.400, -66.719, 21.394]
+    - [-60.142, -68.529, 21.385]
+    - [-62.547, -70.793, 21.386]
+    - [-64.853, -73.270, 21.389]
+    - [-66.343, -76.324, 21.396]
+    - [-66.652, -79.711, 21.397]
+    - [-66.380, -83.000, 21.388]
+    - [-64.722, -85.949, 21.386]
+    - [-62.753, -88.370, 21.379]
+    - [-60.921, -90.460, 21.369]
+    - [-59.108, -92.320, 21.365]
+    - [-57.320, -94.108, 21.365]
+    - [-55.480, -95.956, 21.370]
+    - [-53.349, -97.697, 21.382]
+    - [-50.896, -99.427, 21.393]
+    - [-48.000, -100.780, 21.405]
+    - [-44.982, -100.116, 21.406]
+    - [-42.405, -98.373, 21.395]
+    - [-40.150, -96.597, 21.384]
+    - [-38.165, -94.720, 21.380]
+    - [-36.218, -92.886, 21.374]
+    - [-34.646, -90.710, 21.374]
+    - [-33.792, -88.171, 21.381]
+    - [-34.370, -85.403, 21.381]
+    - [-35.780, -83.000, 21.374]
+    - [-37.108, -81.079, 21.368]
+    - [-38.284, -79.464, 21.363]
+    - [-39.409, -78.040, 21.359]
+    - [-40.592, -76.784, 21.359]
+    - [-41.765, -75.569, 21.360]
   speed_range_m_s: [0.0, 8.0]
   speed_step_perturbation_m_s: [-0.5, 0.5]
   yaw_rate_step_perturbation_deg_s: [-3.0, 3.0]
   motion_update_dt_s: 0.1
-  arena_radius_m: 300.0
+  # Waypoints are absolute campus coordinates; the origin-centred open-field
+  # clamp must be disabled or it would pull legal road poses toward [0, 0].
+  arena_radius_m: 0.0
   yaw_rate_limit_deg_s: 90.0
   deck_size_m: [1.5, 1.5]
 
@@ -48,6 +136,14 @@ gnss:
 vision:
   mode: aruco
   pose_source_for_policy: false
+  # The inherited lorry board was 4.0 m wide, so four tags visibly floated
+  # outside a 1.5 m benchmark deck. This board stays fully inside the platform.
+  board:
+    - {id: 10, side_m: 0.18, center_xy_m: [0.00, 0.00]}
+    - {id: 11, side_m: 0.42, center_xy_m: [-0.43, 0.43]}
+    - {id: 12, side_m: 0.42, center_xy_m: [0.43, 0.43]}
+    - {id: 13, side_m: 0.42, center_xy_m: [0.43, -0.43]}
+    - {id: 14, side_m: 0.42, center_xy_m: [-0.43, -0.43]}
   camera:
     model: shin2026_grayscale
     resolution: [512, 320]

@@ -443,3 +443,93 @@ class RvizPublisher:
             "node_values": [float(v) for v in cur.sem.node_values],
         }, allow_nan=False)
         self.telemetry_pub.publish(message)
+
+    def publish_benchmark_step(self, *, state: dict[str, Any], method: str,
+                               scenario: str, step: int, dt: float,
+                               in_fov: bool, status: str) -> None:
+        """Publish the recurrent Shin benchmark without its legacy log type.
+
+        The controlled benchmark has a stricter actor boundary and therefore
+        does not construct the ontology pipeline's ``EpisodeLog`` object.
+        RViz still needs the physical flight, paths and operator status, all of
+        which are already present in the gateway state returned after a step.
+        """
+        pad = state.get("pad") if isinstance(state.get("pad"), dict) else {}
+        truth = (state.get("truth")
+                 if isinstance(state.get("truth"), dict) else {})
+        pad_pos = np.asarray(pad.get("position", (0.0, 0.0, 0.0)), dtype=float)
+        relative = np.asarray(
+            truth.get("position") if truth.get("valid", False)
+            else state.get("position", (0.0, 0.0, 0.0)), dtype=float)
+        quaternion = np.asarray(state.get("quaternion_wxyz", (1.0, 0.0, 0.0, 0.0)),
+                                dtype=float)
+        if (pad_pos.shape != (3,) or relative.shape != (3,)
+                or quaternion.shape != (4,) or not np.isfinite(relative).all()
+                or not np.isfinite(pad_pos).all() or not np.isfinite(quaternion).all()):
+            return
+
+        # Gateway relative positions use gravity-aligned ENU axes translated
+        # to the platform origin, so this display frame is translated but not
+        # yaw-rotated. The platform's actual heading remains visible in its
+        # Isaac odometry display.
+        self._broadcast_tf(pad_pos, 0.0, relative, quaternion)
+        limit = int(self.opt.trail_length)
+        self._uav_trail.append(tuple(float(value) for value in relative))
+        self._pad_trail.append(tuple(float(value) for value in pad_pos))
+        del self._uav_trail[:-limit]
+        del self._pad_trail[:-limit]
+        self._publish_path(self.uav_path_pub, self.opt.pad_frame, self._uav_trail)
+        self._publish_path(self.pad_path_pub, self.opt.world_frame, self._pad_trail)
+
+        Marker = self.m["Marker"]
+        array = self.m["MarkerArray"]()
+        deck = self._marker("scene", 0, Marker.CUBE, self.opt.pad_frame)
+        deck.scale.x, deck.scale.y, deck.scale.z = 1.50, 1.50, 0.04
+        deck.pose.position.z = -0.02
+        _rgba(deck, (0.10, 0.32, 0.48), 0.82)
+        array.markers.append(deck)
+
+        tolerance = self._marker("scene", 1, Marker.CYLINDER, self.opt.pad_frame)
+        tolerance.scale.x = tolerance.scale.y = 2.0 * float(self.cfg.criteria.xy)
+        tolerance.scale.z = 0.012
+        _rgba(tolerance, (0.18, 0.78, 0.42), 0.42)
+        array.markers.append(tolerance)
+
+        uav = self._marker("scene", 2, Marker.SPHERE, self.opt.pad_frame)
+        uav.pose.position.x, uav.pose.position.y, uav.pose.position.z = (
+            float(value) for value in relative)
+        uav.scale.x, uav.scale.y, uav.scale.z = 0.34, 0.34, 0.14
+        _rgba(uav, (0.16, 0.48, 0.95), 0.96)
+        array.markers.append(uav)
+
+        drop = self._marker("scene", 3, Marker.LINE_LIST, self.opt.pad_frame)
+        drop.scale.x = 0.025
+        drop.points = [self._point(*relative),
+                       self._point(relative[0], relative[1], 0.0)]
+        _rgba(drop, (0.64, 0.68, 0.75), 0.8)
+        array.markers.append(drop)
+
+        text = self._marker("scene", 4, Marker.TEXT_VIEW_FACING, self.opt.pad_frame)
+        text.pose.position.x = float(relative[0])
+        text.pose.position.y = float(relative[1])
+        text.pose.position.z = float(relative[2]) + 0.55
+        text.scale.z = 0.18
+        colour = ((0.25, 0.95, 0.45) if status == "success"
+                  else (0.98, 0.30, 0.22) if status == "failure"
+                  else (0.94, 0.94, 0.94))
+        _rgba(text, colour, 0.96)
+        text.text = (f"{method} | {scenario}\n"
+                     f"t={step * dt:5.1f}s  {status.upper()}\n"
+                     f"relative xyz=({relative[0]:+.2f}, {relative[1]:+.2f}, "
+                     f"{relative[2]:+.2f}) m  marker={'ON' if in_fov else 'LOST'}")
+        array.markers.append(text)
+        self.scene_pub.publish(array)
+
+        message = self.m["String"]()
+        message.data = json.dumps({
+            "method": str(method), "scenario": str(scenario),
+            "step": int(step), "t": float(step * dt), "status": str(status),
+            "position_pad": [float(value) for value in relative],
+            "marker_visible": bool(in_fov),
+        })
+        self.telemetry_pub.publish(message)

@@ -4,6 +4,7 @@ import argparse
 import json
 import math
 from pathlib import Path
+import threading
 from typing import Any
 
 import numpy as np
@@ -159,6 +160,13 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
     class NodeImpl(Node):
         def __init__(self):
             super().__init__("ontology_rgat_px4_gateway")
+            # Sensor topics can arrive hundreds of times per second.  Keep the
+            # OFFBOARD heartbeat in its own callback group so those callbacks
+            # cannot starve it past PX4's 500 ms loss threshold.  The lock
+            # serializes the small set of command fields shared with UDP.
+            from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
+            self.control_callback_group = MutuallyExclusiveCallbackGroup()
+            self.control_lock = threading.RLock()
             self.cfg = cfg
             self.safety = safety
             self.sample = VehicleSample()
@@ -251,7 +259,11 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             self.pad_contact_ns = 0
             self.warned_missing_land_detector = False
             self.offboard_nav_state = int(getattr(VehicleStatus, "NAVIGATION_STATE_OFFBOARD", 14))
-            self.mode_request_period = max(1, int(round(cfg.control_hz / 2.0)))
+            # The policy remains at the paper's 10 Hz; this only repeats the
+            # latest setpoint and OffboardControlMode heartbeat at a robust
+            # transport rate.
+            self.heartbeat_hz = max(20.0, float(cfg.control_hz))
+            self.mode_request_period = max(1, int(round(self.heartbeat_hz / 2.0)))
             self.last_mode_request_tick = -self.mode_request_period
 
             qos = _make_qos(rclpy)
@@ -321,14 +333,19 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                                      self._on_battery_status, qos)
             self.create_subscription(String, "/landing_sim/reset_ack", self._on_reset_ack, 10)
 
-            self.udp = DatagramServer(cfg.bind_host, cfg.gateway_port,
-                                      cfg.protocol_version, self._on_udp)
+            self.udp = DatagramServer(
+                cfg.bind_host, cfg.gateway_port, cfg.protocol_version,
+                self._on_udp_synchronized)
             self.create_timer(0.005, self.udp.poll)
-            self.create_timer(1.0 / cfg.control_hz, self._control_tick)
+            self.create_timer(
+                1.0 / self.heartbeat_hz,
+                self._control_tick_synchronized,
+                callback_group=self.control_callback_group)
             self.get_logger().info(
                 f"gateway target={cfg.target}, UDP={cfg.bind_host}:{cfg.gateway_port}, "
                 f"PX4 namespace={cfg.namespace}, arm_allowed={safety.may_arm()}, "
                 f"offboard_allowed={safety.may_enable_offboard()}, "
+                f"heartbeat={self.heartbeat_hz:g} Hz, "
                 f"pad_motion={cfg.pad_motion}, gnss={'on' if cfg.gnss_enabled else 'off'}, "
                 f"battery={'on' if cfg.battery.enabled else 'off'} "
                 f"(hover {self.battery.hover_power_w:.0f} W)"
@@ -340,6 +357,14 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
 
         def _timestamp_us(self) -> int:
             return self.get_clock().now().nanoseconds // 1000
+
+        def _on_udp_synchronized(self, msg: dict[str, Any]) -> None:
+            with self.control_lock:
+                self._on_udp(msg)
+
+        def _control_tick_synchronized(self) -> None:
+            with self.control_lock:
+                self._control_tick()
 
         def _on_udp(self, msg: dict[str, Any]) -> None:
             kind = msg["type"]
@@ -1671,8 +1696,13 @@ def main(argv=None) -> None:
     _load_ros_types()
     rclpy.init(args=None)
     node = Px4GatewayNode(cfg, allow_arm=args.allow_arm, allow_offboard=args.allow_offboard)
+    # The node's default callback group handles sensor traffic while the
+    # dedicated control group keeps publishing PX4's OFFBOARD heartbeat.
+    from rclpy.executors import MultiThreadedExecutor
+    executor = MultiThreadedExecutor(num_threads=2)
+    executor.add_node(node)
     try:
-        rclpy.spin(node)
+        executor.spin()
     except (KeyboardInterrupt, rclpy.executors.ExternalShutdownException):
         pass
     except Exception:
@@ -1683,6 +1713,7 @@ def main(argv=None) -> None:
         if rclpy.ok():
             raise
     finally:
+        executor.shutdown()
         node.destroy_node()
         # A launch service can shut the shared context down before spin exits.
         # Calling shutdown twice used to turn every clean stack restart into a

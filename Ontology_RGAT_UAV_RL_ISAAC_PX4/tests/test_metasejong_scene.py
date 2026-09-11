@@ -54,6 +54,39 @@ def test_pipeline_overlay_restores_episode_control_and_battery():
     assert config["battery"]["enabled"] is True
 
 
+def test_shin_profile_uses_campus_plaza_and_fitted_platform():
+    config = load_config(ROOT / "config" / "shin2026-system.yaml")
+    pad = PadMotionConfig.from_mapping(config)
+
+    assert config["metasejong"]["enabled"] is True
+    assert config["metasejong"]["scenario"] == "gwanggaeto"
+    assert config["metasejong"]["hide_vegetation"] is True
+    assert pad.carrier == "ugv"
+    assert pad.deck_size_m == pytest.approx((1.5, 1.5))
+    assert pad.deck_height_m == pytest.approx(0.42)
+    assert pad.mode == "waypoints"
+    assert pad.waypoint_loop is True
+    assert pad.route_start == "continue"
+    assert pad.arena_radius_m == 0.0
+    assert len(pad.route_waypoints_enu_m) == 37
+    assert pad.route_waypoints_enu_m[0] == pytest.approx(
+        (-41.765, -75.569, 21.360))
+    assert pad.route_waypoints_enu_m[-1] == pytest.approx(
+        pad.route_waypoints_enu_m[0])
+    assert (ROOT / pad.vehicle_visual_usd).is_file()
+    assert config["isaac"]["start_airborne"] is True
+    assert config["isaac"]["viewport_follow"]["focus"] == "pair"
+
+    half_length, half_width = (0.5 * value for value in pad.deck_size_m)
+    # The texture adds one quiet-zone cell around a 4x4 tag, so the visible
+    # quad is 4/3 of the configured physical marker side.
+    for marker in config["vision"]["board"]:
+        half_quad = 0.5 * float(marker["side_m"]) * (4.0 / 3.0)
+        x, y = (float(value) for value in marker["center_xy_m"])
+        assert abs(x) + half_quad <= half_length
+        assert abs(y) + half_quad <= half_width
+
+
 def test_alias_and_asset_path_are_resolved_from_workspace(tmp_path):
     config = MetaSejongConfig.from_mapping(
         {

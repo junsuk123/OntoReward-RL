@@ -84,6 +84,7 @@ from px4_gnss import UrbanGnssSensor
 from live_overlay import LiveOverlay
 from metasejong_scene import MetaSejongConfig, MetaSejongScene
 from view_geometry import paired_view_pose, street_offset_enu
+from wind_sensor import WindSensor
 
 
 IDENTITY_QUAT = np.array([1.0, 0.0, 0.0, 0.0])
@@ -894,7 +895,11 @@ class LandingWorld:
 
         ns = f"/{isaac_cfg['namespace']}{int(isaac_cfg['vehicle_id'])}"
         node = self.ros_backend.node
-        self.wind_pub = node.create_publisher(Vector3Stamped, ns + "/environment/wind", 10)
+        # Physics consumes /environment/wind truth.  The learner consumes only
+        # the separately modelled UAV anemometer measurement on /sensors/wind.
+        self.wind_pub = node.create_publisher(Vector3Stamped, ns + "/sensors/wind", 10)
+        self.wind_truth_pub = node.create_publisher(
+            Vector3Stamped, ns + "/environment/wind", 10)
         self.force_pub = node.create_publisher(Vector3Stamped, ns + "/environment/aero_force", 10)
         self.marker_pub = node.create_publisher(Float32, ns + "/perception/marker_quality", 10)
         self.pad_pose_pub = node.create_publisher(PoseStamped, ns + "/perception/uav_pose_in_pad", 10)
@@ -940,8 +945,10 @@ class LandingWorld:
         self.viewport_follower = ViewportFollower(CONFIG["isaac"])
 
         self.wind = WindField(CONFIG["wind"])
+        self.wind_sensor = WindSensor(CONFIG["wind"].get("sensor", {}))
         self.pending_reset: dict | None = None
         self.last_wind = np.zeros(3)
+        self.last_wind_measurement = np.zeros(3)
         self.last_force = np.zeros(3)
         self.world.add_physics_callback("/landing_wind", self._apply_wind)
         # Stepped with physics, not with rendering: PhysX derives the kinematic
@@ -953,6 +960,7 @@ class LandingWorld:
             self.camera.start()
             self.camera.aim_at_nadir(self.vehicle)
         self.wind.reset(int(CONFIG["wind"].get("seed", 49)), self.world.current_time)
+        self.wind_sensor.reset(int(CONFIG["wind"].get("seed", 49)), self.world.current_time)
         pad_cfg = CONFIG.get("pad") or {}
         preview_motion = bool(pad_cfg.get("preview_motion", False))
         preview_scale = float(pad_cfg.get("preview_speed_scale", 1.0))
@@ -1044,6 +1052,7 @@ class LandingWorld:
         for backend in (self.px4_backend, self.ros_backend):
             backend.reset()
         self.wind.reset(req["seed"], self.world.current_time, req["wind_scale"])
+        self.wind_sensor.reset(req["seed"], self.world.current_time)
         deck = self.deck.reset(req["seed"], self.world.current_time,
                                req.get("pad_scale", 1.0))
         self.gnss.reset(req["seed"], req.get("gnss_scale", 1.0))
@@ -1333,7 +1342,11 @@ class LandingWorld:
         self._publish_gnss()
         self._publish_deck()
         stamp = self.ros_backend.node.get_clock().now().to_msg()
-        for publisher, vector in ((self.wind_pub, self.last_wind), (self.force_pub, self.last_force)):
+        self.last_wind_measurement = self.wind_sensor.measure(self.last_wind, now)
+        for publisher, vector in (
+                (self.wind_pub, self.last_wind_measurement),
+                (self.wind_truth_pub, self.last_wind),
+                (self.force_pub, self.last_force)):
             msg = Vector3Stamped()
             msg.header.stamp = stamp
             msg.header.frame_id = "map"

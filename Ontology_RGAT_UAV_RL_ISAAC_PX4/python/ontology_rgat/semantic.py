@@ -50,9 +50,11 @@ class SemanticState:
     gnss_integrity: float = 1.0
     # Diagnostics, logged but not fed to the graph.
     mean_wind: np.ndarray = field(default_factory=lambda: np.zeros(3))
+    wind_speed: float = 0.0
     wind_accel: float = 0.0
     wind_dir_change: float = 0.0
     r_drag: float = 0.0
+    r_speed: float = 0.0
     r_acc: float = 0.0
     r_dir: float = 0.0
     closing_speed: float = 0.0
@@ -172,8 +174,12 @@ def compute_features(diag: dict[str, Any], meas: dict[str, Any],
     # ---- wind risk ------------------------------------------------------
     f_cap = max(1.0, cfg.drone.max_total_thrust * max(np.cos(tilt), 0.1)
                 - cfg.drone.mass * cfg.sim.g)
-    r_drag = min(1.0, float(diag.get("aero_force_mag", 0.0)) / f_cap)
+    observed_force = float(diag.get(
+        "aero_force_observed_mag", diag.get("aero_force_mag", 0.0)))
+    r_drag = min(1.0, observed_force / f_cap)
     mean_wind = np.asarray(diag.get("mean_wind_i", (0.0, 0.0, 0.0)), dtype=float)
+    wind_speed = float(np.linalg.norm(mean_wind))
+    r_speed = min(1.0, wind_speed / max(cfg.semantic.wind_speed_thr, 1e-6))
     if prev is None:
         a_wind = 0.0
         d_theta = 0.0
@@ -188,7 +194,8 @@ def compute_features(diag: dict[str, Any], meas: dict[str, Any],
             d_theta = float(np.arccos(c))
     r_acc = min(1.0, a_wind / cfg.semantic.wind_accel_thr)
     r_dir = min(1.0, d_theta / cfg.semantic.wind_dir_thr)
-    z = float(np.dot(cfg.semantic.wind_risk_w, [r_drag, r_acc, r_dir])) + cfg.semantic.wind_risk_b
+    z = float(np.dot(cfg.semantic.wind_risk_w,
+                     [r_speed, r_drag, r_acc, r_dir])) + cfg.semantic.wind_risk_b
     wind_risk = 1.0 / (1.0 + np.exp(-z))
 
     marker_quality = float(meas["marker_quality"])
@@ -262,8 +269,9 @@ def compute_features(diag: dict[str, Any], meas: dict[str, Any],
         attitude_stability=attitude_stability, touchdown_safety=touchdown_safety,
         pad_motion=pad_motion, battery_reserve=battery_reserve,
         gnss_integrity=gnss_integrity,
-        mean_wind=mean_wind, wind_accel=a_wind, wind_dir_change=d_theta,
-        r_drag=r_drag, r_acc=r_acc, r_dir=r_dir,
+        mean_wind=mean_wind, wind_speed=wind_speed,
+        wind_accel=a_wind, wind_dir_change=d_theta,
+        r_speed=r_speed, r_drag=r_drag, r_acc=r_acc, r_dir=r_dir,
         closing_speed=closing_speed, pad_speed=pad_speed,
         gnss_sigma_xy=float(max(gnss["sigma_xy_m"], gnss["deck_sigma_xy_m"])),
         gnss_nlos_fraction=float(gnss["nlos_detected_fraction"]),

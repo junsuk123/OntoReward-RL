@@ -379,6 +379,8 @@ class EpisodeMonitor:
             "xy_error": float(np.linalg.norm(log.x[-1][0:2])),
             "reward": float(log.r[-1]), "tilt_deg": float(np.degrees(log.tilt[-1])),
             "aero_n": float(log.aero_mag[-1]),
+            "wind_speed": float(np.linalg.norm(log.wind[-1])),
+            "wind_risk": float(cur.sem.wind_risk),
             "pad_speed": float(log.pad_speed[-1]),
             "closing_speed": float(log.closing_speed[-1]),
             "marker_quality": float(log.marker_quality[-1]),

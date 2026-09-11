@@ -115,6 +115,12 @@ def state_to_model(s: dict[str, Any], cfg: Config) -> tuple[np.ndarray, dict[str
     pad = _pad_of(s)
     world = s.get("world") if isinstance(s.get("world"), dict) else {}
     aero = _column(s["aero_force"], 3)
+    extra = s.get("extra") if isinstance(s.get("extra"), dict) else {}
+    # Isaac publishes the exact applied force for validation plots. It must not
+    # become a privileged policy input; real flights would need an estimator.
+    # The measured anemometer still drives WindRisk through speed/change.
+    aero_is_truth = extra.get("aero_force_source") == "simulator_truth"
+    aero_for_control = np.zeros(3) if aero_is_truth else aero
     sensor = {
         "position": x[0:3].copy(), "velocity": x[3:6].copy(),
         "quaternion_wxyz": q.copy(), "angular_velocity": x[10:13].copy(),
@@ -139,6 +145,8 @@ def state_to_model(s: dict[str, Any], cfg: Config) -> tuple[np.ndarray, dict[str
         "mean_wind_i": _column(s["wind"], 3),
         "aero_force_i": aero,
         "aero_force_mag": float(np.linalg.norm(aero)),
+        "aero_force_observed_mag": float(np.linalg.norm(aero_for_control)),
+        "aero_force_data_policy": "validation_only" if aero_is_truth else "measured",
         "acceleration_i": _column(s["acceleration"], 3),
         "marker_quality": float(s["marker_quality"]),
         "source": "PX4/Isaac",

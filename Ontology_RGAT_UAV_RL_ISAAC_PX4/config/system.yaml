@@ -105,6 +105,15 @@ landing:
 
 wind:
   enabled: true
+  # The field below drives physics. Learning receives this imperfect UAV
+  # anemometer measurement, never the simulator's exact wind vector.
+  sensor:
+    enabled: true
+    seed: 83
+    noise_std_m_s: [0.12, 0.12, 0.08]
+    bias_std_m_s: [0.06, 0.06, 0.04]
+    time_constant_s: 0.15
+    max_speed_m_s: 25.0
   air_density_kg_m3: 1.225
   drag_area_m2: [0.055, 0.055, 0.085]
   drag_coefficient: [1.0, 1.0, 1.2]

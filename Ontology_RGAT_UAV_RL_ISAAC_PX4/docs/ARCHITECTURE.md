@@ -201,7 +201,9 @@ from the episode seed, so the climb is not charged to the policy. Hardware can
 adopt PX4 `battery_status`. Every state carries finite energy fields, and an
 empty modeled pack ends the episode as `battery_depleted`.
 
-The learning contract is now 23 observations and 14 ontology nodes. `PadMotion`
+The learning contract is now 23 observations and 14 ontology nodes. `WindRisk`
+is derived from the UAV anemometer's measured speed and temporal changes, not
+the exact field applied by physics. `PadMotion`
 degrades alignment, visual stability, touchdown safety and `SafeLanding`;
 `BatteryReserve` supports touchdown safety and contributes to `SafeLanding`;
 `GnssIntegrity` supports exactly what `MarkerQuality` supports — the alignment
@@ -244,8 +246,10 @@ quadratic drag is applied in an Isaac physics callback instead
 (`WindField.force` in `isaac_sim/landing_world.py`). The field is a seeded mean
 plus a six-mode turbulence sum plus configured Gaussian gusts, all scaled by the
 per-episode `wind_scale` the reset request carries. The force is applied in the
-body frame and republished in ENU so the same numbers the physics saw reach the
-ontology and the plots.
+body frame and republished in ENU for validation plots only. A separate UAV
+anemometer adds seeded bias, white noise and a first-order response. Only that
+measurement reaches `WindRisk`, the ontology, PPO and rewards, preventing
+simulator truth from leaking into the policy.
 
 `wind.canyon` adds the one thing a street does to wind that open ground does
 not: the facades channel the mean flow along the carriageway and block most of
@@ -320,7 +324,11 @@ default: it means Isaac is running an older `landing_world.py`.
 
 Isaac publishes, under `/landing_uav0` (`isaac.namespace` + `vehicle_id`):
 
-- `/environment/wind`, `/environment/aero_force` (`geometry_msgs/Vector3Stamped`, ENU)
+- `/sensors/wind` (`geometry_msgs/Vector3Stamped`, ENU): the UAV anemometer
+  measurement with seeded bias, noise and first-order response; this is the
+  only wind value forwarded to ontology/R-GAT/PPO
+- `/environment/wind`, `/environment/aero_force` (`geometry_msgs/Vector3Stamped`, ENU):
+  simulator truth for physics and validation only
 - `/perception/marker_quality` (`std_msgs/Float32`, `[0,1]`)
 - `/perception/uav_pose_in_pad` (`geometry_msgs/PoseStamped`, pad-frame ENU)
 - `/perception/pad_contact` (`std_msgs/Bool`): physical UAV contact with the

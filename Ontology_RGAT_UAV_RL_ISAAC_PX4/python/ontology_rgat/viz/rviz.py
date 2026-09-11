@@ -280,10 +280,12 @@ class RvizPublisher:
         text.scale.z = 0.16
         _rgba(text, (0.95, 0.95, 0.95), 0.95)
         phi = log.phi[-1]
+        wind_risk = float(getattr(getattr(cur, "sem", None), "wind_risk", 0.0))
         text.text = (
             f"t={log.t[-1]:5.2f}s  {info['status']}\n"
             f"z={pos[2]:5.2f}m  xy={float(np.linalg.norm(pos[:2])):4.2f}m\n"
             f"deck={log.pad_speed[-1]:4.2f}  closing={log.closing_speed[-1]:4.2f} m/s\n"
+            f"wind={np.linalg.norm(log.wind[-1]):4.2f} m/s  risk={wind_risk:4.2f}\n"
             f"marker={log.marker_quality[-1]:4.2f}  gnss={log.gnss_quality[-1]:4.2f}\n"
             f"hover left={log.hover_seconds_left[-1]:5.1f}s"
             + (f"\nPhi={phi:+.3f}" if np.isfinite(phi) else ""))
@@ -430,6 +432,9 @@ class RvizPublisher:
             "pad_position": [float(v) for v in pad_pos],
             "pad_speed": float(log.pad_speed[-1]),
             "closing_speed": float(log.closing_speed[-1]),
+            "wind_enu": [float(v) for v in log.wind[-1]],
+            "wind_speed": float(np.linalg.norm(log.wind[-1])),
+            "wind_risk": float(cur.sem.wind_risk),
             "marker_quality": float(log.marker_quality[-1]),
             "battery_reserve": float(log.battery_reserve[-1]),
             "hover_seconds_left": float(log.hover_seconds_left[-1]),

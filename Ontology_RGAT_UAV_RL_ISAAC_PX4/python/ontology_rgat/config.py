@@ -119,9 +119,11 @@ def default_config(mode: str = "quick", target: str = "sitl") -> Config:
 
     # ------------------------------------------------- semantic feature scales
     cfg.semantic = {
+        "wind_speed_thr": 8.0,                  # m/s measured by the UAV sensor
         "wind_accel_thr": 4.0,                  # m/s^2
         "wind_dir_thr": math.radians(50.0),
-        "wind_risk_w": [2.0, 1.4, 1.0],
+        # measured speed, inferred aerodynamic load, acceleration, direction
+        "wind_risk_w": [1.2, 2.0, 1.4, 1.0],
         "wind_risk_b": -1.4,
         "align_scale": 0.75,
         "att_tilt_scale": math.radians(22.0),

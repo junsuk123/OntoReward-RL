@@ -114,6 +114,18 @@ def test_observation_matches_the_declared_width_and_is_bounded(cfg):
     assert np.isfinite(obs).all()
 
 
+def test_measured_wind_speed_changes_ontology_and_policy_context(cfg):
+    """Constant wind must matter immediately, not only after a gust derivative."""
+    calm = compute_features(_diag(mean_wind_i=np.zeros(3)), _meas(), None, cfg)
+    windy = compute_features(
+        _diag(mean_wind_i=np.array([7.0, 0.0, 0.0])), _meas(), None, cfg)
+    assert windy.wind_speed == pytest.approx(7.0)
+    assert windy.wind_risk > calm.wind_risk
+    calm_obs = make_observation(_meas(), calm, cfg)
+    windy_obs = make_observation(_meas(), windy, cfg)
+    assert not np.allclose(calm_obs, windy_obs)
+
+
 def test_observation_carries_the_deck_velocity_feed_forward(cfg):
     """The policy must be able to lead the deck, not only react to error."""
     still = _meas(pad_velocity=np.zeros(3))
@@ -370,6 +382,17 @@ def test_sensor_and_ground_truth_contracts_are_separate(cfg):
     assert np.array_equal(diag["sensor"]["position"], [0.4, -0.3, 2.1])
     assert np.array_equal(diag["ground_truth"]["world_position"], [0.4, -0.3, 2.1])
     assert "world_position" not in diag["sensor"]
+
+
+def test_simulator_aero_force_is_validation_only(cfg):
+    _, diag = state_to_model(_wire_state(extra={
+        "wind_source": "uav_anemometer",
+        "aero_force_source": "simulator_truth",
+    }), cfg)
+    assert diag["aero_force_data_policy"] == "validation_only"
+    assert diag["aero_force_observed_mag"] == 0.0
+    assert diag["aero_force_mag"] > 0.0
+    assert np.linalg.norm(diag["aero_force_i"]) > 0.0
 
 
 def test_the_episode_is_scored_on_truth_and_flown_on_the_measurement(cfg):

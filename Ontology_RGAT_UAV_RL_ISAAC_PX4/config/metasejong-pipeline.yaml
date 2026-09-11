@@ -12,3 +12,15 @@ battery:
   # Unlike the indefinite viewing demo, research episodes restore the seeded
   # 9--55 second reserve so BatteryReserve is a meaningful ontology feature.
   enabled: true
+
+wind:
+  # The research pipeline must include the dynamic environment.  The visual
+  # demo keeps wind off for integration work, but ontology/R-GAT/PPO runs do
+  # not inherit that control-condition override.
+  enabled: true
+  sensor:
+    enabled: true
+  # The licensed campus mesh has no machine-readable facade footprint yet, so
+  # do not invent canyon occlusion. Turbulence and seeded gusts remain active.
+  canyon:
+    enabled: false

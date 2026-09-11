@@ -283,7 +283,9 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                                      _topic(cfg, "out", "vehicle_thrust_setpoint"),
                                      self._on_thrust_setpoint, qos)
             sensor_qos = rclpy.qos.qos_profile_sensor_data
-            self.create_subscription(Vector3Stamped, "/landing_uav0/environment/wind",
+            # Policy-safe measurement. /environment/wind is simulator truth
+            # and deliberately has no subscriber on the control path.
+            self.create_subscription(Vector3Stamped, "/landing_uav0/sensors/wind",
                                      self._on_wind, sensor_qos)
             self.create_subscription(Vector3Stamped, "/landing_uav0/environment/aero_force",
                                      self._on_aero_force, sensor_qos)
@@ -916,9 +918,11 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
 
         def _on_wind(self, msg) -> None:
             self.sample.wind_enu = (float(msg.vector.x), float(msg.vector.y), float(msg.vector.z))
+            self.sample.extra["wind_source"] = "uav_anemometer"
 
         def _on_aero_force(self, msg) -> None:
             self.sample.aero_force_enu = (float(msg.vector.x), float(msg.vector.y), float(msg.vector.z))
+            self.sample.extra["aero_force_source"] = "simulator_truth"
 
         def _on_marker_quality(self, msg) -> None:
             self.sample.marker_quality = float(np.clip(msg.data, 0.0, 1.0))

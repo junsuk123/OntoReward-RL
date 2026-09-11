@@ -78,6 +78,14 @@ collective, roll, pitch and yaw-rate commands. Selected semantic values appear
 in the policy observation, while the complete 14-node ontology is the parallel
 state representation used to calculate `Phi(G)` for reward shaping.
 
+The landing context includes `WindRisk`, computed from the UAV's simulated
+three-axis anemometer rather than simulator truth. The sensor has seeded bias,
+white noise and first-order response. Its measured speed, acceleration and
+direction change drive the `WindRisk` ontology node; that node reaches PPO,
+the manual reward and the R-GAT potential used by PBRS. The MetaSejong research
+pipeline enables this wind sensor, turbulence and seeded gusts together with
+the moving UGV. The simpler visual demo deliberately leaves wind disabled.
+
 ## The environment: a lorry on a city street
 
 The pad is painted on the roof of a box lorry driving a lap of a city block, in

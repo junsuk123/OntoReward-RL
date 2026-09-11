@@ -330,6 +330,19 @@ class PX4Bridge:
         self.last_state = state
         return state
 
+    def step_velocity(self, command: Iterable[float]) -> dict[str, Any]:
+        """Send physical body-heading [vx, vy, vz, yaw-rate] to PX4."""
+        value = np.asarray(list(command), dtype=float).reshape(-1)
+        limits = np.array([10.0, 10.0, 5.0, np.deg2rad(180.0)])
+        if (value.shape != (4,) or not np.isfinite(value).all()
+                or np.any(np.abs(value) > limits)):
+            raise BridgeError("Velocity command is malformed or outside safety bounds.")
+        reply = self.transact(
+            "velocity_action", {"command": value.tolist()}, ("state",))
+        state = self.pace_to_control_period(self.validate_state(reply))
+        self.last_state = state
+        return state
+
     def pace_to_control_period(self, state: dict[str, Any]) -> dict[str, Any]:
         """Let one control period of *simulated* time pass.
 

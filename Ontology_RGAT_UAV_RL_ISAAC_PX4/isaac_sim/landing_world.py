@@ -92,7 +92,7 @@ from live_overlay import LiveOverlay
 from metasejong_scene import MetaSejongConfig, MetaSejongScene
 from view_geometry import paired_view_pose, street_offset_enu
 from wind_sensor import WindSensor
-from sensor_profiles import validate_zed2i_mono, vn100_pegasus_config
+from sensor_profiles import validate_camera_profile, vn100_pegasus_config
 from vn100_imu import Vn100Imu
 
 
@@ -186,11 +186,12 @@ class DownwardCamera:
     def __init__(self, config: dict, board: MarkerBoard, dictionary: str,
                  runtime_rate_hz: int | None = None):
         camera_cfg = config["camera"]
-        validate_zed2i_mono(camera_cfg)
+        validate_camera_profile(camera_cfg)
         self.width, self.height = (int(v) for v in camera_cfg["resolution"])
         self.fov_deg = float(camera_cfg["horizontal_fov_deg"])
         self.nominal_rate_hz = float(camera_cfg["rate_hz"])
         self.rate_hz = int(runtime_rate_hz or round(self.nominal_rate_hz))
+        self.pitch_down_deg = float(camera_cfg.get("pitch_down_deg", 90.0))
         self.mount = np.array([float(v) for v in camera_cfg["mount_translation_flu_m"]])
         self.clipping = tuple(float(v) for v in camera_cfg.get("clipping_range_m", (0.02, 60.0)))
         self.camera_matrix = intrinsics_from_fov(self.width, self.height, self.fov_deg)
@@ -199,6 +200,7 @@ class DownwardCamera:
             quality_reprojection_px=float(config.get("quality_reprojection_px", 3.0)),
             quality_full_scale_px=float(config.get("quality_full_scale_px", 120.0)))
         self.camera = None
+        self.raw_gray = None
         # Set ONTOLOGY_RGAT_VISION_DEBUG_DIR to dump annotated frames; the only
         # way to tell "no image" from "no marker in it" is to look at one.
         self.debug_dir = os.environ.get("ONTOLOGY_RGAT_VISION_DEBUG_DIR", "")
@@ -206,10 +208,10 @@ class DownwardCamera:
         self.frames = 0
         self.annotated_rgb = None
         carb.log_info(
-            f"[landing-camera] ZED 2i mono {camera_cfg.get('eye', 'left')} eye: "
+            f"[landing-camera] {camera_cfg.get('model', 'camera')}: "
             f"{self.width}x{self.height}@{self.rate_hz:g} Hz runtime "
             f"({self.nominal_rate_hz:g} Hz device), "
-            f"HFOV={self.fov_deg:g} deg"
+            f"HFOV={self.fov_deg:g} deg, pitch-down={self.pitch_down_deg:g} deg"
         )
 
     def attach(self, vehicle_prim_path: str) -> None:
@@ -221,7 +223,7 @@ class DownwardCamera:
                                    orientation=IDENTITY_QUAT, camera_axes="ros")
 
     def aim_at_nadir(self, vehicle) -> None:
-        """Point the optical axis straight down, whatever axis convention applies.
+        """Apply the configured down-pitch, despite Isaac's axis convention.
 
         Isaac's camera_axes conventions are not worth guessing at: an identity
         orientation here comes out looking sideways. So measure what identity
@@ -233,7 +235,9 @@ class DownwardCamera:
         identity_mount, _ = self._measure_mount(vehicle)
         # Isaac composes the requested rotation with a fixed convention, so the
         # rotation that lands on the frame we want is the residual.
-        correction = R_BODY_FROM_OPTICAL @ identity_mount.T
+        pitch_from_nadir = math.radians(self.pitch_down_deg - 90.0)
+        desired = Rotation.from_euler("y", pitch_from_nadir).as_matrix() @ R_BODY_FROM_OPTICAL
+        correction = desired @ identity_mount.T
         self.camera.set_local_pose(
             translation=self.mount,
             orientation=_matrix_to_quat_wxyz(correction),
@@ -241,10 +245,11 @@ class DownwardCamera:
 
         body_from_optical, mount = self._measure_mount(vehicle)
         view_in_body = body_from_optical[:, 2]
-        if view_in_body[2] > -0.99:
+        expected_view = desired[:, 2]
+        if float(np.dot(view_in_body, expected_view)) < 0.99:
             carb.log_error(
-                f"Landing camera is not looking down: optical +Z is {view_in_body} "
-                "in body axes. Marker detection will be unusable.")
+                f"Landing camera optical +Z is {view_in_body}, expected "
+                f"{expected_view} in body axes. Marker detection will be unusable.")
         self.estimator.body_from_optical = body_from_optical
         self.estimator.mount_translation_body = mount
         carb.log_info(f"[landing-camera] optical axes in body:\n{body_from_optical}\n"
@@ -303,6 +308,10 @@ class DownwardCamera:
             self.frames += 1
             return None
         image = frame[:, :, :3]
+        # Actor topic: unannotated grayscale pixels only.  No pose, marker
+        # solve or simulator overlay is rendered into this image.
+        self.raw_gray = np.ascontiguousarray(
+            np.clip(np.mean(image.astype(np.float32), axis=2), 0, 255).astype(np.uint8))
         observation, self.annotated_rgb = self.estimator.detect_annotated(image)
         self.frames += 1
         if self.debug_dir and self.frames % max(1, self.debug_every) == 0:
@@ -990,6 +999,8 @@ class LandingWorld:
         # custom visualization message or cv_bridge dependency is needed.
         self.marker_image_pub = node.create_publisher(
             Image, ns + "/perception/landing_camera/annotated", 1)
+        self.actor_image_pub = node.create_publisher(
+            Image, ns + "/perception/landing_camera/image_raw", 1)
         self.reset_ack_pub = node.create_publisher(String, "/landing_sim/reset_ack", 10)
         # The deck broadcasts its own state, the way a cooperative ground
         # vehicle would. The drone's own estimate of the pad still comes from
@@ -1095,22 +1106,30 @@ class LandingWorld:
         """
         req, self.pending_reset = self.pending_reset, None
         rng = np.random.default_rng(req["seed"])
-        # Unchanged distribution, new frame: the entry pose is now an offset
-        # from the deck rather than an absolute point, because the deck moves.
-        # Wider and higher than the rover experiment's: the deck is a 6 m box
-        # body rather than a 1.3 m tray, and the entry has to clear it.
-        # Scale the established 4.0--5.8 m entry-height distribution by the
-        # configured hover height. Imported maps can use a smaller marker deck
-        # that must be approached lower to retain the same pixel footprint;
-        # previously hover_start_offset_pad_m affected only start_airborne and
-        # was silently ignored by the normal flown entry.
-        reference_hover_m = 4.5
-        entry_x = 1.8 * rng.normal()
-        entry_y = 1.4 * rng.normal()
-        entry_height = (4.0 + 1.8 * rng.random()) * max(
-            float(self.hover_start_pad_m[2]), 0.5) / reference_hover_m
-        offset = np.array([entry_x, entry_y, entry_height])
-        offset = self._entry_within_camera(offset)
+        benchmark = CONFIG.get("benchmark") or {}
+        initial = benchmark.get("initial_conditions") or {}
+        if str(benchmark.get("profile", "")).lower() == "shin2026":
+            # Table I.  Do not pull this sample back inside the camera
+            # footprint: partial/out-of-FOV observations are part of the task.
+            x_range = initial.get("relative_lateral_x_m", (-3.0, 3.0))
+            y_range = initial.get("relative_lateral_y_m", (-3.0, 3.0))
+            z_range = initial.get("relative_altitude_m", (2.0, 8.0))
+            yaw_range = initial.get("platform_yaw_misalignment_deg", (-60.0, 60.0))
+            offset = np.array([rng.uniform(*x_range), rng.uniform(*y_range),
+                               rng.uniform(*z_range)])
+            rpy_deg = np.array([0.0, 0.0, rng.uniform(*yaw_range)])
+        else:
+            # Retained urban distribution, expressed as an offset from the
+            # moving deck rather than an absolute world point.
+            reference_hover_m = 4.5
+            entry_x = 1.8 * rng.normal()
+            entry_y = 1.4 * rng.normal()
+            entry_height = (4.0 + 1.8 * rng.random()) * max(
+                float(self.hover_start_pad_m[2]), 0.5) / reference_hover_m
+            offset = np.array([entry_x, entry_y, entry_height])
+            offset = self._entry_within_camera(offset)
+            rpy_deg = np.array([4.0 * rng.normal(), 4.0 * rng.normal(),
+                                12.0 * rng.normal()])
         # A Gaussian tail can put the entry point inside a facade -- about one
         # seed in three thousand on the outer lane -- and PX4 flies into it,
         # never reaches the pose and times out the reset. Pulling the offset
@@ -1119,7 +1138,6 @@ class LandingWorld:
         deck_world = self.deck.world_from_pad(np.zeros(3))
         offset = self.urban.clear_of_buildings(
             deck_world + offset, deck_world) - deck_world
-        rpy_deg = np.array([4.0 * rng.normal(), 4.0 * rng.normal(), 12.0 * rng.normal()])
         # Drawn from the same generator as the entry pose so the whole initial
         # condition -- geometry, wind, deck motion and energy -- is one seed.
         hover_seconds = float(rng.uniform(*self.battery_hover_range))
@@ -1135,6 +1153,9 @@ class LandingWorld:
         self.wind_sensor.reset(req["seed"], self.world.current_time)
         deck = self.deck.reset(req["seed"], self.world.current_time,
                                req.get("pad_scale", 1.0))
+        entry_yaw_enu = (self.deck.yaw + math.radians(float(rpy_deg[2]))
+                         if str(benchmark.get("profile", "")).lower() == "shin2026"
+                         else math.radians(float(rpy_deg[2])))
         self.gnss.reset(req["seed"], req.get("gnss_scale", 1.0))
         self.gnss_time = float(self.world.current_time)
         self._update_environment_sensors(0.0)
@@ -1154,7 +1175,7 @@ class LandingWorld:
                                "entry_position_enu_m":
                                    self.deck.world_from_pad(offset).tolist(),
                                "entry_rpy_deg": rpy_deg.tolist(),
-                               "entry_yaw_enu_rad": math.radians(float(rpy_deg[2])),
+                               "entry_yaw_enu_rad": entry_yaw_enu,
                                "battery_hover_seconds":
                                    (hover_seconds if self.battery_enabled else None),
                                "pad": deck,
@@ -1481,6 +1502,7 @@ class LandingWorld:
         to the PX4 estimate.
         """
         observation = self.camera.observe()
+        self._publish_actor_camera(stamp)
         self._publish_annotated_camera(stamp)
         marker = Float32()
         if observation is None or not observation.detected:
@@ -1532,6 +1554,23 @@ class LandingWorld:
         msg.step = int(msg.width * 3)
         msg.data = image.tobytes()
         self.marker_image_pub.publish(msg)
+
+    def _publish_actor_camera(self, stamp) -> None:
+        """Publish the unmodified actor frame as ROS ``mono8``."""
+        image = self.camera.raw_gray
+        if image is None or image.size == 0:
+            return
+        image = np.ascontiguousarray(image, dtype=np.uint8)
+        msg = Image()
+        msg.header.stamp = stamp
+        msg.header.frame_id = "landing_camera_optical"
+        msg.height = int(image.shape[0])
+        msg.width = int(image.shape[1])
+        msg.encoding = "mono8"
+        msg.is_bigendian = 0
+        msg.step = int(msg.width)
+        msg.data = image.tobytes()
+        self.actor_image_pub.publish(msg)
 
     def run(self):
         self.timeline.play()

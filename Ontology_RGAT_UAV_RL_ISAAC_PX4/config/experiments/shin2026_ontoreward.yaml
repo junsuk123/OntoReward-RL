@@ -1,0 +1,6 @@
+extends: shin2026_baseline.yaml
+reward_mode: ontoreward
+reward:
+  active_perception: {enabled: false, alpha: 0.1, beta: 1.0, tau: 0.01}
+  pbrs: {lambda: 1.0, gamma: 0.99, terminal_potential: 0.0, frozen_design: true}
+ontology_profile: controlled_landing

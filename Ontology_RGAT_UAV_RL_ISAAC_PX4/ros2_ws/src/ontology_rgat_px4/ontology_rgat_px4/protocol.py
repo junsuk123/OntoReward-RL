@@ -37,7 +37,7 @@ def decode(raw: bytes, expected_version: int = 1) -> dict[str, Any]:
     if msg.get("v") != expected_version:
         raise ProtocolError("protocol version mismatch")
     if msg.get("type") not in {
-        "hello", "state", "action", "reset", "arm", "disarm",
+        "hello", "state", "action", "velocity_action", "reset", "arm", "disarm",
         "goto", "enable_offboard", "disable_offboard", "error", "ack",
     }:
         raise ProtocolError("unknown message type")
@@ -61,6 +61,15 @@ def validate_action(msg: dict[str, Any]) -> tuple[float, float, float, float]:
     if any(abs(x) > 1.0 for x in action):
         raise ProtocolError("normalized action outside [-1, 1]")
     return action  # collective, roll, pitch, yaw-rate
+
+
+def validate_velocity_action(msg: dict[str, Any]) -> tuple[float, float, float, float]:
+    """Validate physical [vx, vy, vz, yaw-rate] in body-heading/FLU units."""
+    command = finite_vector(msg.get("command", ()), 4, "velocity command")
+    limits = (10.0, 10.0, 5.0, math.radians(180.0))
+    if any(abs(value) > limit for value, limit in zip(command, limits)):
+        raise ProtocolError("velocity command exceeds protocol safety bounds")
+    return command
 
 
 # Guard rails for the pre-episode climb. The gateway must never be talked into

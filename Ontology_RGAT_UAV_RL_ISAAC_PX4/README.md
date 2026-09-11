@@ -2,11 +2,42 @@
 
 **Documentation:** [system overview](docs/SYSTEM_OVERVIEW.md) ·
 [architecture](docs/ARCHITECTURE.md) · [operations](docs/OPERATIONS.md) ·
-[hardware safety](docs/HARDWARE_SAFETY.md) · [references](docs/REFERENCES.md)
+[hardware safety](docs/HARDWARE_SAFETY.md) · [references](docs/REFERENCES.md) ·
+[Shin-2026 benchmark](docs/SHIN2026_BASELINE.md)
 
 This workspace replaces the in-process MATLAB rigid-body simulator in
 `../Ontology_RGAT_UAV_RL_MATLAB/Ontology_RGAT_UAV_RL_MATLAB` with an external,
 flight-stack-in-the-loop system. The original directory is not modified.
+
+## Shin-2026 controlled reward benchmark
+
+The new benchmark keeps this Isaac Sim + Pegasus + PX4 stack but provides a
+non-cooperative actor compatible with Shin et al. (2026): raw 512×320 grayscale
+pixels, UAV body velocity, and attitude in; body-heading velocity plus yaw rate
+out. Simulator platform truth is isolated to the training critic, auxiliary
+estimation target, terminal scoring, and evaluation. All five reward modes use
+the same recurrent actor/critic and paired seed plan.
+
+```bash
+# CPU-only contract smoke tests (not flight results)
+./scripts/run_metasejong_pipeline.sh --experiment shin2026 --reward shin2026 --mode quick --smoke-test
+./scripts/run_metasejong_pipeline.sh --experiment shin2026 --reward ontoreward --mode quick --smoke-test
+
+# Full paired evaluation plan; then summarize real collected episode records
+python python/run_shin2026_benchmark.py --methods shin2026 ontoreward --mode full --paired-seeds --plan-only
+python python/run_shin2026_benchmark.py --methods shin2026 ontoreward --mode full --paired-seeds \
+  --input-results results/shin2026/per_episode.csv
+```
+
+The PACMAN encoder/target and the paper's geometric controller are not publicly
+bundled here. Their Isaac/PX4 substitutes are explicitly marked as
+approximations in [the benchmark protocol](docs/SHIN2026_BASELINE.md). The
+existing 23-channel cooperative urban experiment below remains unchanged and
+is not used for the primary controlled comparison. The current benchmark CLI
+validates/plans the controlled experiment and analyzes real episode records;
+the live recurrent rollout/training loop and remaining Table-II/scenario wiring
+are listed explicitly in that protocol and must be completed before reporting
+flight results.
 
 ## Data path
 

@@ -1,0 +1,11 @@
+extends: shin2026_baseline.yaml
+reward_modes: [shin2026, sparse, manual_no_active, ontoreward, ontoreward_plus_active]
+paired_seeds: true
+evaluation:
+  training_random_walk: 10000
+  straight_8mps: 1000
+  linear_acceleration_wave: 1000
+  circle: 1000
+  zigzag: 1000
+  u_turn: 1000
+  vertical_heave_boat: 1000

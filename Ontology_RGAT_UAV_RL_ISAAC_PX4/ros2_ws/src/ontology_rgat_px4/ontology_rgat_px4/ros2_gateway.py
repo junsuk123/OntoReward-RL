@@ -29,6 +29,7 @@ from .protocol import (
     open_sky_gnss_state,
     static_pad_state,
     validate_action,
+    validate_velocity_action,
     validate_goto,
 )
 from .safety import SafetyGate
@@ -156,6 +157,8 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             self.safety = safety
             self.sample = VehicleSample()
             self.action = (0.0, 0.0, 0.0, 0.0)
+            self.velocity_action = (0.0, 0.0, 0.0, 0.0)
+            self.command_interface = "attitude"
             self.last_action_ns = 0
             self.last_action_px4_time_us = 0
             self.last_command_seq = -1
@@ -340,6 +343,19 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                 return
             if kind == "action":
                 self.action = validate_action(msg)
+                self.command_interface = "attitude"
+                self.last_action_ns = now_ns()
+                self.last_action_px4_time_us = int(self.sample.px4_time_us)
+                self.last_command_seq = seq
+                self.pending_state_ack = seq
+                self.pending_state_peer = self.udp.peer
+                self.goto_target_enu = None
+                if not self.battery_armed:
+                    self._arm_battery()
+                self._publish_flight_state()
+            elif kind == "velocity_action":
+                self.velocity_action = validate_velocity_action(msg)
+                self.command_interface = "velocity_yaw_rate"
                 self.last_action_ns = now_ns()
                 self.last_action_px4_time_us = int(self.sample.px4_time_us)
                 self.last_command_seq = seq
@@ -527,7 +543,10 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                     self.last_action_ns = 0
                     self.last_action_px4_time_us = 0
             if self.last_action_ns:
-                self._publish_attitude_setpoint()
+                if self.command_interface == "velocity_yaw_rate":
+                    self._publish_velocity_setpoint()
+                else:
+                    self._publish_attitude_setpoint()
             elif self.goto_target_enu is not None:
                 self._publish_position_setpoint()
             else:
@@ -588,6 +607,22 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             _set_if_present(sp, "yaw_sp_move_rate", float(-cfg.max_yaw_rate_rad_s * a_yaw_rate))
             _set_if_present(sp, "reset_integral", False)
             self.attitude_pub.publish(sp)
+
+        def _publish_velocity_setpoint(self) -> None:
+            """Let PX4 track body-heading velocity and yaw-rate commands."""
+            self._publish_offboard_mode(velocity=True)
+            vx, vy, vz, yaw_rate = self.velocity_action
+            yaw = yaw_from_quat_wxyz(self.sample.quaternion_enu_flu_wxyz)
+            c, s = math.cos(yaw), math.sin(yaw)
+            velocity_enu = np.array([c * vx - s * vy, s * vx + c * vy, vz])
+            sp = TrajectorySetpoint()
+            sp.timestamp = self._timestamp_us()
+            sp.position = [float("nan")] * 3
+            sp.velocity = [float(value) for value in enu_to_ned(velocity_enu)]
+            sp.acceleration = [float("nan")] * 3
+            sp.yaw = float("nan")
+            sp.yawspeed = float(-yaw_rate)
+            self.trajectory_pub.publish(sp)
 
         def _vehicle_command(self, command: int, param1: float = 0.0, param2: float = 0.0) -> None:
             msg = VehicleCommand()
@@ -718,6 +753,7 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             )
             self.sample.extra["offboard_active"] = bool(self.offboard_requested)
             self.sample.extra["control_mapping"] = {
+                "interface": self.command_interface,
                 "hover_thrust": cfg.hover_thrust,
                 "collective_span": cfg.collective_span,
                 "max_roll_pitch_rad": cfg.max_roll_pitch_rad,

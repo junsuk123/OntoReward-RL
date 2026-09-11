@@ -33,7 +33,8 @@ import numpy as np
 
 _erf = np.vectorize(math.erf)
 
-MODES = ("static", "constant", "circular", "lissajous", "road", "waypoints")
+MODES = ("static", "constant", "circular", "lissajous", "road", "waypoints",
+         "random_walk")
 CARRIERS = ("lorry", "ugv")
 
 
@@ -88,6 +89,9 @@ class PadMotionConfig:
     stop_interval_s: float
     stop_sigma_s: float
     stop_depth_range: tuple[float, float]
+    speed_step_range_m_s: tuple[float, float]
+    yaw_rate_step_range_rad_s: tuple[float, float]
+    motion_update_dt_s: float
 
     @classmethod
     def from_mapping(cls, data: dict[str, Any]) -> "PadMotionConfig":
@@ -178,6 +182,16 @@ class PadMotionConfig:
             # Two overlapping dips could sum past one and drive the profile
             # backwards, which is not traffic, it is reverse gear.
             raise ValueError("pad.stop_interval_s must be at least 4x pad.stop_sigma_s")
+        speed_steps = tuple(float(v) for v in pad.get(
+            "speed_step_perturbation_m_s", (-0.5, 0.5)))
+        yaw_steps = tuple(math.radians(float(v)) for v in pad.get(
+            "yaw_rate_step_perturbation_deg_s", (-3.0, 3.0)))
+        motion_dt = float(pad.get("motion_update_dt_s", 0.1))
+        if (len(speed_steps) != 2 or speed_steps[0] > speed_steps[1]
+                or len(yaw_steps) != 2 or yaw_steps[0] > yaw_steps[1]):
+            raise ValueError("pad random-walk perturbation ranges must be ordered pairs")
+        if not math.isfinite(motion_dt) or motion_dt <= 0.0:
+            raise ValueError("pad.motion_update_dt_s must be positive and finite")
         return cls(
             mode=mode,
             carrier=carrier,
@@ -214,6 +228,9 @@ class PadMotionConfig:
             stop_interval_s=float(pad.get("stop_interval_s", 11.0)),
             stop_sigma_s=float(pad.get("stop_sigma_s", 1.7)),
             stop_depth_range=stops,
+            speed_step_range_m_s=speed_steps,
+            yaw_rate_step_range_rad_s=yaw_steps,
+            motion_update_dt_s=motion_dt,
         )
 
     @property
@@ -437,6 +454,8 @@ class PadTrajectory:
         self.lane_change_to = 0.0
         self.wander_phase = 0.0
         self._driven = False
+        self.random_walk_position = np.zeros((1, 3))
+        self.random_walk_velocity = np.zeros((1, 3))
 
     def reset(self, seed: int, sim_time: float, speed_scale: float = 1.0) -> dict[str, Any]:
         """Draw this episode's deck motion from the episode seed.
@@ -504,6 +523,8 @@ class PadTrajectory:
         self.t0 = float(sim_time)
         self._driven = True
         self._yaw_initialised = False
+        if cfg.mode == "random_walk":
+            self._prepare_random_walk(rng)
         position, velocity = self.pose(sim_time)
         fallback = self.heading0
         if cfg.mode == "waypoints":
@@ -522,6 +543,32 @@ class PadTrajectory:
             "arc_length_m": self.s0,
             "lane_offset_m": self.lane_base,
         }
+
+    def _prepare_random_walk(self, rng, samples: int = 6001) -> None:
+        """Seed a Table-I random walk at its 0.1 s control period."""
+        cfg = self.cfg
+        dt = cfg.motion_update_dt_s
+        if dt <= 0.0:
+            raise ValueError("pad.motion_update_dt_s must be positive")
+        dv = rng.uniform(*cfg.speed_step_range_m_s, size=samples - 1)
+        dw = rng.uniform(*cfg.yaw_rate_step_range_rad_s, size=samples - 1)
+        speeds = np.empty(samples)
+        yaw_rates = np.empty(samples)
+        headings = np.empty(samples)
+        speeds[0], yaw_rates[0], headings[0] = self.speed, 0.0, self.heading0
+        for index in range(1, samples):
+            speeds[index] = np.clip(speeds[index - 1] + dv[index - 1],
+                                    cfg.speed_min_m_s, cfg.speed_max_m_s)
+            yaw_rates[index] = np.clip(yaw_rates[index - 1] + dw[index - 1],
+                                       -cfg.yaw_rate_limit_rad_s,
+                                       cfg.yaw_rate_limit_rad_s)
+            headings[index] = headings[index - 1] + yaw_rates[index] * dt
+        velocity = np.c_[speeds * np.cos(headings), speeds * np.sin(headings),
+                         np.zeros(samples)]
+        position = np.zeros((samples, 3))
+        position[1:] = np.cumsum(velocity[:-1] * dt, axis=0)
+        self.random_walk_position = position
+        self.random_walk_velocity = velocity
 
     def pull_away(self, sim_time: float) -> None:
         """Move off from a standing start, as if from a light.
@@ -632,6 +679,14 @@ class PadTrajectory:
                                     ay * math.sin(self.phase[1]), 0.0])
                 velocity = np.array([ax * wx * math.cos(wx * t + self.phase[0]),
                                      ay * wy * math.cos(wy * t + self.phase[1]), 0.0])
+            elif cfg.mode == "random_walk":
+                u = max(0.0, t) / cfg.motion_update_dt_s
+                index = min(int(math.floor(u)), len(self.random_walk_position) - 1)
+                fraction = min(max(u - index, 0.0), 1.0)
+                offset = self.random_walk_position[index].copy()
+                velocity = self.random_walk_velocity[index].copy()
+                if index + 1 < len(self.random_walk_position):
+                    offset += fraction * (self.random_walk_position[index + 1] - offset)
         position = self.start + offset
         position[2] = self.start[2] + cfg.deck_height_m
         # Never let a profile drive the deck out of the arena the drone is

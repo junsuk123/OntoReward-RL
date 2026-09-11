@@ -1,0 +1,48 @@
+extends: system.yaml
+
+system:
+  control_hz: 10.0
+  sitl_action_timeout_s: 1.0
+
+landing:
+  max_time_s: 30.0
+  world_xy_limit_m: 60.0
+
+benchmark:
+  profile: shin2026
+  initial_conditions:
+    relative_altitude_m: [2.0, 8.0]
+    relative_lateral_x_m: [-3.0, 3.0]
+    relative_lateral_y_m: [-3.0, 3.0]
+    platform_yaw_misalignment_deg: [-60.0, 60.0]
+
+pad:
+  motion: random_walk
+  route_start: seeded
+  speed_range_m_s: [0.0, 8.0]
+  speed_step_perturbation_m_s: [-0.5, 0.5]
+  yaw_rate_step_perturbation_deg_s: [-3.0, 3.0]
+  motion_update_dt_s: 0.1
+  arena_radius_m: 300.0
+  yaw_rate_limit_deg_s: 90.0
+  deck_size_m: [1.5, 1.5]
+
+gnss:
+  # No platform GNSS or V2V estimate is consumed by the benchmark actor.
+  enabled: false
+
+vision:
+  mode: aruco
+  pose_source_for_policy: false
+  camera:
+    model: shin2026_grayscale
+    resolution: [512, 320]
+    horizontal_fov_deg: 90.0
+    pitch_down_deg: 60.0
+    rate_hz: 30.0
+    mount_translation_flu_m: [0.0, 0.0, -0.16]
+    clipping_range_m: [0.02, 60.0]
+
+battery:
+  # Battery is outside the primary controlled ontology profile.
+  enabled: false

@@ -1,0 +1,15 @@
+experiment: shin2026
+reward_mode: shin2026
+system_config: ../shin2026-system.yaml
+paper:
+  doi: 10.1109/LRA.2026.3674011
+  reproduction_claim: methodological-interface
+camera: {resolution: [512, 320], grayscale: true, horizontal_fov_deg: 90, pitch_down_deg: 60}
+estimator: {image_embedding: 512, lstm_hidden: 512, latent_dimension: 256, output_dimension: 6}
+control: {dt_seconds: 0.1, horizon_steps: 300, action: velocity_yaw_rate}
+ppo: {gamma: 0.99, auxiliary_estimation_coefficient: 1.0, asymmetric_critic: true}
+curriculum: {enabled: true, levels: 80, update_every_episodes: 512}
+reward:
+  terminal: {success: 10.0, failure: -10.0}
+  active_perception: {enabled: true, alpha: 0.1, beta: 1.0, tau: 0.01}
+seeds: {training: [42, 43, 44, 45, 46], evaluation_start: 5000}

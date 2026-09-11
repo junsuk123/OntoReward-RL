@@ -559,3 +559,11 @@ all of them. These are recorded for provenance and changing them has no effect:
   datagram's source address.
 - `vision.max_range_m`, `vision.tilt_scale_deg`, `vision.xy_scale_m`: only the
   `pose_proxy` stand-in uses these.
+# Controlled Shin-2026 benchmark path
+
+The non-cooperative benchmark path is documented in
+[`SHIN2026_BASELINE.md`](SHIN2026_BASELINE.md). It consumes raw grayscale
+camera frames plus UAV body velocity and attitude only. `/landing_pad/state/odom`,
+deck GNSS, wheel odometry, V2V velocity, and simulator pad truth do not enter
+that actor. The cooperative V2V/GNSS flow described below belongs only to the
+retained extended urban OntoReward experiment.

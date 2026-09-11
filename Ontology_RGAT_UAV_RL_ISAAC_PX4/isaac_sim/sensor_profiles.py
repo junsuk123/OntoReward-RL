@@ -14,6 +14,7 @@ from typing import Any
 
 VN100_MODEL = "vectornav_vn100"
 ZED2I_MONO_MODEL = "stereolabs_zed2i_mono"
+SHIN2026_CAMERA_MODEL = "shin2026_grayscale"
 
 
 @dataclass(frozen=True)
@@ -151,3 +152,21 @@ def validate_zed2i_mono(camera: dict[str, Any]) -> None:
     fov = float(camera.get("horizontal_fov_deg", 0.0))
     if not 1.0 < fov <= 110.0:
         raise ValueError("ZED 2i 2.1 mm horizontal FOV must be in (1, 110] degrees")
+
+
+def validate_camera_profile(camera: dict[str, Any]) -> None:
+    """Validate either the retained ZED profile or the benchmark profile."""
+    model = str(camera.get("model", ZED2I_MONO_MODEL)).lower()
+    if model == ZED2I_MONO_MODEL:
+        validate_zed2i_mono(camera)
+        return
+    if model != SHIN2026_CAMERA_MODEL:
+        raise ValueError(f"unsupported vision.camera.model {model!r}")
+    if tuple(int(v) for v in camera.get("resolution", ())) != (512, 320):
+        raise ValueError("Shin-2026 camera resolution must be 512x320")
+    if abs(float(camera.get("horizontal_fov_deg", 0.0)) - 90.0) > 1e-9:
+        raise ValueError("Shin-2026 camera horizontal FOV must be 90 degrees")
+    if abs(float(camera.get("pitch_down_deg", 0.0)) - 60.0) > 1e-9:
+        raise ValueError("Shin-2026 camera pitch must be 60 degrees downward")
+    if float(camera.get("rate_hz", 0.0)) <= 0.0:
+        raise ValueError("Shin-2026 camera rate must be positive")

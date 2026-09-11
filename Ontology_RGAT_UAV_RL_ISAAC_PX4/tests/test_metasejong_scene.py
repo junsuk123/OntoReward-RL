@@ -18,6 +18,8 @@ def test_overlay_deep_merges_system_configuration():
     assert config["metasejong"]["hide_vegetation"] is True
     assert config["pad"]["motion"] == "waypoints"
     assert config["pad"]["carrier"] == "ugv"
+    assert config["pad"]["vehicle_model"] == "agilex_ranger_mini_v3"
+    assert config["pad"]["vehicle_dimensions_m"] == pytest.approx([0.720, 0.500, 0.345])
     assert config["pad"]["preview_motion"] is True
     assert config["pad"]["preview_speed_scale"] == pytest.approx(1.0)
     assert config["battery"]["enabled"] is False
@@ -30,7 +32,7 @@ def test_overlay_deep_merges_system_configuration():
 
     trajectory = PadTrajectory(PadMotionConfig.from_mapping(config))
     position, velocity = trajectory.pose(0.0)
-    assert position.tolist() == pytest.approx([-65.0, 131.0, 16.896])
+    assert position.tolist() == pytest.approx([-65.0, 131.0, 16.566])
     assert velocity.tolist() == [0.0, 0.0, 0.0]
 
     # Once the idle preview releases the deck, the waypoint shuttle visibly
@@ -39,7 +41,7 @@ def test_overlay_deep_merges_system_configuration():
         seed=49, sim_time=0.0,
         speed_scale=config["pad"]["preview_speed_scale"])
     preview_position, preview_velocity = trajectory.pose(20.0)
-    assert preview_position.tolist() != pytest.approx([-65.0, 131.0, 16.896])
+    assert preview_position.tolist() != pytest.approx([-65.0, 131.0, 16.566])
     assert sum(v * v for v in preview_velocity[:2]) > 0.01
 
 

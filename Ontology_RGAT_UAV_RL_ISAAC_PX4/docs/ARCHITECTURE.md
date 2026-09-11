@@ -343,6 +343,14 @@ default: it means Isaac is running an older `landing_world.py`.
 
 ### Environment and perception telemetry
 
+The SITL sensor suite is hardware-profiled rather than ideal: ZED-F9P-05B
+multi-constellation RTK at 5 Hz, a VN-100 IMU whose 800 Hz device capability is
+sampled at the 250 Hz physics limit, and one ZED 2i eye at 1280 x 720/60 Hz.
+The Meta-Sejong carrier references the official AGILEX Ranger Mini V3 mesh;
+trajectory ownership remains with the kinematic pad so all seeds are exactly
+repeatable. Full values and source links are in `config/system.yaml` and
+`docs/REFERENCES.md`.
+
 Isaac publishes, under `/landing_uav0` (`isaac.namespace` + `vehicle_id`):
 
 - `/sensors/wind` (`geometry_msgs/Vector3Stamped`, ENU): the UAV anemometer

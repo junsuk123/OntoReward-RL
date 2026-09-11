@@ -41,6 +41,13 @@ CARRIERS = ("lorry", "ugv")
 class PadMotionConfig:
     mode: str
     carrier: str
+    vehicle_model: str
+    vehicle_visual_usd: str
+    vehicle_dimensions_m: tuple[float, float, float]
+    vehicle_visual_origin_from_road_m: tuple[float, float, float]
+    vehicle_mass_kg: float
+    vehicle_payload_kg: float
+    vehicle_max_speed_m_s: float
     start_position_enu_m: tuple[float, float, float]
     deck_height_m: float
     deck_size_m: tuple[float, float]
@@ -94,6 +101,25 @@ class PadMotionConfig:
         low, high = (float(v) for v in pad.get("speed_range_m_s", (0.0, 0.0)))
         if not 0.0 <= low <= high:
             raise ValueError("pad.speed_range_m_s must be non-negative and ordered")
+        vehicle_dimensions = tuple(float(v) for v in pad.get(
+            "vehicle_dimensions_m", (0.720, 0.500, 0.345)))
+        if len(vehicle_dimensions) != 3 or min(vehicle_dimensions) <= 0.0:
+            raise ValueError("pad.vehicle_dimensions_m must be three positive lengths")
+        visual_origin = tuple(float(v) for v in pad.get(
+            "vehicle_visual_origin_from_road_m", (0.0, 0.0, 0.31)))
+        if len(visual_origin) != 3:
+            raise ValueError("pad.vehicle_visual_origin_from_road_m must have three components")
+        vehicle_model = str(pad.get(
+            "vehicle_model", "agilex_ranger_mini_v3" if carrier == "ugv" else "box_lorry"))
+        vehicle_mass = float(pad.get("vehicle_mass_kg", 75.0 if carrier == "ugv" else 120.0))
+        vehicle_payload = float(pad.get("vehicle_payload_kg", 120.0))
+        vehicle_max_speed = float(pad.get("vehicle_max_speed_m_s", 2.0))
+        if min(vehicle_mass, vehicle_payload, vehicle_max_speed) <= 0.0:
+            raise ValueError("pad vehicle mass, payload and max speed must be positive")
+        if carrier == "ugv" and vehicle_model != "agilex_ranger_mini_v3":
+            raise ValueError("the supported UGV is 'agilex_ranger_mini_v3'")
+        if carrier == "ugv" and high > vehicle_max_speed + 1e-9:
+            raise ValueError("pad.speed_range_m_s exceeds the RANGER MINI 3.0 limit")
         start = tuple(float(v) for v in pad.get("start_position_enu_m", (0.0, 0.0, 0.0)))
         if len(start) != 3:
             raise ValueError("pad.start_position_enu_m must have three components")
@@ -125,7 +151,13 @@ class PadMotionConfig:
         # counted out from the centreline. An explicit pad.lane_offset_m pins
         # the lorry to one lane instead.
         half_road = float(urban.get("road_half_width_m", 7.0))
-        deck_width = float(pad.get("deck_size_m", (6.2, 2.45))[1])
+        deck_size = tuple(float(v) for v in pad.get("deck_size_m", (6.2, 2.45)))
+        deck_width = float(deck_size[1])
+        if len(deck_size) != 2 or min(deck_size) <= 0.0:
+            raise ValueError("pad.deck_size_m must be two positive lengths")
+        if carrier == "ugv" and (deck_size[0] + 1e-9 < vehicle_dimensions[0]
+                                 or deck_size[1] + 1e-9 < vehicle_dimensions[1]):
+            raise ValueError("landing deck must cover the RANGER MINI 3.0 footprint")
         if "lane_offset_m" in pad:
             lanes = (float(pad["lane_offset_m"]),)
         else:
@@ -149,9 +181,16 @@ class PadMotionConfig:
         return cls(
             mode=mode,
             carrier=carrier,
+            vehicle_model=vehicle_model,
+            vehicle_visual_usd=str(pad.get("vehicle_visual_usd", "")),
+            vehicle_dimensions_m=vehicle_dimensions,
+            vehicle_visual_origin_from_road_m=visual_origin,
+            vehicle_mass_kg=vehicle_mass,
+            vehicle_payload_kg=vehicle_payload,
+            vehicle_max_speed_m_s=vehicle_max_speed,
             start_position_enu_m=start,
             deck_height_m=float(pad.get("deck_height_m", 0.0)),
-            deck_size_m=tuple(float(v) for v in pad.get("deck_size_m", (1.3, 0.9))),
+            deck_size_m=deck_size,
             speed_min_m_s=low,
             speed_max_m_s=high,
             circular_radius_m=float(pad.get("circular_radius_m", 4.0)),
@@ -244,41 +283,43 @@ def lorry_parts(deck_size_m, deck_height_m: float) -> tuple[LorryPart, ...]:
     return tuple(parts)
 
 
-def ugv_parts(deck_size_m, deck_height_m: float) -> tuple[LorryPart, ...]:
-    """Compact four-wheel carrier for narrow imported-world roads.
+def ugv_parts(deck_size_m, deck_height_m: float,
+              vehicle_dimensions_m=(0.720, 0.500, 0.345)) -> tuple[LorryPart, ...]:
+    """RANGER MINI 3.0 fallback geometry in the landing-deck frame.
 
-    The marker deck remains the separate top collider built by
-    :class:`LandingDeck`; these parts provide the body and wheels underneath.
-    Dimensions are derived from the configured deck so the carrier cannot
-    protrude beyond the footprint used by route-clearance checks.
+    The official mesh is preferred at runtime. These dimensions keep collision
+    and a no-asset fallback faithful to the 720 x 500 x 345 mm chassis and to
+    the wheel positions/collision sizes in AgileX's public V3 URDF.
     """
-    length, width = (float(v) for v in deck_size_m)
-    height = float(deck_height_m)
-    road_z = -height
-    wheel_r = min(0.22, 0.28 * height, 0.22 * width)
-    wheel_width = min(0.18, 0.18 * width)
-    body_bottom = road_z + 0.55 * wheel_r
-    body_top = -0.12
-    body_height = max(body_top - body_bottom, 0.15)
-    body_width = max(width - 2.0 * wheel_width, 0.55 * width)
+    deck_length, deck_width = (float(v) for v in deck_size_m)
+    length, width, overall_height = (float(v) for v in vehicle_dimensions_m)
+    if length > deck_length + 1e-9 or width > deck_width + 1e-9:
+        raise ValueError("RANGER MINI 3.0 does not fit under the configured deck")
+    road_z = -float(deck_height_m)
+    wheel_r, wheel_width = 0.09, 0.08
     parts = [
         LorryPart(
-            "ugv_body", "box", (0.82 * length, body_width, body_height),
-            (0.0, 0.0, body_bottom + 0.5 * body_height),
-            (0.16, 0.23, 0.30), True,
+            "ranger_collision", "box", (0.50, 0.35, 0.20),
+            (0.0, 0.0, road_z + 0.22), (0.12, 0.16, 0.19), True,
         ),
         LorryPart(
-            "ugv_sensor_box", "box", (0.34 * length, 0.58 * body_width, 0.18),
-            (-0.12 * length, 0.0, -0.21), (0.30, 0.38, 0.44), False,
+            "ranger_body", "box", (length, 0.42, 0.15),
+            (0.0, 0.0, road_z + 0.255), (0.16, 0.23, 0.30), False,
+        ),
+        LorryPart(
+            "ranger_top", "box", (0.48, 0.32, 0.075),
+            (-0.025, 0.0, road_z + overall_height - 0.0375),
+            (0.30, 0.38, 0.44), False,
         ),
     ]
-    axle_x = 0.30 * length
-    for index, x in enumerate((-axle_x, axle_x)):
+    # AgileX URDF steering joint origins: x=+/-0.25, y=+/-0.19 m;
+    # its wheel collision is a radius-0.09, width-0.08 m cylinder.
+    for index, x in enumerate((-0.25, 0.25)):
         for side, tag in ((-1.0, "l"), (1.0, "r")):
             parts.append(LorryPart(
-                f"ugv_wheel_{index}_{tag}", "wheel",
+                f"ranger_wheel_{index}_{tag}", "wheel",
                 (2.0 * wheel_r, wheel_width, 2.0 * wheel_r),
-                (x, side * (0.5 * width - 0.5 * wheel_width), road_z + wheel_r),
+                (x, side * 0.19, road_z + wheel_r),
                 (0.04, 0.04, 0.05),
             ))
     return tuple(parts)

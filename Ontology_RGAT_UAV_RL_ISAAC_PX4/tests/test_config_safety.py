@@ -26,7 +26,7 @@ def test_gateway_loads_metasejong_overlay_with_the_simulator_datum():
     cfg = load_gateway_config(ROOT / "config" / "metasejong-demo.yaml")
 
     assert cfg.pad_motion == "waypoints"
-    assert cfg.pad_deck_height_m == pytest.approx(0.75)
+    assert cfg.pad_deck_height_m == pytest.approx(0.42)
     assert cfg.map_latitude_deg == pytest.approx(37.5503)
     assert cfg.map_longitude_deg == pytest.approx(127.0736)
     assert cfg.map_altitude_m == pytest.approx(30.0)

@@ -19,7 +19,9 @@ troubleshooting guide:
 
 The system models the two dynamic conditions central to the experiment: a
 seeded turbulent wind field measured by an onboard anemometer, and a road-going
-UGV carrying a moving landing pad. Policy observations contain only measurable
+AGILEX RANGER MINI 3.0 carrying a moving landing pad. The UAV sensor suite is
+profiled as ZED-F9P RTK GNSS, VectorNav VN-100 IMU, and one ZED 2i mono eye.
+Policy observations contain only measurable
 sensor/estimator values; simulator truth is isolated to reset, terminal reward,
 and evaluation scoring.
 

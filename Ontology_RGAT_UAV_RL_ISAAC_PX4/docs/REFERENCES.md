@@ -35,6 +35,22 @@
 - [USD rigid bodies](https://openusd.org/dev/api/class_usd_physics_rigid_body_a_p_i.html):
   kinematic rigid-body schema used for the reproducible moving deck.
 
+## Hardware profiles
+
+- [u-blox ZED-F9P-05B data sheet](https://content.u-blox.com/sites/default/files/documents/ZED-F9P-05B_DataSheet_UBXDOC-963802114-12824.pdf):
+  5 Hz multi-constellation navigation rate, under-10-second RTK convergence,
+  and 0.01 m + 1 ppm RTK horizontal/vertical accuracy.
+- [VectorNav VN-100 specifications](https://www.vectornav.com/products/detail/vn-100):
+  800 Hz IMU and 400 Hz attitude output, ±2000 deg/s gyro, ±16 g
+  accelerometer, bias stability and noise-density parameters.
+- [Stereolabs ZED 2i data sheet](https://support.stereolabs.com/hc/en-us/article_attachments/27901419901463):
+  per-eye 1280 x 720 at 60 Hz and the 2.1 mm lens' 110 x 70 degree FOV.
+- [AGILEX RANGER MINI 3.0](https://global.agilex.ai/products/ranger-mini):
+  2 m/s maximum speed, 120 kg payload and open SDK.
+- [AGILEX `ugv_gazebo_sim`](https://github.com/agilexrobotics/ugv_gazebo_sim):
+  pinned BSD `ranger_mini_v3` URDF and visual meshes imported by
+  `scripts/import_ranger_mini_v3.sh`.
+
 ## Marker vision
 
 - [OpenCV ArUco detection](https://docs.opencv.org/4.x/d5/dae/tutorial_aruco_detection.html):

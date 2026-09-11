@@ -66,7 +66,7 @@ from pegasus.simulator.logic.vehicles.multirotor import Multirotor, MultirotorCo
 from isaacsim.core.api.materials import OmniPBR, PhysicsMaterial
 from isaacsim.sensors.physics import ContactSensor
 from isaacsim.sensors.camera import Camera
-from pxr import Gf, PhysxSchema, Sdf, UsdGeom, UsdPhysics, UsdShade
+from pxr import Gf, PhysxSchema, Sdf, Usd, UsdGeom, UsdPhysics, UsdShade
 
 from marker_vision import (
     nadir_footprint_m,
@@ -85,6 +85,8 @@ from live_overlay import LiveOverlay
 from metasejong_scene import MetaSejongConfig, MetaSejongScene
 from view_geometry import paired_view_pose, street_offset_enu
 from wind_sensor import WindSensor
+from sensor_profiles import validate_zed2i_mono, vn100_pegasus_config
+from vn100_imu import Vn100Imu
 
 
 IDENTITY_QUAT = np.array([1.0, 0.0, 0.0, 0.0])
@@ -176,6 +178,7 @@ class DownwardCamera:
 
     def __init__(self, config: dict, board: MarkerBoard, dictionary: str):
         camera_cfg = config["camera"]
+        validate_zed2i_mono(camera_cfg)
         self.width, self.height = (int(v) for v in camera_cfg["resolution"])
         self.fov_deg = float(camera_cfg["horizontal_fov_deg"])
         self.rate_hz = float(camera_cfg["rate_hz"])
@@ -193,6 +196,11 @@ class DownwardCamera:
         self.debug_every = int(os.environ.get("ONTOLOGY_RGAT_VISION_DEBUG_EVERY", "30"))
         self.frames = 0
         self.annotated_rgb = None
+        carb.log_info(
+            f"[landing-camera] ZED 2i mono {camera_cfg.get('eye', 'left')} eye: "
+            f"{self.width}x{self.height}@{self.rate_hz:g} Hz, "
+            f"HFOV={self.fov_deg:g} deg"
+        )
 
     def attach(self, vehicle_prim_path: str) -> None:
         self.camera = Camera(
@@ -229,8 +237,8 @@ class DownwardCamera:
                 "in body axes. Marker detection will be unusable.")
         self.estimator.body_from_optical = body_from_optical
         self.estimator.mount_translation_body = mount
-        print(f"[landing-camera] optical axes in body:\n{body_from_optical}\n"
-              f"[landing-camera] mount in body: {mount}", file=sys.stderr, flush=True)
+        carb.log_info(f"[landing-camera] optical axes in body:\n{body_from_optical}\n"
+                      f"[landing-camera] mount in body: {mount}")
 
     def _measure_mount(self, vehicle):
         """Camera pose relative to the vehicle body, read back from the stage.
@@ -269,11 +277,12 @@ class DownwardCamera:
             self.estimator.camera_matrix = self.camera_matrix
         fov = 2.0 * math.degrees(math.atan(
             self.width / (2.0 * float(self.camera_matrix[0, 0]))))
-        print(f"[landing-camera] {self.width}x{self.height} fov={fov:.1f}deg "
-              f"(asked {self.fov_deg:.1f}) fx={self.camera_matrix[0, 0]:.1f} "
-              f"focal={self.camera.get_focal_length():.4f} "
-              f"aperture={self.camera.get_horizontal_aperture():.4f} "
-              f"world_pose={self.camera.get_world_pose()}", file=sys.stderr, flush=True)
+        carb.log_info(
+            f"[landing-camera] {self.width}x{self.height} fov={fov:.1f}deg "
+            f"(asked {self.fov_deg:.1f}) fx={self.camera_matrix[0, 0]:.1f} "
+            f"focal={self.camera.get_focal_length():.4f} "
+            f"aperture={self.camera.get_horizontal_aperture():.4f} "
+            f"world_pose={self.camera.get_world_pose()}")
 
     def observe(self):
         frame = self.camera.get_rgba()
@@ -372,7 +381,7 @@ class LandingDeck:
             body_prim = stage.GetPrimAtPath(self.BODY)
             UsdPhysics.CollisionAPI.Apply(body_prim)
             mass = UsdPhysics.MassAPI.Apply(stage.GetPrimAtPath(self.PRIM))
-            mass.CreateMassAttr(120.0)
+            mass.CreateMassAttr(float(self.cfg.vehicle_mass_kg))
             self._apply_grip_material(body_prim)
             # ContactSensor otherwise adds this API lazily and asks for a
             # stop/play cycle. The world has not started yet, so author it now
@@ -467,8 +476,16 @@ class LandingDeck:
         USD. Everything hangs off the same kinematic body as the deck, so it
         drives, turns and stops with it for free.
         """
-        builder = ugv_parts if self.cfg.carrier == "ugv" else lorry_parts
-        for part in builder(self.cfg.deck_size_m, self.cfg.deck_height_m):
+        official_visual = self._add_official_ugv_visual(stage)
+        parts = (ugv_parts(self.cfg.deck_size_m, self.cfg.deck_height_m,
+                           self.cfg.vehicle_dimensions_m)
+                 if self.cfg.carrier == "ugv"
+                 else lorry_parts(self.cfg.deck_size_m, self.cfg.deck_height_m))
+        for part in parts:
+            # The imported AgileX mesh supplies the visible body and wheels.
+            # Retain only its audited simple body collider underneath it.
+            if official_visual and not part.collider:
+                continue
             path = f"{self.PRIM}/{part.name}"
             if part.kind == "wheel":
                 prim = UsdGeom.Cylinder.Define(stage, path)
@@ -485,6 +502,48 @@ class LandingDeck:
             prim.CreateDisplayColorAttr([Gf.Vec3f(*part.colour)])
             if part.collider:
                 UsdPhysics.CollisionAPI.Apply(stage.GetPrimAtPath(path))
+            if official_visual:
+                UsdGeom.Imageable(prim).MakeInvisible()
+
+    def _add_official_ugv_visual(self, stage) -> bool:
+        """Reference the public AgileX Ranger Mini V3 model when available."""
+        if self.cfg.carrier != "ugv" or not self.cfg.vehicle_visual_usd:
+            return False
+        asset = Path(self.cfg.vehicle_visual_usd)
+        if not asset.is_absolute():
+            asset = WORKSPACE / asset
+        if not asset.is_file():
+            carb.log_warn(
+                f"RANGER MINI 3.0 USD not found at {asset}; using audited fallback geometry. "
+                "Run scripts/import_ranger_mini_v3.sh to generate it.")
+            return False
+
+        path = f"{self.PRIM}/ranger_mini_v3_visual"
+        root = UsdGeom.Xform.Define(stage, path)
+        root.GetPrim().GetReferences().AddReference(str(asset.resolve()))
+        offset = self.cfg.vehicle_visual_origin_from_road_m
+        UsdGeom.XformCommonAPI(root).SetTranslate(Gf.Vec3d(
+            float(offset[0]), float(offset[1]),
+            -float(self.cfg.deck_height_m) + float(offset[2])))
+
+        # The pad trajectory owns motion. Remove the imported articulation and
+        # collision APIs in the stronger session layer so there is only one
+        # kinematic rigid body, while retaining all visual meshes/transforms.
+        for prim in Usd.PrimRange(root.GetPrim()):
+            if prim.IsA(UsdPhysics.Joint):
+                prim.SetActive(False)
+                continue
+            for api in (UsdPhysics.RigidBodyAPI, UsdPhysics.CollisionAPI,
+                        UsdPhysics.MassAPI, UsdPhysics.ArticulationRootAPI):
+                if prim.HasAPI(api):
+                    prim.RemoveAPI(api)
+            for api in (PhysxSchema.PhysxRigidBodyAPI,
+                        PhysxSchema.PhysxArticulationAPI):
+                if prim.HasAPI(api):
+                    prim.RemoveAPI(api)
+        carb.log_info(
+            f"[landing-pad] loaded official {self.cfg.vehicle_model} visual: {asset}")
+        return True
 
     def reset(self, seed: int, sim_time: float, speed_scale: float = 1.0) -> dict:
         info = self.trajectory.reset(seed, sim_time, speed_scale)
@@ -836,10 +895,17 @@ class LandingWorld:
         self.deck.spawn(self.world)
 
         vehicle_cfg = MultirotorConfig()
+        imu_cfg = vn100_pegasus_config(CONFIG, float(isaac_cfg["physics_dt"]))
+        vehicle_cfg.sensors[1] = Vn100Imu(imu_cfg)
+        carb.log_info(
+            "[imu] VectorNav VN-100: "
+            f"hardware max={(CONFIG.get('imu') or {}).get('hardware_output_rate_hz', 800):g} Hz, "
+            f"Isaac injection={imu_cfg['update_rate']:g} Hz"
+        )
         if self.gnss_injected_into_px4:
             # Replace Pegasus' generic clean GPS with the receiver that sees the
-            # same buildings as the rendered camera.  IMU, barometer and
-            # magnetometer remain Pegasus sensors; PX4 EKF2 performs the actual
+            # same buildings as the rendered camera. The IMU above carries the
+            # VN-100 noise/range profile; PX4 EKF2 performs the actual
             # covariance-weighted fusion and inertial dead reckoning.
             self.urban_gps_sensor = UrbanGnssSensor(
                 self.gnss, self.deck, gnss_cfg)
@@ -1451,19 +1517,22 @@ class LandingWorld:
 
     def run(self):
         self.timeline.play()
-        # rendering_dt is a multiple of physics_dt, so one frame covers several
-        # physics steps. Drawing on every step would render at the physics rate
-        # instead, and because PX4 runs in lockstep that slows the flight stack
-        # itself, not just the picture.
-        render_divider = max(1, round(float(CONFIG["isaac"]["rendering_dt"]) /
-                                      float(CONFIG["isaac"]["physics_dt"])))
-        step = 0
+        # Accumulate physical time instead of rounding to an integer divider.
+        # ZED 2i's 60 Hz period is 4.1667 of the retained 250 Hz physics steps,
+        # so a divider would silently run it at either 50 or 62.5 Hz. The
+        # accumulator alternates four/five-step intervals for exactly 60 Hz on
+        # average without changing the flight dynamics clock.
+        physics_dt = float(CONFIG["isaac"]["physics_dt"])
+        rendering_dt = float(CONFIG["isaac"]["rendering_dt"])
+        render_elapsed = 0.0
         try:
             while simulation_app.is_running() and not self.stop_sim:
                 if self.pending_reset is not None:
                     self._perform_reset()
-                step += 1
-                frame_boundary = step % render_divider == 0
+                render_elapsed += physics_dt
+                frame_boundary = render_elapsed + 1e-12 >= rendering_dt
+                if frame_boundary:
+                    render_elapsed -= rendering_dt
                 # The pad camera only produces an image on a rendered frame, so
                 # vision costs rendering even in a headless run.
                 render = frame_boundary and (self.vision_enabled or not ARGS.headless)

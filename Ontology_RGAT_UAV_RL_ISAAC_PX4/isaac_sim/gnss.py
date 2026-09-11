@@ -87,6 +87,13 @@ def _stable_seed(name: str) -> int:
 
 @dataclass(frozen=True)
 class GnssConfig:
+    model: str
+    correction_mode: str
+    constellations: tuple[str, ...]
+    rtk_convergence_s: float
+    rtk_quality_threshold: float
+    rtk_horizontal_accuracy_m: float
+    rtk_vertical_accuracy_m: float
     enabled: bool
     seed: int
     n_satellites: int
@@ -146,7 +153,17 @@ class GnssConfig:
     @classmethod
     def from_mapping(cls, data: dict[str, Any]) -> "GnssConfig":
         gnss = (data.get("gnss") or {}) if isinstance(data, dict) else {}
-        return cls(
+        result = cls(
+            model=str(gnss.get("model", "ublox_zed_f9p_05b")).lower(),
+            correction_mode=str(gnss.get("correction_mode", "rtk_fixed")).lower(),
+            constellations=tuple(str(item) for item in gnss.get(
+                "constellations", ("GPS", "GLONASS", "Galileo", "BeiDou"))),
+            rtk_convergence_s=float(gnss.get("rtk_convergence_s", 10.0)),
+            rtk_quality_threshold=float(gnss.get("rtk_quality_threshold", 0.65)),
+            rtk_horizontal_accuracy_m=float(
+                gnss.get("rtk_horizontal_accuracy_m", 0.01)),
+            rtk_vertical_accuracy_m=float(
+                gnss.get("rtk_vertical_accuracy_m", 0.01)),
             enabled=bool(gnss.get("enabled", True)),
             seed=int(gnss.get("seed", 17)),
             n_satellites=int(gnss.get("n_satellites", 24)),
@@ -171,15 +188,27 @@ class GnssConfig:
             sigma_scale_m=float(gnss.get("sigma_scale_m", 10.0)),
             cn0_weight=float(gnss.get("cn0_weight", 0.85)),
             outage_drift_m_s=float(gnss.get("outage_drift_m_s", 0.8)),
-            update_rate_hz=float(gnss.get("update_rate_hz", 10.0)),
-            eph_floor_m=float(gnss.get("eph_floor_m", 0.6)),
-            epv_floor_m=float(gnss.get("epv_floor_m", 1.0)),
+            update_rate_hz=float(gnss.get("update_rate_hz", 5.0)),
+            eph_floor_m=float(gnss.get("eph_floor_m", 0.01)),
+            epv_floor_m=float(gnss.get("epv_floor_m", 0.01)),
             inject_into_px4=bool(gnss.get("inject_into_px4", True)),
             dr_enter_quality=float(gnss.get("dr_enter_quality", 0.45)),
             dr_exit_quality=float(gnss.get("dr_exit_quality", 0.65)),
             recovery_epochs=int(gnss.get("recovery_epochs", 5)),
             bootstrap_s=float(gnss.get("bootstrap_s", 15.0)),
         )
+        if result.model != "ublox_zed_f9p_05b":
+            raise ValueError("gnss.model must be 'ublox_zed_f9p_05b'")
+        if result.correction_mode not in ("rtk_fixed", "none"):
+            raise ValueError("gnss.correction_mode must be 'rtk_fixed' or 'none'")
+        if not 0.0 <= result.rtk_quality_threshold <= 1.0:
+            raise ValueError("gnss.rtk_quality_threshold must be inside [0, 1]")
+        if min(result.update_rate_hz, result.rtk_horizontal_accuracy_m,
+               result.rtk_vertical_accuracy_m) <= 0.0:
+            raise ValueError("GNSS rate and RTK accuracies must be positive")
+        if result.rtk_convergence_s < 0.0:
+            raise ValueError("gnss.rtk_convergence_s must be nonnegative")
+        return result
 
 
 @dataclass
@@ -594,8 +623,12 @@ def hil_gps_measurement(fix: GnssFix, position_enu, velocity_enu,
     # uint16; an outage uses the maximum rather than pretending to be precise.
     if fix.valid:
         eph_m = max(float(fix.sigma_xy_m), float(cfg.eph_floor_m))
-        dop_ratio = float(fix.vdop) / max(float(fix.hdop), 1e-3)
-        epv_m = max(eph_m * dop_ratio, float(cfg.epv_floor_m))
+        if fix.fix_type == 6 and cfg.correction_mode == "rtk_fixed":
+            eph_m = max(eph_m, float(cfg.rtk_horizontal_accuracy_m))
+            epv_m = max(float(cfg.rtk_vertical_accuracy_m), float(cfg.epv_floor_m))
+        else:
+            dop_ratio = float(fix.vdop) / max(float(fix.hdop), 1e-3)
+            epv_m = max(eph_m * dop_ratio, float(cfg.epv_floor_m))
     else:
         eph_m = epv_m = 655.35
     eph_cm = int(np.clip(round(100.0 * eph_m), 1, 65535))

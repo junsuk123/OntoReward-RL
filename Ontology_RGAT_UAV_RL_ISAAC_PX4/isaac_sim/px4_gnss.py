@@ -31,6 +31,39 @@ class UrbanGnssSensor(Sensor):
         self._elapsed_s = 0.0
         self._good_epochs = 0
         self._imu_dominant = False
+        self._rtk_good_s = 0.0
+
+    def _rtk_solution(self, fix, dt: float):
+        """Apply fixed-RTK correction only after a sustained good solution.
+
+        Multipath and sky blockage still decide whether the receiver can hold
+        ambiguities.  When it can, the residual position error and reported
+        covariance are reduced to the ZED-F9P RTK specification; a degraded
+        epoch immediately drops back to the ordinary 3-D solution.
+        """
+        if self.cfg.correction_mode != "rtk_fixed" or not fix.valid:
+            self._rtk_good_s = 0.0
+            return fix, False
+        if fix.quality < self.cfg.rtk_quality_threshold:
+            self._rtk_good_s = 0.0
+            return replace(fix, fix_type=3), False
+        self._rtk_good_s += max(float(dt), 0.0)
+        if self._rtk_good_s + 1e-9 < self.cfg.rtk_convergence_s:
+            return replace(fix, fix_type=3), False
+
+        error = np.asarray(fix.error_enu_m, dtype=float).copy()
+        horizontal_sigma = max(float(fix.sigma_xy_m), 1e-9)
+        error[:2] *= min(1.0, self.cfg.rtk_horizontal_accuracy_m / horizontal_sigma)
+        vertical_sigma = max(horizontal_sigma * float(fix.vdop)
+                             / max(float(fix.hdop), 1e-3), 1e-9)
+        error[2] *= min(1.0, self.cfg.rtk_vertical_accuracy_m / vertical_sigma)
+        corrected = replace(
+            fix,
+            fix_type=6,  # MAVLink GPS_FIX_TYPE_RTK_FIXED
+            sigma_xy_m=self.cfg.rtk_horizontal_accuracy_m,
+            error_enu_m=error,
+        )
+        return corrected, True
 
     @Sensor.update_at_rate
     def update(self, state, dt: float):
@@ -45,6 +78,7 @@ class UrbanGnssSensor(Sensor):
                 uav_fix, valid=True, fix_type=3,
                 satellites_tracked=max(uav_fix.satellites_tracked, 10),
                 hdop=1.0, vdop=1.6, sigma_xy_m=self.cfg.eph_floor_m,
+                quality=1.0,
                 error_enu_m=np.zeros(3), velocity_error_enu_m_s=np.zeros(3))
             self.aiding_enabled = True
             self.mode = "bootstrap"
@@ -74,6 +108,9 @@ class UrbanGnssSensor(Sensor):
                     self._imu_dominant = True
                     self._good_epochs = 0
                 self.mode = "imu_dominant" if self._imu_dominant else "gnss_aided"
+        hil_fix, rtk_fixed = self._rtk_solution(hil_fix, dt)
+        if rtk_fixed and self.mode != "imu_dominant":
+            self.mode = "rtk_fixed"
         return hil_gps_measurement(
             hil_fix,
             state.position,

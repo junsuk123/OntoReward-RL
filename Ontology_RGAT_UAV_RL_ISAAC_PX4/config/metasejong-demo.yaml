@@ -30,14 +30,23 @@ urban:
     altitude: 30.0
 
 pad:
-  # The competition start is on only 2.26 m of usable pavement. The 2.45 m
-  # box lorry cannot fit, so this overlay uses a 1.60 x 1.00 m compact UGV.
+  # The competition start is on only 2.26 m of usable pavement. The carrier is
+  # the 720 x 500 x 345 mm AGILEX RANGER MINI 3.0, with the official BSD URDF
+  # visual mounted under a separate 1.60 x 1.00 m research landing platform.
   # It follows the surveyed pavement centreline to the north end and reverses
   # over the same path; no unsafe U-turn is attempted on the narrow branch.
   carrier: ugv
+  vehicle_model: agilex_ranger_mini_v3
+  vehicle_visual_usd: assets/ranger_mini_v3/ranger_mini_v3.usd
+  vehicle_dimensions_m: [0.720, 0.500, 0.345]
+  vehicle_mass_kg: 75.0
+  vehicle_payload_kg: 120.0
+  vehicle_max_speed_m_s: 2.0
+  # Imported URDF base_link is 0.31 m above the tyre contact plane.
+  vehicle_visual_origin_from_road_m: [0.0, 0.0, 0.31]
   motion: waypoints
   deck_size_m: [1.60, 1.00]
-  deck_height_m: 0.75
+  deck_height_m: 0.42
   start_position_enu_m: [-65.00, 131.00, 16.146]
   speed_range_m_s: [0.60, 1.20]
   route_start: continue

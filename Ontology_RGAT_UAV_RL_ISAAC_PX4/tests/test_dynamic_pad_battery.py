@@ -249,16 +249,19 @@ def test_waypoint_route_is_continuous_across_episode_reset():
     assert after == pytest.approx(before, abs=1e-12)
 
 
-def test_compact_ugv_fits_under_its_audited_deck_footprint():
+def test_ranger_mini_v3_matches_official_dimensions_and_urdf_wheels():
     length, width, height = 1.6, 1.0, 0.75
     parts = ugv_parts((length, width), height)
     wheels = [part for part in parts if part.kind == "wheel"]
 
     assert len(wheels) == 4
-    assert any(part.name == "ugv_body" and part.collider for part in parts)
+    assert any(part.name == "ranger_collision" and part.collider for part in parts)
     for part in parts:
         assert abs(part.centre[0]) + 0.5 * part.size[0] <= 0.5 * length + 1e-9
         assert abs(part.centre[1]) + 0.5 * part.size[1] <= 0.5 * width + 1e-9
         assert part.centre[2] + 0.5 * part.size[2] <= 1e-9
     for wheel in wheels:
         assert wheel.centre[2] - 0.5 * wheel.size[0] == pytest.approx(-height)
+        assert abs(wheel.centre[0]) == pytest.approx(0.25)
+        assert abs(wheel.centre[1]) == pytest.approx(0.19)
+        assert wheel.size == pytest.approx((0.18, 0.08, 0.18))

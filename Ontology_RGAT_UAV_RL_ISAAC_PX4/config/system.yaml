@@ -38,7 +38,8 @@ isaac:
   vehicle_id: 0
   namespace: landing_uav
   physics_dt: 0.004
-  rendering_dt: 0.02
+  # One rendered state per 60 Hz ZED 2i mono exposure.
+  rendering_dt: 0.0166666667
   # The city is built into the stage from config below rather than loaded as a
   # canned asset: the GNSS model has to occlude satellites with the *same*
   # boxes the camera renders, and no shipped Pegasus environment comes with a
@@ -264,16 +265,27 @@ gnss:
   # about the difference. See isaac_sim/gnss.py for the model and
   # docs/REFERENCES.md for where the numbers come from.
   enabled: true
+  # u-blox ZED-F9P-05B multi-band RTK profile.  The urban ray/multipath model
+  # still determines whether RTK can remain fixed; these values describe the
+  # receiver and correction service rather than bypassing the environment.
+  model: ublox_zed_f9p_05b
+  correction_mode: rtk_fixed
+  constellations: [GPS, GLONASS, Galileo, BeiDou]
+  rtk_convergence_s: 10.0
+  rtk_quality_threshold: 0.65
+  rtk_horizontal_accuracy_m: 0.01
+  rtk_vertical_accuracy_m: 0.01
   # Feed this receiver into Pegasus HIL_GPS so PX4 EKF2, rather than the ROS
   # gateway, performs GNSS/IMU fusion. During poor fixes EKF2 reduces or rejects
   # GNSS aiding and propagates on its inertial solution; when accuracy recovers
   # its observation covariance brings the state back without a position step.
   inject_into_px4: true
-  update_rate_hz: 10.0
+  # ZED-F9P maximum multi-constellation navigation solution rate is 5 Hz.
+  update_rate_hz: 5.0
   # Minimum accuracy sent in HIL_GPS. MAVLink carries centimetres; zero means
   # "unknown" on some stacks and must never be used as perfect covariance.
-  eph_floor_m: 0.6
-  epv_floor_m: 1.0
+  eph_floor_m: 0.01
+  epv_floor_m: 0.01
   # Hysteresis around the receiver's observable integrity. Below the enter
   # threshold the estimator is labelled IMU-dominant and the large reported
   # covariance gives GNSS little weight. A true receiver outage reports no fix
@@ -337,6 +349,28 @@ gnss:
   # Coasting rate once there are fewer than four satellites left.
   outage_drift_m_s: 0.8
 
+imu:
+  # VectorNav VN-100 hardware limits/noise. Isaac's 250 Hz physics clock is
+  # the effective sample rate; 800 Hz is retained as the physical device's
+  # maximum output capability and 400 Hz as its attitude-output capability.
+  model: vectornav_vn100
+  hardware_output_rate_hz: 800.0
+  attitude_output_rate_hz: 400.0
+  simulation_update_rate_hz: 250.0
+  seed: 101
+  gyroscope:
+    measurement_range_rad_s: 34.90658504       # +/-2000 deg/s
+    noise_density_rad_s_sqrt_hz: 0.00006108652 # 0.0035 deg/s/sqrt(Hz)
+    bias_stability_rad_s: 0.00002424068         # 5 deg/hour typical
+    bias_correlation_time_s: 1.0e9
+    random_walk_rad_s_sqrt_s: 0.0
+  accelerometer:
+    measurement_range_m_s2: 156.9064           # +/-16 g
+    noise_density_m_s2_sqrt_hz: 0.001372931     # 0.14 mg/sqrt(Hz)
+    bias_stability_m_s2: 0.000392266            # <0.04 mg
+    bias_correlation_time_s: 1.0e9
+    random_walk_m_s2_sqrt_s: 0.0
+
 battery:
   enabled: true
   # Pack: a 3S 3500 mAh LiPo, the class of pack an Iris-sized airframe carries.
@@ -391,9 +425,18 @@ vision:
   pose_reacquire_error_m: 2.0
   fusion_max_correction_m: 0.50
   camera:
-    resolution: [800, 600]
-    horizontal_fov_deg: 90.0
-    rate_hz: 30.0
+    # One eye of the ZED 2i, using its 2.1 mm wide-angle lens. Stereo depth is
+    # deliberately disabled: landing pose continues to come from monocular
+    # ArUco geometry, as requested.
+    model: stereolabs_zed2i_mono
+    eye: left
+    lens_focal_length_mm: 2.1
+    sensor: 1/3-inch_4MP
+    shutter: rolling
+    resolution: [1280, 720]
+    horizontal_fov_deg: 110.0
+    vertical_fov_deg: 70.0
+    rate_hz: 60.0
     # Clear of the airframe: at -0.05 the Iris' own legs fill the frame.
     mount_translation_flu_m: [0.0, 0.0, -0.16]
     clipping_range_m: [0.02, 60.0]

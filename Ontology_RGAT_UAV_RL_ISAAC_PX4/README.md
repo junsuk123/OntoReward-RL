@@ -170,6 +170,10 @@ then replaces Pegasus' generic GPS on MAVLink `HIL_GPS`, including its reported
 EPH/EPV. PX4 EKF2 therefore performs the real GNSS/IMU fusion: uncertain but
 valid fixes become weak drift-bounding observations, a true loss of fix falls
 back to inertial dead reckoning, and consistently good fixes regain full weight.
+The receiver profile is a u-blox ZED-F9P-05B at its 5 Hz multi-constellation
+rate. Ten continuous good-quality seconds promote MAVLink to RTK-fixed
+(`fix_type=6`, 1 cm horizontal/vertical accuracy); blockage or poor integrity
+immediately drops it back to an ordinary 3-D fix rather than granting RTK truth.
 The gateway observes that estimate and does not add a second synthetic offset.
 `docs/ARCHITECTURE.md`, "GNSS", details the path and its diagnostic topics.
 
@@ -182,10 +186,17 @@ PX4/deck relative velocity and applies the two GNSS positions only as a
 covariance-weighted drift correction. It also reports `marker_quality` 0, which
 lets the ontology reason about degraded perception without receiving truth.
 
+The simulated imager is the left eye of a ZED 2i used strictly as a monocular
+camera: 1280 x 720 at 60 Hz with its 2.1 mm, 110-degree horizontal-FOV lens.
+Stereo depth is not passed to the policy. The inertial sensor is a VectorNav
+VN-100 profile (±2000 deg/s, ±16 g and manufacturer noise densities). Its
+hardware capability remains documented as 800 Hz IMU/400 Hz attitude, while
+the actual SITL injection is correctly capped by Isaac's 250 Hz physics loop.
+
 The pad uses two marker scales because one cannot cover a landing: a tag big
 enough to resolve from the entry altitude overflows the frame near touchdown,
 and a tag small enough to survive touchdown is a few pixels from altitude.
-`config/system.yaml` therefore spreads four 0.62 m tags along the lorry's roof
+`config/system.yaml` therefore spreads four 0.62 m tags along the carrier deck
 around one 0.18 m tag, and the solver uses whichever are visible.
 
 In the canyon this is not a redundancy but the primary absolute anchor. During
@@ -437,11 +448,15 @@ hover does not time out. `run_rviz.sh` is a separate fourth process for manual
 startup; the one-command Python pipeline launches it automatically.
 
 This is an environment adaptation, not a claim of compatibility with the
-competition task protocol. The competition robot is a Scout UGV with a Kinova
-manipulator and recycling-task scoring; this project remains a Pegasus/PX4 UAV
-landing system. The supplied S1 overlay disables the generated OSM buildings,
+competition task protocol; this project remains a Pegasus/PX4 UAV landing
+system. Its ground carrier is now the AGILEX RANGER MINI 3.0: the visual is
+generated from AGILEX's public BSD `ranger_mini_v3` URDF/DAE package, while the
+kinematic route remains deterministic for repeatable landing experiments. Run
+`./scripts/import_ranger_mini_v3.sh` to regenerate the Isaac USD. The supplied
+S1 overlay disables the generated OSM buildings,
 canyon GNSS occluder model and route-centred arena clamp. Its moving target is
-a compact 1.60 x 1.00 m UGV: the original 2.45 m lorry is wider than the 2.26 m
+a 720 x 500 x 345 mm, 75 kg RANGER MINI under a 1.60 x 1.00 m landing deck:
+the original 2.45 m lorry is wider than the 2.26 m
 of usable pavement at the competition start. The UGV follows 44 terrain-height
 waypoints for 165.7 m, stops smoothly at the north end, and reverses down the
 same path instead of attempting a U-turn on the narrow branch.

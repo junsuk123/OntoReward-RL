@@ -176,6 +176,20 @@ class RvizPublisher:
     def _stamp(self):
         return self.node.get_clock().now().to_msg()
 
+    def _latest_stamp(self):
+        """A zero ROS stamp asks RViz for the newest available transform.
+
+        Paths are deliberately expressed relative to the *current* platform,
+        not reconstructed as historical world poses. Exact wall timestamps
+        only make a busy campus viewport reject replaceable visual messages
+        after its ten-second TF cache advances. TF itself remains timestamped.
+        """
+        stamp = self._stamp()
+        if hasattr(stamp, "sec") and hasattr(stamp, "nanosec"):
+            stamp.sec = 0
+            stamp.nanosec = 0
+        return stamp
+
     def _delete_all(self, publisher) -> None:
         array = self.m["MarkerArray"]()
         marker = self.m["Marker"]()
@@ -186,7 +200,7 @@ class RvizPublisher:
     def _marker(self, ns: str, mid: int, kind: int, frame: str):
         marker = self.m["Marker"]()
         marker.header.frame_id = frame
-        marker.header.stamp = self._stamp()
+        marker.header.stamp = self._latest_stamp()
         marker.ns = ns
         marker.id = int(mid)
         marker.type = kind
@@ -233,7 +247,7 @@ class RvizPublisher:
                       trail: Sequence[tuple[float, float, float]]) -> None:
         path = self.m["Path"]()
         path.header.frame_id = frame
-        path.header.stamp = self._stamp()
+        path.header.stamp = self._latest_stamp()
         for x, y, z in trail:
             pose = self.m["PoseStamped"]()
             pose.header = path.header

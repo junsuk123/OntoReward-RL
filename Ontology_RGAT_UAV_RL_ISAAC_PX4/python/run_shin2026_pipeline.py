@@ -528,4 +528,11 @@ def main():
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        exit_code = main()
+    except KeyboardInterrupt:
+        # The main finally block has already stopped every owned process. Keep
+        # an intentional Ctrl-C distinguishable from an experiment failure.
+        print("Pipeline interrupted by user; checkpoint and completed rows were preserved.")
+        exit_code = 130
+    raise SystemExit(exit_code)

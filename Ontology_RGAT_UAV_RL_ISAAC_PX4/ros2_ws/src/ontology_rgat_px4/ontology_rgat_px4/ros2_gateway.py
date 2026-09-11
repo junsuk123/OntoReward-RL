@@ -128,6 +128,47 @@ def action_age_seconds(target: str, wall_now_ns: int, last_wall_ns: int,
     return wall_age
 
 
+class ContinuousPx4Clock:
+    """Preserve simulated-time deltas across XRCE-DDS clock rebases.
+
+    PX4 timestamps exported through XRCE-DDS include the agent time offset.
+    When the timesync filter resets, that offset can disappear and later return,
+    making the raw timestamp jump between Unix-epoch and boot-time domains.
+    Neither jump is simulated progress. Accumulating only credible consecutive
+    deltas gives the learner a continuous lockstep clock without replacing it
+    with wall time.
+    """
+
+    def __init__(self, max_forward_gap_us: int = 10_000_000):
+        self.max_forward_gap_us = int(max_forward_gap_us)
+        if self.max_forward_gap_us <= 0:
+            raise ValueError("maximum PX4 clock gap must be positive")
+        self.raw_time_us: int | None = None
+        self.logical_time_us: int | None = None
+        self.last_delta_us = 0
+        self.discontinuities = 0
+
+    def update(self, raw_time_us: int) -> tuple[int, bool]:
+        raw = int(raw_time_us)
+        if raw <= 0:
+            return int(self.logical_time_us or 0), False
+        if self.raw_time_us is None:
+            self.raw_time_us = raw
+            self.logical_time_us = raw
+            return raw, False
+
+        delta = raw - self.raw_time_us
+        self.raw_time_us = raw
+        self.last_delta_us = delta
+        discontinuity = delta < 0 or delta > self.max_forward_gap_us
+        if discontinuity:
+            self.discontinuities += 1
+            return int(self.logical_time_us), True
+
+        self.logical_time_us = int(self.logical_time_us) + delta
+        return int(self.logical_time_us), False
+
+
 def bounded_position_update(reference, measurement, max_correction_m: float) -> np.ndarray:
     """Apply a finite optical correction without permitting a pose jump."""
     result = np.asarray(reference, dtype=float).copy()
@@ -237,6 +278,7 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             self.offboard_enabled = cfg.target == "sitl"
             self.last_velocity: np.ndarray | None = None
             self.last_velocity_ns = 0
+            self.px4_clock = ContinuousPx4Clock()
             self.pending_reset_seq = -1
             self.pending_reset_peer: tuple[str, int] | None = None
             self.pad_position_enu: np.ndarray | None = None
@@ -861,7 +903,16 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             self.last_velocity = velocity
             self.last_velocity_ns = stamp
             self.sample.timestamp_ns = stamp
-            self.sample.px4_time_us = int(msg.timestamp)
+            raw_px4_time_us = int(msg.timestamp)
+            px4_time_us, clock_rebased = self.px4_clock.update(raw_px4_time_us)
+            self.sample.px4_time_us = px4_time_us
+            self.sample.extra["px4_clock_discontinuities"] = int(
+                self.px4_clock.discontinuities)
+            if clock_rebased:
+                self.get_logger().warning(
+                    "XRCE-DDS rebased the PX4 timestamp "
+                    f"(raw delta {self.px4_clock.last_delta_us / 1e6:.3f} s); "
+                    "continuing on the monotonic simulated-time axis")
             pad_pose_fresh = (stamp - self.pad_pose_time_ns) * 1e-9 <= cfg.state_timeout_s
             deck_fresh = self._deck_is_fresh(stamp)
             # Hardware always flies on the pad-relative pose. In SITL it is a

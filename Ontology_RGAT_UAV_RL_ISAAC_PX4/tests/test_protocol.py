@@ -15,7 +15,8 @@ from ontology_rgat_px4.protocol import (
     validate_goto,
 )
 from ontology_rgat_px4.udp_server import DatagramServer
-from ontology_rgat_px4.ros2_gateway import (action_age_seconds,
+from ontology_rgat_px4.ros2_gateway import (ContinuousPx4Clock,
+                                            action_age_seconds,
                                             advance_velocity_position_target,
                                             advance_pad_contact_latch,
                                             bounded_position_update,
@@ -93,6 +94,49 @@ def test_sitl_deadman_uses_px4_lockstep_time_but_hardware_uses_wall_time():
 def test_control_pacing_reanchors_after_a_missed_deadline():
     assert pacing_anchor_us(2_020_000, 2_016_000) == 2_020_000
     assert pacing_anchor_us(2_020_000, 2_300_000) == 2_300_000
+
+
+def test_xrce_clock_rebase_preserves_simulated_time_deltas():
+    epoch = 1_789_147_094_000_000
+    clock = ContinuousPx4Clock(max_forward_gap_us=1_000_000)
+
+    assert clock.update(epoch) == (epoch, False)
+    assert clock.update(epoch + 20_000) == (epoch + 20_000, False)
+    # Timesync loses its epoch offset, then reacquires it. Neither domain
+    # switch may be billed as flight time.
+    assert clock.update(2_000_000) == (epoch + 20_000, True)
+    assert clock.update(2_020_000) == (epoch + 40_000, False)
+    assert clock.update(epoch + 60_000) == (epoch + 40_000, True)
+    assert clock.update(epoch + 80_000) == (epoch + 60_000, False)
+    assert clock.discontinuities == 2
+
+
+def test_bridge_pacing_reanchors_instead_of_failing_on_raw_clock_reset():
+    bridge = object.__new__(PX4Bridge)
+    bridge.control_period_us = 100_000
+    bridge.last_px4_time_us = 1_789_147_094_000_000
+    bridge.cfg = SimpleNamespace(timeout=.05)
+    replies = iter([{"px4_time_us": 2_050_000},
+                    {"px4_time_us": 2_100_000}])
+    bridge.transact = lambda *_args, **_kwargs: next(replies)
+    bridge.validate_state = lambda state: state
+
+    state = bridge.pace_to_control_period({"px4_time_us": 2_000_000})
+
+    assert state["px4_time_us"] == 2_100_000
+    assert bridge.last_px4_time_us == 2_100_000
+
+
+def test_bridge_pacing_still_rejects_a_genuine_stall():
+    bridge = object.__new__(PX4Bridge)
+    bridge.control_period_us = 100_000
+    bridge.last_px4_time_us = 2_000_000
+    bridge.cfg = SimpleNamespace(timeout=0.0)
+    bridge.transact = lambda *_args, **_kwargs: {"px4_time_us": 2_000_000}
+    bridge.validate_state = lambda state: state
+
+    with pytest.raises(BridgeError, match="advanced only 0.0 ms"):
+        bridge.pace_to_control_period({"px4_time_us": 2_000_000})
 
 
 def test_reset_sends_motion_and_initial_condition_scales_separately():

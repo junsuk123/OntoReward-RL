@@ -411,9 +411,12 @@ Two things a real extract needs watching for:
   PX4's, not a missed request. Check QGC/RC and `extra.last_command`, which
   carries the command id and PX4 result code from `vehicle_command_ack`; the
   rejection is also logged with its reason.
-- `PX4 simulated time advanced only … ms`: the simulator stalled. This is the
-  bridge refusing to fake progress; look at Isaac's log and its frame rate
-  before looking at the learner.
+- `PX4 simulated time advanced only … ms`: a small non-negative value means the
+  simulator genuinely stopped advancing; look at Isaac's log and frame rate.
+  Older builds could report an epoch-sized negative value after PX4 logged
+  `Time jump detected`; that was an XRCE-DDS timesync-domain reset, not a
+  physics stall. The gateway now normalizes that rebase and the bridge retains
+  a defensive re-anchor for an adopted older gateway.
 - Vehicle dives: verify NED/ENU conversion and negative Z body thrust; do not
   compensate by flipping gains. If the expert controller touches down hard,
   suspect `px4.hover_thrust` first and re-run `tools/calibrate_hover_thrust.py`.

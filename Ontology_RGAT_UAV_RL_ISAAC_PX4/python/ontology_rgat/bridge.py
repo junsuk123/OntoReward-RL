@@ -368,22 +368,33 @@ class PX4Bridge:
         if self.last_px4_time_us is None:
             self.last_px4_time_us = int(state["px4_time_us"])
             return state
+        observed = int(state["px4_time_us"])
+        # An adopted older gateway may still expose XRCE-DDS's raw clock. Its
+        # timesync filter can jump from Unix epoch back to boot time. Re-anchor
+        # on that new domain instead of waiting for ~56,000 years and reporting
+        # a huge negative "stall". New gateways normalize this upstream too.
+        if observed < self.last_px4_time_us:
+            self.last_px4_time_us = observed
         deadline = self.last_px4_time_us + self.control_period_us
         started = time.monotonic()
-        while int(state["px4_time_us"]) < deadline:
+        while observed < deadline:
             if time.monotonic() - started > float(self.cfg.timeout):
-                advanced = (int(state["px4_time_us"]) - self.last_px4_time_us) / 1e3
+                advanced = (observed - self.last_px4_time_us) / 1e3
                 raise BridgeError(
                     f"PX4 simulated time advanced only {advanced:.1f} ms in "
                     f"{float(self.cfg.timeout):.2f} s of wall time; the simulator "
                     "has stalled.")
             state = self.validate_state(self.transact("state", {}, ("state",)))
+            observed = int(state["px4_time_us"])
+            if observed < self.last_px4_time_us:
+                self.last_px4_time_us = observed
+                deadline = observed + self.control_period_us
         # Fixed cadence while on time, but re-anchor when an expensive monitor
         # or rendering callback let simulation advance past the deadline. If we
         # retain the missed deadline, subsequent actions run at odometry rate
         # until it catches up, under-counting a 20 s episode as only a few
         # seconds and starving PX4's setpoint stream again on the next callback.
-        self.last_px4_time_us = pacing_anchor_us(deadline, int(state["px4_time_us"]))
+        self.last_px4_time_us = pacing_anchor_us(deadline, observed)
         return state
 
     # ------------------------------------------------------------- commands

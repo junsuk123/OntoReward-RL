@@ -526,9 +526,13 @@ period from the previous deadline so sampling jitter cannot accumulate. `sim.ste
 then advances `env.t` by the simulated time that actually elapsed rather than by
 the nominal period. Without this the policy ran far faster than `cfg.sim.dt`
 while the clock still charged `cfg.sim.dt` per step, and episodes ran out of
-steps before they could land. If simulated time fails to advance within
-`cfg.external.timeout` of wall time, the bridge reports a stalled simulator
-instead of hanging.
+steps before they could land. XRCE-DDS may temporarily remove and reacquire its
+Unix-epoch offset when its timesync filter resets. The gateway converts those
+raw timestamp domain switches into a continuous logical PX4 clock while
+preserving ordinary simulated-time deltas; the bridge also defensively
+re-anchors if it is connected to an older gateway. If simulated time fails to
+advance within `cfg.external.timeout` of wall time, the bridge reports a
+stalled simulator instead of hanging.
 
 The learner may pause briefly without malformed setpoints being repeated forever:
 the gateway stops publishing setpoints when the action deadman expires, so PX4's

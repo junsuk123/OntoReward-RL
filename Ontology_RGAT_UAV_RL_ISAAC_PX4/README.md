@@ -22,7 +22,8 @@ the same recurrent actor/critic and paired seed plan.
 # One command: stack startup, controlled R-GAT freeze, recurrent training,
 # live dashboard, paired scenario evaluation, CSV tables, confidence intervals,
 # and plots.
-./scripts/run_shin2026_benchmark.sh --mode quick --headless
+../run.sh                         # publication-scale full run
+../run.sh --mode quick --headless # smaller integration run
 
 # CPU-only contract smoke tests (not flight results)
 ./scripts/run_metasejong_pipeline.sh --experiment shin2026 --reward shin2026 --mode quick --smoke-test

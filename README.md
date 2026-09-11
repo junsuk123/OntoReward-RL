@@ -43,14 +43,25 @@ An experiment passes only when both independent criteria pass:
 From the repository root:
 
 ```bash
-cd Ontology_RGAT_UAV_RL_ISAAC_PX4
-./scripts/run_metasejong_pipeline.sh --mode full
+./run.sh
 ```
 
-Use `--mode quick` for the smaller integration run or `--smoke-test-only` for a
-single end-to-end flight check. The command starts the simulator/flight stack,
-dashboard, RViz when a graphical ROS session is available, cumulative dataset
-and model updates, paired evaluation, sweeps, and publication outputs.
+The root entry point defaults to the publication-scale Shin/OntoReward run. It
+starts DDS, Isaac Sim, Pegasus, PX4, the ROS gateway and MATLAB-style dashboard;
+prepares the frozen controlled R-GAT reward; trains the recurrent PPO arms;
+runs paired scenario evaluation; and exports checkpoints, CSV tables,
+confidence intervals and publication figures. It is independent of the current
+working directory and forwards all benchmark options:
+
+```bash
+./run.sh --mode quick --headless
+./run.sh --methods shin2026 sparse manual_no_active ontoreward ontoreward_plus_active --headless
+./run.sh --help
+```
+
+The second command runs every ablation arm. Use
+`Ontology_RGAT_UAV_RL_ISAAC_PX4/scripts/run_metasejong_pipeline.sh` directly for
+the separate legacy 23-channel cooperative urban experiment.
 
 ## System figures
 

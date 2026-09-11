@@ -105,7 +105,8 @@ actor information boundary, method progress, estimator/PPO diagnostics, live
 reward components, curriculum, visibility, and paired scenario outcomes:
 
 ```bash
-./scripts/run_shin2026_benchmark.sh --mode quick --headless
+../run.sh                         # publication-scale full run
+../run.sh --mode quick --headless # smaller integration run
 ```
 
 Use `--mode full` for the configured publication-scale counts. This is a

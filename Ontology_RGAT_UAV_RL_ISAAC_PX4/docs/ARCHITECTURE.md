@@ -219,6 +219,24 @@ GNSS integrity, the suspect-signal fraction and the reported horizontal
 1-sigma are observable. The true error, the true NLOS count and the true sky
 view are not, and `tests/test_urban_gnss.py` enforces it.
 
+**Fixed reward design.** R-GAT remains context dependent while fitting the
+discounted safe-landing outcome. After training, the learner creates one
+counterfactual dataset per physical term by replacing that term with its neutral
+value, measures the absolute change in R-GAT output, and projects the eight
+sensitivities onto a bounded unit simplex. The resulting position, vertical
+speed, tilt, body-rate, wind, pad-tracking, energy and navigation coefficients
+are frozen for PPO. They define `Phi_w=-sum(w_i c_i)` inside PBRS; PPO never
+reads the changing R-GAT attention as a changing reward. The JSON artifact
+records coefficients, physical ranges, sensitivity, validation loss, dataset
+size and a deterministic design ID.
+
+**Optimization contract.** The proposed policy is accepted only if two gates
+pass: nominal paired-evaluation success exceeds `eval.acceptance.min_success_rate`,
+and its success-rate dispersion across wind, pad-motion, GNSS and energy strata
+stays below `max_success_std` while worst-case success and R-GAT validation fit
+also meet their limits. This prevents a uniformly failing policy from appearing
+"consistent" and keeps reward effectiveness separate from R-GAT robustness.
+
 **Scoring.** The fused pad-relative pose can still drift away from truth during
 a long outage, so the terminal test and the touchdown metrics run on
 `env.truth_state` — the gateway's `truth` block built from the simulator-only

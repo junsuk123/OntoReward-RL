@@ -41,6 +41,10 @@ def test_learner_selects_the_same_metasejong_pipeline_yaml():
     cfg = config_from_args(args)
 
     assert Path(cfg.paths.system_yaml) == path.resolve()
+    assert cfg.reward.fixed.weight_min == pytest.approx(0.025)
+    assert cfg.reward.fixed.weight_max == pytest.approx(0.45)
+    assert cfg.eval.acceptance.min_success_rate == pytest.approx(0.60)
+    assert cfg.eval.acceptance.max_success_std == pytest.approx(0.15)
 
 
 def test_sitl_reset_and_arm_gate():

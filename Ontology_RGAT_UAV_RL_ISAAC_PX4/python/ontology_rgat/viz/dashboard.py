@@ -17,11 +17,49 @@ from __future__ import annotations
 import json
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from typing import Any
 
 from .live import STORE, LiveStore
 
 __all__ = ["Dashboard"]
+
+
+def _saved_reward_scalars(cfg) -> dict[str, Any]:
+    """Restore the last committed design while a new long run is collecting data."""
+    out: dict[str, Any] = {}
+    design_path = Path(cfg.paths.models) / "rgat_fixed_reward_external.json"
+    try:
+        design = json.loads(design_path.read_text(encoding="utf-8"))
+        if design.get("format") == "ontology_rgat.fixed_reward/1" and design.get("frozen"):
+            out.update(reward_weights=design["weights"],
+                       reward_ranges=design["physical_ranges"],
+                       reward_task_constants=design.get("sparse_task_constants", {}),
+                       reward_design_id=design["design_id"],
+                       reward_weights_frozen=True)
+    except (OSError, ValueError, KeyError, TypeError):
+        return out
+
+    acceptance_path = Path(cfg.paths.results) / "optimization_acceptance.json"
+    try:
+        report = json.loads(acceptance_path.read_text(encoding="utf-8"))
+        # Never display an old policy's verdict beside a newer reward design.
+        if report.get("reward_design_id") != out.get("reward_design_id"):
+            return out
+        reward = report["reward_optimization"]
+        consistency = report["rgat_consistency"]
+        out.update(
+            reward_success_rate=reward["success_rate"],
+            reward_success_min=reward["minimum"],
+            reward_optimization_pass=reward["pass"],
+            rgat_consistency_std=consistency["std"],
+            rgat_consistency_max_std=consistency["max_std"],
+            rgat_worst_case_success=consistency["worst_case"],
+            rgat_consistency_pass=consistency["pass"],
+            optimization_overall_pass=report["overall_pass"])
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    return out
 
 
 PAGE = """<!doctype html>
@@ -84,6 +122,15 @@ margin-bottom:10px}
 .reward-grid{display:grid;grid-template-columns:minmax(260px,.8fr) minmax(360px,1.4fr);gap:14px}
 .reward-grid h3{font-size:11px;color:var(--muted);font-weight:600;margin:0 0 4px}
 .reward-grid canvas{height:220px}
+.reward-weights{display:grid;grid-template-columns:repeat(auto-fit,minmax(185px,1fr));
+gap:6px;margin:10px 0}.reward-weight{padding:6px 8px;border:1px solid var(--line);
+border-radius:7px;background:var(--bg)}.reward-weight .rw-head{display:flex;justify-content:space-between;
+font-size:11px}.reward-weight .track{height:6px;background:var(--line);border-radius:4px;
+overflow:hidden;margin:5px 0}.reward-weight .track i{display:block;height:100%;background:var(--accent)}
+.reward-weight small{color:var(--muted);font-size:9px}.acceptance{display:grid;
+grid-template-columns:repeat(3,1fr);gap:7px;margin:8px 0}.gate{padding:7px 9px;border-radius:7px;
+border:1px solid var(--line)}.gate.pass{border-left:4px solid #0d8c4d}.gate.fail{border-left:4px solid #c0392b}
+.gate.wait{border-left:4px solid #8a8f98}.gate b,.gate span{display:block}.gate span{font-size:10px;color:var(--muted)}
 @media(max-width:820px){.reward-grid{grid-template-columns:1fr}}
 </style></head><body>
 <header><h1>Ontology-RGAT &middot; Isaac Sim + PX4</h1>
@@ -150,18 +197,23 @@ for(const c of CARDS){
       proof. Self-loops are not drawn.</div>`;}
   else if(c.kind==='reward'){el.innerHTML=`<h2>${c.title}</h2>
     <div class="reward-formula">r<sub>R-GAT</sub> = r<sub>sparse</sub>
-      + &lambda;[&gamma;&Phi;<sub>R-GAT</sub>(G<sub>s&prime;</sub>)
-      &minus; &Phi;<sub>R-GAT</sub>(G<sub>s</sub>)]</div>
+      + &lambda;[&gamma;&Phi;<sub>w</sub>(s&prime;)&minus;&Phi;<sub>w</sub>(s)],
+      &nbsp;&Phi;<sub>w</sub>(s)=&minus;&Sigma;<sub>i</sub>w<sub>i</sub>c<sub>i</sub>(s)</div>
     <div class="reward-values" id="reward-values"></div>
+    <h3>Frozen coefficients distilled from R-GAT / 고정 보상 가중치</h3>
+    <div class="reward-weights" id="reward-weights"></div>
+    <div class="note" id="reward-task-constants"></div>
+    <div class="acceptance" id="reward-acceptance"></div>
     <div class="reward-grid"><div><h3>PBRS shaping surface over learned potentials</h3>
       <canvas id="cv-rgat_reward_surface"></canvas></div>
       <div><h3>Live reward decomposition during PPO</h3>
       <canvas id="cv-rgat_reward"></canvas><div class="legend" id="lg-rgat_reward"></div>
       </div></div>
-    <div class="note">The surface is F(s,s&prime;)=&lambda;(&gamma;&Phi;(s&prime;)&minus;&Phi;(s)).
-      The moving point is the current R-GAT transition. At terminal states
-      &Phi;(s&prime;)=0. Shaping changes learning feedback while preserving the
-      sparse task optimum because its &gamma; equals PPO &gamma;.</div>`;}
+    <div class="note">R-GAT counterfactual sensitivity is projected into bounded
+      coefficients that sum to one, then frozen before PPO. The surface is
+      F(s,s&prime;)=&lambda;(&gamma;&Phi;<sub>w</sub>(s&prime;)&minus;&Phi;<sub>w</sub>(s));
+      &Phi;<sub>w</sub>(s&prime;)=0 at terminal states. Equal PPO/PBRS &gamma; preserves
+      the sparse task optimum.</div>`;}
   else{el.innerHTML=`<h2>${c.title}</h2><canvas id="cv-${c.id}"></canvas>
     <div class="legend" id="lg-${c.id}"></div>`;}
   root.appendChild(el);
@@ -247,9 +299,9 @@ function rewardSurface(state,last){
   const g=cv.getContext('2d');g.setTransform(dpr,0,0,dpr,0,0);g.clearRect(0,0,w,h);
   const s=state.scalars||{},lambda=Number(s.reward_lambda??2),gamma=Number(s.reward_gamma??0.999);
   const pad={l:39,r:10,t:8,b:30},pw=w-pad.l-pad.r,ph=h-pad.t-pad.b,n=48;
-  const peak=Math.max(lambda*(1+gamma),1e-6);
+  const peak=Math.max(lambda,1e-6);
   for(let iy=0;iy<n;iy++)for(let ix=0;ix<n;ix++){
-    const phi=-1+2*(ix+.5)/n,phi1=1-2*(iy+.5)/n;
+    const phi=-1+(ix+.5)/n,phi1=-(iy+.5)/n;
     const q=Math.max(-1,Math.min(1,lambda*(gamma*phi1-phi)/peak));
     const a=Math.abs(q),base=245-95*a;
     g.fillStyle=q>=0?`rgb(${base},${225-35*a},${245-8*a})`
@@ -259,14 +311,14 @@ function rewardSurface(state,last){
   const css=getComputedStyle(document.body),ink=css.getPropertyValue('--ink').trim();
   g.strokeStyle=ink;g.lineWidth=1;g.strokeRect(pad.l,pad.t,pw,ph);
   g.fillStyle=ink;g.font='10px sans-serif';g.textAlign='center';
-  g.fillText('-1',pad.l,h-15);g.fillText('0',pad.l+pw/2,h-15);g.fillText('1',pad.l+pw,h-15);
-  g.fillText('learned Phi(s)',pad.l+pw/2,h-3);g.textAlign='right';
-  g.fillText('1',pad.l-5,pad.t+4);g.fillText('0',pad.l-5,pad.t+ph/2+3);
+  g.fillText('-1',pad.l,h-15);g.fillText('-0.5',pad.l+pw/2,h-15);g.fillText('0',pad.l+pw,h-15);
+  g.fillText('fixed Phi_w(s)',pad.l+pw/2,h-3);g.textAlign='right';
+  g.fillText('0',pad.l-5,pad.t+4);g.fillText('-0.5',pad.l-5,pad.t+ph/2+3);
   g.fillText('-1',pad.l-5,pad.t+ph+3);
   g.save();g.translate(10,pad.t+ph/2);g.rotate(-Math.PI/2);g.textAlign='center';
   g.fillText('learned Phi(s next)',0,0);g.restore();
   if(last&&Number.isFinite(last.phi)&&Number.isFinite(last.phi_next)){
-    const x=pad.l+(last.phi+1)*pw/2,y=pad.t+(1-last.phi_next)*ph/2;
+    const x=pad.l+(last.phi+1)*pw,y=pad.t-last.phi_next*ph;
     g.fillStyle='#ffd23f';g.strokeStyle='#16181d';g.lineWidth=2;
     g.beginPath();g.arc(x,y,6,0,Math.PI*2);g.fill();g.stroke();
   }
@@ -286,6 +338,34 @@ function rewardPanel(state){
     item('Phi(s next)',fmt(last&&last.phi_next)),
     item('lambda',fmt(Number(s.reward_lambda??2))),
     item('gamma',fmt(Number(s.reward_gamma??0.999))),
+  ].join('');
+  const weights=s.reward_weights||{},ranges=s.reward_ranges||{};
+  const weightBox=document.getElementById('reward-weights');
+  const entries=Object.entries(weights);
+  weightBox.innerHTML=entries.length?entries.map(([name,value])=>{
+    const range=ranges[name]||{},unit=range.unit||'';
+    return `<div class="reward-weight"><div class="rw-head"><span>${name.replaceAll('_',' ')}</span>`+
+      `<b>${Number(value).toFixed(5)}</b></div><div class="track">`+
+      `<i style="width:${Math.min(100,Number(value)*100)}%"></i></div>`+
+      `<small>range ${range.min??'--'}..${range.max??'--'} ${unit}</small></div>`;
+  }).join(''):'<span class="note">waiting for R-GAT reward-weight distillation</span>';
+  const task=s.reward_task_constants||{};
+  document.getElementById('reward-task-constants').textContent=Object.keys(task).length
+    ?'Fixed sparse task constants: '+Object.entries(task).map(([k,v])=>`${k}=${v}`).join(' · ')
+    :'Fixed sparse task constants are configured; waiting for the committed design.';
+  const gateBox=document.getElementById('reward-acceptance');
+  const gate=(label,pass,value)=>{
+    const stateClass=pass===undefined?'wait':(pass?'pass':'fail');
+    const verdict=pass===undefined?'WAIT':(pass?'PASS':'FAIL');
+    return `<div class="gate ${stateClass}"><b>${verdict} &middot; ${value}</b><span>${label}</span></div>`;};
+  const rewardPass=s.reward_optimization_pass,consistencyPass=s.rgat_consistency_pass;
+  const overall=s.optimization_overall_pass;
+  gateBox.innerHTML=[
+    gate('reward optimization: landing success',rewardPass,
+      Number.isFinite(s.reward_success_rate)?(100*s.reward_success_rate).toFixed(1)+'%':'pending'),
+    gate('R-GAT consistency: cross-condition std',consistencyPass,
+      Number.isFinite(s.rgat_consistency_std)?(100*s.rgat_consistency_std).toFixed(1)+' pp':'pending'),
+    gate('both requirements',overall,overall===undefined?'pending':'overall')
   ].join('');
   rewardSurface(state,last);
 }
@@ -596,7 +676,8 @@ class Dashboard:
         self.store.set(
             reward_lambda=float(self.cfg.reward.pbrs["lambda"]),
             reward_gamma=float(self.cfg.reward.pbrs.gamma),
-            reward_formula="r_sparse + lambda * (gamma * Phi(s') - Phi(s))",
+            reward_formula="r_sparse + lambda * (gamma * Phi_w(s') - Phi_w(s))",
+            **_saved_reward_scalars(self.cfg),
         )
         handler = type("BoundHandler", (_Handler,), {"store": self.store})
         try:

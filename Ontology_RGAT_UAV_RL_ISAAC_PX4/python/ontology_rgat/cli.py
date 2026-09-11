@@ -6,9 +6,33 @@ import os
 import sys
 from pathlib import Path
 
+import yaml
+
 from .config import Config, default_config
 
 __all__ = ["base_parser", "config_from_args", "ensure_fastdds", "bootstrap_path"]
+
+
+def _apply_learning_overlay(cfg: Config, path: Path) -> None:
+    """Read only the learner-owned section of the shared pipeline YAML."""
+    raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    learning = raw.get("learning") or {}
+    mappings = {
+        "reward_design": (cfg.reward.fixed, {
+            "weight_min", "weight_max", "importance_floor",
+            "max_attribution_samples"}),
+        "acceptance": (cfg.eval.acceptance, {
+            "min_success_rate", "max_success_std",
+            "min_worst_case_success", "max_rgat_val_mse"}),
+    }
+    for section, (target, allowed) in mappings.items():
+        values = learning.get(section) or {}
+        unknown = set(values) - allowed
+        if unknown:
+            raise ValueError(
+                f"unknown learning.{section} keys in {path}: {sorted(unknown)}")
+        for key, value in values.items():
+            target[key] = value
 
 
 def bootstrap_path() -> None:
@@ -63,6 +87,7 @@ def config_from_args(args: argparse.Namespace) -> Config:
         if not config_path.is_file():
             raise ValueError(f"system configuration does not exist: {config_path}")
         cfg.paths.system_yaml = str(config_path)
+        _apply_learning_overlay(cfg, config_path)
     if args.seed is not None:
         cfg.seed = int(args.seed)
     if args.rgat_device:

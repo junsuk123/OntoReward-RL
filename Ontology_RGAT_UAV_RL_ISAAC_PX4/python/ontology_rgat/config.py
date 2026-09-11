@@ -190,6 +190,15 @@ def default_config(mode: str = "quick", target: str = "sitl") -> Config:
             # Must equal ppo.gamma, or the shaping is no longer policy-invariant.
             "gamma": 0.999,
         },
+        # After R-GAT learns a context-dependent safe-landing potential, its
+        # counterfactual sensitivities are distilled to these bounded, fixed
+        # coefficients. They sum to one and stay frozen for the whole PPO run.
+        "fixed": {
+            "weight_min": 0.025,
+            "weight_max": 0.45,
+            "importance_floor": 1e-6,
+            "max_attribution_samples": 4096,
+        },
     }
 
     # -------------------------------------------------------- ontology schema
@@ -311,6 +320,16 @@ def default_config(mode: str = "quick", target: str = "sitl") -> Config:
         # is what isolates the GNSS effect from the geometry.
         "gnss_scales": [0.0, 0.5, 1.0, 1.5, 2.0],
         "battery_bins_s": [0.0, 10.0, 20.0, 30.0, 50.0],
+        # Two independent acceptance gates. Reward quality is the nominal
+        # landing success rate. R-GAT robustness is the variation of that rate
+        # across wind, pad-motion, GNSS and energy strata; a uniformly bad
+        # policy cannot pass merely by being consistently bad.
+        "acceptance": {
+            "min_success_rate": 0.60,
+            "max_success_std": 0.15,
+            "min_worst_case_success": 0.35,
+            "max_rgat_val_mse": 0.35,
+        },
     }
 
     # ------------------------------------------------------- visualization

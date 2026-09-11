@@ -56,14 +56,21 @@ edges.
 ![Manual, sparse and proposed PBRS reward functions](docs/images/reward_function-v2.png)
 
 The experiment compares the hand-weighted dense baseline, the sparse task
-reward and the proposed potential-based reward shaping (PBRS):
+reward and the proposed fixed-weight potential-based reward shaping (PBRS).
+After R-GAT training, counterfactual node sensitivities over the accumulated
+dataset are projected to bounded coefficients `w_i` that sum to one. Those
+coefficients are written to disk and frozen before PPO starts:
 
 ```text
-r_proposed = r_sparse + 2.0 * (0.999 * Phi(s') - Phi(s))
+Phi_w(s)    = -sum_i w_i * normalized_physical_cost_i(s)
+r_proposed = r_sparse + 2.0 * (0.999 * Phi_w(s') - Phi_w(s))
 ```
 
-At an absorbing terminal state `Phi(s') = 0`. The shaping discount is kept
-equal to PPO's `gamma = 0.999`, so the learned potential supplies denser credit
+The eight fixed terms are position error, vertical speed, tilt, angular rate,
+wind risk, pad tracking, energy risk and navigation risk. Their normalization
+ranges are tied to the landing criteria or a fixed `[0,1]` semantic range. At
+an absorbing terminal state `Phi_w(s') = 0`. The shaping discount is kept equal
+to PPO's `gamma = 0.999`, so the fixed learned design supplies denser credit
 without changing the sparse task's optimal policy.
 
 ### PPO observation and semantic state
@@ -237,12 +244,21 @@ relations the potential leans on -- markers against GNSS as the pad leaves the
 frame, for one -- can be read off while the run is still going. Attention is
 learned importance, not causal proof.
 
-The reward panel makes the learned potential operational rather than merely
-showing its attention graph. It displays the configured PBRS equation, a
-`Phi(s)`/`Phi(s')` shaping surface and the current transition on that surface.
+The reward panel makes the learned reward design operational rather than merely
+showing its attention graph. It displays every frozen coefficient and physical
+range, the PBRS equation, a `Phi_w(s)`/`Phi_w(s')` shaping surface and the current
+transition on that surface.
 During PPO it also plots `r_sparse`, the R-GAT shaping term, final reward and
 both potentials step by step. Manual PPO appears with a zero shaping term;
 the proposed arm shows the complete R-GAT reward decomposition.
+
+Evaluation has two separate acceptance gates. Nominal deterministic landing
+success measures the optimized reward's effectiveness. The standard deviation
+and worst-case success over wind, moving-pad, GNSS and energy strata measure
+R-GAT-derived reward consistency; the R-GAT validation MSE must also pass. The
+system passes only when both gates pass. Thresholds live under
+`cfg.eval.acceptance`, and the complete decision is saved in
+`results/optimization_acceptance.json`.
 
 Each episode starts in the air. Isaac draws the entry pose from the same
 distribution as the original simulator but does **not** teleport the vehicle:
@@ -372,7 +388,8 @@ Git:
 ./scripts/run_metasejong_demo.sh
 
 # Complete learning experiment: adds the ontology dataset, R-GAT potential,
-# manual/PBRS PPO training, paired evaluation, dashboard and figures.
+# fixed reward-weight distillation, manual/PBRS PPO training, dual-gate
+# evaluation, dashboard and figures.
 ./scripts/run_metasejong_pipeline.sh --mode quick
 ```
 

@@ -438,15 +438,18 @@ Everything lands under `results/` (`cfg.paths.*`), which is git-ignored:
 |---|---|
 | `results/data/rgat_dataset_external.npz` (+ `.graph.pkl`) | stage 2, dataset generation |
 | `results/models/rgat_model_external.pt` | stage 3, R-GAT potential (CPU float32, with the schema it was trained against) |
-| `results/models/ppo_manual_external.pt` | stage 4, baseline PPO |
-| `results/models/ppo_rgats_pbrs_external.pt` | stage 5, proposed PPO |
-| `results/comparison_results_external.pkl`, `summary_metrics_external.csv`, `episode_metrics_external.csv` | stage 6, paired evaluation |
-| `results/wind_generalization_sweep.csv` | stage 6, Isaac wind sweep |
-| `results/pad_speed_sweep.csv` | stage 6, paired moving-deck speed sweep |
-| `results/battery_reserve_bins.csv` | stage 6, paired outcomes binned by starting reserve |
+| `results/models/rgat_fixed_reward_external.json` | stage 4, frozen R-GAT-distilled reward coefficients, ranges and provenance |
+| `results/rgat_fixed_reward_weights.csv` | stage 4, tabular fixed coefficients and R-GAT sensitivities |
+| `results/models/ppo_manual_external.pt` | stage 5, baseline PPO |
+| `results/models/ppo_rgats_pbrs_external.pt` | stage 6, proposed fixed-reward PPO |
+| `results/comparison_results_external.pkl`, `summary_metrics_external.csv`, `episode_metrics_external.csv` | stage 7, paired evaluation |
+| `results/wind_generalization_sweep.csv` | stage 7, Isaac wind sweep |
+| `results/pad_speed_sweep.csv` | stage 7, paired moving-deck speed sweep |
+| `results/battery_reserve_bins.csv` | stage 7, paired outcomes binned by starting reserve |
 | `results/paired_difference_ci.csv` | proposed-minus-manual paired 95% intervals, including relative speed, depletion and energy |
-| `results/figures/*.png` | stage 7, publication figures |
-| `results/run_summary.json` | stage 7, elapsed time, final R-GAT validation loss, the device it trained on |
+| `results/optimization_acceptance.json` | stage 7, reward-success and R-GAT-consistency gates; both must pass |
+| `results/figures/*.png` | stage 8, publication figures |
+| `results/run_summary.json` | stage 8, elapsed time, fixed weights and dual-gate result |
 | `results/live/*.png`, `results/live/*.csv` | live snapshots during dataset generation, R-GAT training and both PPO runs |
 
 `results/live/` is the one to watch during an unattended run with nothing else
@@ -479,11 +482,14 @@ survives the SSH forward the rest of the dashboard uses. Before stage 3 finishes
 there is no trained model to ask, and the panel says so: it draws the schema
 with uniform edges and labels itself *schema only*.
 
-The adjacent **R-GAT-shaped RL reward** panel is available immediately: its
-surface visualizes `lambda * (gamma * Phi(s') - Phi(s))` over the bounded
-potential range. During manual and proposed PPO it is updated from the live
-control loop with base reward, shaping, final reward, `Phi(s)` and `Phi(s')`;
-the yellow point on the surface is the current proposed-policy transition.
+The adjacent **R-GAT-shaped RL reward** panel first waits for stage 4, then lists
+the eight frozen coefficients with their physical normalization ranges and the
+reward-design ID. Its surface visualizes
+`lambda * (gamma * Phi_w(s') - Phi_w(s))`. During manual and proposed PPO it is
+updated from the live control loop with base reward, shaping, final reward,
+`Phi_w(s)` and `Phi_w(s')`; the yellow point is the current proposed-policy
+transition. After stage 7, three gates show nominal reward success,
+cross-condition R-GAT consistency and the combined decision.
 
 ## Reproducibility
 

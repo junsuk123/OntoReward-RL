@@ -366,6 +366,8 @@ class RewardMonitor:
             "shape": float(parts.get("shape", 0.0)),
             "phi": float(phi) if phi is not None else None,
             "phi_next": float(phi_next) if phi_next is not None else None,
+            "design_id": parts.get("design_id"),
+            "weighted_terms": dict(parts.get("weighted_terms") or {}),
             "shaped": str(mode).lower() == "proposed",
         })
 

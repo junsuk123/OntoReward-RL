@@ -15,6 +15,7 @@ import numpy as np
 
 from .bridge import PX4Bridge
 from .config import Config
+from .evaluation.acceptance import assess_optimization
 from .evaluation.compare import LABELS, compare_policies, write_table
 from .evaluation.plots import make_plots
 from .evaluation.sweeps import battery_sweep, gnss_sweep, pad_sweep, wind_sweep
@@ -22,6 +23,7 @@ from .ppo.networks import load_agent, save_agent
 from .ppo.train import train_ppo
 from .rgat.dataset import generate_dataset, load_dataset, merge_datasets, save_dataset
 from .rgat.model import load_potential, save_potential
+from .rgat.reward_design import distill_reward_design, save_reward_design
 from .rgat.train import train_potential
 from .viz.dashboard import Dashboard
 from .viz.live import (STORE, DatasetMonitor, EpisodeMonitor, PPOMonitor,
@@ -42,6 +44,7 @@ def run_all(cfg: Config) -> dict[str, Any]:
     results_dir = Path(cfg.paths.results)
     data_path = Path(cfg.paths.data) / "rgat_dataset_external.npz"
     potential_path = Path(cfg.paths.models) / "rgat_model_external.pt"
+    reward_design_path = Path(cfg.paths.models) / "rgat_fixed_reward_external.json"
 
     dashboard = Dashboard(cfg).start()
     rviz = RvizPublisher.create(cfg) if cfg.viz.realtime else None
@@ -113,11 +116,38 @@ def run_all(cfg: Config) -> dict[str, Any]:
         if episode_monitor is not None:
             episode_monitor.potential = potential
 
+        _banner(4, "Freeze R-GAT-optimized physical reward weights")
+        STORE.stage("reward_design", "counterfactual attribution -> fixed weights")
+        reward_design = distill_reward_design(
+            potential, dataset, cfg, rgat_history=rgat_history)
+        save_reward_design(reward_design, reward_design_path)
+        weight_rows = []
+        print(f"Frozen reward design {reward_design.design_id} "
+              f"(sum={sum(reward_design.weights.values()):.6f}):")
+        for name, weight in reward_design.weights.items():
+            physical = reward_design.ranges[name]
+            row = {
+                "Term": name, "Weight": weight,
+                "RgatImportance": reward_design.importance[name],
+                "RgatSignedEffect": reward_design.signed_effect[name],
+                "RangeMin": physical["min"], "RangeMax": physical["max"],
+                "Unit": physical["unit"], "DesignId": reward_design.design_id,
+            }
+            weight_rows.append(row)
+            print(f"  {name:<18} w={weight:.6f} | physical range "
+                  f"[{physical['min']:.4g}, {physical['max']:.4g}] {physical['unit']}")
+        write_table(weight_rows, results_dir / "rgat_fixed_reward_weights.csv")
+        STORE.set(reward_weights=dict(reward_design.weights),
+                  reward_ranges=reward_design.ranges,
+                  reward_task_constants=reward_design.task_reward,
+                  reward_design_id=reward_design.design_id,
+                  reward_weights_frozen=True)
+
         agents: dict[str, Any] = {}
         histories: dict[str, Any] = {}
         for step, (mode, label, checkpoint) in enumerate((
                 ("manual", LABELS[0], "ppo_manual_external.pt"),
-                ("proposed", LABELS[1], "ppo_rgats_pbrs_external.pt")), start=4):
+                ("proposed", LABELS[1], "ppo_rgats_pbrs_external.pt")), start=5):
             _banner(step, f"PPO {mode} on PX4")
             STORE.stage(f"ppo_{mode}", f"{cfg.ppo.train_episodes} episodes")
             monitor = PPOMonitor(cfg, mode)
@@ -129,7 +159,7 @@ def run_all(cfg: Config) -> dict[str, Any]:
                 print(f"Warm-starting {label} PPO from {checkpoint} "
                       f"({len(previous_history.get('episode', []))} prior episodes).")
             agent, history = train_ppo(
-                mode, potential if mode == "proposed" else None, cfg,
+                mode, reward_design if mode == "proposed" else None, cfg,
                 initial_agent=previous_agent, initial_history=previous_history,
                 on_episode=monitor.update, on_update=monitor.refresh,
                 reward_monitor=reward_monitor,
@@ -139,7 +169,7 @@ def run_all(cfg: Config) -> dict[str, Any]:
             agents[label] = agent
             histories[label] = history
 
-        _banner(6, "Paired external evaluation (urban: moving lorry, energy, GNSS)")
+        _banner(7, "Paired external evaluation (urban: moving lorry, energy, GNSS)")
         STORE.stage("evaluation")
         results = compare_policies(agents[LABELS[0]], agents[LABELS[1]], potential, cfg,
                                    episode_monitor=episode_monitor)
@@ -155,6 +185,30 @@ def run_all(cfg: Config) -> dict[str, Any]:
         results["battery_bins"] = battery_sweep(agents[LABELS[0]], agents[LABELS[1]],
                                                 potential, cfg,
                                                 episode_monitor=episode_monitor)
+        results["reward_design"] = reward_design.to_dict()
+        acceptance = assess_optimization(results, rgat_history, reward_design, cfg)
+        results["optimization_acceptance"] = acceptance
+        acceptance_path = results_dir / "optimization_acceptance.json"
+        acceptance_path.write_text(json.dumps(acceptance, indent=2), encoding="utf-8")
+        reward_gate = acceptance["reward_optimization"]
+        consistency_gate = acceptance["rgat_consistency"]
+        STORE.set(
+            reward_success_rate=reward_gate["success_rate"],
+            reward_success_min=reward_gate["minimum"],
+            reward_optimization_pass=reward_gate["pass"],
+            rgat_consistency_std=consistency_gate["std"],
+            rgat_consistency_max_std=consistency_gate["max_std"],
+            rgat_worst_case_success=consistency_gate["worst_case"],
+            rgat_consistency_pass=consistency_gate["pass"],
+            optimization_overall_pass=acceptance["overall_pass"],
+        )
+        print("Optimization acceptance: "
+              f"reward success={100 * reward_gate['success_rate']:.1f}% "
+              f"({'PASS' if reward_gate['pass'] else 'FAIL'}), "
+              f"cross-environment std={100 * consistency_gate['std']:.1f} pp, "
+              f"worst={100 * consistency_gate['worst_case']:.1f}% "
+              f"({'PASS' if consistency_gate['pass'] else 'FAIL'}), "
+              f"overall={'PASS' if acceptance['overall_pass'] else 'FAIL'}")
         write_table(results["summary"], results_dir / "summary_metrics_external.csv")
         write_table(results["per_episode"], results_dir / "episode_metrics_external.csv")
         with (results_dir / "comparison_results_external.pkl").open("wb") as handle:
@@ -162,7 +216,7 @@ def run_all(cfg: Config) -> dict[str, Any]:
             # module in the pickle would tie the results file to a torch version.
             pickle.dump({k: v for k, v in results.items() if k != "potential"}, handle)
 
-        _banner(7, "Publication figures")
+        _banner(8, "Publication figures")
         STORE.stage("figures")
         figures = make_plots(results, histories, cfg)
 
@@ -176,6 +230,9 @@ def run_all(cfg: Config) -> dict[str, Any]:
             "cumulative_dataset_samples": total_samples,
             "cumulative_dataset_positive_fraction": positive / max(total_samples, 1),
             "cumulative_rgat_epochs": len(rgat_history.get("train_loss", [])),
+            "reward_design_id": reward_design.design_id,
+            "fixed_reward_weights": dict(reward_design.weights),
+            "optimization_acceptance": acceptance,
             "cumulative_ppo_episodes": {
                 label: len(history.get("episode", []))
                 for label, history in histories.items()},

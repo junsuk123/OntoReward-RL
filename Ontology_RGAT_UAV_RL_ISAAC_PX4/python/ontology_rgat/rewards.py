@@ -2,7 +2,8 @@
 
 ``manual``    hand-designed dense baseline, with explicit arbitrary weights.
 ``sparse``    binary task reward; the PBRS base that shaping must not alter.
-``proposed``  the sparse base plus ontology-R-GAT potential-based shaping.
+``proposed``  the sparse base plus potential-based shaping with coefficients
+              distilled from R-GAT and frozen before PPO starts.
 """
 from __future__ import annotations
 
@@ -78,8 +79,8 @@ def sparse_task(status: str, cfg: Config) -> float:
     return float(r)
 
 
-def proposed_pbrs(cur, nxt, status: str, potential, cfg: Config) -> tuple[float, dict[str, float]]:
-    """Ontology-R-GAT potential-based reward shaping.
+def proposed_pbrs(cur, nxt, status: str, potential, cfg: Config) -> tuple[float, dict[str, Any]]:
+    """Fixed R-GAT-distilled potential-based reward shaping.
 
     ``F(s, s') = lambda * (gamma * Phi(s') - Phi(s))`` with ``Phi = 0`` in the
     absorbing terminal state, which is what keeps the optimal policy the one
@@ -87,13 +88,18 @@ def proposed_pbrs(cur, nxt, status: str, potential, cfg: Config) -> tuple[float,
     ``cfg.ppo.gamma`` for that invariance to hold.
     """
     if potential is None:
-        raise ValueError("the 'proposed' reward needs a trained R-GAT potential")
+        raise ValueError("the 'proposed' reward needs a frozen R-GAT reward design")
     base = sparse_task(status, cfg)
     phi0 = potential.predict(cur.graph)
     phi1 = potential.predict(nxt.graph) if status == "running" else 0.0
     shape = cfg.reward.pbrs["lambda"] * (cfg.reward.pbrs.gamma * phi1 - phi0)
-    return float(base + shape), {"base": base, "shape": float(shape),
-                                 "phi0": float(phi0), "phi1": float(phi1)}
+    parts: dict[str, Any] = {"base": base, "shape": float(shape),
+                             "phi0": float(phi0), "phi1": float(phi1)}
+    if hasattr(potential, "design_id"):
+        parts["design_id"] = str(potential.design_id)
+    if hasattr(potential, "explain_terms"):
+        parts["weighted_terms"] = potential.explain_terms(cur.graph)
+    return float(base + shape), parts
 
 
 def reward_for(mode: str, cur, nxt, action, status: str, viol: float,

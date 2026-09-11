@@ -24,3 +24,18 @@ wind:
   # do not invent canyon occlusion. Turbulence and seeded gusts remain active.
   canyon:
     enabled: false
+
+# Learner-owned experiment contract. R-GAT may change during stage 3, but its
+# stage-4 reward coefficients are constrained to this range, sum to one and are
+# frozen before PPO. The final system passes only when both acceptance gates do.
+learning:
+  reward_design:
+    weight_min: 0.025
+    weight_max: 0.45
+    importance_floor: 1.0e-6
+    max_attribution_samples: 4096
+  acceptance:
+    min_success_rate: 0.60
+    max_success_std: 0.15
+    min_worst_case_success: 0.35
+    max_rgat_val_mse: 0.35

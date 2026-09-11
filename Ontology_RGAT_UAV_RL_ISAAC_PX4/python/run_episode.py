@@ -24,9 +24,10 @@ from ontology_rgat.env import run_episode
 from ontology_rgat.expert import PolicySpec
 from ontology_rgat.ppo.networks import load_agent
 from ontology_rgat.rgat.model import load_potential
+from ontology_rgat.rgat.reward_design import load_reward_design
 from ontology_rgat.semantic import SemanticState, build_ontology_graph
 from ontology_rgat.viz.dashboard import Dashboard
-from ontology_rgat.viz.live import EpisodeMonitor
+from ontology_rgat.viz.live import EpisodeMonitor, STORE
 from ontology_rgat.viz.rviz import RvizPublisher
 
 CHECKPOINTS = {"manual": "ppo_manual_external.pt",
@@ -48,10 +49,19 @@ def main() -> int:
     models = Path(cfg.paths.models)
 
     potential = None
+    reward_design = None
     template = build_ontology_graph(SemanticState(), cfg)
     potential_path = models / "rgat_model_external.pt"
     if potential_path.is_file():
         potential, _ = load_potential(potential_path, cfg, template)
+    reward_design_path = models / "rgat_fixed_reward_external.json"
+    if reward_design_path.is_file():
+        reward_design = load_reward_design(reward_design_path)
+        STORE.set(reward_weights=dict(reward_design.weights),
+                  reward_ranges=reward_design.ranges,
+                  reward_task_constants=reward_design.task_reward,
+                  reward_design_id=reward_design.design_id,
+                  reward_weights_frozen=True)
 
     if args.policy == "expert":
         policy = PolicySpec("expert")
@@ -60,9 +70,9 @@ def main() -> int:
         agent, _ = load_agent(models / CHECKPOINTS[args.policy], cfg)
         policy = PolicySpec("ppo", agent=agent, deterministic=True)
         reward = args.reward or ("proposed" if args.policy == "proposed" else "sparse")
-    if reward == "proposed" and potential is None:
-        parser.error(f"{potential_path} is missing; the proposed reward needs the "
-                     "trained R-GAT potential.")
+    if reward == "proposed" and reward_design is None:
+        parser.error(f"{reward_design_path} is missing; run the R-GAT reward-design "
+                     "stage before using the proposed reward.")
 
     dashboard = Dashboard(cfg).start()
     rviz = RvizPublisher.create(cfg, potential=potential)
@@ -71,7 +81,8 @@ def main() -> int:
         for i in range(args.episodes):
             seed = cfg.seed + i
             monitor.reset(f"{args.policy} seed {seed}")
-            log = run_episode(policy, reward, potential, seed, cfg, monitor=monitor)
+            reward_model = reward_design if reward == "proposed" else None
+            log = run_episode(policy, reward, reward_model, seed, cfg, monitor=monitor)
             print(json.dumps({k: (float(v) if isinstance(v, (int, float, np.floating))
                                   else v)
                               for k, v in log.metrics.items()}, indent=2))

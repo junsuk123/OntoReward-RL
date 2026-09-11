@@ -8,7 +8,10 @@ from __future__ import annotations
 
 from .layers import RGAT, RelationalGraphAttention
 from .model import RGATPotential, build_potential, load_potential, save_potential
+from .reward_design import (FixedRewardDesign, distill_reward_design,
+                            load_reward_design, save_reward_design)
 from .topology import Topology
 
 __all__ = ["RGAT", "RelationalGraphAttention", "RGATPotential", "Topology",
-           "build_potential", "load_potential", "save_potential"]
+           "FixedRewardDesign", "build_potential", "load_potential", "save_potential",
+           "distill_reward_design", "load_reward_design", "save_reward_design"]

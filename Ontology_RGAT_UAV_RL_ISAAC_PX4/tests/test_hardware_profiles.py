@@ -11,7 +11,11 @@ sys.path.insert(0, str(ROOT / "isaac_sim"))
 
 from config_loader import load_config  # noqa: E402
 from gnss import GnssConfig, GnssFix, hil_gps_measurement  # noqa: E402
-from sensor_profiles import validate_zed2i_mono, vn100_pegasus_config  # noqa: E402
+from sensor_profiles import (  # noqa: E402
+    isaac_runtime_profile,
+    validate_zed2i_mono,
+    vn100_pegasus_config,
+)
 
 
 @pytest.fixture(scope="module")
@@ -56,6 +60,20 @@ def test_zed2i_left_mono_mode_is_a_supported_per_eye_mode(config):
     assert camera["rate_hz"] == pytest.approx(60.0)
     assert camera["horizontal_fov_deg"] == pytest.approx(110.0)
     assert config["isaac"]["rendering_dt"] == pytest.approx(1.0 / 60.0)
+
+
+def test_gui_profile_preserves_physics_and_caps_only_rendered_camera_frames(config):
+    gui = isaac_runtime_profile(config, headless=False)
+    headless = isaac_runtime_profile(config, headless=True)
+
+    assert config["isaac"]["physics_dt"] == pytest.approx(1.0 / 250.0)
+    assert gui.rendering_dt == pytest.approx(1.0 / 20.0)
+    assert gui.camera_rate_hz == 20
+    assert gui.viewport_resolution == (960, 540)
+    assert gui.startup_rendering_dt == pytest.approx(0.5)
+    assert gui.startup_max_sim_s == pytest.approx(30.0)
+    assert headless.rendering_dt == pytest.approx(1.0 / 60.0)
+    assert headless.camera_rate_hz == 60
 
 
 def test_ranger_asset_was_generated_from_the_pinned_official_source(config):

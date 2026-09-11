@@ -123,6 +123,10 @@ but reads nothing from them.
    lockstepped to the simulator, slows the flight stack itself. With
    `vision.mode: aruco` the world still renders in a headless run, because the
    pad camera only produces an image on a rendered frame.
+   `metasejong-pipeline.yaml` gives GUI runs a 960x540, 20 Hz operator view and
+   camera stream while leaving physics/HIL at 250 Hz; headless runs retain the
+   60 Hz ZED stream. Before the gateway attaches, GUI rendering is temporarily
+   reduced to 2 Hz so PX4 can finish EKF/preflight initialization promptly.
 4. Confirm `/fmu/out/vehicle_odometry`, `/landing_uav0/state/pose`, and
    `/landing_pad/state/odom` are live.
 5. Start the gateway.
@@ -136,7 +140,7 @@ timeout diagnosable:
 | Stage | Readiness signal | Default budget |
 |---|---|---|
 | DDS agent | UDP 8888 bound (`ss -lnu`) | 30 s |
-| Isaac + PX4 SITL | `Ready for takeoff` in `isaac.log` | 600 s |
+| Isaac + PX4 SITL | `Ready for takeoff` in `isaac.log` | 1200 s GUI / 600 s headless |
 | Gateway | UDP 14650 bound | 60 s |
 
 Each stage is skipped and adopted if it is already up — a UDP port already bound,

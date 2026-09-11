@@ -45,6 +45,10 @@ def main() -> int:
     parser = base_parser(__doc__ or "")
     parser.add_argument("--isaac-sim-path", default=None,
                         help="Isaac Sim release directory; defaults to $ISAACSIM_PATH")
+    parser.add_argument(
+        "--isaac-timeout", type=float, default=None,
+        help="wall-clock seconds allowed for Isaac/PX4 startup; defaults to "
+             "1200 with the GUI and 600 headless")
     parser.add_argument("--headless", action="store_true",
                         help="run Isaac Sim without a GUI window; GUI is the default")
     parser.add_argument("--use-running-stack", action="store_true",
@@ -60,6 +64,8 @@ def main() -> int:
     if args.target == "hardware":
         parser.error("This entry point arms and flies the vehicle unattended and is "
                      "SITL only. Use run_hardware_policy.py for a real vehicle.")
+    if args.isaac_timeout is not None and args.isaac_timeout <= 0.0:
+        parser.error("--isaac-timeout must be positive")
 
     ensure_fastdds()
     cfg = config_from_args(args)
@@ -74,7 +80,10 @@ def main() -> int:
         else:
             owned = ExternalStack(cfg, isaac_sim_path=args.isaac_sim_path,
                                   headless=bool(args.headless),
-                                  config_path=cfg.paths.system_yaml)
+                                  config_path=cfg.paths.system_yaml,
+                                  isaac_timeout=(args.isaac_timeout if args.isaac_timeout
+                                                 is not None else
+                                                 (600.0 if args.headless else 1200.0)))
             owned.start()
             # Let env.LandingEnv.reset cycle this simulator if PX4 stops arming.
             stack_module.current(owned)

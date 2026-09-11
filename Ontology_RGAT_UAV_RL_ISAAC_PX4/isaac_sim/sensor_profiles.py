@@ -8,11 +8,69 @@ to Pegasus without importing Isaac Sim.
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
 from typing import Any
 
 
 VN100_MODEL = "vectornav_vn100"
 ZED2I_MONO_MODEL = "stereolabs_zed2i_mono"
+
+
+@dataclass(frozen=True)
+class IsaacRuntimeProfile:
+    """Render settings selected without importing Isaac Sim.
+
+    Physics remains at ``isaac.physics_dt`` in every profile.  Only rendered
+    frames are decimated in a GUI run; PX4 HIL IMU/GPS callbacks continue to
+    run on physics time.
+    """
+
+    rendering_dt: float
+    startup_rendering_dt: float
+    startup_max_sim_s: float
+    viewport_resolution: tuple[int, int]
+    camera_rate_hz: int
+
+
+def isaac_runtime_profile(data: dict[str, Any], headless: bool) -> IsaacRuntimeProfile:
+    """Resolve the GUI/headless render budget and validate its timing."""
+    isaac = data.get("isaac") or {}
+    camera = (data.get("vision") or {}).get("camera") or {}
+    physics_dt = float(isaac.get("physics_dt", 0.0))
+    sensor_rendering_dt = float(isaac.get("rendering_dt", 0.0))
+    rendering_dt = (sensor_rendering_dt if headless else
+                    float(isaac.get("gui_rendering_dt", sensor_rendering_dt)))
+    startup_rendering_dt = float(
+        isaac.get("startup_rendering_dt", rendering_dt))
+    startup_max_sim_s = float(isaac.get("startup_max_sim_s", 0.0))
+    viewport = tuple(int(v) for v in isaac.get(
+        "gui_viewport_resolution", (1280, 720)))
+    nominal_camera_rate = float(camera.get("rate_hz", 0.0))
+
+    values = (physics_dt, sensor_rendering_dt, rendering_dt,
+              startup_rendering_dt, nominal_camera_rate)
+    if not all(math.isfinite(value) and value > 0.0 for value in values):
+        raise ValueError("Isaac physics, rendering and camera rates must be positive and finite")
+    if rendering_dt + 1e-12 < physics_dt:
+        raise ValueError("Isaac rendering period cannot be shorter than physics_dt")
+    if startup_rendering_dt + 1e-12 < rendering_dt:
+        raise ValueError("isaac.startup_rendering_dt cannot be shorter than the run-time rendering period")
+    if not math.isfinite(startup_max_sim_s) or startup_max_sim_s < 0.0:
+        raise ValueError("isaac.startup_max_sim_s must be finite and non-negative")
+    if len(viewport) != 2 or min(viewport) < 320:
+        raise ValueError("isaac.gui_viewport_resolution must contain two values of at least 320 pixels")
+
+    # A camera cannot produce more independent frames than the stage renders.
+    # Use an integer frequency because Isaac's Camera API requires one.
+    render_rate = max(1, int(round(1.0 / rendering_dt)))
+    camera_rate = max(1, min(int(round(nominal_camera_rate)), render_rate))
+    return IsaacRuntimeProfile(
+        rendering_dt=rendering_dt,
+        startup_rendering_dt=startup_rendering_dt,
+        startup_max_sim_s=startup_max_sim_s,
+        viewport_resolution=(viewport[0], viewport[1]),
+        camera_rate_hz=camera_rate,
+    )
 
 
 def vn100_pegasus_config(data: dict[str, Any], physics_dt: float) -> dict[str, Any]:

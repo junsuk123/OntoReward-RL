@@ -346,11 +346,14 @@ Useful variants are:
 ./scripts/run_metasejong_pipeline.sh --headless
 ```
 
-The Isaac Sim window opens by default whenever `DISPLAY` is set; otherwise the
-run falls back to headless. Rendering costs simulation speed even though it is
-throttled to `isaac.rendering_dt`: PX4 runs in lockstep, so a slower frame rate
-slows the flight stack too. Raise `isaac.rendering_dt` in the system config for
-a cheaper picture, or use `--headless` for long sweeps.
+The Isaac Sim window opens by default whenever `DISPLAY` is set. The
+Meta-Sejong full-pipeline profile keeps physics and PX4 HIL at 250 Hz but caps
+the GUI viewport and rendered camera stream at 20 Hz; before PX4 is ready it
+renders a 2 Hz preview so EKF initialization is not starved by the campus
+scene. Headless mode retains the configured 60 Hz ZED stream. Rendering still
+costs simulation speed because PX4 runs in lockstep; use `--headless` when a
+window is not required, or `--isaac-timeout SECONDS` for an unusually slow GUI
+host.
 
 PX4 runs in real time: quick mode flies roughly 550 episodes and full mode
 roughly 8,500, so budget hours and days respectively. If PX4 stops accepting arm

@@ -1,6 +1,20 @@
 # Meta-Sejong overlay for the complete ontology -> R-GAT -> PPO experiment.
 extends: metasejong-demo.yaml
 
+isaac:
+  # Keep the 250 Hz physics/HIL loop unchanged, but do not ask this laptop to
+  # render both the photoreal campus viewport and a 1280x720 camera at 60 Hz.
+  # The physical ZED profile remains 60 Hz in system.yaml; GUI experiments
+  # consume a deterministic 20 Hz subset. Headless runs retain all 60 Hz.
+  gui_rendering_dt: 0.05
+  gui_viewport_resolution: [960, 540]
+  # Camera frames are not part of PX4 preflight. Render only a 2 Hz preview
+  # until PX4 is ready and the gateway publishes its first flight state, then
+  # switch automatically to the normal GUI rate. The time cap keeps a manually
+  # launched simulator from staying in preview mode indefinitely.
+  startup_rendering_dt: 0.5
+  startup_max_sim_s: 30.0
+
 pad:
   # PX4 boots and calibrates on the roof, so the UGV must remain parked until
   # the learner has completed the entry climb. Policy handover releases it for

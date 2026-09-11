@@ -30,11 +30,18 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from config_loader import load_config
 
 CONFIG = load_config(CONFIG_PATH)
+from sensor_profiles import isaac_runtime_profile
+
+RUNTIME = isaac_runtime_profile(CONFIG, ARGS.headless)
 
 # SimulationApp must be constructed before importing Omniverse/Pegasus modules.
 from isaacsim import SimulationApp
 
-simulation_app = SimulationApp({"headless": ARGS.headless})
+app_config = {"headless": ARGS.headless}
+if not ARGS.headless:
+    app_config.update({"width": RUNTIME.viewport_resolution[0],
+                       "height": RUNTIME.viewport_resolution[1]})
+simulation_app = SimulationApp(app_config)
 
 import carb
 import omni.timeline
@@ -176,12 +183,14 @@ class LandingPadMarkers:
 class DownwardCamera:
     """A downward camera on the vehicle plus the pad-relative pose it yields."""
 
-    def __init__(self, config: dict, board: MarkerBoard, dictionary: str):
+    def __init__(self, config: dict, board: MarkerBoard, dictionary: str,
+                 runtime_rate_hz: int | None = None):
         camera_cfg = config["camera"]
         validate_zed2i_mono(camera_cfg)
         self.width, self.height = (int(v) for v in camera_cfg["resolution"])
         self.fov_deg = float(camera_cfg["horizontal_fov_deg"])
-        self.rate_hz = float(camera_cfg["rate_hz"])
+        self.nominal_rate_hz = float(camera_cfg["rate_hz"])
+        self.rate_hz = int(runtime_rate_hz or round(self.nominal_rate_hz))
         self.mount = np.array([float(v) for v in camera_cfg["mount_translation_flu_m"]])
         self.clipping = tuple(float(v) for v in camera_cfg.get("clipping_range_m", (0.02, 60.0)))
         self.camera_matrix = intrinsics_from_fov(self.width, self.height, self.fov_deg)
@@ -198,7 +207,8 @@ class DownwardCamera:
         self.annotated_rgb = None
         carb.log_info(
             f"[landing-camera] ZED 2i mono {camera_cfg.get('eye', 'left')} eye: "
-            f"{self.width}x{self.height}@{self.rate_hz:g} Hz, "
+            f"{self.width}x{self.height}@{self.rate_hz:g} Hz runtime "
+            f"({self.nominal_rate_hz:g} Hz device), "
             f"HFOV={self.fov_deg:g} deg"
         )
 
@@ -818,11 +828,13 @@ class ViewportFollower:
 class LandingWorld:
     def __init__(self):
         isaac_cfg = CONFIG["isaac"]
+        self.runtime = RUNTIME
+        self.startup_render_released = False
         self.timeline = omni.timeline.get_timeline_interface()
         self.pg = PegasusInterface()
         self.pg.set_world_settings(
             physics_dt=float(isaac_cfg["physics_dt"]),
-            rendering_dt=float(isaac_cfg["rendering_dt"]),
+            rendering_dt=self.runtime.rendering_dt,
         )
         self.pg._world = World(**self.pg._world_settings)
         self.world = self.pg.world
@@ -951,7 +963,8 @@ class LandingWorld:
             self.pad = LandingPadMarkers(vision_cfg, WORKSPACE, LandingDeck.PRIM)
             self.pad.spawn(self.world)
             self.camera = DownwardCamera(
-                vision_cfg, self.pad.board, self.pad.dictionary)
+                vision_cfg, self.pad.board, self.pad.dictionary,
+                runtime_rate_hz=self.runtime.camera_rate_hz)
             self.camera.attach(self.vehicle.prim_path)
 
         battery_cfg = CONFIG.get("battery", {}) or {}
@@ -1065,6 +1078,7 @@ class LandingWorld:
             self.pending_reset = {"seq": int(req["seq"]), "seed": int(req.get("seed", 0)),
                                   "wind_scale": scale, "pad_scale": pad_scale,
                                   "gnss_scale": gnss_scale}
+            self.startup_render_released = True
         except (ValueError, TypeError, KeyError, json.JSONDecodeError) as exc:
             carb.log_warn(f"Ignored malformed reset request: {exc}")
 
@@ -1247,6 +1261,10 @@ class LandingWorld:
             carb.log_warn(f"Ignored malformed flight state: {exc}")
             return
         self.autopilot_flying = flying
+        # The gateway starts only after PX4 reports Ready for takeoff.  Its
+        # first valid state therefore releases the cheap startup render loop
+        # even for viewers such as run_metasejong_demo that do not reset first.
+        self.startup_render_released = True
         if handover and self.deck.held:
             carb.log_warn("Policy has the vehicle; the lorry pulls away.")
             self.deck.release(self.world.current_time)
@@ -1523,16 +1541,30 @@ class LandingWorld:
         # accumulator alternates four/five-step intervals for exactly 60 Hz on
         # average without changing the flight dynamics clock.
         physics_dt = float(CONFIG["isaac"]["physics_dt"])
-        rendering_dt = float(CONFIG["isaac"]["rendering_dt"])
+        rendering_dt = self.runtime.rendering_dt
         render_elapsed = 0.0
+        previous_rendering_dt = None
         try:
             while simulation_app.is_running() and not self.stop_sim:
                 if self.pending_reset is not None:
                     self._perform_reset()
+                startup_rendering = (
+                    not self.startup_render_released
+                    and float(self.world.current_time) < self.runtime.startup_max_sim_s
+                    and self.runtime.startup_rendering_dt > rendering_dt)
+                active_rendering_dt = (self.runtime.startup_rendering_dt
+                                       if startup_rendering else rendering_dt)
+                if active_rendering_dt != previous_rendering_dt:
+                    render_elapsed = 0.0
+                    previous_rendering_dt = active_rendering_dt
+                    mode = "PX4 startup" if startup_rendering else "run-time"
+                    carb.log_warn(
+                        f"Isaac {mode} render rate: {1.0 / active_rendering_dt:.1f} Hz "
+                        f"(physics {1.0 / physics_dt:.0f} Hz)")
                 render_elapsed += physics_dt
-                frame_boundary = render_elapsed + 1e-12 >= rendering_dt
+                frame_boundary = render_elapsed + 1e-12 >= active_rendering_dt
                 if frame_boundary:
-                    render_elapsed -= rendering_dt
+                    render_elapsed -= active_rendering_dt
                 # The pad camera only produces an image on a rendered frame, so
                 # vision costs rendering even in a headless run.
                 render = frame_boundary and (self.vision_enabled or not ARGS.headless)

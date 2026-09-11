@@ -18,7 +18,7 @@ Why a board and not one marker
 One marker cannot cover a landing. A tag large enough to resolve from the
 entry altitude overflows the field of view before touchdown, and a tag small
 enough to stay in view at touchdown is a handful of pixels from altitude. The
-pad therefore carries markers at two scales with known positions, and the pose
+pad therefore carries markers at multiple scales with known positions, and the pose
 is solved from whichever ones are currently visible.
 """
 
@@ -103,9 +103,21 @@ class MarkerBoard:
     """The markers painted on the pad, keyed by id."""
 
     def __init__(self, markers: Iterable[BoardMarker]):
-        self.markers = {int(m.marker_id): m for m in markers}
-        if not self.markers:
+        marker_list = tuple(markers)
+        if not marker_list:
             raise ValueError("a landing pad needs at least one marker")
+        ids = [int(marker.marker_id) for marker in marker_list]
+        if any(marker_id < 0 for marker_id in ids):
+            raise ValueError("marker ids must be non-negative")
+        if len(set(ids)) != len(ids):
+            raise ValueError("landing-pad marker ids must be unique")
+        for marker in marker_list:
+            center = np.asarray(marker.center_xy_m, dtype=float)
+            if center.shape != (2,) or not np.isfinite(center).all():
+                raise ValueError("marker centres must be finite XY pairs")
+            if not math.isfinite(marker.side_m) or marker.side_m <= 0.0:
+                raise ValueError("marker side lengths must be positive and finite")
+        self.markers = {int(marker.marker_id): marker for marker in marker_list}
 
     @classmethod
     def from_config(cls, entries: Sequence[dict]) -> "MarkerBoard":

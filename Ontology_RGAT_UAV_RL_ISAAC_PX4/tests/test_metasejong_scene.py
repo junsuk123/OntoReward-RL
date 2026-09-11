@@ -64,6 +64,8 @@ def test_shin_profile_uses_campus_plaza_and_fitted_platform():
     assert pad.carrier == "ugv"
     assert pad.deck_size_m == pytest.approx((1.5, 1.5))
     assert pad.deck_height_m == pytest.approx(0.42)
+    assert pad.vehicle_max_speed_m_s == pytest.approx(2.0)
+    assert (pad.speed_min_m_s, pad.speed_max_m_s) == pytest.approx((0.5, 1.2))
     assert pad.mode == "waypoints"
     assert pad.waypoint_loop is True
     assert pad.route_start == "continue"
@@ -80,11 +82,28 @@ def test_shin_profile_uses_campus_plaza_and_fitted_platform():
     half_length, half_width = (0.5 * value for value in pad.deck_size_m)
     # The texture adds one quiet-zone cell around a 4x4 tag, so the visible
     # quad is 4/3 of the configured physical marker side.
-    for marker in config["vision"]["board"]:
+    markers = config["vision"]["board"]
+    assert config["vision"]["dictionary"] == "DICT_4X4_100"
+    assert len(markers) == 45
+    assert len({marker["id"] for marker in markers}) == len(markers)
+    assert sorted({float(marker["side_m"]) for marker in markers}) == pytest.approx(
+        [0.04, 0.12, 0.32])
+    assert sum(float(marker["side_m"]) <= 0.04 for marker in markers) == 37
+    for marker in markers:
         half_quad = 0.5 * float(marker["side_m"]) * (4.0 / 3.0)
         x, y = (float(value) for value in marker["center_xy_m"])
         assert abs(x) + half_quad <= half_length
         assert abs(y) + half_quad <= half_width
+
+    # Quiet zones may not overlap: overlap makes both adjacent codewords
+    # invalid even if their black squares themselves remain disjoint.
+    for index, first in enumerate(markers):
+        ax, ay = (float(value) for value in first["center_xy_m"])
+        ah = 0.5 * float(first["side_m"]) * (4.0 / 3.0)
+        for second in markers[index + 1:]:
+            bx, by = (float(value) for value in second["center_xy_m"])
+            bh = 0.5 * float(second["side_m"]) * (4.0 / 3.0)
+            assert abs(ax - bx) >= ah + bh or abs(ay - by) >= ah + bh
 
 
 def test_alias_and_asset_path_are_resolved_from_workspace(tmp_path):

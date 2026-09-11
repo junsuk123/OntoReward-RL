@@ -11,6 +11,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "isaac_sim"))
 
+from config_loader import load_config  # noqa: E402
 from marker_vision import (  # noqa: E402
     R_BODY_FROM_OPTICAL,
     BoardMarker,
@@ -38,42 +39,46 @@ BOARD = MarkerBoard([
 ])
 
 
-def render_board_view(body_position, yaw_rad=0.0):
+def render_board_view(body_position, yaw_rad=0.0, *, board=BOARD,
+                      dictionary=DICTIONARY, width=WIDTH, height=HEIGHT,
+                      fov_deg=FOV_DEG, mount=MOUNT):
     """Draw what the downward camera at BODY_POSITION sees of the pad."""
-    camera_matrix = intrinsics_from_fov(WIDTH, HEIGHT, FOV_DEG)
+    camera_matrix = intrinsics_from_fov(width, height, fov_deg)
     c, s = np.cos(yaw_rad), np.sin(yaw_rad)
     r_pad_from_body = np.array([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]])
     r_pad_from_optical = r_pad_from_body @ R_BODY_FROM_OPTICAL
-    camera_in_pad = np.asarray(body_position, float) + r_pad_from_body @ np.asarray(MOUNT)
+    camera_in_pad = np.asarray(body_position, float) + r_pad_from_body @ np.asarray(mount)
     r_optical_from_pad = r_pad_from_optical.T
     tvec = -r_optical_from_pad @ camera_in_pad
     rvec, _ = cv2.Rodrigues(r_optical_from_pad)
 
-    image = np.full((HEIGHT, WIDTH), 255, dtype=np.uint8)
+    image = np.full((height, width), 255, dtype=np.uint8)
     span, margin = 400, 100          # the margin is the printed quiet zone
     lo, hi = margin, margin + span - 1
     src = np.array([[lo, lo], [hi, lo], [hi, hi], [lo, hi]], dtype=np.float32)
-    for marker in BOARD.markers.values():
+    for marker in board.markers.values():
         corners, _ = cv2.projectPoints(
             marker.object_points(), rvec, tvec, camera_matrix, np.zeros(5))
         corners = corners.reshape(4, 2).astype(np.float32)
         if not np.isfinite(corners).all():
             continue
         tag = cv2.aruco.generateImageMarker(
-            cv2.aruco.getPredefinedDictionary(getattr(cv2.aruco, DICTIONARY)),
+            cv2.aruco.getPredefinedDictionary(getattr(cv2.aruco, dictionary)),
             marker.marker_id, span)
         padded = cv2.copyMakeBorder(tag, margin, margin, margin, margin,
                                     cv2.BORDER_CONSTANT, value=255)
         warped = cv2.warpPerspective(
-            padded, cv2.getPerspectiveTransform(src, corners), (WIDTH, HEIGHT),
+            padded, cv2.getPerspectiveTransform(src, corners), (width, height),
             borderMode=cv2.BORDER_CONSTANT, borderValue=255)
         image = np.minimum(image, warped)   # tags are dark on white
     return image, camera_matrix
 
 
-def estimator():
+def estimator(*, board=BOARD, dictionary=DICTIONARY, width=WIDTH,
+              height=HEIGHT, fov_deg=FOV_DEG, mount=MOUNT):
     return MarkerPoseEstimator(
-        BOARD, intrinsics_from_fov(WIDTH, HEIGHT, FOV_DEG), MOUNT, dictionary=DICTIONARY)
+        board, intrinsics_from_fov(width, height, fov_deg), mount,
+        dictionary=dictionary)
 
 
 @pytest.mark.parametrize("body_position", [
@@ -170,6 +175,48 @@ def test_texture_carries_a_quiet_zone(tmp_path):
     assert image.shape[0] == image.shape[1] > 240
     assert image.shape[0] / 240 == pytest.approx(texture_side_ratio(DICTIONARY), rel=0.02)
     assert image[0, 0] == 255
+
+
+@pytest.mark.parametrize("markers, message", [
+    ([BoardMarker(1, 0.1), BoardMarker(1, 0.2)], "unique"),
+    ([BoardMarker(1, 0.0)], "positive"),
+    ([BoardMarker(-1, 0.1)], "non-negative"),
+])
+def test_invalid_board_geometry_is_rejected(markers, message):
+    with pytest.raises(ValueError, match=message):
+        MarkerBoard(markers)
+
+
+@pytest.mark.parametrize("body_position", [
+    (0.0, 0.0, 4.6),
+    (0.0, 0.0, 0.32),
+    (0.30, 0.00, 0.32),
+    (-0.20, 0.20, 0.32),
+    (0.10, -0.30, 0.32),
+])
+def test_shin_multiscale_board_remains_visible_near_touchdown(body_position):
+    """Exercise the deployed board, camera and dictionary as one system."""
+    config = load_config(ROOT / "config" / "shin2026-system.yaml")
+    camera = config["vision"]["camera"]
+    width, height = camera["resolution"]
+    dictionary = config["vision"]["dictionary"]
+    mount = camera["mount_translation_flu_m"]
+    board = MarkerBoard.from_config(config["vision"]["board"])
+
+    image, _ = render_board_view(
+        body_position, board=board, dictionary=dictionary,
+        width=width, height=height,
+        fov_deg=camera["horizontal_fov_deg"], mount=mount)
+    observation = estimator(
+        board=board, dictionary=dictionary, width=width, height=height,
+        fov_deg=camera["horizontal_fov_deg"], mount=mount).detect(image)
+
+    assert observation.detected, f"nothing seen at {body_position}"
+    np.testing.assert_allclose(
+        observation.position_pad_enu, body_position, atol=0.04)
+    if body_position[2] < 1.0:
+        assert any(board.markers[marker_id].side_m == pytest.approx(0.04)
+                   for marker_id in observation.marker_ids)
 
 
 def test_the_entry_pose_is_drawn_inside_the_camera_frame():

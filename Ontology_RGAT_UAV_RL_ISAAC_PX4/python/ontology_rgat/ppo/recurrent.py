@@ -35,7 +35,8 @@ class ShinRecurrentActorCritic(nn.Module):
 
     def __init__(self, image_embedding=512, lstm_hidden=512, latent_dim=256,
                  actor_hidden=256, critic_hidden=256, action_dim=4,
-                 init_log_std=-1.5, freeze_keypoint=False):
+                 init_log_std=-1.5, actor_output_gain=0.01,
+                 freeze_keypoint=False):
         super().__init__()
         if action_dim != 4:
             raise ValueError("benchmark action dimension must be four")
@@ -50,6 +51,11 @@ class ShinRecurrentActorCritic(nn.Module):
             nn.Linear(latent_dim - 6 + 7, actor_hidden), nn.Tanh(),
             nn.Linear(actor_hidden, actor_hidden), nn.Tanh(),
             nn.Linear(actor_hidden, action_dim))
+        output_gain = float(actor_output_gain)
+        if not math.isfinite(output_gain) or output_gain < 0.0:
+            raise ValueError("actor output gain must be finite and non-negative")
+        nn.init.orthogonal_(self.actor[-1].weight, gain=output_gain)
+        nn.init.zeros_(self.actor[-1].bias)
         # Section III-D: o_priv=[u_t, s_rel_t], exactly 7+6 values.
         self.critic = nn.Sequential(
             nn.Linear(13, critic_hidden), nn.Tanh(),
@@ -147,7 +153,11 @@ def recurrent_ppo_loss(model: ShinRecurrentActorCritic, batch: dict,
     loss = (policy_loss + value_coef * value_loss - entropy_coef * entropy
             + auxiliary_coef * auxiliary_loss)
     with torch.no_grad():
-        approximate_kl = (batch["old_log_prob"] - log_prob).mean()
+        # Non-negative second-order approximation used by PPO early stopping.
+        # A signed mean(old-new) can cancel across samples and hid the policy
+        # jumps observed in the live flight run.
+        log_ratio = log_prob - batch["old_log_prob"]
+        approximate_kl = ((log_ratio.exp() - 1.0) - log_ratio).mean()
     metrics = {
         "loss": loss.detach(), "ppo_loss": policy_loss.detach(),
         "value_loss": value_loss.detach(), "entropy": entropy.detach(),

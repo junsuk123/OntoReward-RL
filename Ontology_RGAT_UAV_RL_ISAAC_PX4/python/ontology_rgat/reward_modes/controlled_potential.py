@@ -9,26 +9,31 @@ import numpy as np
 
 
 FEATURES = ("lateral_error", "altitude_error", "relative_horizontal_speed",
-            "relative_vertical_speed")
+            "relative_vertical_speed", "battery_risk")
 NORMALIZATION = {
     "lateral_error": 4.25,
     "altitude_error": 8.0,
     "relative_horizontal_speed": 8.0,
     "relative_vertical_speed": 3.0,
+    "battery_risk": 1.0,
 }
 EMPIRICAL_PROVENANCE = "isaac_px4_shin2026_rollouts"
 
 
-def controlled_costs(estimated_relative_state) -> np.ndarray:
-    """Map the six-state visual estimate to the four bounded ontology costs."""
+def controlled_costs(estimated_relative_state, battery_reserve: float = 1.0) -> np.ndarray:
+    """Map the visual estimate and onboard energy to five bounded costs."""
     estimate = np.asarray(estimated_relative_state, dtype=float).reshape(-1)
     if estimate.shape != (6,) or not np.isfinite(estimate).all():
         raise ValueError("controlled costs require a finite six-state estimate")
+    battery_reserve = float(battery_reserve)
+    if not np.isfinite(battery_reserve):
+        raise ValueError("controlled costs require a finite battery reserve")
     return np.asarray([
         np.linalg.norm(estimate[:2]) / NORMALIZATION["lateral_error"],
         abs(estimate[2]) / NORMALIZATION["altitude_error"],
         np.linalg.norm(estimate[3:5]) / NORMALIZATION["relative_horizontal_speed"],
         abs(estimate[5]) / NORMALIZATION["relative_vertical_speed"],
+        1.0 - np.clip(battery_reserve, 0.0, 1.0),
     ]).clip(0.0, 1.0)
 
 
@@ -45,8 +50,8 @@ class FrozenControlledPotential:
         data = json.loads(raw)
         if data.get("profile") != "controlled_landing":
             raise ValueError("reward artifact must use profile=controlled_landing")
-        if data.get("format") != "ontology_rgat.controlled_reward/2":
-            raise ValueError("controlled reward artifact must use empirical format version 2")
+        if data.get("format") != "ontology_rgat.controlled_reward/3":
+            raise ValueError("controlled reward artifact must use battery-aware format version 3")
         if not bool(data.get("frozen", False)):
             raise ValueError("controlled R-GAT reward artifact must be frozen")
         if str(data.get("provenance", "")).lower() != "rgat_distillation":
@@ -76,6 +81,6 @@ class FrozenControlledPotential:
         estimate = np.asarray(state["estimated_relative_state"], dtype=float).reshape(-1)
         if estimate.shape != (6,) or not np.isfinite(estimate).all():
             raise ValueError("controlled potential requires a finite six-state estimate")
-        costs = controlled_costs(estimate)
+        costs = controlled_costs(estimate, state.get("battery_reserve", 1.0))
         return -float(sum(self.weights[name] * value
                           for name, value in zip(FEATURES, costs)))

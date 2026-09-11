@@ -6,6 +6,8 @@ import math
 
 import numpy as np
 
+from ..initialization import curriculum_camera_entry
+
 
 @dataclass(frozen=True)
 class DomainRandomizationSample:
@@ -45,13 +47,17 @@ def sample_domain_randomization(seed: int) -> DomainRandomizationSample:
 
 
 def sample_initial_condition(seed: int, curriculum: float = 1.0) -> dict:
-    """Table-I reset distribution; platform motion alone is curriculum-scaled."""
+    """Seeded reset draw; ``c=1`` is the exact Table-I distribution."""
     rng = np.random.default_rng(int(seed))
     c = float(np.clip(curriculum, 0.0, 1.0))
+    raw_position = np.array([
+        rng.uniform(-3.0, 3.0), rng.uniform(-3.0, 3.0), rng.uniform(2.0, 8.0)])
+    raw_yaw_deg = float(rng.uniform(-60.0, 60.0))
+    position, yaw_deg = curriculum_camera_entry(
+        raw_position, raw_yaw_deg, c)
     return {
-        "relative_position_m": np.array([
-            rng.uniform(-3.0, 3.0), rng.uniform(-3.0, 3.0), rng.uniform(2.0, 8.0)]),
-        "platform_yaw_misalignment_rad": math.radians(rng.uniform(-60.0, 60.0)),
+        "relative_position_m": position,
+        "platform_yaw_misalignment_rad": math.radians(yaw_deg),
         "platform_speed_m_s": c * rng.uniform(0.0, 8.0),
         "platform_yaw_rate_rad_s": 0.0,
         "speed_step_m_s": c * rng.uniform(-0.5, 0.5),

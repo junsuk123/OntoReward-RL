@@ -19,25 +19,25 @@ from .controlled_potential import (EMPIRICAL_PROVENANCE, FEATURES,
 
 NODE_NAMES = tuple(FEATURES) + ("SafeLanding",)
 RELATION_NAMES = ("contributes", "self")
-DATASET_FORMAT = "ontology_rgat.controlled_rollouts/1"
-ARTIFACT_FORMAT = "ontology_rgat.controlled_reward/2"
+DATASET_FORMAT = "ontology_rgat.controlled_rollouts/2"
+ARTIFACT_FORMAT = "ontology_rgat.controlled_reward/3"
 
 
 def controlled_graph(values=None):
-    values = np.zeros(5) if values is None else np.asarray(values, dtype=float)
-    if values.shape != (5,):
-        raise ValueError("controlled ontology needs five node values")
-    src = np.asarray([0, 1, 2, 3, 0, 1, 2, 3, 4], dtype=np.int64)
-    dst = np.asarray([4, 4, 4, 4, 0, 1, 2, 3, 4], dtype=np.int64)
-    rel = np.asarray([0, 0, 0, 0, 1, 1, 1, 1, 1], dtype=np.int64)
-    features = np.zeros((9, 5), dtype=float)
+    values = np.zeros(6) if values is None else np.asarray(values, dtype=float)
+    if values.shape != (6,):
+        raise ValueError("controlled ontology needs six node values")
+    src = np.asarray([0, 1, 2, 3, 4, 0, 1, 2, 3, 4, 5], dtype=np.int64)
+    dst = np.asarray([5, 5, 5, 5, 5, 0, 1, 2, 3, 4, 5], dtype=np.int64)
+    rel = np.asarray([0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1], dtype=np.int64)
+    features = np.zeros((10, 6), dtype=float)
     features[0] = values
     features[1] = 1.0 - values
-    features[2, :4] = 1.0
+    features[2, :5] = 1.0
     features[3] = 1.0
-    features[4:] = np.eye(5)
+    features[4:] = np.eye(6)
     return OntologyGraph(
-        X=features, src=src, dst=dst, rel=rel, goal_node=4,
+        X=features, src=src, dst=dst, rel=rel, goal_node=5,
         node_names=NODE_NAMES, relation_names=RELATION_NAMES)
 
 
@@ -46,9 +46,9 @@ def episode_rollout_dataset(rows: Sequence[dict[str, Any]], metric: dict[str, An
                             sample_stride: int = 3) -> dict[str, Any]:
     """Convert one real Isaac/PX4 rollout into discounted-outcome graphs.
 
-    Graph features come only from the recurrent visual estimator. Simulator
-    truth determines the already-reported physical-contact outcome but is never
-    copied into ``X``.
+    Graph features come from the recurrent visual estimator and modeled
+    onboard battery reserve. Simulator truth determines the already-reported
+    physical-contact outcome but is never copied into ``X``.
     """
     if not rows:
         raise ValueError("cannot build an R-GAT dataset from an empty rollout")
@@ -63,7 +63,9 @@ def episode_rollout_dataset(rows: Sequence[dict[str, Any]], metric: dict[str, An
     total = len(rows)
     indices = list(range(0, total, stride))
     X = np.stack([
-        controlled_graph(np.r_[controlled_costs(rows[index]["estimate"]), 0.0]).X.T
+        controlled_graph(np.r_[controlled_costs(
+            rows[index]["estimate"], rows[index].get("battery_reserve", 1.0)),
+            0.0]).X.T
         for index in indices
     ]).astype(np.float32)
     y = np.asarray([
@@ -101,7 +103,7 @@ def _validated_rollout_arrays(dataset: dict[str, Any]):
     X = np.asarray(dataset["X"], dtype=np.float32)
     y = np.asarray(dataset["y"], dtype=np.float32).reshape(-1)
     meta = np.asarray(dataset["meta"], dtype=np.float64)
-    if X.ndim != 3 or X.shape[1:] != (5, 9) or y.shape != (X.shape[0],):
+    if X.ndim != 3 or X.shape[1:] != (6, 10) or y.shape != (X.shape[0],):
         raise ValueError("controlled rollout dataset has an invalid feature/label shape")
     if meta.shape != (X.shape[0], 4):
         raise ValueError("controlled rollout metadata must be [samples,4]")
@@ -148,8 +150,8 @@ def save_rollout_dataset(dataset: dict[str, Any], path: str | Path, *,
         "dataset_config_hash": str(config_hash),
         "source_policy": "trained_shin2026_recurrent_actor",
         "source_checkpoint_sha256": str(source_checkpoint_sha256),
-        "feature_source": "recurrent_visual_estimator_prediction",
-        "label_source": "Isaac/PX4 physical pad-contact terminal outcome",
+        "feature_source": "recurrent visual estimate plus modeled onboard battery reserve",
+        "label_source": "Isaac/PX4 physical pad-contact success versus terminal failure",
         "samples": int(X.shape[0]),
         "episodes": len(episode_outcomes),
         "successful_episodes": int(sum(episode_outcomes.values())),
@@ -215,9 +217,9 @@ def prepare_controlled_rgat_artifact(
     cfg.seed = int(seed)
     cfg.ontology.node_names = list(NODE_NAMES)
     cfg.ontology.relation_names = list(RELATION_NAMES)
-    cfg.ontology.n_nodes = 5
+    cfg.ontology.n_nodes = 6
     cfg.ontology.n_relations = 2
-    cfg.ontology.in_dim = 9
+    cfg.ontology.in_dim = 10
     cfg.rgat.epochs = int(epochs if epochs is not None else (10 if mode == "quick" else 80))
     cfg.rgat.batch_size = 64
     # The non-stabilized softmax overflowed in the supplied full-run log at
@@ -235,7 +237,7 @@ def prepare_controlled_rgat_artifact(
     baseline = model.predict_batch(X)
     importance = []
     signed = []
-    for node in range(4):
+    for node in range(len(FEATURES)):
         counterfactual = X.copy()
         counterfactual[:, node, 0] = 0.0
         counterfactual[:, node, 1] = 1.0
@@ -258,7 +260,7 @@ def prepare_controlled_rgat_artifact(
         "dataset_sha256": dataset_sha256,
         "source_policy": "trained_shin2026_recurrent_actor",
         "source_checkpoint_sha256": str(source_checkpoint_sha256),
-        "feature_source": "recurrent_visual_estimator_prediction",
+        "feature_source": "recurrent visual estimate plus modeled onboard battery reserve",
         "target": "discounted physical pad-contact outcome (+1 success, -1 failure)",
         "features": list(FEATURES),
         "normalization": NORMALIZATION,

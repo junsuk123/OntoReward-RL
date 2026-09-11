@@ -17,20 +17,33 @@ control:
   max_yaw_acceleration_deg_s2: 90.0
   # c=0 begins as hover/slow-follow at 35%; c=1 uses the full limits above.
   curriculum_min_action_scale: 0.35
+  require_initial_pad_visible_during_curriculum: true
 ppo:
   gamma: 0.99
   gae_lambda: 0.95
   clip: 0.2
-  learning_rate: 0.0002
-  epochs: 5
+  learning_rate: 0.00005
+  minimum_learning_rate: 0.000005
+  epochs: 3
   sequence_length: 32
   entropy_coef: 0.003
   value_coef: 0.5
   grad_clip: 5.0
-  auxiliary_estimation_coefficient: 1.0
+  auxiliary_estimation_coefficient: 0.05
   asymmetric_critic: true
   # Initial action standard deviation exp(-1.5)=0.223 (formerly 0.607).
   init_log_std: -1.5
+  # Near-zero initial actor mean prevents an untrained visual stack from
+  # commanding a persistent direction before it has learned image geometry.
+  actor_output_gain: 0.01
+  target_kl: 0.03
+  # Actual Isaac/PX4 hover frames train only the visual estimator first.
+  perception_warmup_episodes_quick: 2
+  perception_warmup_episodes_full: 32
+  perception_warmup_epochs: 2
+  # Abort an unattended run when perception remains blind after warm-up.
+  health_window_episodes: 20
+  health_max_fov_loss_fraction: 0.80
 curriculum: {enabled: true, levels: 80, update_every_episodes: 512}
 reward:
   terminal: {success: 10.0, failure: -10.0}

@@ -22,6 +22,7 @@ class LiveStep:
     physical_contact: bool
     crash: bool
     excessive_drift: bool
+    battery_depleted: bool
     terminal: bool
     timeout: bool
     strict_success: bool
@@ -41,24 +42,33 @@ class LiveShinEnvironment:
 
     def _connect(self):
         self.bridge = PX4Bridge(self.cfg)
-        control = getattr(self.cfg, "benchmark_control", {})
+        self.control = getattr(self.cfg, "benchmark_control", {})
         self.adapter = ShinPX4Adapter(
             self.bridge, self.image_source,
             VelocityYawRateController.from_mapping(
-                control, dt=float(self.cfg.sim.dt)))
+                self.control, dt=float(self.cfg.sim.dt)))
 
     def _classify(self, actor, state, command, *, timeout=False) -> LiveStep:
         critic = critic_observation_from_state(actor, state)
         extra = state.get("extra") or {}
-        contact = bool(state.get("landed", False) and extra.get("pad_contact", False))
+        contact = bool(extra.get("pad_contact", False))
         rpy = quat_to_euler_zyx(np.asarray(state["quaternion_wxyz"], dtype=float))
         tilt = float(np.linalg.norm(rpy[:2]))
         raw_truth = state.get("truth") or {}
         truth_position = np.asarray(raw_truth.get("position", (math.inf,) * 3), dtype=float)
         drift = bool(np.linalg.norm(truth_position[:2]) > float(self.cfg.sim.world_xy_limit))
-        off_pad_ground = bool(state.get("landed", False) and not contact and self.steps > 0)
+        truth_is_finite = bool(truth_position.shape == (3,)
+                               and np.isfinite(truth_position).all())
+        near_deck = bool(truth_is_finite
+                         and truth_position[2] <= max(0.5, float(self.cfg.sim.ground_z)))
+        off_pad_ground = bool(
+            state.get("landed", False) and not contact and self.steps > 0
+            and (near_deck or not truth_is_finite))
         crash = bool(off_pad_ground or tilt > float(self.cfg.sim.crash_tilt))
-        terminal = bool(contact or crash or drift or timeout)
+        battery = state.get("battery") if isinstance(state.get("battery"), dict) else {}
+        battery_depleted = bool(battery.get("enabled", False)
+                                and battery.get("depleted", False))
+        terminal = bool(contact or crash or drift or battery_depleted or timeout)
         rel = critic.true_relative_state
         angular_rate = float(np.linalg.norm(np.asarray(state["angular_velocity"], dtype=float)))
         strict = bool(contact
@@ -70,7 +80,8 @@ class LiveShinEnvironment:
         return LiveStep(
             actor=actor, critic=critic, state=state,
             command=np.asarray(command, dtype=float), physical_contact=contact,
-            crash=crash, excessive_drift=drift, terminal=terminal,
+            crash=crash, excessive_drift=drift,
+            battery_depleted=battery_depleted, terminal=terminal,
             timeout=bool(timeout), strict_success=strict,
             pad_in_fov=float(state.get("marker_quality", 0.0)) > 0.0)
 
@@ -86,6 +97,11 @@ class LiveShinEnvironment:
         attempts = 1 + max(0, int(self.cfg.external.reset_recoveries))
         for attempt in range(1, attempts + 1):
             self.bridge.cfg.pad_scale = curriculum
+            control = getattr(self, "control", {})
+            self.bridge.cfg.require_pad_in_view = bool(
+                control.get(
+                    "require_initial_pad_visible_during_curriculum", True)
+                and curriculum < 1.0)
             self.adapter.controller.set_curriculum(curriculum)
             try:
                 actor, state = self.adapter.reset(int(seed), scenario=scenario)

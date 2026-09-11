@@ -100,6 +100,17 @@ def advance_pad_contact_latch(latched: bool, armed_clear: bool,
     return bool(latched), bool(armed_clear)
 
 
+def effective_px4_landed(raw_landed: bool, armed: bool, truth_position,
+                         airborne_clearance_m: float = 0.5) -> bool:
+    """Reject a delayed PX4 landed bit while SITL truth is clearly airborne."""
+    truth = np.asarray(truth_position if truth_position is not None else (),
+                       dtype=float).reshape(-1)
+    clearly_airborne = bool(
+        armed and truth.size == 3 and np.isfinite(truth).all()
+        and float(truth[2]) >= float(airborne_clearance_m))
+    return bool(raw_landed and not clearly_airborne)
+
+
 def action_age_seconds(target: str, wall_now_ns: int, last_wall_ns: int,
                        px4_time_us: int, last_px4_time_us: int) -> float:
     """Use the safe common age across lockstep and DDS delivery in SITL.
@@ -126,6 +137,40 @@ def bounded_position_update(reference, measurement, max_correction_m: float) -> 
     if distance > limit and distance > 1e-9:
         delta *= limit / distance
     return result + delta
+
+
+def advance_velocity_position_target(reference, velocity_enu, dt_s: float, *,
+                                     floor_z_m: float, ceiling_z_m: float,
+                                     world_radius_m: float) -> np.ndarray:
+    """Integrate one finite velocity command into a bounded world pose.
+
+    PX4 accepts position setpoints with velocity feed-forward.  Keeping a
+    continuous position target through the entry-hold/policy handover prevents
+    a near-zero, untrained action from turning a stable hover into an open
+    velocity-mode drop.  The helper is pure so the safety bounds can be tested
+    without ROS or PX4 message packages.
+    """
+    target = np.asarray(reference, dtype=float).reshape(-1)
+    velocity = np.asarray(velocity_enu, dtype=float).reshape(-1)
+    values = (float(dt_s), float(floor_z_m), float(ceiling_z_m),
+              float(world_radius_m))
+    if (target.size != 3 or velocity.size != 3
+            or not np.isfinite(target).all()
+            or not np.isfinite(velocity).all()
+            or not all(math.isfinite(value) for value in values)):
+        raise ValueError("position target update requires finite 3-vectors and bounds")
+    if dt_s < 0.0:
+        raise ValueError("position target dt must be non-negative")
+    if ceiling_z_m < floor_z_m:
+        raise ValueError("position target ceiling must not be below its floor")
+    if world_radius_m <= 0.0:
+        raise ValueError("position target world radius must be positive")
+    result = target + velocity * dt_s
+    radial = float(np.linalg.norm(result[:2]))
+    if radial > world_radius_m:
+        result[:2] *= world_radius_m / radial
+    result[2] = float(np.clip(result[2], floor_z_m, ceiling_z_m))
+    return result
 
 
 def _topic(cfg: GatewayConfig, direction: str, name: str) -> str:
@@ -172,6 +217,8 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             self.sample = VehicleSample()
             self.action = (0.0, 0.0, 0.0, 0.0)
             self.velocity_action = (0.0, 0.0, 0.0, 0.0)
+            self.velocity_position_target_enu: np.ndarray | None = None
+            self.velocity_position_time_us = 0
             self.command_interface = "attitude"
             self.last_action_ns = 0
             self.last_action_px4_time_us = 0
@@ -265,6 +312,8 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             self.heartbeat_hz = max(20.0, float(cfg.control_hz))
             self.mode_request_period = max(1, int(round(self.heartbeat_hz / 2.0)))
             self.last_mode_request_tick = -self.mode_request_period
+            self.offboard_mode_rejections = 0
+            self.px4_failsafe = False
 
             qos = _make_qos(rclpy)
             self.offboard_pub = self.create_publisher(
@@ -375,6 +424,8 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             if kind == "action":
                 self.action = validate_action(msg)
                 self.command_interface = "attitude"
+                self.velocity_position_target_enu = None
+                self.velocity_position_time_us = 0
                 self.last_action_ns = now_ns()
                 self.last_action_px4_time_us = int(self.sample.px4_time_us)
                 self.last_command_seq = seq
@@ -385,7 +436,11 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                     self._arm_battery()
                 self._publish_flight_state()
             elif kind == "velocity_action":
+                first_policy_action = not bool(self.last_action_ns)
                 self.velocity_action = validate_velocity_action(msg)
+                new_velocity_handover = (
+                    self.command_interface != "velocity_yaw_rate"
+                    or self.velocity_position_target_enu is None)
                 self.command_interface = "velocity_yaw_rate"
                 self.last_action_ns = now_ns()
                 self.last_action_px4_time_us = int(self.sample.px4_time_us)
@@ -397,6 +452,28 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                 # handover, so the climb PX4 flew to get here is not charged to
                 # the policy.
                 self.goto_target_enu = None
+                if new_velocity_handover:
+                    here = self.px4_world_position
+                    if here is None:
+                        candidate = np.asarray(
+                            self.sample.position_world_enu, dtype=float)
+                        if candidate.shape == (3,) and np.isfinite(candidate).all():
+                            here = candidate
+                    if here is None:
+                        # This fallback is only reachable before the first PX4
+                        # world pose.  It preserves the current pad-relative
+                        # state rather than creating a target at world zero.
+                        here = self.deck_position_enu + np.asarray(
+                            self.sample.position_enu, dtype=float)
+                    self.velocity_position_target_enu = np.asarray(
+                        here, dtype=float).copy()
+                    self.velocity_position_time_us = int(self.sample.px4_time_us)
+                # Only rejections occurring after policy handover belong to
+                # this measured episode. Pre-arm transient rejections are not
+                # allowed to poison its health status.
+                if first_policy_action:
+                    self.offboard_mode_rejections = 0
+                    self.sample.extra["offboard_mode_rejections"] = 0
                 if not self.battery_armed:
                     self._arm_battery()
                 self._publish_flight_state()
@@ -466,6 +543,8 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                 self.action = (0.0, 0.0, 0.0, 0.0)
                 self.last_action_ns = 0
                 self.last_action_px4_time_us = 0
+                self.velocity_position_target_enu = None
+                self.velocity_position_time_us = 0
                 # A previous terminal outcome deliberately disabled offboard.
                 # Reset starts a new, independently authorised SITL episode.
                 self.offboard_enabled = cfg.target == "sitl"
@@ -499,6 +578,8 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                         "vehicle_local_position has not reported xy_global yet")
                 self.last_command_seq = seq
                 self.goto_target_enu = np.asarray(request.position_enu, dtype=float)
+                self.velocity_position_target_enu = None
+                self.velocity_position_time_us = 0
                 self.goto_pad_relative = request.is_pad_relative
                 self.goto_yaw_enu = request.yaw_enu_rad
                 self.goto_deadline_ns = now_ns() + int(request.hold_s * 1e9)
@@ -549,6 +630,8 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                 self.offboard_requested = False
                 self.last_action_ns = 0
                 self.last_action_px4_time_us = 0
+                self.velocity_position_target_enu = None
+                self.velocity_position_time_us = 0
                 self._send_ack(seq, "offboard_disabled")
             elif kind in {"hello", "state"}:
                 if kind == "hello":
@@ -596,6 +679,8 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                     self.last_mode_request_tick = -self.mode_request_period
                     self.last_action_ns = 0
                     self.last_action_px4_time_us = 0
+                    self.velocity_position_target_enu = None
+                    self.velocity_position_time_us = 0
             if self.last_action_ns:
                 if self.command_interface == "velocity_yaw_rate":
                     self._publish_velocity_setpoint()
@@ -607,7 +692,9 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                 return
 
             self.prestream += 1
-            if self.offboard_enabled and self.prestream >= cfg.offboard_prestream_count:
+            if (self.offboard_enabled and self.sample.armed
+                    and not self.px4_failsafe
+                    and self.prestream >= cfg.offboard_prestream_count):
                 self.offboard_requested = self.sample.nav_state == self.offboard_nav_state
                 # PX4 only accepts the mode switch once it has seen a steady
                 # setpoint stream, and rejects it outright in some pre-arm
@@ -663,15 +750,39 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             self.attitude_pub.publish(sp)
 
         def _publish_velocity_setpoint(self) -> None:
-            """Let PX4 track body-heading velocity and yaw-rate commands."""
-            self._publish_offboard_mode(velocity=True)
+            """Track velocity through a continuous, position-backed setpoint."""
+            self._publish_offboard_mode(position=True, velocity=True)
             vx, vy, vz, yaw_rate = self.velocity_action
             yaw = yaw_from_quat_wxyz(self.sample.quaternion_enu_flu_wxyz)
             c, s = math.cos(yaw), math.sin(yaw)
             velocity_enu = np.array([c * vx - s * vy, s * vx + c * vy, vz])
+            now_us = int(self.sample.px4_time_us)
+            if self.velocity_position_target_enu is None:
+                here = (self.px4_world_position if self.px4_world_position is not None
+                        else np.asarray(self.sample.position_world_enu, dtype=float))
+                self.velocity_position_target_enu = np.asarray(here, dtype=float).copy()
+                self.velocity_position_time_us = now_us
+            dt = 0.0
+            if now_us > 0 and self.velocity_position_time_us > 0:
+                elapsed = (now_us - self.velocity_position_time_us) * 1e-6
+                if elapsed > 0.0:
+                    # DDS may deliver a batch after a slow rendered frame. Do
+                    # not let that backlog become a multi-metre setpoint jump.
+                    dt = min(elapsed, 2.0 / cfg.control_hz)
+            self.velocity_position_time_us = now_us
+            deck_z = float(self.deck_position_enu[2])
+            self.velocity_position_target_enu = advance_velocity_position_target(
+                self.velocity_position_target_enu, velocity_enu, dt,
+                floor_z_m=deck_z,
+                ceiling_z_m=deck_z + cfg.max_altitude_m,
+                world_radius_m=cfg.world_radius_m)
+            target_ned = enu_to_ned(
+                self.velocity_position_target_enu - self.world_from_px4)
+            self.sample.extra["velocity_position_target_world_enu_m"] = [
+                float(value) for value in self.velocity_position_target_enu]
             sp = TrajectorySetpoint()
             sp.timestamp = self._timestamp_us()
-            sp.position = [float("nan")] * 3
+            sp.position = [float(value) for value in target_ned]
             sp.velocity = [float(value) for value in enu_to_ned(velocity_enu)]
             sp.acceleration = [float("nan")] * 3
             sp.yaw = float("nan")
@@ -826,7 +937,8 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             self.sample.armed = int(msg.arming_state) == int(armed_value)
             self.sample.extra["pre_flight_checks_pass"] = bool(
                 getattr(msg, "pre_flight_checks_pass", False))
-            self.sample.extra["px4_failsafe"] = bool(getattr(msg, "failsafe", False))
+            self.px4_failsafe = bool(getattr(msg, "failsafe", False))
+            self.sample.extra["px4_failsafe"] = self.px4_failsafe
             self._publish_flight_state()
 
         def _on_land(self, msg) -> None:
@@ -842,10 +954,12 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             # motors stop, but touchdown has already physically occurred.
             truth = self.sample.truth_position_enu
             clearance = bool(truth is not None and float(truth[2]) >= 0.5)
+            px4_landed = effective_px4_landed(
+                self.px4_landed, self.sample.armed, truth)
             self.pad_contact_latched, self.pad_contact_armed_clear = (
                 advance_pad_contact_latch(
                     self.pad_contact_latched, self.pad_contact_armed_clear,
-                    self.sample.armed, self.pad_contact_raw, self.px4_landed,
+                    self.sample.armed, self.pad_contact_raw, px4_landed,
                     clearance))
             if self.pad_contact_latched and not was_latched:
                 # Do not wait for the next learner sample to stop the motors.
@@ -886,6 +1000,15 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             in_progress = int(getattr(VehicleCommandAck, "VEHICLE_CMD_RESULT_IN_PROGRESS", 5))
             result = int(msg.result)
             self.sample.extra["last_command"] = [int(msg.command), result]
+            mode_command = int(getattr(
+                VehicleCommand, "VEHICLE_CMD_DO_SET_MODE", 176))
+            if int(msg.command) == mode_command:
+                if result in (accepted, in_progress):
+                    self.offboard_mode_rejections = 0
+                else:
+                    self.offboard_mode_rejections += 1
+                self.sample.extra["offboard_mode_rejections"] = int(
+                    self.offboard_mode_rejections)
             if result not in (accepted, in_progress):
                 self.get_logger().warning(
                     f"PX4 rejected command {int(msg.command)} with result {result} "
@@ -1562,7 +1685,7 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             slow frame would otherwise bill the policy for the simulator's
             stall. PX4's own timestamp is the simulator's clock.
             """
-            if not cfg.battery.enabled:
+            if not cfg.battery.enabled or not self.battery_armed:
                 return
             now_us = int(self.sample.px4_time_us)
             if now_us <= 0:
@@ -1676,8 +1799,12 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             self.sample.extra["pad_contact_raw"] = bool(
                 contact_live and self.pad_contact_raw)
             self.sample.extra["pad_contact"] = bool(self.pad_contact_latched)
-            self.sample.extra["px4_landed"] = bool(self.px4_landed)
-            self.sample.landed = bool(self.px4_landed or self.pad_contact_latched)
+            px4_landed = effective_px4_landed(
+                self.px4_landed, self.sample.armed,
+                self.sample.truth_position_enu)
+            self.sample.extra["px4_landed_raw"] = bool(self.px4_landed)
+            self.sample.extra["px4_landed"] = bool(px4_landed)
+            self.sample.landed = bool(px4_landed or self.pad_contact_latched)
 
             px4_authoritative = bool(
                 cfg.pad_is_static and self.sample.extra["land_detector"] == "live")
@@ -1685,7 +1812,7 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                 self.pad_contact_latched or px4_authoritative)
             self.sample.extra["touchdown_source"] = (
                 "pad_contact" if self.pad_contact_latched
-                else "px4_land_detector" if self.px4_landed
+                else "px4_land_detector" if px4_landed
                 else "none")
 
     return NodeImpl()

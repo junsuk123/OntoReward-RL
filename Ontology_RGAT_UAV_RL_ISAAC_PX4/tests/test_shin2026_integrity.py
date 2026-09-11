@@ -183,6 +183,17 @@ def test_reward_mode_does_not_change_trajectory_seed():
     np.testing.assert_array_equal(a["relative_position_m"], b["relative_position_m"])
 
 
+def test_beginner_curriculum_starts_at_stationary_airborne_hover():
+    easy = sample_initial_condition(7, curriculum=0.0)
+    np.testing.assert_allclose(easy["relative_position_m"], [0.0, 0.0, 4.5])
+    assert easy["platform_yaw_misalignment_rad"] == 0.0
+    assert easy["platform_speed_m_s"] == 0.0
+    full = sample_initial_condition(7, curriculum=1.0)
+    assert -3.0 <= full["relative_position_m"][0] <= 3.0
+    assert -3.0 <= full["relative_position_m"][1] <= 3.0
+    assert 2.0 <= full["relative_position_m"][2] <= 8.0
+
+
 def test_airborne_terminal_is_staged_in_hover_instead_of_auto_land():
     """A tilt failure can be terminal while the airframe is still flying."""
     calls = []
@@ -278,23 +289,26 @@ def test_controlled_potential_rejects_legacy_or_unfrozen_artifact(tmp_path):
 def test_controlled_potential_accepts_only_frozen_rgat_profile(tmp_path):
     artifact = tmp_path / "reward.json"
     artifact.write_text(json.dumps({
-        "format": "ontology_rgat.controlled_reward/2",
+        "format": "ontology_rgat.controlled_reward/3",
         "profile": "controlled_landing", "frozen": True,
         "provenance": "rgat_distillation", "design_id": "test",
         "dataset_provenance": "isaac_px4_shin2026_rollouts",
         "dataset_config_hash": "cfg",
-        "weights": {"lateral_error": .25, "altitude_error": .25,
-                    "relative_horizontal_speed": .25,
-                    "relative_vertical_speed": .25},
+        "weights": {"lateral_error": .2, "altitude_error": .2,
+                    "relative_horizontal_speed": .2,
+                    "relative_vertical_speed": .2, "battery_risk": .2},
     }), encoding="utf-8")
     potential = FrozenControlledPotential(artifact, expected_config_hash="cfg")
-    assert potential({"estimated_relative_state": np.zeros(6)}) == 0.0
+    assert potential({"estimated_relative_state": np.zeros(6),
+                      "battery_reserve": 1.0}) == 0.0
+    assert potential({"estimated_relative_state": np.zeros(6),
+                      "battery_reserve": 0.0}) == pytest.approx(-.2)
 
 
 def test_controlled_potential_rejects_synthetic_bootstrap_artifact(tmp_path):
     artifact = tmp_path / "reward.json"
     artifact.write_text(json.dumps({
-        "format": "ontology_rgat.controlled_reward/2",
+        "format": "ontology_rgat.controlled_reward/3",
         "profile": "controlled_landing", "frozen": True,
         "provenance": "rgat_distillation",
         "dataset_provenance": "synthetic_table_i_semantic_bootstrap",
@@ -306,14 +320,15 @@ def test_controlled_potential_rejects_synthetic_bootstrap_artifact(tmp_path):
 def test_rgat_rollout_graph_uses_estimate_and_physical_outcome_not_truth():
     rows = [
         {"estimate": np.array([2.125, 0, -4, 4, 0, -1.5]),
-         "truth": np.full(6, 999.0)},
-        {"estimate": np.zeros(6), "truth": np.full(6, -999.0)},
+         "truth": np.full(6, 999.0), "battery_reserve": .25},
+        {"estimate": np.zeros(6), "truth": np.full(6, -999.0),
+         "battery_reserve": 1.0},
     ]
     success = episode_rollout_dataset(
         rows, {"paper_success": 1.0}, episode=3, seed=12,
         gamma=.5, sample_stride=1)
-    # First feature channel of the four cost nodes is the bounded visual estimate.
-    np.testing.assert_allclose(success["X"][0, :4, 0], [.5, .5, .5, .5])
+    # First feature channel is four visual costs plus real battery risk.
+    np.testing.assert_allclose(success["X"][0, :5, 0], [.5, .5, .5, .5, .75])
     np.testing.assert_allclose(success["y"], [.5, 1.0])
     failure = episode_rollout_dataset(
         rows, {"paper_success": 0.0}, episode=4, seed=13,
@@ -322,7 +337,8 @@ def test_rgat_rollout_graph_uses_estimate_and_physical_outcome_not_truth():
 
 
 def test_empirical_rgat_dataset_round_trip_checks_provenance(tmp_path):
-    rows = [{"estimate": np.zeros(6)}, {"estimate": np.ones(6)}]
+    rows = [{"estimate": np.zeros(6), "battery_reserve": .8},
+            {"estimate": np.ones(6), "battery_reserve": .6}]
     dataset = episode_rollout_dataset(
         rows, {"paper_success": 1.0}, episode=1, seed=70)
     path = tmp_path / "rollouts.npz"
@@ -339,7 +355,8 @@ def test_empirical_rgat_dataset_round_trip_checks_provenance(tmp_path):
 
 
 def test_controlled_rgat_preparation_writes_loadable_frozen_artifact(tmp_path):
-    rows = [{"estimate": np.asarray([x, 0, -2, .1, 0, -.1])}
+    rows = [{"estimate": np.asarray([x, 0, -2, .1, 0, -.1]),
+             "battery_reserve": float(.2 + .6 * x / 2.0)}
             for x in np.linspace(.1, 2.0, 16)]
     success = episode_rollout_dataset(
         rows, {"paper_success": 1.0}, episode=1, seed=10, sample_stride=2)

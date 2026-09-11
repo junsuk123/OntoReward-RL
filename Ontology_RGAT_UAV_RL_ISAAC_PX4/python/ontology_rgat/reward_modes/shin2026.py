@@ -53,7 +53,7 @@ class ShinReward:
                  next_estimation_loss: float | None = None,
                  next_estimation_error: float | None = None,
                  physical_contact=False, crash=False, excessive_drift=False,
-                 terminal=False):
+                 battery_depleted=False, terminal=False):
         cfg = self.config
         state = np.asarray(current_relative_state, dtype=float).reshape(-1)
         nxt = np.asarray(next_relative_state, dtype=float).reshape(-1)
@@ -71,6 +71,7 @@ class ShinReward:
         task = sparse_terminal_reward(
                 physical_contact=physical_contact, crash=crash,
                 excessive_drift=excessive_drift, terminal=terminal,
+                battery_depleted=battery_depleted,
                 success_value=cfg.success_value, failure_value=cfg.failure_value)
         parts = {
             "task": task,

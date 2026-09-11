@@ -180,6 +180,16 @@ const CARDS=[
   series:BENCHMARK_TRAIN,x:'episode',y:'entropy',smooth:12},
  {id:'benchmark_kl',view:'benchmark',title:'PPO approximate KL divergence',
   series:BENCHMARK_TRAIN,x:'episode',y:'kl_divergence',smooth:12},
+ {id:'benchmark_lr',view:'benchmark',title:'Effective PPO learning rate',
+  series:BENCHMARK_TRAIN,x:'episode',y:'effective_learning_rate'},
+ {id:'benchmark_early_stop',view:'benchmark',title:'PPO KL early-stop rate',
+  series:BENCHMARK_TRAIN,x:'episode',y:'ppo_early_stop',smooth:12,ymin:0,ymax:1},
+ {id:'benchmark_battery_used',view:'benchmark',title:'Real-pack energy used per flight (J)',
+  series:BENCHMARK_TRAIN,x:'episode',y:'battery_energy_used_j',smooth:12},
+ {id:'benchmark_battery_final',view:'benchmark',title:'Final normalized battery reserve',
+  series:BENCHMARK_TRAIN,x:'episode',y:'battery_reserve_final',smooth:12,ymin:0,ymax:1},
+ {id:'benchmark_battery_depleted',view:'benchmark',title:'Battery-depletion terminal rate',
+  series:BENCHMARK_TRAIN,x:'episode',y:'battery_depleted',smooth:20,ymin:0,ymax:1},
  {id:'benchmark_live_reward',view:'benchmark',title:'Current episode · reward decomposition',
   series:['benchmark_step'],x:'step',
   y:['reward','task','shape','active_perception','lateral_progress','vertical_progress'],
@@ -192,6 +202,10 @@ const CARDS=[
   series:['benchmark_step'],x:'step',
   y:['position_error','velocity_error','estimation_loss','in_fov'],
   labels:['position error','velocity error','6-state MSE','target in FOV']},
+ {id:'benchmark_live_battery',view:'benchmark',title:'Current episode · real 3S battery',
+  series:['benchmark_step'],x:'step',
+  y:['battery_reserve','battery_state_of_charge','battery_power_kw'],
+  labels:['landing reserve [0,1]','pack state of charge','power (kW)'],ymin:0,ymax:1},
  {id:'benchmark_eval_scenario',view:'benchmark',kind:'evalbars',
   title:'Paired evaluation success by scenario'},
  {id:'benchmark_eval_position',view:'benchmark',title:'Evaluation position RMSE',
@@ -381,7 +395,13 @@ function tiles(state){
     if(s.current_scenario)add('scenario',s.current_scenario.replaceAll('_',' '));
     const step=state.series.benchmark_step||[],latest=step.length?step[step.length-1]:null;
     if(latest){add('target visible',latest.in_fov?'yes':'no');
-      add('position error',Number(latest.position_error).toFixed(3)+' m');}
+      add('position error',Number(latest.position_error).toFixed(3)+' m');
+      add('battery reserve',(100*Number(latest.battery_reserve||0)).toFixed(1)+'%');
+      add('battery energy',Number(latest.battery_remaining_j||0).toFixed(0)+' J');}
+    const current=s.current_method?(state.series['benchmark_train_'+s.current_method]||[]):[];
+    const trainedLast=current.length?current[current.length-1]:null;
+    if(trainedLast){add('optimizer phase',trainedLast.optimization_phase||'--');
+      add('effective LR',Number(trainedLast.effective_learning_rate||0).toExponential(2));}
     if(s.current_curriculum!==undefined)add('curriculum c',Number(s.current_curriculum).toFixed(3));
     if(s.current_action_envelope_scale!==undefined)
       add('UAV envelope',Number(s.current_action_envelope_scale).toFixed(3));
@@ -413,6 +433,7 @@ function benchmarkPanel(state){
   const s=state.scalars||{},contract=s.actor_contract||{};
   const labels={camera:'Actor image',proprioception:'Actor proprioception',
     estimator:'Recurrent estimator',actor:'Deployment actor',critic:'Asymmetric critic',
+    reward_side:'Reward-side ontology state',
     forbidden:'Hard information boundary'};
   document.getElementById('benchmark-contract').innerHTML=Object.entries(labels).map(([key,label])=>
     `<div class="contract-item ${key==='forbidden'?'forbidden':''}"><b>${label}</b>`+

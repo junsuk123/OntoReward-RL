@@ -79,13 +79,29 @@ def test_shin_profile_uses_campus_plaza_and_fitted_platform():
         pad.route_waypoints_enu_m[0])
     assert (ROOT / pad.vehicle_visual_usd).is_file()
     assert config["isaac"]["start_airborne"] is True
+    assert config["benchmark"]["entry_speed_tolerance_m_s"] == pytest.approx(.15)
+    assert config["benchmark"]["entry_settle_s"] == pytest.approx(1.0)
     assert config["isaac"]["viewport_follow"]["focus"] == "pair"
     assert config["px4"]["sitl_parameters"] == {
         "COM_RC_IN_MODE": 4,
         "COM_RCL_EXCEPT": 4,
         "COM_OF_LOSS_T": 5.0,
         "COM_OBL_RC_ACT": 5,
+        "MPC_THR_HOVER": 0.58,
+        "MPC_USE_HTE": 0,
+        "MPC_XY_VEL_MAX": 2.0,
+        "MPC_Z_VEL_MAX_UP": 1.0,
+        "MPC_Z_VEL_MAX_DN": 1.0,
+        "MPC_ACC_HOR_MAX": 1.5,
+        "MPC_ACC_UP_MAX": 1.0,
+        "MPC_ACC_DOWN_MAX": 1.0,
+        "SIM_BAT_MIN_PCT": 100.0,
     }
+    assert config["battery"]["enabled"] is True
+    assert config["battery"]["capacity_mah"] == 3500
+    assert config["battery"]["nominal_voltage_v"] == pytest.approx(11.1)
+    assert config["battery"]["episode_hover_seconds_range"] == pytest.approx(
+        [9.0, 55.0])
 
     half_length, half_width = (0.5 * value for value in pad.deck_size_m)
     # The texture adds one quiet-zone cell around a 4x4 tag, so the visible

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import csv
+import math
 from pathlib import Path
 from typing import Callable
 
@@ -17,6 +18,16 @@ from ..reward_modes import (OntoRewardPBRS, ShinReward, ShinRewardConfig,
 from .recurrent import ShinRecurrentActorCritic, recurrent_ppo_loss
 
 
+def _battery_sample(state):
+    battery = state.get("battery") if isinstance(state.get("battery"), dict) else {}
+    return battery if battery.get("enabled", False) else {}
+
+
+def _battery_reserve(state) -> float:
+    battery = _battery_sample(state)
+    return float(np.clip(battery.get("reserve", 1.0), 0.0, 1.0))
+
+
 def _tensor_observation(model, observation):
     image = grayscale_image_tensor(observation.image, device=model.device)
     proprio = torch.as_tensor(observation.proprioception[None],
@@ -28,7 +39,9 @@ def _reward(method, previous, following, estimate, next_estimate, potential,
             *, gamma=0.99, shaping_lambda=1.0):
     terminal = dict(
         physical_contact=following.physical_contact, crash=following.crash,
-        excessive_drift=following.excessive_drift, terminal=following.terminal)
+        excessive_drift=following.excessive_drift,
+        battery_depleted=following.battery_depleted,
+        terminal=following.terminal)
     next_loss = float(np.mean((next_estimate - following.critic.true_relative_state) ** 2))
     if method == "sparse":
         value = sparse_terminal_reward(**terminal)
@@ -46,8 +59,10 @@ def _reward(method, previous, following, estimate, next_estimate, potential,
         potential, gamma=gamma, ppo_gamma=gamma,
         shaping_lambda=shaping_lambda, design_id=potential.design_id, frozen=True)
     value, parts = pbrs(
-        {"estimated_relative_state": estimate},
-        {"estimated_relative_state": next_estimate}, **terminal)
+        {"estimated_relative_state": estimate,
+         "battery_reserve": _battery_reserve(previous.state)},
+        {"estimated_relative_state": next_estimate,
+         "battery_reserve": _battery_reserve(following.state)}, **terminal)
     if method == "ontoreward_plus_active" and not following.terminal:
         active = active_perception_reward(next_loss, ShinRewardConfig())
         value += active
@@ -62,6 +77,7 @@ def collect_episode(env, model: ShinRecurrentActorCritic, method: str, seed: int
                     phase="evaluation"):
     """Collect one true simulator episode without crossing the actor boundary."""
     step = env.reset(seed, curriculum, scenario=scenario)
+    initial_battery = dict(_battery_sample(step.state))
     action_scale = float(env.adapter.controller.action_scale)
     if monitor is not None:
         monitor.reset_episode(
@@ -107,12 +123,16 @@ def collect_episode(env, model: ShinRecurrentActorCritic, method: str, seed: int
                 "value": float(output.value.item()), "reward": float(reward),
                 "done": float(following.terminal), "estimate": estimate,
                 "estimation_loss": estimation_loss, "in_fov": following.pad_in_fov,
+                "battery_reserve": _battery_reserve(step.state),
+                "battery_energy_j": float(_battery_sample(step.state).get(
+                    "remaining_j", 0.0)),
                 "reward_parts": parts,
                 "hidden_h": hidden[0].cpu().numpy(),
                 "hidden_c": hidden[1].cpu().numpy(),
             })
             if monitor is not None:
                 status = ("success" if following.physical_contact
+                          else "battery_depleted" if following.battery_depleted
                           else "failure" if following.terminal else "running")
                 monitor.step(
                     index=len(rows), dt=env.cfg.sim.dt, method=method,
@@ -131,6 +151,7 @@ def collect_episode(env, model: ShinRecurrentActorCritic, method: str, seed: int
     lost_errors = [row["estimation_loss"] for row in rows if not row["in_fov"]]
     truth_final = step.critic.true_relative_state
     state = step.state
+    final_battery = _battery_sample(state)
     rpy = quat_to_euler_zyx(np.asarray(state["quaternion_wxyz"], dtype=float))
     metric = {
         "seed": int(seed), "episode_return": float(sum(row["reward"] for row in rows)),
@@ -148,7 +169,14 @@ def collect_episode(env, model: ShinRecurrentActorCritic, method: str, seed: int
         "visual_loss_estimation_error": float(np.mean(lost_errors)) if lost_errors else 0.0,
         "action_envelope_scale": action_scale,
         "touchdown_time_s": float(len(rows) * env.cfg.sim.dt),
+        "battery_reserve_initial": float(initial_battery.get("reserve", 1.0)),
+        "battery_reserve_final": _battery_reserve(state),
+        "battery_energy_initial_j": float(initial_battery.get("remaining_j", 0.0)),
+        "battery_energy_final_j": float(final_battery.get("remaining_j", 0.0)),
+        "battery_energy_used_j": float(final_battery.get("energy_used_j", 0.0)),
+        "battery_depleted": float(step.battery_depleted),
         "steps": len(rows), "status": ("success" if step.physical_contact else
+                                         "battery_depleted" if step.battery_depleted else
                                          "timeout" if step.timeout else "failure"),
     }
     return rows, metric
@@ -168,13 +196,62 @@ def _gae(rows, gamma, gae_lambda):
     return advantage, advantage + values
 
 
+def update_estimator_episode(model, optimizer, rows, *, epochs=2,
+                             grad_clip=5.0, sequence_length=32):
+    """Supervise vision/LSTM on actual hover frames before changing the actor."""
+    device = model.device
+    losses = []
+    estimator_parameters = [
+        *model.encoder.parameters(), *model.estimator.parameters()]
+    for _ in range(int(epochs)):
+        for start in range(0, len(rows), int(sequence_length)):
+            chunk = rows[start:min(start + int(sequence_length), len(rows))]
+            images = np.stack([row["image"] for row in chunk])[:, None]
+            initial_hidden = (
+                torch.as_tensor(chunk[0]["hidden_h"], dtype=torch.float32, device=device),
+                torch.as_tensor(chunk[0]["hidden_c"], dtype=torch.float32, device=device),
+            )
+            output = model(
+                torch.as_tensor(images[None], dtype=torch.float32, device=device) / 255.0,
+                torch.as_tensor(
+                    np.stack([row["proprioception"] for row in chunk])[None],
+                    dtype=torch.float32, device=device),
+                hidden=initial_hidden,
+                episode_start=torch.zeros(
+                    (1, len(chunk)), dtype=torch.bool, device=device))
+            truth = torch.as_tensor(
+                np.stack([row["truth"] for row in chunk])[None],
+                dtype=torch.float32, device=device)
+            loss = model.estimator.auxiliary_loss(output.relative_state, truth)
+            optimizer.zero_grad(set_to_none=True)
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(estimator_parameters, float(grad_clip))
+            optimizer.step()
+            losses.append(float(loss.detach()))
+    entropy = float(torch.log(
+        model.log_std.detach().exp()
+        * math.sqrt(2.0 * math.pi * math.e)).sum())
+    auxiliary = float(np.mean(losses))
+    return {
+        "loss": auxiliary, "ppo_loss": 0.0, "value_loss": 0.0,
+        "entropy": entropy, "kl_divergence": 0.0,
+        "auxiliary_estimation_loss": auxiliary,
+        "ppo_early_stop": 0.0, "ppo_epochs_completed": 0.0,
+        "effective_learning_rate": float(optimizer.param_groups[0]["lr"]),
+    }
+
+
 def update_episode(model, optimizer, rows, *, gamma=.99, gae_lambda=.95,
                    epochs=5, clip=.2, value_coef=.5, entropy_coef=.003,
-                   auxiliary_coef=1.0, grad_clip=5.0, sequence_length=32):
+                   auxiliary_coef=1.0, grad_clip=5.0, sequence_length=32,
+                   target_kl=.03, minimum_learning_rate=5e-6):
     advantage, returns = _gae(rows, gamma, gae_lambda)
     advantage = (advantage - advantage.mean()) / (advantage.std() + 1e-8)
     device = model.device
     metrics = []
+    early_stop = False
+    epochs_completed = 0
+    target_kl = float(target_kl)
     for _ in range(int(epochs)):
         for start in range(0, len(rows), int(sequence_length)):
             stop = min(start + int(sequence_length), len(rows))
@@ -215,12 +292,60 @@ def update_episode(model, optimizer, rows, *, gamma=.99, gae_lambda=.95,
             loss, values = recurrent_ppo_loss(
                 model, batch, clip=clip, value_coef=value_coef,
                 entropy_coef=entropy_coef, auxiliary_coef=auxiliary_coef)
+            if target_kl > 0.0 and float(values["kl_divergence"]) > target_kl:
+                metrics.append({key: float(value) for key, value in values.items()})
+                early_stop = True
+                break
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), float(grad_clip))
             optimizer.step()
+            # Measure the update rather than the pre-update batch. This catches
+            # a representation shift caused by the auxiliary estimator before
+            # another recurrent chunk can amplify it.
+            with torch.no_grad():
+                _, values = recurrent_ppo_loss(
+                    model, batch, clip=clip, value_coef=value_coef,
+                    entropy_coef=entropy_coef, auxiliary_coef=auxiliary_coef)
             metrics.append({key: float(value) for key, value in values.items()})
-    return {key: float(np.mean([row[key] for row in metrics])) for key in metrics[0]}
+            if target_kl > 0.0 and float(values["kl_divergence"]) > target_kl:
+                early_stop = True
+                current_lr = float(optimizer.param_groups[0]["lr"])
+                reduced_lr = max(float(minimum_learning_rate), 0.5 * current_lr)
+                for group in optimizer.param_groups:
+                    group["lr"] = reduced_lr
+                break
+        if early_stop:
+            break
+        epochs_completed += 1
+    summary = {
+        key: float(np.mean([row[key] for row in metrics]))
+        for key in metrics[0]
+    }
+    summary.update({
+        "ppo_early_stop": float(early_stop),
+        "ppo_epochs_completed": float(epochs_completed),
+        "effective_learning_rate": float(optimizer.param_groups[0]["lr"]),
+    })
+    return summary
+
+
+def training_health_issue(history, ppo, *, warmup_episodes=0) -> str | None:
+    """Return why an unattended run is not learning, after a fair window."""
+    window = max(1, int(ppo.get("health_window_episodes", 20)))
+    policy_rows = [row for row in history
+                   if int(float(row.get("episode", 0))) > int(warmup_episodes)]
+    if len(policy_rows) < window:
+        return None
+    recent = policy_rows[-window:]
+    successes = sum(float(row.get("paper_success", 0.0)) for row in recent)
+    fov_loss = float(np.mean([
+        float(row.get("fov_loss_fraction", 1.0)) for row in recent]))
+    limit = float(ppo.get("health_max_fov_loss_fraction", 0.80))
+    if successes == 0.0 and fov_loss > limit:
+        return (f"no landing in the last {window} policy episodes and mean "
+                f"FOV loss is {fov_loss:.1%} (limit {limit:.1%})")
+    return None
 
 
 def save_recurrent_checkpoint(path, model, optimizer, *, method, episode,
@@ -251,6 +376,7 @@ def train_live(env_factory: Callable, model, method, seeds, output_dir,
     history_path = output_dir / f"{method}_training.csv"
     history = []
     completed = 0
+    warmup_episodes = max(0, int(ppo.get("perception_warmup_episodes", 0)))
     if checkpoint_path.is_file():
         saved = torch.load(checkpoint_path, map_location=model.device, weights_only=False)
         incompatibility = None
@@ -317,24 +443,40 @@ def train_live(env_factory: Callable, model, method, seeds, output_dir,
     with env_factory() as env:
         for episode, seed in enumerate(seed_list[completed:], start=completed + 1):
             c = curriculum.update(episode - 1)
+            perception_warmup = episode <= warmup_episodes
             rows, metric = collect_episode(
                 env, model, method, seed, curriculum=c, potential=potential,
                 gamma=float(ppo.get("gamma", .99)),
                 shaping_lambda=float(ppo.get("shaping_lambda", 1.0)),
-                monitor=monitor, phase="training")
-            loss = update_episode(
-                model, optimizer, rows, gamma=float(ppo.get("gamma", .99)),
-                gae_lambda=float(ppo.get("gae_lambda", .95)),
-                epochs=int(ppo.get("epochs", 5)), clip=float(ppo.get("clip", .2)),
-                value_coef=float(ppo.get("value_coef", .5)),
-                entropy_coef=float(ppo.get("entropy_coef", .003)),
-                auxiliary_coef=float(ppo.get("auxiliary_estimation_coefficient", 1.0)),
-                grad_clip=float(ppo.get("grad_clip", 5.0)),
-                sequence_length=int(ppo.get("sequence_length", 32)))
+                monitor=monitor, phase=("perception warm-up" if perception_warmup
+                                        else "training"),
+                deterministic=perception_warmup)
+            if perception_warmup:
+                loss = update_estimator_episode(
+                    model, optimizer, rows,
+                    epochs=int(ppo.get("perception_warmup_epochs", 2)),
+                    grad_clip=float(ppo.get("grad_clip", 5.0)),
+                    sequence_length=int(ppo.get("sequence_length", 32)))
+            else:
+                loss = update_episode(
+                    model, optimizer, rows, gamma=float(ppo.get("gamma", .99)),
+                    gae_lambda=float(ppo.get("gae_lambda", .95)),
+                    epochs=int(ppo.get("epochs", 5)), clip=float(ppo.get("clip", .2)),
+                    value_coef=float(ppo.get("value_coef", .5)),
+                    entropy_coef=float(ppo.get("entropy_coef", .003)),
+                    auxiliary_coef=float(ppo.get(
+                        "auxiliary_estimation_coefficient", 1.0)),
+                    grad_clip=float(ppo.get("grad_clip", 5.0)),
+                    sequence_length=int(ppo.get("sequence_length", 32)),
+                    target_kl=float(ppo.get("target_kl", .03)),
+                    minimum_learning_rate=float(ppo.get(
+                        "minimum_learning_rate", 5e-6)))
             metric.update(loss)
             metric.update({"method": method, "scenario": "training_random_walk",
                            "episode": episode, "curriculum_level": curriculum.level,
                            "curriculum": float(c),
+                           "optimization_phase": ("perception_warmup"
+                                                  if perception_warmup else "ppo"),
                            "training_sample_efficiency": episode})
             history.append(metric)
             if monitor is not None:
@@ -344,6 +486,10 @@ def train_live(env_factory: Callable, model, method, seeds, output_dir,
                 episode=episode, config_hash=config_hash, curriculum=curriculum,
                 potential=potential)
             persist_history()
+            issue = training_health_issue(
+                history, ppo, warmup_episodes=warmup_episodes)
+            if issue is not None:
+                raise RuntimeError(f"training health gate stopped {method}: {issue}")
             print(f"{method} episode {episode}/{len(seed_list)} "
                   f"return={metric['episode_return']:+.3f} "
                   f"success={int(metric['paper_success'])} c={c:.3f}")

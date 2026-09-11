@@ -23,12 +23,14 @@ class OntoRewardPBRS:
             raise ValueError("R-GAT reward design must be frozen before PPO training")
 
     def __call__(self, state, next_state, *, physical_contact=False, crash=False,
-                 excessive_drift=False, terminal=False):
+                 excessive_drift=False, battery_depleted=False, terminal=False):
         task = sparse_terminal_reward(
             physical_contact=physical_contact, crash=crash,
-            excessive_drift=excessive_drift, terminal=terminal)
+            excessive_drift=excessive_drift, battery_depleted=battery_depleted,
+            terminal=terminal)
         phi = float(self.potential(state))
-        absorbing = bool(terminal or physical_contact or crash or excessive_drift)
+        absorbing = bool(terminal or physical_contact or crash or excessive_drift
+                         or battery_depleted)
         phi_next = 0.0 if absorbing else float(self.potential(next_state))
         shaping = self.shaping_lambda * (self.gamma * phi_next - phi)
         return float(task + shaping), {

@@ -73,6 +73,12 @@ def _live_config(mode, results_dir, system_config):
     # Copy only presentation geometry from the authoritative merged simulator
     # profile so its deck and surveyed campus route match the live world.
     pad = simulator_config.get("pad") or {}
+    benchmark = simulator_config.get("benchmark") or {}
+    cfg.external.entry_speed_tolerance = float(
+        benchmark.get("entry_speed_tolerance_m_s",
+                      cfg.external.entry_speed_tolerance))
+    cfg.external.entry_settle = float(
+        benchmark.get("entry_settle_s", cfg.external.entry_settle))
     cfg.viz.rviz.deck_size_m = list(pad.get("deck_size_m", (1.5, 1.5)))
     cfg.viz.rviz.deck_height_m = float(pad.get("deck_height_m", 0.0))
     cfg.viz.rviz.route_waypoints_enu_m = list(
@@ -91,6 +97,7 @@ def _build_model(config, device):
         actor_hidden=int(ppo.get("hidden", 256)),
         critic_hidden=int(ppo.get("hidden", 256)),
         init_log_std=float(ppo.get("init_log_std", -1.5)),
+        actor_output_gain=float(ppo.get("actor_output_gain", 0.01)),
     ).to(torch_device)
 
 
@@ -268,7 +275,15 @@ def main():
         args.reward_design = args.results_dir / "models/rgat_fixed_reward_controlled.json"
 
     config = load_experiment(args.config)
-    config_hash = configuration_hash(config)
+    # Policies, empirical R-GAT data and frozen reward weights depend on both
+    # the learning experiment and the resolved live simulator/hardware model.
+    # Including the latter prevents a battery, camera or PX4 change from
+    # silently resuming an incompatible checkpoint.
+    resolved_system_config = load_system_config(args.system_config)
+    config_hash = configuration_hash({
+        "experiment": config,
+        "system": resolved_system_config,
+    })
     needs_potential = any(name.startswith("ontoreward") for name in args.methods)
     potential = None
     artifact_error = None
@@ -336,6 +351,9 @@ def main():
     if args.dashboard_port is not None:
         cfg.viz.dashboard.port = int(args.dashboard_port)
     ppo_config = dict(config.get("ppo") or {})
+    ppo_config["perception_warmup_episodes"] = int(ppo_config.get(
+        f"perception_warmup_episodes_{args.mode}",
+        2 if args.mode == "quick" else 32))
     cfg.reward.pbrs.gamma = float(ppo_config.get("gamma", .99))
     cfg.reward.pbrs["lambda"] = float(ppo_config.get("shaping_lambda", 1.0))
     rviz_publisher = RvizPublisher.create(cfg) if not args.no_rviz else None

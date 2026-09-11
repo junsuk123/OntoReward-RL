@@ -55,6 +55,13 @@ landing:
 
 benchmark:
   profile: shin2026
+  # c=0 starts at the already-stationary airborne hover support. It blends
+  # back to the exact Table-I draw and is unchanged at paired evaluation c=1.
+  initial_condition_curriculum_min_scale: 0.0
+  # Policy control begins only after a genuine stationary hover, not while
+  # the PX4 position loop is merely passing through the entry tolerance.
+  entry_speed_tolerance_m_s: 0.15
+  entry_settle_s: 1.0
   initial_conditions:
     relative_altitude_m: [2.0, 8.0]
     relative_lateral_x_m: [-3.0, 3.0]
@@ -207,5 +214,29 @@ vision:
     clipping_range_m: [0.02, 60.0]
 
 battery:
-  # Battery is outside the primary controlled ontology profile.
-  enabled: false
+  # Use the real 3S 3500 mAh pack, vehicle and rotor specification inherited
+  # from system.yaml. Each seeded episode starts with 9--55 hover seconds of
+  # that physical pack remaining so energy changes within the 30 s benchmark.
+  # The gateway integrates the PX4 thrust setpoint in joules; battery risk is
+  # reward-side and is an input to the controlled R-GAT.
+  enabled: true
+
+px4:
+  sitl_parameters:
+    # Match PX4's position/velocity controller to the calibrated Pegasus Iris
+    # and the common RL command envelope. These limits also prevent the entry
+    # position step from exciting a fast oscillation before policy handover.
+    MPC_THR_HOVER: 0.58
+    MPC_USE_HTE: 0
+    MPC_XY_VEL_MAX: 2.0
+    MPC_Z_VEL_MAX_UP: 1.0
+    MPC_Z_VEL_MAX_DN: 1.0
+    MPC_ACC_HOR_MAX: 1.5
+    MPC_ACC_UP_MAX: 1.0
+    MPC_ACC_DOWN_MAX: 1.0
+    # The stock PX4 SITL pack drains from full to empty in 60 simulated
+    # seconds. Airborne episode staging intentionally remains armed, so clamp
+    # the simulator-only pack at full charge. The independently integrated
+    # experiment pack above still discharges, is logged, and drives R-GAT;
+    # hardware never consumes this SITL-only override.
+    SIM_BAT_MIN_PCT: 100.0

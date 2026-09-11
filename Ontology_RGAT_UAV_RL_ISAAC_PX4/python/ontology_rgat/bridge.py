@@ -504,6 +504,13 @@ class PX4Bridge:
                 raise BridgeError(f"Gateway state contains non-finite {field}.")
         if not state["estimator_valid"]:
             raise BridgeError("PX4 estimator state is not valid yet.")
+        extra = state.get("extra") if isinstance(state.get("extra"), dict) else {}
+        if bool(extra.get("px4_failsafe", False)):
+            raise BridgeError(
+                "PX4 reports an active failsafe; refusing to record this as an RL step.")
+        if int(extra.get("offboard_mode_rejections", 0)) >= 6:
+            raise BridgeError(
+                "PX4 repeatedly rejected OFFBOARD mode; refusing a corrupted episode.")
         out = dict(state)
         for field in ("position", "velocity", "quaternion_wxyz",
                       "angular_velocity", "acceleration", "wind", "aero_force"):

@@ -9,6 +9,7 @@ import yaml
 
 from ontology_rgat_px4.battery import BatteryConfig, BatteryModel
 from ontology_rgat_px4.protocol import ProtocolError, VehicleSample, encode, validate_goto
+from ontology_rgat.reward_modes import sparse_terminal_reward
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -104,6 +105,13 @@ def test_configured_pack_capacity_is_3s_3500mah(system_config):
     cfg = BatteryConfig.from_mapping(system_config)
     assert cfg.capacity_j == pytest.approx(3.5 * 11.1 * 3600.0)
     assert math.isfinite(BatteryModel(cfg).sample()["remaining_j"])
+
+
+def test_battery_depletion_is_a_common_terminal_failure():
+    reward = sparse_terminal_reward(
+        physical_contact=False, crash=False, excessive_drift=False,
+        battery_depleted=True, terminal=True)
+    assert reward == -10.0
 
 
 def test_pinning_t0_parks_the_lorry_without_moving_it(system_config):

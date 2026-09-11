@@ -16,8 +16,10 @@ from ontology_rgat_px4.protocol import (
 )
 from ontology_rgat_px4.udp_server import DatagramServer
 from ontology_rgat_px4.ros2_gateway import (action_age_seconds,
+                                            advance_velocity_position_target,
                                             advance_pad_contact_latch,
-                                            bounded_position_update)
+                                            bounded_position_update,
+                                            effective_px4_landed)
 
 
 def test_protocol_roundtrip():
@@ -64,6 +66,12 @@ def test_pad_contact_only_latches_after_takeoff_clearance():
     assert latched and clear               # the next contact is touchdown
     latched, clear = advance_pad_contact_latch(latched, clear, False, False)
     assert latched and clear               # sticky through motor disarm/bounce
+
+
+def test_delayed_px4_landed_flag_is_not_ground_contact_in_air():
+    assert not effective_px4_landed(True, True, [0.0, 0.0, 4.3])
+    assert effective_px4_landed(True, True, [0.0, 0.0, 0.08])
+    assert effective_px4_landed(True, False, None)
 
 
 def test_sitl_deadman_uses_px4_lockstep_time_but_hardware_uses_wall_time():
@@ -129,6 +137,32 @@ def test_optical_position_update_is_bounded_around_dr_prediction():
     assert corrected == pytest.approx([1.5, 2.0, 3.0])
     assert bounded_position_update([1.0, 2.0, 3.0], [1.1, 2.0, 3.0], 0.5) \
         == pytest.approx([1.1, 2.0, 3.0])
+
+
+def test_velocity_position_target_holds_integrates_and_obeys_world_bounds():
+    held = advance_velocity_position_target(
+        [2.0, 3.0, 4.5], [0.0, 0.0, 0.0], 0.1,
+        floor_z_m=0.0, ceiling_z_m=12.0, world_radius_m=20.0)
+    assert held == pytest.approx([2.0, 3.0, 4.5])
+    moved = advance_velocity_position_target(
+        held, [1.0, -2.0, -0.5], 2.0,
+        floor_z_m=0.0, ceiling_z_m=12.0, world_radius_m=20.0)
+    assert moved == pytest.approx([4.0, -1.0, 3.5])
+    bounded = advance_velocity_position_target(
+        [9.0, 0.0, 0.1], [10.0, 0.0, -10.0], 1.0,
+        floor_z_m=0.05, ceiling_z_m=12.0, world_radius_m=10.0)
+    assert bounded == pytest.approx([10.0, 0.0, 0.05])
+
+
+@pytest.mark.parametrize("kwargs", (
+    {"reference": [0.0, 0.0], "velocity_enu": [0.0, 0.0, 0.0], "dt_s": 0.1},
+    {"reference": [0.0, 0.0, 1.0], "velocity_enu": [0.0, 0.0, 0.0], "dt_s": -0.1},
+))
+def test_velocity_position_target_rejects_invalid_updates(kwargs):
+    with pytest.raises(ValueError):
+        advance_velocity_position_target(
+            **kwargs, floor_z_m=0.0, ceiling_z_m=12.0,
+            world_radius_m=20.0)
 
 
 def test_offboard_command_is_versioned():

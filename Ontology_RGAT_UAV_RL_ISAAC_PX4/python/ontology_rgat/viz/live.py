@@ -452,6 +452,7 @@ class BenchmarkMonitor:
                 "estimator": "6-keypoint CNN -> 512 LSTM -> latent y[256]",
                 "actor": "y[6:256] + proprioception -> action[4]",
                 "critic": "training only: proprioception[7] + truth[6]",
+                "reward_side": "visual estimate + onboard battery reserve -> 6-node R-GAT",
                 "forbidden": "pad pose/velocity, GNSS, V2V and simulator truth",
             })
 
@@ -479,6 +480,7 @@ class BenchmarkMonitor:
         parts = reward_parts or {}
         point = {
             "step": int(index), "t": float(index * dt), "method": str(method),
+            "status": str(status),
             "reward": float(reward), "in_fov": float(bool(in_fov)),
             "estimation_loss": float(estimation_loss),
             "position_error": float(np.linalg.norm(estimate[:3] - truth[:3])),
@@ -493,6 +495,17 @@ class BenchmarkMonitor:
                     "yaw_rate_penalty", "active_perception", "shape",
                     "phi", "phi_next"):
             point[key] = float(parts.get(key, 0.0))
+        battery = (state.get("battery") if isinstance(state, dict)
+                   and isinstance(state.get("battery"), dict) else {})
+        enabled = bool(battery.get("enabled", False))
+        point.update({
+            "battery_reserve": float(battery.get("reserve", 1.0) if enabled else 1.0),
+            "battery_state_of_charge": float(
+                battery.get("state_of_charge", 1.0) if enabled else 1.0),
+            "battery_remaining_j": float(battery.get("remaining_j", 0.0)),
+            "battery_energy_used_j": float(battery.get("energy_used_j", 0.0)),
+            "battery_power_kw": float(battery.get("power_w", 0.0)) / 1000.0,
+        })
         self.store.append("benchmark_step", point)
         if self.rviz is not None and state is not None:
             self.rviz.publish_benchmark_step(

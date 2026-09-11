@@ -27,7 +27,9 @@ ARGS = parse_args()
 CONFIG_PATH = Path(ARGS.config).expanduser().resolve()
 WORKSPACE = CONFIG_PATH.parent.parent
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(WORKSPACE / "python"))
 from config_loader import load_config
+from ontology_rgat.initialization import curriculum_camera_entry
 
 CONFIG = load_config(CONFIG_PATH)
 from sensor_profiles import isaac_runtime_profile
@@ -1171,8 +1173,10 @@ class LandingWorld:
         benchmark = CONFIG.get("benchmark") or {}
         initial = benchmark.get("initial_conditions") or {}
         if str(benchmark.get("profile", "")).lower() == "shin2026":
-            # Table I.  Do not pull this sample back inside the camera
-            # footprint: partial/out-of-FOV observations are part of the task.
+            # The raw draw is exactly Table I. During training its curriculum
+            # version starts at the already-supported airborne hover and
+            # blends to this draw. Paired evaluation uses c=1 and is therefore
+            # unchanged.
             x_range = initial.get("relative_lateral_x_m", (-3.0, 3.0))
             y_range = initial.get("relative_lateral_y_m", (-3.0, 3.0))
             z_range = initial.get("relative_altitude_m", (2.0, 8.0))
@@ -1180,6 +1184,13 @@ class LandingWorld:
             offset = np.array([rng.uniform(*x_range), rng.uniform(*y_range),
                                rng.uniform(*z_range)])
             rpy_deg = np.array([0.0, 0.0, rng.uniform(*yaw_range)])
+            offset, rpy_deg[2] = curriculum_camera_entry(
+                offset, rpy_deg[2],
+                float(np.clip(req.get("pad_scale", 1.0), 0.0, 1.0)),
+                minimum_scale=float(benchmark.get(
+                    "initial_condition_curriculum_min_scale", 0.0)),
+                hover_offset_pad_m=self.hover_start_pad_m,
+            )
         else:
             # Retained urban distribution, expressed as an offset from the
             # moving deck rather than an absolute world point.

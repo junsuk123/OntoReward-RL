@@ -22,7 +22,10 @@ def test_benchmark_monitor_publishes_refactored_contract_and_progress():
                       "phi_next": -0.2},
         estimate=np.array([1, 0, -2, 0.5, 0, 0]),
         truth=np.array([0, 0, -2, 0, 0, 0]), in_fov=False,
-        estimation_loss=0.2)
+        estimation_loss=0.2, state={"battery": {
+            "enabled": True, "reserve": .4, "state_of_charge": .03,
+            "remaining_j": 4200.0, "energy_used_j": 600.0, "power_w": 190.0,
+        }})
     monitor.training_update("ontoreward", {
         "method": "ontoreward", "episode": 1, "episode_return": 3.0,
         "paper_success": 1.0, "position_rmse": 0.2,
@@ -30,13 +33,20 @@ def test_benchmark_monitor_publishes_refactored_contract_and_progress():
         "ppo_loss": -0.01, "value_loss": 0.2, "entropy": 2.0,
         "kl_divergence": 0.001, "curriculum": 0.25,
         "action_envelope_scale": 0.5125,
+        "effective_learning_rate": 5e-5, "ppo_early_stop": 0.0,
+        "optimization_phase": "ppo", "battery_energy_used_j": 600.0,
+        "battery_reserve_final": .4, "battery_depleted": 0.0,
     })
 
     state = store.snapshot()
     assert state["scalars"]["dashboard_profile"] == "shin2026"
     assert "simulator truth" in state["scalars"]["actor_contract"]["forbidden"]
+    assert "battery reserve" in state["scalars"]["actor_contract"]["reward_side"]
     assert state["series"]["benchmark_step"][-1]["position_error"] == 1.0
+    assert state["series"]["benchmark_step"][-1]["status"] == "running"
     assert state["series"]["benchmark_step"][-1]["shape"] == 0.3
+    assert state["series"]["benchmark_step"][-1]["battery_reserve"] == .4
+    assert state["series"]["benchmark_step"][-1]["battery_remaining_j"] == 4200.0
     assert state["series"]["benchmark_train_ontoreward"][-1]["episode"] == 1
     assert state["scalars"]["current_action_envelope_scale"] == 0.5125
 
@@ -69,6 +79,8 @@ def test_dashboard_has_self_contained_matlab_style_benchmark_view():
     assert "Hard information boundary" in PAGE
     assert "recurrent estimate vs truth" in PAGE
     assert "UAV action-envelope curriculum" in PAGE
+    assert "Current episode · real 3S battery" in PAGE
+    assert "Battery-depletion terminal rate" in PAGE
     assert "prefers-color-scheme:dark" not in PAGE
     for color in MATLAB_COLORS:
         assert color in PAGE

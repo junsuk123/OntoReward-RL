@@ -251,7 +251,11 @@ def test_waypoint_route_is_continuous_across_episode_reset():
 
 
 def test_closed_waypoint_route_keeps_driving_forward_through_seam():
-    cfg = dataclasses.replace(_waypoint_config(), waypoint_loop=True)
+    base = _waypoint_config()
+    cfg = dataclasses.replace(
+        base, waypoint_loop=True,
+        route_waypoints_enu_m=(base.route_waypoints_enu_m
+                               + (base.route_waypoints_enu_m[0],)))
     trajectory = PadTrajectory(cfg)
     trajectory.reset(seed=11, sim_time=0.0)
     ramp, _, _ = trajectory._waypoint_parameters()
@@ -261,11 +265,21 @@ def test_closed_waypoint_route_keeps_driving_forward_through_seam():
 
     before, before_velocity = trajectory.pose(seam_time - 1e-4)
     after, after_velocity = trajectory.pose(seam_time + 1e-4)
+    _, _, before_speed = trajectory._waypoint_pose(seam_time - 1e-4)
+    _, _, after_speed = trajectory._waypoint_pose(seam_time + 1e-4)
 
     assert np.linalg.norm(after - before) < 1e-3
     assert np.linalg.norm(before_velocity) == pytest.approx(trajectory.speed)
     assert np.linalg.norm(after_velocity) == pytest.approx(trajectory.speed)
-    assert np.dot(before_velocity, after_velocity) > 0.0
+    assert before_speed > 0.0 and after_speed > 0.0
+
+
+def test_closed_waypoint_route_requires_explicitly_closed_polyline():
+    with pytest.raises(ValueError, match="repeat its first point"):
+        PadMotionConfig.from_mapping({"pad": {
+            "motion": "waypoints", "waypoint_loop": True,
+            "route_waypoints_enu_m": [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]],
+        }})
 
 
 def test_ranger_mini_v3_matches_official_dimensions_and_urdf_wheels():

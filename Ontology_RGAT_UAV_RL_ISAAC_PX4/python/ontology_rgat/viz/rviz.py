@@ -10,7 +10,8 @@ Topics published under ``cfg.viz.rviz.namespace`` (default ``/landing_rl``):
 
 ===========================  ===================================================
 ``/uav_path``                ``nav_msgs/Path``, the trail in the **pad** frame
-``/pad_path``                ``nav_msgs/Path``, the deck's own track in ``map``
+``/pad_path``                ``nav_msgs/Path``, the deck track relative to its
+                             current pose
 ``/scene``                   ``visualization_msgs/MarkerArray``: deck, success
                              cylinder, wind/aero arrows, HUD and a persistent
                              colour-coded landing-outcome banner
@@ -417,7 +418,15 @@ class RvizPublisher:
         del self._uav_trail[:-limit]
         del self._pad_trail[:-limit]
         self._publish_path(self.uav_path_pub, self.opt.pad_frame, self._uav_trail)
-        self._publish_path(self.pad_path_pub, self.opt.world_frame, self._pad_trail)
+        # RViz's fixed frame is the moving landing_pad frame. Expressing both
+        # the driven history and the surveyed road relative to the current pad
+        # avoids asking its message filter for a transform at an already-past
+        # wall timestamp, which caused the map-frame queue to overflow on the
+        # heavy campus scene.
+        relative_pad_trail = [tuple(np.asarray(point) - pad_pos)
+                              for point in self._pad_trail]
+        self._publish_path(
+            self.pad_path_pub, self.opt.pad_frame, relative_pad_trail)
         self._publish_scene(log, cur, info)
 
         self._counter += 1
@@ -479,12 +488,20 @@ class RvizPublisher:
         del self._uav_trail[:-limit]
         del self._pad_trail[:-limit]
         self._publish_path(self.uav_path_pub, self.opt.pad_frame, self._uav_trail)
-        self._publish_path(self.pad_path_pub, self.opt.world_frame, self._pad_trail)
+        # Use the current deck as the origin for its history.  This avoids an
+        # exact-time map transform for delayed photoreal frames and shows the
+        # road already travelled directly behind the vehicle.
+        pad_relative_trail = [tuple(np.asarray(point) - pad_pos)
+                              for point in self._pad_trail]
+        self._publish_path(
+            self.pad_path_pub, self.opt.pad_frame, pad_relative_trail)
 
         Marker = self.m["Marker"]
         array = self.m["MarkerArray"]()
         deck = self._marker("scene", 0, Marker.CUBE, self.opt.pad_frame)
-        deck.scale.x, deck.scale.y, deck.scale.z = 1.50, 1.50, 0.04
+        deck_size = tuple(getattr(self.opt, "deck_size_m", (1.5, 1.5)))
+        deck.scale.x, deck.scale.y, deck.scale.z = (
+            float(deck_size[0]), float(deck_size[1]), 0.04)
         deck.pose.position.z = -0.02
         _rgba(deck, (0.10, 0.32, 0.48), 0.82)
         array.markers.append(deck)
@@ -523,6 +540,19 @@ class RvizPublisher:
                      f"relative xyz=({relative[0]:+.2f}, {relative[1]:+.2f}, "
                      f"{relative[2]:+.2f}) m  marker={'ON' if in_fov else 'LOST'}")
         array.markers.append(text)
+
+        route_points = tuple(getattr(self.opt, "route_waypoints_enu_m", ()))
+        if len(route_points) >= 2:
+            route = self._marker("campus_road_route", 0, Marker.LINE_STRIP,
+                                 self.opt.pad_frame)
+            route.scale.x = 0.08
+            route.points = [self._point(
+                float(point[0]) - pad_pos[0],
+                float(point[1]) - pad_pos[1],
+                float(point[2]) + 0.08 - pad_pos[2])
+                for point in route_points]
+            _rgba(route, (0.95, 0.72, 0.12), 0.92)
+            array.markers.append(route)
         self.scene_pub.publish(array)
 
         message = self.m["String"]()

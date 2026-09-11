@@ -422,6 +422,15 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                 self.last_command_seq = seq
                 self.pending_reset_seq = seq
                 self.pending_reset_peer = self.udp.peer
+                # ``finish_episode`` installs this bounded pad-relative hold.
+                # Keep it streaming until the freshly seeded entry goto
+                # replaces it.  Clearing the target while the photoreal scene
+                # prepares its reset acknowledgement leaves no setpoint for up
+                # to a second and trips PX4's OFFBOARD-loss failsafe between
+                # otherwise continuous airborne episodes.
+                keep_airborne_hold = bool(
+                    cfg.start_airborne and self.sample.armed
+                    and self.goto_target_enu is not None)
                 # A disarmed vehicle is on the ground whatever the land detector
                 # says -- and before its first sample arrives it says "airborne"
                 # by design (see _refresh_land_detector), so without this the
@@ -457,14 +466,15 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                 self.action = (0.0, 0.0, 0.0, 0.0)
                 self.last_action_ns = 0
                 self.last_action_px4_time_us = 0
-                self.prestream = 0
                 # A previous terminal outcome deliberately disabled offboard.
                 # Reset starts a new, independently authorised SITL episode.
                 self.offboard_enabled = cfg.target == "sitl"
-                self.offboard_requested = False
-                self.last_mode_request_tick = -self.mode_request_period
-                self.goto_target_enu = None
-                self.goto_pad_relative = False
+                if not keep_airborne_hold:
+                    self.prestream = 0
+                    self.offboard_requested = False
+                    self.last_mode_request_tick = -self.mode_request_period
+                    self.goto_target_enu = None
+                    self.goto_pad_relative = False
                 self.deck_track_ns = 0
                 self.pad_track_ns = 0
                 self.battery_armed = False

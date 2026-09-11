@@ -3,6 +3,10 @@ extends: system.yaml
 system:
   control_hz: 10.0
   sitl_action_timeout_s: 1.0
+  # S5's photoreal mesh occasionally delays one rendered sensor callback past
+  # the Flat-Plane 0.5 s budget.  This admits one delayed scene sample without
+  # masking a genuinely stopped estimator.
+  state_timeout_s: 1.5
 
 isaac:
   # This benchmark is a landing task. Keep the disarmed Iris at a physical

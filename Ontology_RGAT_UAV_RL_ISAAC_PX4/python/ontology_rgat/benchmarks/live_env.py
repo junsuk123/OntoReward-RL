@@ -39,6 +39,7 @@ class LiveShinEnvironment:
             VelocityYawRateController(dt=float(cfg.sim.dt)))
         self.horizon_steps = int(horizon_steps)
         self.steps = 0
+        self.last_step: LiveStep | None = None
 
     def _classify(self, actor, state, command, *, timeout=False) -> LiveStep:
         critic = critic_observation_from_state(actor, state)
@@ -73,13 +74,16 @@ class LiveShinEnvironment:
         # The same scalar scales platform speed and perturbations for every arm.
         self.bridge.cfg.pad_scale = float(np.clip(curriculum, 0.0, 1.0))
         actor, state = self.adapter.reset(int(seed), scenario=scenario)
-        return self._classify(actor, state, np.zeros(4))
+        self.last_step = self._classify(actor, state, np.zeros(4))
+        return self.last_step
 
     def step(self, normalized_action) -> LiveStep:
         actor, state, command = self.adapter.step(normalized_action)
         self.steps += 1
-        return self._classify(actor, state, command.as_array(),
-                              timeout=self.steps >= self.horizon_steps)
+        self.last_step = self._classify(
+            actor, state, command.as_array(),
+            timeout=self.steps >= self.horizon_steps)
+        return self.last_step
 
     def finish_episode(self):
         if self.bridge.last_state:
@@ -88,6 +92,12 @@ class LiveShinEnvironment:
                 if (self.bridge.last_state.get("landed", False)
                         or extra.get("pad_contact", False)):
                     self.bridge.stop_after_outcome()
+                elif self.last_step is not None and self.last_step.crash:
+                    # A ground/tilt crash is not an airborne staging state.
+                    # Complete PX4's landing/disarm before the next physical
+                    # hover; otherwise the following reset tries to hold a
+                    # grounded, failsafe-controlled vehicle in OFFBOARD.
+                    self.bridge.land_and_wait()
                 elif bool(self.cfg.external.get("start_airborne", False)):
                     self.bridge.hold_for_next_airborne_reset()
                 else:

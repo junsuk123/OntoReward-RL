@@ -15,8 +15,11 @@ import time
 
 import torch
 
+ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(ROOT / "isaac_sim"))
 
+from config_loader import load_config as load_system_config
 from ontology_rgat import stack as stack_module
 from ontology_rgat.benchmarks.experiment import (METHODS, configuration_hash,
                                                  load_experiment, paired_seed_plan)
@@ -38,10 +41,6 @@ from ontology_rgat.viz.dashboard import Dashboard
 from ontology_rgat.viz.live import BenchmarkMonitor, STORE
 from ontology_rgat.viz.rviz import RvizPublisher
 
-
-ROOT = Path(__file__).resolve().parents[1]
-
-
 def _write_csv(path, rows):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -56,6 +55,7 @@ def _write_csv(path, rows):
 
 def _live_config(mode, results_dir, system_config):
     cfg = default_config(mode, "sitl")
+    simulator_config = load_system_config(Path(system_config))
     cfg.sim.dt = 0.1
     cfg.sim.max_time = 30.0
     cfg.sim.max_steps = 300
@@ -69,6 +69,14 @@ def _live_config(mode, results_dir, system_config):
     cfg.paths.results = str(Path(results_dir).resolve())
     cfg.paths.models = str((Path(results_dir) / "models").resolve())
     cfg.paths.live = str((Path(results_dir) / "live").resolve())
+    # RViz is a learner-side process and does not read Isaac's YAML itself.
+    # Copy only presentation geometry from the authoritative merged simulator
+    # profile so its deck and surveyed campus route match the live world.
+    pad = simulator_config.get("pad") or {}
+    cfg.viz.rviz.deck_size_m = list(pad.get("deck_size_m", (1.5, 1.5)))
+    cfg.viz.rviz.deck_height_m = float(pad.get("deck_height_m", 0.0))
+    cfg.viz.rviz.route_waypoints_enu_m = list(
+        pad.get("route_waypoints_enu_m", ()))
     return cfg
 
 

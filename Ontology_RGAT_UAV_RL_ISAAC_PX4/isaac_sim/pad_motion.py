@@ -17,9 +17,9 @@ because a real deck steers rather than snapping to its velocity, and because
 every closed-form profile has cusps where the velocity direction reverses.
 
 ``road`` is the mode the generated urban experiment runs: a lorry driving a
-rounded-rectangle lap. ``waypoints`` follows a surveyed 3-D polyline and
-reverses smoothly at its ends, for imported worlds whose road is neither flat
-nor a loop. Both modes report an analytic velocity.
+rounded-rectangle lap. ``waypoints`` follows a surveyed 3-D polyline; it either
+reverses smoothly at its ends or continuously follows a configured closed loop.
+Both modes report an analytic velocity.
 """
 
 from __future__ import annotations
@@ -153,6 +153,11 @@ class PadMotionConfig:
             if any(np.linalg.norm(np.subtract(a, b)) < 1e-6
                    for a, b in zip(waypoints[:-1], waypoints[1:])):
                 raise ValueError("consecutive route waypoints must be distinct")
+        waypoint_loop = bool(pad.get("waypoint_loop", False))
+        if (mode == "waypoints" and waypoint_loop
+                and np.linalg.norm(np.subtract(waypoints[0], waypoints[-1])) > 1e-6):
+            raise ValueError(
+                "a waypoint loop must repeat its first point as its last point")
         waypoint_ramp_s = float(pad.get("waypoint_ramp_s", 4.0))
         if not math.isfinite(waypoint_ramp_s) or waypoint_ramp_s <= 0.0:
             raise ValueError("pad.waypoint_ramp_s must be positive and finite")
@@ -228,7 +233,7 @@ class PadMotionConfig:
             route_corner_radius_m=float(pad.get("route_corner_radius_m",
                                                 urban.get("corner_radius_m", 12.0))),
             route_waypoints_enu_m=waypoints,
-            waypoint_loop=bool(pad.get("waypoint_loop", False)),
+            waypoint_loop=waypoint_loop,
             waypoint_ramp_s=waypoint_ramp_s,
             lane_centres_m=lanes,
             lane_wander_m=float(pad.get("lane_wander_m", 0.18)),

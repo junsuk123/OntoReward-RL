@@ -58,9 +58,14 @@ def _reward(method, previous, following, estimate, next_estimate, potential,
 def collect_episode(env, model: ShinRecurrentActorCritic, method: str, seed: int,
                     *, curriculum=1.0, potential=None, deterministic=False,
                     gamma=0.99, shaping_lambda=1.0,
-                    scenario="training_random_walk"):
+                    scenario="training_random_walk", monitor=None,
+                    phase="evaluation"):
     """Collect one true simulator episode without crossing the actor boundary."""
     step = env.reset(seed, curriculum, scenario=scenario)
+    if monitor is not None:
+        monitor.reset_episode(
+            method=method, phase=phase, seed=seed, scenario=scenario,
+            curriculum=curriculum)
     hidden = model.initial_state(1)
     rows = []
     visual_loss_run = 0
@@ -105,6 +110,13 @@ def collect_episode(env, model: ShinRecurrentActorCritic, method: str, seed: int
                 "hidden_h": hidden[0].cpu().numpy(),
                 "hidden_c": hidden[1].cpu().numpy(),
             })
+            if monitor is not None:
+                monitor.step(
+                    index=len(rows), dt=env.cfg.sim.dt, method=method,
+                    reward=reward, reward_parts=parts, estimate=next_estimate,
+                    truth=following.critic.true_relative_state,
+                    in_fov=following.pad_in_fov,
+                    estimation_loss=estimation_loss)
             hidden = output.hidden
             step, output = following, next_output
             if following.terminal:
@@ -224,7 +236,8 @@ def save_recurrent_checkpoint(path, model, optimizer, *, method, episode,
 
 
 def train_live(env_factory: Callable, model, method, seeds, output_dir,
-               *, config_hash, potential=None, ppo=None, curriculum_config=None):
+               *, config_hash, potential=None, ppo=None, curriculum_config=None,
+               monitor=None):
     ppo = ppo or {}
     curriculum = PlatformMotionCurriculum(**(curriculum_config or {}))
     optimizer = torch.optim.Adam(model.parameters(), lr=float(ppo.get("learning_rate", 2e-4)))
@@ -253,6 +266,8 @@ def train_live(env_factory: Callable, model, method, seeds, output_dir,
     seed_list = list(seeds)
     if completed > len(seed_list):
         raise ValueError("checkpoint has more episodes than this run requests")
+    if monitor is not None:
+        monitor.restore_training(method, history)
 
     def persist_history():
         if not history:
@@ -275,7 +290,8 @@ def train_live(env_factory: Callable, model, method, seeds, output_dir,
             rows, metric = collect_episode(
                 env, model, method, seed, curriculum=c, potential=potential,
                 gamma=float(ppo.get("gamma", .99)),
-                shaping_lambda=float(ppo.get("shaping_lambda", 1.0)))
+                shaping_lambda=float(ppo.get("shaping_lambda", 1.0)),
+                monitor=monitor, phase="training")
             loss = update_episode(
                 model, optimizer, rows, gamma=float(ppo.get("gamma", .99)),
                 gae_lambda=float(ppo.get("gae_lambda", .95)),
@@ -288,8 +304,11 @@ def train_live(env_factory: Callable, model, method, seeds, output_dir,
             metric.update(loss)
             metric.update({"method": method, "scenario": "training_random_walk",
                            "episode": episode, "curriculum_level": curriculum.level,
+                           "curriculum": float(c),
                            "training_sample_efficiency": episode})
             history.append(metric)
+            if monitor is not None:
+                monitor.training_update(method, metric)
             save_recurrent_checkpoint(
                 checkpoint_path, model, optimizer, method=method,
                 episode=episode, config_hash=config_hash, curriculum=curriculum,

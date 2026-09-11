@@ -20,7 +20,8 @@ the same recurrent actor/critic and paired seed plan.
 
 ```bash
 # One command: stack startup, controlled R-GAT freeze, recurrent training,
-# paired scenario evaluation, CSV tables, confidence intervals, and plots.
+# live dashboard, paired scenario evaluation, CSV tables, confidence intervals,
+# and plots.
 ./scripts/run_shin2026_benchmark.sh --mode quick --headless
 
 # CPU-only contract smoke tests (not flight results)
@@ -39,6 +40,11 @@ approximations in [the benchmark protocol](docs/SHIN2026_BASELINE.md). The
 existing 23-channel cooperative urban experiment below remains unchanged and
 is not used for the primary controlled comparison. The live command checkpoints
 after each training episode and writes evaluation records incrementally. The
+dashboard at `http://127.0.0.1:8770/` automatically selects the benchmark view:
+MATLAB-style plots show each reward arm's return/success, recurrent PPO losses,
+six-state estimator errors, curriculum, current reward decomposition, visibility,
+and paired scenario success. Use `--dashboard-port PORT` to change the port or
+`--no-dashboard` to disable it. The
 protocol lists remaining simulator-randomization limitations that must be
 resolved before claiming a bit-exact reproduction.
 

@@ -99,7 +99,10 @@ The live pipeline starts or adopts DDS, Isaac Sim, Pegasus/PX4, and the ROS
 gateway; prepares and freezes a controlled R-GAT reward artifact when missing;
 trains every requested reward arm through the same recurrent PPO loop; runs the
 paired evaluation plan; and produces checkpoints, per-episode data, confidence
-intervals, tables, and figures:
+intervals, tables, and figures. It also serves `http://127.0.0.1:8770/` while
+running. That dashboard uses a MATLAB-figure visual language and exposes the
+actor information boundary, method progress, estimator/PPO diagnostics, live
+reward components, curriculum, visibility, and paired scenario outcomes:
 
 ```bash
 ./scripts/run_shin2026_benchmark.sh --mode quick --headless
@@ -108,6 +111,8 @@ intervals, tables, and figures:
 Use `--mode full` for the configured publication-scale counts. This is a
 long-running real-time flight-stack experiment. `--use-running-stack` adopts a
 compatible active stack, and `--keep-stack` leaves a newly started stack alive.
+The dashboard port can be changed with `--dashboard-port`; `--no-dashboard`
+turns off only the HTTP view, not metric collection or result files.
 
 The R-GAT bootstrap dataset is an OntoReward design choice because Shin et al.
 do not define an ontology or its training set. Its artifact records provenance

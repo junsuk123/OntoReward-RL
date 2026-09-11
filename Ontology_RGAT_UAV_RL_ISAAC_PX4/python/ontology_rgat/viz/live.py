@@ -26,7 +26,17 @@ from typing import Any, Iterable, Sequence
 import numpy as np
 
 __all__ = ["LiveStore", "DatasetMonitor", "RGATMonitor", "PPOMonitor",
-           "RewardMonitor", "EpisodeMonitor", "STORE"]
+           "RewardMonitor", "BenchmarkMonitor", "EpisodeMonitor", "STORE",
+           "MATLAB_COLORS"]
+
+
+# MATLAB R2025a's default line order.  The browser dashboard uses the same
+# sequence, so exported PNG snapshots and the live view remain visually
+# comparable when figures are copied into a report.
+MATLAB_COLORS = (
+    "#0072BD", "#D95319", "#EDB120", "#7E2F8E",
+    "#77AC30", "#4DBEEE", "#A2142F",
+)
 
 
 class LiveStore:
@@ -100,7 +110,21 @@ def _figure(nrows: int, ncols: int, size: tuple[float, float]):
     matplotlib.use("Agg", force=False)
     import matplotlib.pyplot as plt
     fig, axes = plt.subplots(nrows, ncols, figsize=size, constrained_layout=True)
-    return fig, np.atleast_1d(np.asarray(axes)).ravel()
+    fig.patch.set_facecolor("white")
+    flat = np.atleast_1d(np.asarray(axes)).ravel()
+    for axis in flat:
+        axis.set_facecolor("white")
+        axis.set_prop_cycle(color=MATLAB_COLORS)
+        axis.grid(True, color="#D8D8D8", linestyle=":", linewidth=0.7)
+        axis.set_axisbelow(True)
+        for spine in axis.spines.values():
+            spine.set_color("#262626")
+            spine.set_linewidth(0.8)
+        axis.tick_params(colors="#262626", labelsize=8, direction="out")
+        axis.title.set_color("#262626")
+        axis.xaxis.label.set_color("#262626")
+        axis.yaxis.label.set_color("#262626")
+    return fig, flat
 
 
 def _moving_mean(values: Sequence[float], window: int) -> np.ndarray:
@@ -184,12 +208,12 @@ class DatasetMonitor(_Monitor):
         success = [r["success"] for r in rows]
         fig, ax = _figure(1, 3, (12.0, 3.6))
         ax[0].plot(episodes, _moving_mean(success, max(1, len(rows) // 4)),
-                   color="#0d8c4d", lw=1.8)
+                   color=MATLAB_COLORS[4], lw=1.8)
         ax[0].set(xlabel="Episode", ylabel="Success rate", ylim=(0, 1),
                   title="Expert moving success rate")
-        ax[1].plot(episodes, np.cumsum(success), color="#1a59bf", lw=1.8,
+        ax[1].plot(episodes, np.cumsum(success), color=MATLAB_COLORS[0], lw=1.8,
                    label="successful episodes")
-        ax[1].plot(episodes, [r["samples"] for r in rows], color="#d96619", lw=1.2,
+        ax[1].plot(episodes, [r["samples"] for r in rows], color=MATLAB_COLORS[1], lw=1.2,
                    label="samples/episode")
         ax[1].set(xlabel="Episode", ylabel="Count", title="Collection progress")
         ax[1].legend(frameon=False, fontsize=8)
@@ -312,23 +336,24 @@ class PPOMonitor(_Monitor):
         window = max(1, min(50, len(rows) // 5))
         returns = [r["return"] for r in rows]
         ax[0].plot(episodes, returns, color="#b8c9e6", lw=0.8)
-        ax[0].plot(episodes, _moving_mean(returns, window), color="#1a59bf", lw=1.8)
+        ax[0].plot(episodes, _moving_mean(returns, window), color=MATLAB_COLORS[0], lw=1.8)
         ax[0].set(xlabel="Episode", ylabel="Return", title="Episode return")
         ax[1].plot(episodes, _moving_mean([r["success"] for r in rows], window),
-                   color="#0d8c4d", lw=1.8)
+                   color=MATLAB_COLORS[4], lw=1.8)
         ax[1].set(xlabel="Episode", ylabel="Success rate", ylim=(0, 1),
                   title="Moving success rate")
         steps = [r["steps"] for r in rows]
         ax[2].plot(episodes, steps, color="#f2d6b8", lw=0.8)
-        ax[2].plot(episodes, _moving_mean(steps, window), color="#d96619", lw=1.8)
+        ax[2].plot(episodes, _moving_mean(steps, window), color=MATLAB_COLORS[1], lw=1.8)
         ax[2].set(xlabel="Episode", ylabel="Steps", title="Episode length")
         ax[3].plot(episodes, [r["actor_loss"] for r in rows], lw=1.4, label="actor")
         twin = ax[3].twinx()
         twin.plot(episodes, [r["critic_loss"] for r in rows], lw=1.4,
-                  color="#d96619", label="critic")
+                  color=MATLAB_COLORS[1], label="critic")
         ax[3].set(xlabel="Episode", ylabel="Actor loss", title="PPO losses")
         twin.set_ylabel("Critic loss")
-        ax[4].plot(episodes, [r["policy_std"] for r in rows], color="#7333a6", lw=1.8)
+        ax[4].plot(episodes, [r["policy_std"] for r in rows],
+                   color=MATLAB_COLORS[3], lw=1.8)
         ax[4].set(xlabel="Episode", ylabel="exp(logStd)", title="Exploration std")
         statuses = [r["status"] for r in rows]
         for status in self.STATUSES:
@@ -370,6 +395,138 @@ class RewardMonitor:
             "weighted_terms": dict(parts.get("weighted_terms") or {}),
             "shaped": str(mode).lower() == "proposed",
         })
+
+
+class BenchmarkMonitor:
+    """Publish recurrent Shin/OntoReward training and paired evaluation.
+
+    This monitor deliberately accepts already-computed metrics.  It cannot
+    reach into the actor observation, so adding the dashboard does not create
+    a back door for simulator truth to enter the deployed policy.
+    """
+
+    def __init__(self, store: LiveStore | None = None):
+        self.store = store or STORE
+        self.methods: tuple[str, ...] = ()
+        self.training_total = 0
+        self.evaluation_total = 0
+
+    @staticmethod
+    def _plain(row: dict[str, Any]) -> dict[str, Any]:
+        """Convert CSV/numpy values into chart-safe numbers where possible."""
+        out: dict[str, Any] = {}
+        integer_keys = {"seed", "episode", "steps", "curriculum_level",
+                        "training_sample_efficiency", "evaluation_index"}
+        for key, value in row.items():
+            if isinstance(value, (np.integer,)):
+                out[key] = int(value)
+            elif isinstance(value, (np.floating,)):
+                out[key] = float(value)
+            elif isinstance(value, str):
+                try:
+                    out[key] = int(value) if key in integer_keys else float(value)
+                except ValueError:
+                    out[key] = value
+            else:
+                out[key] = value
+        return out
+
+    def configure(self, *, methods: Sequence[str], mode: str, config_hash: str,
+                  training_total: int, evaluation_total: int,
+                  reward_design_id: str | None = None,
+                  reward_design_sha256: str | None = None) -> None:
+        self.methods = tuple(str(method) for method in methods)
+        self.training_total = int(training_total)
+        self.evaluation_total = int(evaluation_total)
+        self.store.set(
+            dashboard_profile="shin2026", benchmark_mode=str(mode),
+            benchmark_methods=list(self.methods), config_hash=str(config_hash),
+            training_total=self.training_total,
+            evaluation_total=self.evaluation_total,
+            reward_design_id=reward_design_id,
+            reward_design_sha256=reward_design_sha256,
+            actor_contract={
+                "camera": "512x320 mono / 90 deg HFOV / -60 deg pitch",
+                "proprioception": "7: body velocity (3) + quaternion (4)",
+                "estimator": "6-keypoint CNN -> 512 LSTM -> latent y[256]",
+                "actor": "y[6:256] + proprioception -> action[4]",
+                "critic": "training only: proprioception[7] + truth[6]",
+                "forbidden": "pad pose/velocity, GNSS, V2V and simulator truth",
+            })
+
+    def stage(self, name: str, detail: str = "") -> None:
+        self.store.stage(name, detail)
+
+    def reset_episode(self, *, method: str, phase: str, seed: int,
+                      scenario: str, curriculum: float) -> None:
+        self.store.replace("benchmark_step", [])
+        self.store.set(
+            benchmark_phase=str(phase), current_method=str(method),
+            current_seed=int(seed), current_scenario=str(scenario),
+            current_curriculum=float(curriculum))
+
+    def step(self, *, index: int, dt: float, method: str, reward: float,
+             reward_parts: dict[str, Any], estimate, truth, in_fov: bool,
+             estimation_loss: float) -> None:
+        estimate = np.asarray(estimate, dtype=float)
+        truth = np.asarray(truth, dtype=float)
+        parts = reward_parts or {}
+        point = {
+            "step": int(index), "t": float(index * dt), "method": str(method),
+            "reward": float(reward), "in_fov": float(bool(in_fov)),
+            "estimation_loss": float(estimation_loss),
+            "position_error": float(np.linalg.norm(estimate[:3] - truth[:3])),
+            "velocity_error": float(np.linalg.norm(estimate[3:] - truth[3:])),
+            "estimated_distance": float(np.linalg.norm(estimate[:3])),
+            "true_distance": float(np.linalg.norm(truth[:3])),
+            "estimated_speed": float(np.linalg.norm(estimate[3:])),
+            "true_speed": float(np.linalg.norm(truth[3:])),
+        }
+        for key in ("task", "lateral_progress", "vertical_progress",
+                    "vertical_speed_penalty", "undershoot_penalty",
+                    "yaw_rate_penalty", "active_perception", "shape",
+                    "phi", "phi_next"):
+            point[key] = float(parts.get(key, 0.0))
+        self.store.append("benchmark_step", point)
+
+    def restore_training(self, method: str, history: Sequence[dict[str, Any]]) -> None:
+        rows = [self._plain(dict(row)) for row in history]
+        self.store.replace(f"benchmark_train_{method}", rows)
+        if rows:
+            self.store.set(**{f"benchmark_{method}_episode": rows[-1]["episode"]})
+
+    def training_update(self, method: str, metric: dict[str, Any]) -> None:
+        point = self._plain(dict(metric))
+        self.store.append(f"benchmark_train_{method}", point)
+        self.store.set(**{
+            f"benchmark_{method}_episode": point["episode"],
+            "benchmark_phase": "training", "current_method": str(method),
+        })
+
+    def restore_evaluation(self, rows: Sequence[dict[str, Any]]) -> None:
+        completed = 0
+        for method in self.methods:
+            selected = []
+            for row in rows:
+                if row.get("method") == method:
+                    point = self._plain(dict(row))
+                    point["evaluation_index"] = len(selected) + 1
+                    selected.append(point)
+            self.store.replace(f"benchmark_eval_{method}", selected)
+            completed += len(selected)
+        self.store.set(evaluation_completed=completed)
+
+    def evaluation_update(self, method: str, metric: dict[str, Any]) -> None:
+        point = self._plain(dict(metric))
+        point["evaluation_index"] = len(
+            self.store.series(f"benchmark_eval_{method}")) + 1
+        completed = sum(len(self.store.series(f"benchmark_eval_{name}"))
+                        for name in self.methods) + 1
+        self.store.append(f"benchmark_eval_{method}", point)
+        self.store.set(
+            benchmark_phase="evaluation", current_method=str(method),
+            current_scenario=str(point.get("scenario", "")),
+            evaluation_completed=completed)
 
 
 class EpisodeMonitor:

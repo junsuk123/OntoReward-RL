@@ -67,31 +67,42 @@ PAGE = """<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Ontology-RGAT training</title>
 <style>
-:root{color-scheme:light dark;--bg:#f6f7f9;--card:#fff;--ink:#16181d;--muted:#6b7280;
---line:#d8dce3;--accent:#1a59bf;--good:#0d8c4d;--warn:#d96619;--bad:#c0392b}
-@media (prefers-color-scheme:dark){:root{--bg:#14161a;--card:#1c1f25;--ink:#e8eaee;
---muted:#9aa2af;--line:#2c313a}}
+:root{color-scheme:light;--bg:#f2f2f2;--card:#ffffff;--ink:#262626;--muted:#666666;
+--line:#b8b8b8;--grid:#d8d8d8;--accent:#0072BD;--good:#77AC30;
+--warn:#D95319;--bad:#A2142F}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--ink);
-font:14px/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
-header{padding:16px 20px;border-bottom:1px solid var(--line);display:flex;
-gap:16px;align-items:baseline;flex-wrap:wrap}
-h1{font-size:16px;margin:0;font-weight:650;letter-spacing:-.01em}
+font:13px/1.45 Arial,Helvetica,sans-serif}
+header{padding:11px 18px;background:#e8e8e8;border-bottom:1px solid #8c8c8c;display:flex;
+gap:14px;align-items:baseline;flex-wrap:wrap;box-shadow:0 1px 2px rgba(0,0,0,.08)}
+h1{font-size:15px;margin:0;font-weight:600;letter-spacing:0}
 #stage{font-weight:600;color:var(--accent)}
 #age{color:var(--muted);font-variant-numeric:tabular-nums;margin-left:auto}
 main{padding:16px 20px;display:grid;gap:14px;
 grid-template-columns:repeat(auto-fit,minmax(330px,1fr))}
-.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
-.card h2{font-size:12px;margin:0 0 8px;text-transform:uppercase;letter-spacing:.06em;
-color:var(--muted);font-weight:650}
-canvas{width:100%;height:150px;display:block}
+.card{background:var(--card);border:1px solid #a6a6a6;border-radius:2px;padding:11px 13px;
+box-shadow:0 1px 2px rgba(0,0,0,.06)}
+.card h2{font-size:13px;margin:0 0 6px;text-align:center;color:var(--ink);font-weight:600}
+canvas{width:100%;height:205px;display:block;background:#fff}
 .tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px}
-.tile{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:8px 10px}
-.tile b{display:block;font-size:19px;font-variant-numeric:tabular-nums;font-weight:650}
-.tile span{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.05em}
+.tile{background:#fafafa;border:1px solid #b7b7b7;border-top:3px solid var(--accent);
+border-radius:1px;padding:7px 9px}
+.tile b{display:block;font-size:18px;font-variant-numeric:tabular-nums;font-weight:600}
+.tile span{color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.04em}
 .legend{display:flex;gap:12px;flex-wrap:wrap;font-size:11px;color:var(--muted);margin-top:6px}
-.legend i{display:inline-block;width:10px;height:3px;vertical-align:middle;margin-right:4px}
+.legend i{display:inline-block;width:18px;height:2px;vertical-align:middle;margin-right:4px}
 .wide{grid-column:1/-1}
+[hidden]{display:none!important}
+.contract-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:7px}
+.contract-item{border:1px solid #b8b8b8;background:#fafafa;padding:7px 9px;min-height:52px}
+.contract-item b,.contract-item span{display:block}.contract-item b{color:var(--accent);font-size:11px}
+.contract-item span{font-size:12px}.contract-item.forbidden{border-left:4px solid var(--bad)}
+.method-strip{display:flex;gap:7px;flex-wrap:wrap;margin-top:9px}
+.method-chip{border:1px solid #a8a8a8;border-left:4px solid var(--accent);padding:5px 8px;
+background:white;font-variant-numeric:tabular-nums}.method-chip b,.method-chip small{display:block}
+.method-chip small{color:var(--muted)}
+.benchmark-formula{margin-top:9px;padding:6px 9px;border:1px solid #b8b8b8;background:#f7f7f7;
+font:12px/1.5 "Courier New",monospace;text-align:center}
 .g3d{position:relative}
 .g3d canvas{height:420px;cursor:grab;touch-action:none}
 .g3d canvas.drag{cursor:grabbing}
@@ -129,59 +140,125 @@ font-size:11px}.reward-weight .track{height:6px;background:var(--line);border-ra
 overflow:hidden;margin:5px 0}.reward-weight .track i{display:block;height:100%;background:var(--accent)}
 .reward-weight small{color:var(--muted);font-size:9px}.acceptance{display:grid;
 grid-template-columns:repeat(3,1fr);gap:7px;margin:8px 0}.gate{padding:7px 9px;border-radius:7px;
-border:1px solid var(--line)}.gate.pass{border-left:4px solid #0d8c4d}.gate.fail{border-left:4px solid #c0392b}
+border:1px solid var(--line)}.gate.pass{border-left:4px solid #77AC30}.gate.fail{border-left:4px solid #A2142F}
 .gate.wait{border-left:4px solid #8a8f98}.gate b,.gate span{display:block}.gate span{font-size:10px;color:var(--muted)}
 @media(max-width:820px){.reward-grid{grid-template-columns:1fr}}
 </style></head><body>
-<header><h1>Ontology-RGAT &middot; Isaac Sim + PX4</h1>
+<header><h1 id="page-title">Ontology-RGAT &middot; Isaac Sim + PX4</h1>
 <span id="stage">connecting</span><span id="detail"></span><span id="age"></span></header>
 <main id="root"></main>
 <script>
-const PALETTE=['#1a59bf','#d96619','#0d8c4d','#7333a6','#c0392b','#0e7c86'];
+// MATLAB default color order (R2025a), shared with the PNG exporters.
+const PALETTE=['#0072BD','#D95319','#EDB120','#7E2F8E','#77AC30','#4DBEEE','#A2142F'];
+const BENCHMARK_METHODS=['shin2026','sparse','manual_no_active','ontoreward',
+  'ontoreward_plus_active'];
+const BENCHMARK_TRAIN=BENCHMARK_METHODS.map(x=>'benchmark_train_'+x);
+const BENCHMARK_EVAL=BENCHMARK_METHODS.map(x=>'benchmark_eval_'+x);
 const CARDS=[
  {id:'tiles',title:null},
- {id:'graph3d',kind:'graph',title:'Learned ontology graph (3D, R-GAT attention)'},
- {id:'rgat_reward',kind:'reward',title:'R-GAT-shaped RL reward / R-GAT 보상함수',
+ {id:'benchmark_contract',view:'benchmark',kind:'contract',
+  title:'Shin 2026 controlled benchmark · information boundary'},
+ {id:'benchmark_return',view:'benchmark',title:'Training episode return',
+  series:BENCHMARK_TRAIN,x:'episode',y:'episode_return',smooth:20},
+ {id:'benchmark_success',view:'benchmark',title:'Training moving success rate',
+  series:BENCHMARK_TRAIN,x:'episode',y:'paper_success',smooth:40,ymin:0,ymax:1},
+ {id:'benchmark_curriculum',view:'benchmark',title:'Platform-motion curriculum c',
+  series:BENCHMARK_TRAIN,x:'episode',y:'curriculum',ymin:0,ymax:1},
+ {id:'benchmark_position_rmse',view:'benchmark',title:'Estimator position RMSE',
+  series:BENCHMARK_TRAIN,x:'episode',y:'position_rmse',smooth:12},
+ {id:'benchmark_velocity_rmse',view:'benchmark',title:'Estimator velocity RMSE',
+  series:BENCHMARK_TRAIN,x:'episode',y:'velocity_rmse',smooth:12},
+ {id:'benchmark_aux',view:'benchmark',title:'Auxiliary 6-state estimation loss',
+  series:BENCHMARK_TRAIN,x:'episode',y:'auxiliary_estimation_loss',smooth:12},
+ {id:'benchmark_policy_loss',view:'benchmark',title:'Recurrent PPO policy loss',
+  series:BENCHMARK_TRAIN,x:'episode',y:'ppo_loss',smooth:12},
+ {id:'benchmark_value_loss',view:'benchmark',title:'Asymmetric critic value loss',
+  series:BENCHMARK_TRAIN,x:'episode',y:'value_loss',smooth:12},
+ {id:'benchmark_entropy',view:'benchmark',title:'PPO policy entropy',
+  series:BENCHMARK_TRAIN,x:'episode',y:'entropy',smooth:12},
+ {id:'benchmark_kl',view:'benchmark',title:'PPO approximate KL divergence',
+  series:BENCHMARK_TRAIN,x:'episode',y:'kl_divergence',smooth:12},
+ {id:'benchmark_live_reward',view:'benchmark',title:'Current episode · reward decomposition',
+  series:['benchmark_step'],x:'step',
+  y:['reward','task','shape','active_perception','lateral_progress','vertical_progress'],
+  labels:['total','terminal task','OntoReward PBRS','active perception','lateral','vertical']},
+ {id:'benchmark_live_state',view:'benchmark',title:'Current episode · recurrent estimate vs truth',
+  series:['benchmark_step'],x:'step',
+  y:['estimated_distance','true_distance','estimated_speed','true_speed'],
+  labels:['estimated distance','critic distance','estimated speed','critic speed']},
+ {id:'benchmark_live_error',view:'benchmark',title:'Current episode · estimator and visibility',
+  series:['benchmark_step'],x:'step',
+  y:['position_error','velocity_error','estimation_loss','in_fov'],
+  labels:['position error','velocity error','6-state MSE','target in FOV']},
+ {id:'benchmark_eval_scenario',view:'benchmark',kind:'evalbars',
+  title:'Paired evaluation success by scenario'},
+ {id:'benchmark_eval_position',view:'benchmark',title:'Evaluation position RMSE',
+  series:BENCHMARK_EVAL,x:'evaluation_index',y:'position_rmse',smooth:8},
+ {id:'benchmark_eval_velocity',view:'benchmark',title:'Evaluation velocity RMSE',
+  series:BENCHMARK_EVAL,x:'evaluation_index',y:'velocity_rmse',smooth:8},
+ {id:'benchmark_eval_visual_loss',view:'benchmark',
+  title:'Estimation error while target is out of view',
+  series:BENCHMARK_EVAL,x:'evaluation_index',y:'visual_loss_estimation_error',smooth:8},
+ {id:'graph3d',view:'urban',kind:'graph',title:'Learned ontology graph (3D, R-GAT attention)'},
+ {id:'rgat_reward',view:'urban',kind:'reward',title:'R-GAT-shaped RL reward / R-GAT 보상함수',
   series:['reward','episode'],x:'t',y:['reward','base','shape','phi','phi_next'],
   labels:['final reward','sparse/base','PBRS shaping','Phi(s)','Phi(s next)']},
- {id:'ppo_return',title:'PPO episode return',series:['ppo_manual','ppo_proposed'],
+ {id:'ppo_return',view:'urban',title:'PPO episode return',series:['ppo_manual','ppo_proposed'],
   x:'episode',y:'return',smooth:20},
- {id:'ppo_success',title:'PPO moving success rate',series:['ppo_manual','ppo_proposed'],
+ {id:'ppo_success',view:'urban',title:'PPO moving success rate',series:['ppo_manual','ppo_proposed'],
   x:'episode',y:'success',smooth:40,ymin:0,ymax:1},
- {id:'ppo_steps',title:'PPO episode length (steps)',series:['ppo_manual','ppo_proposed'],
+ {id:'ppo_steps',view:'urban',title:'PPO episode length (steps)',series:['ppo_manual','ppo_proposed'],
   x:'episode',y:'steps',smooth:20},
- {id:'ppo_std',title:'Exploration std',series:['ppo_manual','ppo_proposed'],
+ {id:'ppo_std',view:'urban',title:'Exploration std',series:['ppo_manual','ppo_proposed'],
   x:'episode',y:'policy_std'},
- {id:'rgat_loss',title:'R-GAT potential loss',series:['rgat'],x:'epoch',
+ {id:'rgat_loss',view:'urban',title:'R-GAT potential loss',series:['rgat'],x:'epoch',
   y:['train_mse','val_mse'],labels:['train','validation']},
- {id:'dataset',title:'Expert dataset success rate',series:['dataset'],
+ {id:'dataset',view:'urban',title:'Expert dataset success rate',series:['dataset'],
   x:'episode',y:'success',smooth:8,ymin:0,ymax:1},
- {id:'episode_z',title:'Live episode: altitude above deck (m)',series:['episode'],
+ {id:'episode_z',view:'urban',title:'Live episode: altitude above deck (m)',series:['episode'],
   x:'t',y:'z'},
- {id:'episode_speed',title:'Live episode: deck and closing speed (m/s)',
+ {id:'episode_speed',view:'urban',title:'Live episode: deck and closing speed (m/s)',
   series:['episode'],x:'t',y:['pad_speed','closing_speed'],
   labels:['deck','closing']},
- {id:'episode_wind',title:'Live episode: UAV wind sensor and WindRisk',
+ {id:'episode_wind',view:'urban',title:'Live episode: UAV wind sensor and WindRisk',
   series:['episode'],x:'t',y:['wind_speed','wind_risk'],
   labels:['wind speed (m/s)','WindRisk [0,1]']},
- {id:'episode_energy',title:'Live episode: hover seconds remaining',
+ {id:'episode_energy',view:'urban',title:'Live episode: hover seconds remaining',
   series:['episode'],x:'t',y:'hover_seconds_left'},
- {id:'episode_nav',title:'Live episode: what knows where the lorry is',
+ {id:'episode_nav',view:'urban',title:'Live episode: what knows where the lorry is',
   series:['episode'],x:'t',y:['marker_quality','gnss_quality','nav_confidence'],
   labels:['markers','GNSS','combined'],ymin:0,ymax:1},
- {id:'episode_gnss_error',title:'Live episode: error in the pose being flown on (m)',
+ {id:'episode_gnss_error',view:'urban',title:'Live episode: error in the pose being flown on (m)',
   series:['episode'],x:'t',y:['estimate_error_m','gnss_sigma_xy'],
   labels:['actual','reported 1-sigma']},
 ];
 const LABELS={ppo_manual:'Manual',ppo_proposed:'Ontology-RGAT',rgat:'R-GAT',
- dataset:'expert',episode:'episode',reward:'live'};
+ dataset:'expert',episode:'episode',reward:'live',benchmark_step:'current episode',
+ benchmark_train_shin2026:'Shin + active',benchmark_train_sparse:'Sparse',
+ benchmark_train_manual_no_active:'Shin − active',benchmark_train_ontoreward:'OntoReward',
+ benchmark_train_ontoreward_plus_active:'OntoReward + active',
+ benchmark_eval_shin2026:'Shin + active',benchmark_eval_sparse:'Sparse',
+ benchmark_eval_manual_no_active:'Shin − active',benchmark_eval_ontoreward:'OntoReward',
+ benchmark_eval_ontoreward_plus_active:'OntoReward + active'};
 const root=document.getElementById('root');
 for(const c of CARDS){
   const el=document.createElement('section');
-  el.className='card'+((c.id==='tiles'||c.kind==='graph'||c.kind==='reward')?' wide':'')
+  el.className='card'+((c.id==='tiles'||['graph','reward','contract','evalbars'].includes(c.kind))?' wide':'')
     +(c.kind==='graph'?' g3d':'');
   el.id='card-'+c.id;
+  el.dataset.view=c.view||'common';
+  el.hidden=c.view==='benchmark';
   if(c.id==='tiles'){el.innerHTML='<div class="tiles" id="tiles"></div>';}
+  else if(c.kind==='contract'){el.innerHTML=`<h2>${c.title}</h2>
+    <div class="contract-grid" id="benchmark-contract"></div>
+    <div class="method-strip" id="benchmark-methods"></div>
+    <div class="benchmark-formula">actor = &pi;(y[6:256], u<sub>UAV</sub>)
+      &nbsp;&nbsp;|&nbsp;&nbsp; critic<sub>train</sub> = V(u<sub>UAV</sub>, s<sub>rel,true</sub>)
+      &nbsp;&nbsp;|&nbsp;&nbsp; action = [v<sub>x</sub>, v<sub>y</sub>, v<sub>z</sub>,
+      &omega;<sub>yaw</sub>]</div>`;}
+  else if(c.kind==='evalbars'){el.innerHTML=`<h2>${c.title}</h2>
+    <canvas id="cv-${c.id}" style="height:270px"></canvas>
+    <div class="legend" id="lg-${c.id}"></div>`;}
   else if(c.kind==='graph'){el.innerHTML=`<h2>${c.title}</h2>
     <div class="bar"><span id="g3d-src">waiting for a graph</span>
       <label style="margin-left:auto"><input type="checkbox" id="g3d-auto" checked>spin</label>
@@ -227,7 +304,7 @@ function draw(card,state){
   cv.width=w*dpr;cv.height=h*dpr;
   const g=cv.getContext('2d');g.setTransform(dpr,0,0,dpr,0,0);g.clearRect(0,0,w,h);
   const css=getComputedStyle(document.body);
-  const line=css.getPropertyValue('--line').trim();
+  const line=css.getPropertyValue('--grid').trim();
   const muted=css.getPropertyValue('--muted').trim();
   const lines=[];const yKeys=Array.isArray(card.y)?card.y:[card.y];
   const sources=(card.kind==='reward'&&(state.series.reward||[]).length)
@@ -236,47 +313,78 @@ function draw(card,state){
     const rows=state.series[s]||[];if(!rows.length)continue;
     for(const key of yKeys){
       const xs=[],ys=[];
-      for(const r of rows){const yv=r[key];
-        if(yv===null||yv===undefined||Number.isNaN(yv))continue;
-        xs.push(r[card.x]);ys.push(yv);}
+      for(const r of rows){const yv=Number(r[key]),xv=Number(r[card.x]);
+        if(!Number.isFinite(yv)||!Number.isFinite(xv))continue;
+        xs.push(xv);ys.push(yv);}
       if(!xs.length)continue;
       const label=(card.labels&&yKeys.length>1)
         ?`${LABELS[s]||s} ${card.labels[yKeys.indexOf(key)]}`
-        :(yKeys.length>1?card.labels[yKeys.indexOf(key)]:(LABELS[s]||s));
-      lines.push({xs,ys:smooth(ys,card.smooth||1),label});
+        :(yKeys.length>1?(card.labels?card.labels[yKeys.indexOf(key)]:key):(LABELS[s]||s));
+      const benchmarkMethod=s.replace(/^benchmark_(train|eval)_/,'');
+      const benchmarkIndex=BENCHMARK_METHODS.indexOf(benchmarkMethod);
+      const colorIndex=benchmarkIndex>=0?benchmarkIndex:
+        (sources.length>1?sources.indexOf(s):yKeys.indexOf(key));
+      lines.push({xs,ys:smooth(ys,card.smooth||1),label,
+        color:PALETTE[Math.max(0,colorIndex)%PALETTE.length]});
     }
   }
   const lg=document.getElementById('lg-'+card.id);
   if(!lines.length){g.fillStyle=muted;g.font='12px sans-serif';
-    g.fillText('no data yet',10,h/2);lg.innerHTML='';return;}
+    g.fillText('no data yet',10,h/2);if(lg)lg.innerHTML='';return;}
   let x0=Infinity,x1=-Infinity,y0=Infinity,y1=-Infinity;
   for(const l of lines){for(let i=0;i<l.xs.length;i++){
     x0=Math.min(x0,l.xs[i]);x1=Math.max(x1,l.xs[i]);
     y0=Math.min(y0,l.ys[i]);y1=Math.max(y1,l.ys[i]);}}
   if(card.ymin!==undefined)y0=card.ymin;if(card.ymax!==undefined)y1=card.ymax;
-  if(x1===x0)x1=x0+1;if(y1===y0){y1=y0+1;y0-=1;}
-  const pad={l:44,r:8,t:8,b:20};
+  if(x1===x0){x0-=0.5;x1+=0.5;}if(y1===y0){y1+=0.5;y0-=0.5;}
+  if(card.ymin===undefined&&card.ymax===undefined){const margin=(y1-y0)*0.06;
+    y0-=margin;y1+=margin;}
+  const pad={l:48,r:10,t:9,b:25};
   const px=v=>pad.l+(v-x0)/(x1-x0)*(w-pad.l-pad.r);
   const py=v=>h-pad.b-(v-y0)/(y1-y0)*(h-pad.t-pad.b);
-  g.strokeStyle=line;g.lineWidth=1;g.fillStyle=muted;g.font='10px sans-serif';
-  for(let i=0;i<=3;i++){const v=y0+(y1-y0)*i/3,y=py(v);
+  g.strokeStyle=line;g.lineWidth=.7;g.fillStyle=muted;g.font='10px Arial';
+  g.setLineDash([1.5,2.5]);
+  for(let i=0;i<=4;i++){const v=y0+(y1-y0)*i/4,y=py(v);
     g.beginPath();g.moveTo(pad.l,y);g.lineTo(w-pad.r,y);g.stroke();
     g.fillText(v.toFixed(Math.abs(v)>=100?0:2),4,y+3);}
-  g.fillText(String(Math.round(x0)),pad.l,h-6);
-  g.textAlign='right';g.fillText(String(Math.round(x1)),w-pad.r,h-6);g.textAlign='left';
-  lines.forEach((l,i)=>{g.strokeStyle=PALETTE[i%PALETTE.length];g.lineWidth=1.8;
+  for(let i=0;i<=4;i++){const v=x0+(x1-x0)*i/4,x=px(v);
+    g.beginPath();g.moveTo(x,pad.t);g.lineTo(x,h-pad.b);g.stroke();}
+  g.setLineDash([]);g.strokeStyle='#262626';g.lineWidth=.8;
+  g.strokeRect(pad.l,pad.t,w-pad.l-pad.r,h-pad.t-pad.b);
+  g.fillStyle=muted;g.fillText(formatTick(x0),pad.l,h-7);
+  g.textAlign='right';g.fillText(formatTick(x1),w-pad.r,h-7);g.textAlign='left';
+  lines.forEach(l=>{g.strokeStyle=l.color;g.lineWidth=1.8;
     g.beginPath();for(let k=0;k<l.xs.length;k++){
       const X=px(l.xs[k]),Y=py(l.ys[k]);k?g.lineTo(X,Y):g.moveTo(X,Y);}g.stroke();});
-  lg.innerHTML=lines.map((l,i)=>
-    `<span><i style="background:${PALETTE[i%PALETTE.length]}"></i>${l.label}</span>`).join('');
+  if(lg)lg.innerHTML=lines.map(l=>
+    `<span><i style="background:${l.color}"></i>${escapeHTML(l.label)}</span>`).join('');
 }
+function formatTick(v){const a=Math.abs(v);return a>=1000?v.toExponential(1):
+  (a>=100?Number(v).toFixed(0):a>=10?Number(v).toFixed(1):Number(v).toFixed(2));}
 function tiles(state){
   const s=state.scalars||{};const out=[];
   const add=(label,value)=>out.push(
-    `<div class="tile"><b>${value}</b><span>${label}</span></div>`);
+    `<div class="tile"><b>${escapeHTML(value)}</b><span>${escapeHTML(label)}</span></div>`);
   const last=(name,key)=>{const r=state.series[name];
     return r&&r.length?r[r.length-1][key]:null;};
   add('stage',state.stage.name);
+  if(s.dashboard_profile==='shin2026'){
+    const methods=s.benchmark_methods||[];
+    const trained=methods.reduce((n,m)=>n+(state.series['benchmark_train_'+m]||[]).length,0);
+    add('phase',s.benchmark_phase||'initializing');
+    if(s.current_method)add('reward arm',s.current_method);
+    add('run mode',s.benchmark_mode||'--');
+    add('training progress',`${trained} / ${s.training_total||0}`);
+    add('paired evaluation',`${s.evaluation_completed||0} / ${s.evaluation_total||0}`);
+    if(s.current_scenario)add('scenario',s.current_scenario.replaceAll('_',' '));
+    const step=state.series.benchmark_step||[],latest=step.length?step[step.length-1]:null;
+    if(latest){add('target visible',latest.in_fov?'yes':'no');
+      add('position error',Number(latest.position_error).toFixed(3)+' m');}
+    if(s.current_curriculum!==undefined)add('curriculum c',Number(s.current_curriculum).toFixed(3));
+    if(s.config_hash)add('config hash',String(s.config_hash).slice(0,10));
+    if(s.reward_design_id)add('reward design',String(s.reward_design_id).slice(0,16));
+    document.getElementById('tiles').innerHTML=out.join('');return;
+  }
   if(s.dataset_episode)add('dataset episode',s.dataset_episode);
   if(s.rgat_epoch)add('R-GAT epoch',`${s.rgat_epoch} (${s.rgat_device||'?'})`);
   const rv=last('rgat','val_mse');if(rv!==null)add('R-GAT val MSE',rv.toFixed(4));
@@ -291,6 +399,71 @@ function tiles(state){
   const st=last('episode','status');if(st)add('episode status',st);
   const z=last('episode','z');if(z!==null)add('altitude',z.toFixed(2)+' m');
   document.getElementById('tiles').innerHTML=out.join('');
+}
+function escapeHTML(value){return String(value??'--').replace(/[&<>"']/g,c=>
+  ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function benchmarkPanel(state){
+  const s=state.scalars||{},contract=s.actor_contract||{};
+  const labels={camera:'Actor image',proprioception:'Actor proprioception',
+    estimator:'Recurrent estimator',actor:'Deployment actor',critic:'Asymmetric critic',
+    forbidden:'Hard information boundary'};
+  document.getElementById('benchmark-contract').innerHTML=Object.entries(labels).map(([key,label])=>
+    `<div class="contract-item ${key==='forbidden'?'forbidden':''}"><b>${label}</b>`+
+    `<span>${escapeHTML(contract[key]||'--')}</span></div>`).join('');
+  const methods=s.benchmark_methods||[];
+  document.getElementById('benchmark-methods').innerHTML=methods.map((method,index)=>{
+    const rows=state.series['benchmark_train_'+method]||[],n=Math.min(50,rows.length);
+    const success=n?rows.slice(-n).reduce((sum,row)=>sum+Number(row.paper_success||0),0)/n:null;
+    const progress=rows.length+'/'+Math.max(1,Number(s.training_total||0)/Math.max(1,methods.length));
+    const rate=success===null?'waiting':(100*success).toFixed(1)+'% success';
+    return `<div class="method-chip" style="border-left-color:${PALETTE[index%PALETTE.length]}">`+
+      `<b>${escapeHTML(LABELS['benchmark_train_'+method]||method)}</b>`+
+      `<small>${progress} episodes · ${rate}</small></div>`;}).join('');
+}
+function drawEvaluationBars(card,state){
+  const cv=document.getElementById('cv-'+card.id),lg=document.getElementById('lg-'+card.id);
+  if(!cv)return;
+  const dpr=window.devicePixelRatio||1,w=cv.clientWidth,h=cv.clientHeight;
+  cv.width=w*dpr;cv.height=h*dpr;
+  const g=cv.getContext('2d');g.setTransform(dpr,0,0,dpr,0,0);g.clearRect(0,0,w,h);
+  const methods=(state.scalars.benchmark_methods||[]).filter(method=>
+    (state.series['benchmark_eval_'+method]||[]).length);
+  const preferred=['training_random_walk','straight_8mps','linear_acceleration_wave',
+    'circle','zigzag','u_turn','vertical_heave_boat'];
+  const present=new Set();
+  for(const method of methods)for(const row of state.series['benchmark_eval_'+method]||[])
+    present.add(row.scenario);
+  const scenarios=preferred.filter(x=>present.has(x));
+  for(const value of present)if(!scenarios.includes(value))scenarios.push(value);
+  if(!methods.length||!scenarios.length){g.fillStyle='#666';g.font='12px Arial';
+    g.fillText('no paired evaluation data yet',12,h/2);lg.innerHTML='';return;}
+  const pad={l:48,r:12,t:10,b:67},pw=w-pad.l-pad.r,ph=h-pad.t-pad.b;
+  g.strokeStyle='#D8D8D8';g.lineWidth=.7;g.setLineDash([1.5,2.5]);
+  g.fillStyle='#666';g.font='10px Arial';
+  for(let i=0;i<=4;i++){const y=pad.t+ph*(1-i/4);
+    g.beginPath();g.moveTo(pad.l,y);g.lineTo(w-pad.r,y);g.stroke();
+    g.fillText((i/4).toFixed(2),8,y+3);}
+  g.setLineDash([]);
+  const group=pw/scenarios.length,barWidth=Math.min(24,group*.76/methods.length);
+  scenarios.forEach((scenario,si)=>{
+    methods.forEach((method,mi)=>{
+      const rows=(state.series['benchmark_eval_'+method]||[]).filter(r=>r.scenario===scenario);
+      if(!rows.length)return;
+      const mean=rows.reduce((sum,row)=>sum+Number(row.paper_success||0),0)/rows.length;
+      const x=pad.l+group*si+(group-barWidth*methods.length)/2+mi*barWidth;
+      const height=Math.max(0,Math.min(1,mean))*ph;
+      g.fillStyle=PALETTE[BENCHMARK_METHODS.indexOf(method)%PALETTE.length];
+      g.fillRect(x,pad.t+ph-height,Math.max(1,barWidth-1),height);
+    });
+    const label=scenario.replace('training_','').replaceAll('_',' ');
+    g.save();g.translate(pad.l+group*(si+.5),h-pad.b+8);g.rotate(-Math.PI/7);
+    g.fillStyle='#4d4d4d';g.textAlign='right';g.font='10px Arial';g.fillText(label,0,0);g.restore();
+  });
+  g.strokeStyle='#262626';g.lineWidth=.8;g.strokeRect(pad.l,pad.t,pw,ph);
+  lg.innerHTML=methods.map(method=>{
+    const index=BENCHMARK_METHODS.indexOf(method);
+    return `<span><i style="background:${PALETTE[index%PALETTE.length]}"></i>`+
+      `${escapeHTML(LABELS['benchmark_eval_'+method]||method)}</span>`;}).join('');
 }
 function rewardSurface(state,last){
   const cv=document.getElementById('cv-rgat_reward_surface');if(!cv)return;
@@ -588,6 +761,18 @@ function graphBind(){
 }
 graphBind();
 
+function applyProfile(state){
+  const profile=state.scalars.dashboard_profile==='shin2026'?'benchmark':'urban';
+  document.body.dataset.profile=profile;
+  document.getElementById('page-title').textContent=profile==='benchmark'
+    ?'Shin 2026 · recurrent vision landing benchmark'
+    :'Ontology-RGAT · Isaac Sim + PX4';
+  for(const c of CARDS){
+    const el=document.getElementById('card-'+c.id);
+    el.hidden=Boolean(c.view&&c.view!==profile);
+  }
+  return profile;
+}
 let lastRevision=-1,lastAt=0;
 async function tick(){
   try{
@@ -597,16 +782,24 @@ async function tick(){
     document.getElementById('detail').textContent=state.stage.detail||'';
     if(state.revision!==lastRevision){
       lastRevision=state.revision;lastAt=Date.now();
+      const profile=applyProfile(state);
       tiles(state);
-      for(const c of CARDS)if(c.id!=='tiles'&&c.kind!=='graph')draw(c,state);
-      rewardPanel(state);
-      const gs=state.graph||null;
-      const stamp=gs?`${gs.source||'graph'}${gs.attention?'':' (schema only, '
-        +'the R-GAT has not been trained yet)'}`
-        +(gs.phi!==undefined?`  \u03a6=${gs.phi.toFixed(3)}`:'')
-        :'waiting for a graph';
-      document.getElementById('g3d-src').textContent=stamp;
-      G.data=gs;G.dirty=true;graphLegend();
+      for(const c of CARDS){
+        if(c.id==='tiles'||c.kind==='graph'||c.kind==='contract'||
+           (c.view&&c.view!==profile))continue;
+        c.kind==='evalbars'?drawEvaluationBars(c,state):draw(c,state);
+      }
+      if(profile==='benchmark')benchmarkPanel(state);
+      if(profile==='urban'){
+        rewardPanel(state);
+        const gs=state.graph||null;
+        const stamp=gs?`${gs.source||'graph'}${gs.attention?'':' (schema only, '
+          +'the R-GAT has not been trained yet)'}`
+          +(gs.phi!==undefined?`  \u03a6=${gs.phi.toFixed(3)}`:'')
+          :'waiting for a graph';
+        document.getElementById('g3d-src').textContent=stamp;
+        G.data=gs;G.dirty=true;graphLegend();
+      }
     }
   }catch(e){document.getElementById('stage').textContent='disconnected';}
   const age=lastAt?Math.round((Date.now()-lastAt)/1000):0;

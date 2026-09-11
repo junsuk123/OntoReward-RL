@@ -26,6 +26,8 @@ from ontology_rgat.ppo.recurrent_train import collect_episode, train_live
 from ontology_rgat.reward_modes import (FrozenControlledPotential,
                                         prepare_controlled_rgat_artifact)
 from ontology_rgat.stack import ExternalStack
+from ontology_rgat.viz.dashboard import Dashboard
+from ontology_rgat.viz.live import BenchmarkMonitor, STORE
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -57,6 +59,7 @@ def _live_config(mode, results_dir, system_config):
     cfg.paths.system_yaml = str(Path(system_config).resolve())
     cfg.paths.results = str(Path(results_dir).resolve())
     cfg.paths.models = str((Path(results_dir) / "models").resolve())
+    cfg.paths.live = str((Path(results_dir) / "live").resolve())
     return cfg
 
 
@@ -99,6 +102,8 @@ def main():
     parser.add_argument("--keep-stack", action="store_true")
     parser.add_argument("--isaac-sim-path")
     parser.add_argument("--isaac-timeout", type=float)
+    parser.add_argument("--no-dashboard", action="store_true")
+    parser.add_argument("--dashboard-port", type=int)
     args = parser.parse_args()
     if args.reward:
         args.methods = [args.reward]
@@ -163,9 +168,24 @@ def main():
 
     ensure_fastdds()
     cfg = _live_config(args.mode, args.results_dir, args.system_config)
+    cfg.viz.dashboard.enabled = not args.no_dashboard
+    if args.dashboard_port is not None:
+        cfg.viz.dashboard.port = int(args.dashboard_port)
+    ppo_config = dict(config.get("ppo") or {})
+    cfg.reward.pbrs.gamma = float(ppo_config.get("gamma", .99))
+    cfg.reward.pbrs["lambda"] = float(ppo_config.get("shaping_lambda", 1.0))
+    monitor = BenchmarkMonitor(STORE)
+    monitor.configure(
+        methods=args.methods, mode=args.mode, config_hash=config_hash,
+        training_total=train_count * len(args.methods),
+        evaluation_total=len(plan),
+        reward_design_id=getattr(potential, "design_id", None),
+        reward_design_sha256=getattr(potential, "sha256", None))
+    dashboard = Dashboard(cfg, STORE).start()
     owned = None
     stack_module.current(None)
     try:
+        monitor.stage("stack startup", "DDS · Isaac Sim · Pegasus · PX4")
         if not args.use_running_stack:
             owned = ExternalStack(
                 cfg, isaac_sim_path=args.isaac_sim_path,
@@ -177,13 +197,13 @@ def main():
         with RosGrayscaleSource() as camera:
             models = {}
             training_rows = []
-            ppo_config = dict(config.get("ppo") or {})
             curriculum_raw = dict(config.get("curriculum") or {})
             curriculum_config = {
                 "levels": int(curriculum_raw.get("levels", 80)),
                 "episodes_per_update": int(curriculum_raw.get("update_every_episodes", 512)),
             }
             for method in args.methods:
+                monitor.stage("training", f"recurrent PPO · {method}")
                 # Identical initialization is part of the paired comparison.
                 torch.manual_seed(model_seed)
                 model = _build_model(config, args.device)
@@ -192,7 +212,7 @@ def main():
                     model, method, range(training_seed0, training_seed0 + train_count),
                     args.results_dir / "models", config_hash=config_hash,
                     potential=potential, ppo=ppo_config,
-                    curriculum_config=curriculum_config)
+                    curriculum_config=curriculum_config, monitor=monitor)
                 models[method] = model
                 training_rows.extend(history)
             _write_csv(args.results_dir / "training_curves.csv", training_rows)
@@ -201,11 +221,13 @@ def main():
             if episode_path.is_file():
                 with episode_path.open(newline="", encoding="utf-8") as stream:
                     evaluation_rows = list(csv.DictReader(stream))
+            monitor.restore_evaluation(evaluation_rows)
             completed_evaluation = {
                 (row["method"], row["scenario"], int(row["seed"]))
                 for row in evaluation_rows
             }
             for method, model in models.items():
+                monitor.stage("paired evaluation", method)
                 with LiveShinEnvironment(cfg, camera, horizon_steps=300) as env:
                     for item in plan:
                         if item["method"] != method:
@@ -217,13 +239,16 @@ def main():
                             env, model, method, int(item["seed"]), curriculum=1.0,
                             potential=potential, deterministic=True,
                             gamma=float(ppo_config.get("gamma", .99)),
-                            scenario=item["scenario"])
+                            scenario=item["scenario"], monitor=monitor,
+                            phase="evaluation")
                         metric.update({"method": method, "scenario": item["scenario"],
                                        "episode": int(item["seed"]),
                                        "curriculum_level": 80,
                                        "training_sample_efficiency": train_count})
                         evaluation_rows.append(metric)
+                        monitor.evaluation_update(method, metric)
                         _write_csv(episode_path, evaluation_rows)
+            monitor.stage("reporting", "paired bootstrap · tables · figures")
             outputs = write_benchmark_outputs(evaluation_rows, args.results_dir)
             # The evaluator creates an evaluation-view training file; restore
             # the actual optimization history generated above.
@@ -233,11 +258,17 @@ def main():
             manifest["figures"] = outputs["figures"]
             manifest_path.write_text(
                 json.dumps(manifest, indent=2), encoding="utf-8")
+            monitor.stage("complete", str(args.results_dir.resolve()))
         return 0
+    except Exception as exc:
+        monitor.stage("failed", f"{type(exc).__name__}: {exc}")
+        raise
     finally:
         stack_module.current(None)
         if owned is not None and not args.keep_stack:
             owned.stop()
+        if dashboard is not None:
+            dashboard.stop()
 
 
 if __name__ == "__main__":

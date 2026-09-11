@@ -25,6 +25,7 @@ from ontology_rgat.benchmarks.shin2026 import (ActorObservation,
                                                default_shin2026_config)
 from ontology_rgat.bridge import BridgeError
 from ontology_rgat.controllers import VelocityYawRateController
+from ontology_rgat.initialization import curriculum_motion_scale
 from ontology_rgat.estimation import LSTMRelativeStateEstimator
 from ontology_rgat.ppo.recurrent import ShinRecurrentActorCritic
 from ontology_rgat.ppo.recurrent_train import train_live, update_episode
@@ -194,6 +195,14 @@ def test_beginner_curriculum_starts_at_stationary_airborne_hover():
     assert 2.0 <= full["relative_position_m"][2] <= 8.0
 
 
+def test_beginner_curriculum_keeps_the_ugv_moving_at_a_safe_fraction():
+    assert curriculum_motion_scale(0.0, 0.35) == pytest.approx(0.35)
+    assert curriculum_motion_scale(0.5, 0.35) == pytest.approx(0.675)
+    assert curriculum_motion_scale(1.0, 0.35) == pytest.approx(1.0)
+    with pytest.raises(ValueError):
+        curriculum_motion_scale(0.0, 1.1)
+
+
 def test_airborne_terminal_is_staged_in_hover_instead_of_auto_land():
     """A tilt failure can be terminal while the airframe is still flying."""
     calls = []
@@ -240,11 +249,14 @@ def test_live_benchmark_restarts_owned_stack_after_reset_failure(monkeypatch):
         raise BridgeError("PX4 left OFFBOARD")
 
     scales = []
+    reset_kwargs = []
     recovered_adapter = SimpleNamespace(
         controller=SimpleNamespace(set_curriculum=lambda value: scales.append(value)),
-        reset=lambda *_args, **_kwargs: ("actor", {"state": "ready"}))
+        reset=lambda *_args, **kwargs: reset_kwargs.append(kwargs)
+        or ("actor", {"state": "ready"}))
     env = LiveShinEnvironment.__new__(LiveShinEnvironment)
     env.cfg = SimpleNamespace(external=SimpleNamespace(reset_recoveries=1))
+    env.control = {"curriculum_min_pad_motion_scale": 0.35}
     env.bridge = SimpleNamespace(
         cfg=SimpleNamespace(pad_scale=0.0),
         close=lambda: calls.append("close"))
@@ -257,10 +269,12 @@ def test_live_benchmark_restarts_owned_stack_after_reset_failure(monkeypatch):
     owned = SimpleNamespace(restart=lambda: calls.append("restart"))
     monkeypatch.setattr(stack_module, "current", lambda: owned)
 
-    result = env.reset(7, scenario="circle")
+    result = env.reset(7, curriculum=0.0, scenario="circle")
 
     assert calls == ["close", "restart"]
-    assert scales == [1.0, 1.0]
+    assert scales == [0.0, 0.0]
+    assert env.bridge.cfg.pad_scale == pytest.approx(0.35)
+    assert reset_kwargs == [{"scenario": "circle", "initial_condition_scale": 0.0}]
     assert result[:2] == ("actor", {"state": "ready"})
 
 

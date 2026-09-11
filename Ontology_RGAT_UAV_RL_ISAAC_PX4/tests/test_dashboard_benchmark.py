@@ -15,17 +15,21 @@ def test_benchmark_monitor_publishes_refactored_contract_and_progress():
     monitor.reset_episode(
         method="ontoreward", phase="training", seed=42,
         scenario="training_random_walk", curriculum=0.25,
-        action_scale=0.5125)
+        action_scale=0.5125, motion_scale=0.5125)
     monitor.step(
         index=1, dt=0.1, method="ontoreward", reward=0.3,
         reward_parts={"task": 0.0, "shape": 0.3, "phi": -0.5,
                       "phi_next": -0.2},
         estimate=np.array([1, 0, -2, 0.5, 0, 0]),
         truth=np.array([0, 0, -2, 0, 0, 0]), in_fov=False,
-        estimation_loss=0.2, state={"battery": {
-            "enabled": True, "reserve": .4, "state_of_charge": .03,
-            "remaining_j": 4200.0, "energy_used_j": 600.0, "power_w": 190.0,
-        }})
+        estimation_loss=0.2, state={
+            "world": {"velocity": [0.3, 0.4, 0.0]},
+            "pad": {"velocity": [0.12, 0.0, 0.0]},
+            "battery": {
+                "enabled": True, "reserve": .4, "state_of_charge": .03,
+                "remaining_j": 4200.0, "energy_used_j": 600.0,
+                "power_w": 190.0,
+            }})
     monitor.training_update("ontoreward", {
         "method": "ontoreward", "episode": 1, "episode_return": 3.0,
         "paper_success": 1.0, "position_rmse": 0.2,
@@ -47,8 +51,11 @@ def test_benchmark_monitor_publishes_refactored_contract_and_progress():
     assert state["series"]["benchmark_step"][-1]["shape"] == 0.3
     assert state["series"]["benchmark_step"][-1]["battery_reserve"] == .4
     assert state["series"]["benchmark_step"][-1]["battery_remaining_j"] == 4200.0
+    assert state["series"]["benchmark_step"][-1]["uav_speed_m_s"] == .5
+    assert state["series"]["benchmark_step"][-1]["ugv_speed_m_s"] == .12
     assert state["series"]["benchmark_train_ontoreward"][-1]["episode"] == 1
     assert state["scalars"]["current_action_envelope_scale"] == 0.5125
+    assert state["scalars"]["current_pad_motion_scale"] == 0.5125
 
 
 def test_benchmark_monitor_restores_csv_rows_and_pairs_evaluation_series():
@@ -80,6 +87,7 @@ def test_dashboard_has_self_contained_matlab_style_benchmark_view():
     assert "recurrent estimate vs truth" in PAGE
     assert "UAV action-envelope curriculum" in PAGE
     assert "Current episode · real 3S battery" in PAGE
+    assert "Current episode · vehicle motion (m/s)" in PAGE
     assert "Battery-depletion terminal rate" in PAGE
     assert "prefers-color-scheme:dark" not in PAGE
     for color in MATLAB_COLORS:

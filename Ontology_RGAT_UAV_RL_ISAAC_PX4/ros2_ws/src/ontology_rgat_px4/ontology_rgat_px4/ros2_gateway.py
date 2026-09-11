@@ -487,6 +487,12 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                 pad_scale = float(msg.get("pad_scale", 1.0))
                 if not math.isfinite(pad_scale) or not 0.0 <= pad_scale <= 4.0:
                     raise ProtocolError("pad_scale must be finite and in [0,4]")
+                initial_condition_scale = float(msg.get(
+                    "initial_condition_scale", min(pad_scale, 1.0)))
+                if (not math.isfinite(initial_condition_scale)
+                        or not 0.0 <= initial_condition_scale <= 1.0):
+                    raise ProtocolError(
+                        "initial_condition_scale must be finite and in [0,1]")
                 # Scales the canyon's error mechanisms without moving a
                 # building, so a sweep can ask how much GNSS degradation a
                 # policy survives; 0.0 is the open-sky control condition.
@@ -537,6 +543,8 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                                        "seed": int(msg.get("seed", 0)),
                                        "wind_scale": wind_scale,
                                        "pad_scale": pad_scale,
+                                       "initial_condition_scale":
+                                           initial_condition_scale,
                                        "gnss_scale": gnss_scale,
                                        "scenario": scenario})
                 self.reset_pub.publish(req)
@@ -669,14 +677,33 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                 timeout_s = (cfg.sitl_action_timeout_s
                              if cfg.target == "sitl" else cfg.action_timeout_s)
                 if age_s > timeout_s:
-                    if self.prestream:
+                    keep_sitl_hover = bool(
+                        cfg.target == "sitl" and cfg.start_airborne
+                        and self.sample.armed and self.px4_world_position is not None)
+                    if keep_sitl_hover:
+                        # A rendered frame or learner update can exceed the
+                        # action deadline between episodes. Convert the last
+                        # command to an immediate world-position hover without
+                        # dropping one OFFBOARD heartbeat; stale velocity must
+                        # not continue, but a 12 ms signal gap must not trigger
+                        # AUTO.LAND either.
+                        self.goto_target_enu = self.px4_world_position.copy()
+                        self.goto_pad_relative = False
+                        self.goto_yaw_enu = yaw_from_quat_wxyz(
+                            self.sample.quaternion_enu_flu_wxyz)
+                        self.goto_deadline_ns = stamp + int(120.0e9)
                         self.get_logger().warning(
-                            f"action deadman expired after {age_s:.3f}s "
-                            f"({cfg.target} limit {timeout_s:.3f}s); yielding to "
-                            "PX4 offboard-loss failsafe")
-                    self.prestream = 0
-                    self.offboard_requested = False
-                    self.last_mode_request_tick = -self.mode_request_period
+                            f"action deadman expired after {age_s:.3f}s; "
+                            "holding current SITL position between episodes")
+                    else:
+                        if self.prestream:
+                            self.get_logger().warning(
+                                f"action deadman expired after {age_s:.3f}s "
+                                f"({cfg.target} limit {timeout_s:.3f}s); yielding "
+                                "to PX4 offboard-loss failsafe")
+                        self.prestream = 0
+                        self.offboard_requested = False
+                        self.last_mode_request_tick = -self.mode_request_period
                     self.last_action_ns = 0
                     self.last_action_px4_time_us = 0
                     self.velocity_position_target_enu = None

@@ -67,8 +67,16 @@ class RosGrayscaleSource:
         self._thread.start()
 
     def _spin(self):
+        from rclpy.executors import ExternalShutdownException
+
         while not self._stop.is_set() and self.rclpy.ok():
-            self.rclpy.spin_once(self.node, timeout_sec=0.05)
+            try:
+                self.rclpy.spin_once(self.node, timeout_sec=0.05)
+            except ExternalShutdownException:
+                # Another ROS owner (normally the gateway during Ctrl-C) may
+                # close the shared context before this camera source.  That is
+                # an orderly shutdown, not a camera-thread failure.
+                return
 
     def __call__(self):
         frame, stamp = self.frames.latest(

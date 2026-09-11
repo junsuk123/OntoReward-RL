@@ -96,13 +96,22 @@ five reward arms retain the paper-compatible observation boundary.
   at `log_std=-1.5` (standard deviation 0.223 per normalized action) to avoid
   violent random commands from an untrained policy.
 - The paper gives `c` and the update interval but not its promotion rule. The
-  supplied schedule advances linearly and serializes its state. The same `c`
-  also implements a hover/slow-follow action curriculum: the UAV command and
-  slew-rate envelope is scaled by `0.35 + 0.65c`. At `c=0`, the reset entry is
+  supplied schedule advances linearly and serializes its state. UAV commands
+  and UGV motion use separate lower bounds: the UAV envelope and road-speed
+  draw are both scaled by `0.35 + 0.65c`, while initial-condition geometry uses
+  `c` directly. Thus the target moves at 0.0875--0.21 m/s even at `c=0`,
+  instead of remaining parked for 512 episodes. At `c=0`, the reset entry is
   the existing stationary `[0, 0, 4.5]` m airborne support, avoiding a large
   unmeasured motion before an untrained policy takes over; it continuously
   blends to the exact Table-I draw at `c=1`. Paired evaluation always uses
   `c=1`, and all five reward arms receive exactly the same envelope.
+- During estimator-only warm-up, actions are sampled from the deliberately
+  narrow initial policy distribution rather than fixed at its mean. The
+  position-backed PX4 setpoint and 35% envelope keep this excitation bounded,
+  while avoiding a static image/state dataset. If the learner misses its SITL
+  action deadline, the gateway atomically replaces stale velocity with a
+  current-position hover and continues the OFFBOARD heartbeat; hardware keeps
+  the ordinary PX4 link-loss behavior.
 - Policy handover requires the pad-relative speed to stay below 0.15 m/s for
   1.0 s. PX4's delayed landed flag is ignored while simulator truth places an
   armed vehicle clearly above the deck, preventing a stable hover from being

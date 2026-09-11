@@ -45,9 +45,12 @@ class ShinPX4Adapter:
         self.image_source = image_source
         self.controller = controller
 
-    def reset(self, seed: int, scenario: str = "training_random_walk"):
+    def reset(self, seed: int, scenario: str = "training_random_walk",
+              *, initial_condition_scale: float | None = None):
         self.controller.reset()
-        state = self.bridge.reset(seed, scenario=scenario)
+        state = self.bridge.reset(
+            seed, scenario=scenario,
+            initial_condition_scale=initial_condition_scale)
         return actor_observation_from_state(state, self.image_source()), state
 
     def step(self, normalized_action):

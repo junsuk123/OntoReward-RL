@@ -461,7 +461,8 @@ class BenchmarkMonitor:
 
     def reset_episode(self, *, method: str, phase: str, seed: int,
                       scenario: str, curriculum: float,
-                      action_scale: float = 1.0) -> None:
+                      action_scale: float = 1.0,
+                      motion_scale: float | None = None) -> None:
         self.store.replace("benchmark_step", [])
         if self.rviz is not None:
             self.rviz.clear_trails()
@@ -469,6 +470,8 @@ class BenchmarkMonitor:
             benchmark_phase=str(phase), current_method=str(method),
             current_seed=int(seed), current_scenario=str(scenario),
             current_curriculum=float(curriculum),
+            current_pad_motion_scale=float(
+                curriculum if motion_scale is None else motion_scale),
             current_action_envelope_scale=float(action_scale))
 
     def step(self, *, index: int, dt: float, method: str, reward: float,
@@ -497,8 +500,18 @@ class BenchmarkMonitor:
             point[key] = float(parts.get(key, 0.0))
         battery = (state.get("battery") if isinstance(state, dict)
                    and isinstance(state.get("battery"), dict) else {})
+        world = (state.get("world") if isinstance(state, dict)
+                 and isinstance(state.get("world"), dict) else {})
+        pad = (state.get("pad") if isinstance(state, dict)
+               and isinstance(state.get("pad"), dict) else {})
+        uav_velocity = np.asarray(world.get("velocity", ()), dtype=float)
+        pad_velocity = np.asarray(pad.get("velocity", ()), dtype=float)
         enabled = bool(battery.get("enabled", False))
         point.update({
+            "uav_speed_m_s": float(np.linalg.norm(uav_velocity))
+            if uav_velocity.shape == (3,) else 0.0,
+            "ugv_speed_m_s": float(np.linalg.norm(pad_velocity))
+            if pad_velocity.shape == (3,) else 0.0,
             "battery_reserve": float(battery.get("reserve", 1.0) if enabled else 1.0),
             "battery_state_of_charge": float(
                 battery.get("state_of_charge", 1.0) if enabled else 1.0),

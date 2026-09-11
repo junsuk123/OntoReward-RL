@@ -173,7 +173,8 @@ class PX4Bridge:
                     "action scaling matches the policy.")
 
     # ------------------------------------------------------------------ reset
-    def reset(self, seed: int, scenario: str = "training_random_walk") -> dict[str, Any]:
+    def reset(self, seed: int, scenario: str = "training_random_walk", *,
+              initial_condition_scale: float | None = None) -> dict[str, Any]:
         """Reseed the episode and hand back the first valid state.
 
         The entry pose is flown by PX4, never teleported: Pegasus cannot reset
@@ -183,11 +184,17 @@ class PX4Bridge:
         moving entry point instead of holding a point the rover has already
         driven away from.
         """
-        ack = self.transact("reset", {"seed": float(seed),
-                                      "wind_scale": float(self.cfg.wind_scale),
-                                      "pad_scale": float(self.cfg.pad_scale),
-                                      "gnss_scale": float(self.cfg.gnss_scale),
-                                      "scenario": str(scenario)},
+        reset_fields = {"seed": float(seed),
+                        "wind_scale": float(self.cfg.wind_scale),
+                        "pad_scale": float(self.cfg.pad_scale),
+                        "gnss_scale": float(self.cfg.gnss_scale),
+                        "scenario": str(scenario)}
+        if initial_condition_scale is not None:
+            scale = float(initial_condition_scale)
+            if not np.isfinite(scale) or not 0.0 <= scale <= 1.0:
+                raise BridgeError("initial-condition curriculum must be in [0, 1]")
+            reset_fields["initial_condition_scale"] = scale
+        ack = self.transact("reset", reset_fields,
                             ("ack",))
         # Kept whether or not the entry pose is flown: it carries the seeded
         # entry offset and starting energy, which is what makes an episode

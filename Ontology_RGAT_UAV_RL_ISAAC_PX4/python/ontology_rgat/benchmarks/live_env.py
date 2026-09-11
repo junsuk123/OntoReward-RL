@@ -8,6 +8,7 @@ import numpy as np
 
 from ..bridge import BridgeError, PX4Bridge
 from ..controllers import VelocityYawRateController
+from ..initialization import curriculum_motion_scale
 from ..mathx import quat_to_euler_zyx
 from .px4_adapter import (ShinPX4Adapter, critic_observation_from_state)
 from .shin2026 import ActorObservation, CriticObservation
@@ -88,23 +89,29 @@ class LiveShinEnvironment:
     def reset(self, seed: int, curriculum: float = 1.0,
               scenario: str = "training_random_walk") -> LiveStep:
         self.steps = 0
-        # The same scalar scales both platform difficulty and the UAV action
-        # envelope for every reward arm. A replacement adapter after recovery
-        # receives the same level before its reset.
+        # Initial pose and action difficulty still start at c=0, but a separate
+        # floor keeps the UGV visibly and observably moving from episode one.
+        # A replacement adapter after recovery receives the same two scales.
         curriculum = float(np.clip(curriculum, 0.0, 1.0))
+        control = getattr(self, "control", {})
+        minimum_motion = float(control.get(
+            "curriculum_min_pad_motion_scale", 0.35))
+        motion_scale = curriculum_motion_scale(curriculum, minimum_motion)
+        self.pad_motion_scale = motion_scale
         from .. import stack as stack_module
 
         attempts = 1 + max(0, int(self.cfg.external.reset_recoveries))
         for attempt in range(1, attempts + 1):
-            self.bridge.cfg.pad_scale = curriculum
-            control = getattr(self, "control", {})
+            self.bridge.cfg.pad_scale = motion_scale
             self.bridge.cfg.require_pad_in_view = bool(
                 control.get(
                     "require_initial_pad_visible_during_curriculum", True)
                 and curriculum < 1.0)
             self.adapter.controller.set_curriculum(curriculum)
             try:
-                actor, state = self.adapter.reset(int(seed), scenario=scenario)
+                actor, state = self.adapter.reset(
+                    int(seed), scenario=scenario,
+                    initial_condition_scale=curriculum)
                 break
             except BridgeError as exc:
                 owned = stack_module.current()

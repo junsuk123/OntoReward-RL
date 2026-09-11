@@ -17,6 +17,10 @@ control:
   max_yaw_acceleration_deg_s2: 90.0
   # c=0 begins as hover/slow-follow at 35%; c=1 uses the full limits above.
   curriculum_min_action_scale: 0.35
+  # Do not park the target for hundreds of early episodes. At c=0 the UGV
+  # already drives at 35% of its sampled road speed (0.0875--0.21 m/s), then
+  # increases continuously to the full configured speed at c=1.
+  curriculum_min_pad_motion_scale: 0.35
   require_initial_pad_visible_during_curriculum: true
 ppo:
   gamma: 0.99
@@ -41,6 +45,9 @@ ppo:
   perception_warmup_episodes_quick: 2
   perception_warmup_episodes_full: 32
   perception_warmup_epochs: 2
+  # The position-backed PX4 interface makes low-amplitude policy sampling safe;
+  # use it during warm-up so both the image target and UAV state are excited.
+  perception_warmup_safe_exploration: true
   # Abort an unattended run when perception remains blind after warm-up.
   health_window_episodes: 20
   health_max_fov_loss_fraction: 0.80

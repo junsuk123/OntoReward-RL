@@ -6,6 +6,17 @@ import math
 import numpy as np
 
 
+def curriculum_motion_scale(curriculum: float, minimum_scale: float) -> float:
+    """Keep the platform moving slowly while its difficulty ramps to full."""
+    c = float(curriculum)
+    minimum = float(minimum_scale)
+    if not math.isfinite(c) or not math.isfinite(minimum):
+        raise ValueError("motion curriculum values must be finite")
+    if not 0.0 <= c <= 1.0 or not 0.0 <= minimum <= 1.0:
+        raise ValueError("motion curriculum values must be in [0, 1]")
+    return minimum + (1.0 - minimum) * c
+
+
 def curriculum_camera_entry(raw_offset, raw_yaw_deg: float, curriculum: float,
                             *, minimum_scale: float = 0.0,
                             hover_offset_pad_m=(0.0, 0.0, 4.5),

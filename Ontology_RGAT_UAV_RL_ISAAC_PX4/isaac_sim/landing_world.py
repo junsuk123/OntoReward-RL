@@ -1140,6 +1140,11 @@ class LandingWorld:
             pad_scale = float(req.get("pad_scale", 1.0))
             if not math.isfinite(pad_scale) or not 0.0 <= pad_scale <= 4.0:
                 raise ValueError("pad_scale outside [0,4]")
+            initial_condition_scale = float(req.get(
+                "initial_condition_scale", min(pad_scale, 1.0)))
+            if (not math.isfinite(initial_condition_scale)
+                    or not 0.0 <= initial_condition_scale <= 1.0):
+                raise ValueError("initial_condition_scale outside [0,1]")
             # Scales the error mechanisms, not the buildings: 0.0 is the
             # open-sky control condition with the same city still standing.
             gnss_scale = float(req.get("gnss_scale", 1.0))
@@ -1150,6 +1155,7 @@ class LandingWorld:
                 raise ValueError(f"unknown benchmark scenario {scenario!r}")
             self.pending_reset = {"seq": int(req["seq"]), "seed": int(req.get("seed", 0)),
                                   "wind_scale": scale, "pad_scale": pad_scale,
+                                  "initial_condition_scale": initial_condition_scale,
                                   "gnss_scale": gnss_scale,
                                   "scenario": scenario}
             self.startup_render_released = True
@@ -1186,7 +1192,8 @@ class LandingWorld:
             rpy_deg = np.array([0.0, 0.0, rng.uniform(*yaw_range)])
             offset, rpy_deg[2] = curriculum_camera_entry(
                 offset, rpy_deg[2],
-                float(np.clip(req.get("pad_scale", 1.0), 0.0, 1.0)),
+                req.get("initial_condition_scale", min(
+                    req.get("pad_scale", 1.0), 1.0)),
                 minimum_scale=float(benchmark.get(
                     "initial_condition_curriculum_min_scale", 0.0)),
                 hover_offset_pad_m=self.hover_start_pad_m,
@@ -1239,6 +1246,8 @@ class LandingWorld:
                                "seq": req["seq"], "seed": req["seed"],
                                "wind_scale": req["wind_scale"],
                                "pad_scale": req.get("pad_scale", 1.0),
+                               "initial_condition_scale": req.get(
+                                   "initial_condition_scale", 1.0),
                                "gnss_scale": req.get("gnss_scale", 1.0),
                                "gnss": {
                                    "enabled": self.gnss_enabled,

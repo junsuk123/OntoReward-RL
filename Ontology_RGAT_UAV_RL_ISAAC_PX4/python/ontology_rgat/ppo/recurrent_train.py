@@ -82,7 +82,8 @@ def collect_episode(env, model: ShinRecurrentActorCritic, method: str, seed: int
     if monitor is not None:
         monitor.reset_episode(
             method=method, phase=phase, seed=seed, scenario=scenario,
-            curriculum=curriculum, action_scale=action_scale)
+            curriculum=curriculum, action_scale=action_scale,
+            motion_scale=float(getattr(env, "pad_motion_scale", curriculum)))
     hidden = model.initial_state(1)
     rows = []
     visual_loss_run = 0
@@ -450,7 +451,12 @@ def train_live(env_factory: Callable, model, method, seeds, output_dir,
                 shaping_lambda=float(ppo.get("shaping_lambda", 1.0)),
                 monitor=monitor, phase=("perception warm-up" if perception_warmup
                                         else "training"),
-                deterministic=perception_warmup)
+                # Position-backed velocity setpoints bound this exploration.
+                # Sampling during estimator-only warm-up avoids collecting 32
+                # copies of an almost perfectly static hover trajectory.
+                deterministic=bool(
+                    perception_warmup and not ppo.get(
+                        "perception_warmup_safe_exploration", True)))
             if perception_warmup:
                 loss = update_estimator_episode(
                     model, optimizer, rows,

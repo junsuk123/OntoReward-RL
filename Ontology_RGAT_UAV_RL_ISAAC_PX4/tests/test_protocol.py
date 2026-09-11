@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from ontology_rgat.bridge import PX4Bridge, pacing_anchor_us
+from ontology_rgat.bridge import BridgeError, PX4Bridge, pacing_anchor_us
 from ontology_rgat_px4.protocol import (
     ProtocolError,
     VehicleSample,
@@ -93,6 +93,34 @@ def test_sitl_deadman_uses_px4_lockstep_time_but_hardware_uses_wall_time():
 def test_control_pacing_reanchors_after_a_missed_deadline():
     assert pacing_anchor_us(2_020_000, 2_016_000) == 2_020_000
     assert pacing_anchor_us(2_020_000, 2_300_000) == 2_300_000
+
+
+def test_reset_sends_motion_and_initial_condition_scales_separately():
+    bridge = object.__new__(PX4Bridge)
+    bridge.cfg = SimpleNamespace(
+        wind_scale=1.0, pad_scale=.35, gnss_scale=1.0,
+        reset_settle=0.0, auto_arm=False)
+    sent = []
+    bridge.transact = lambda kind, fields, expected: sent.append(
+        (kind, fields, expected)) or {"status": "reset_complete"}
+    bridge.wait_valid_state = lambda: {"estimator_valid": True}
+    bridge.last_reset_ack = {}
+
+    bridge.reset(12, scenario="circle", initial_condition_scale=0.0)
+
+    kind, fields, expected = sent[0]
+    assert kind == "reset" and expected == ("ack",)
+    assert fields["pad_scale"] == pytest.approx(.35)
+    assert fields["initial_condition_scale"] == pytest.approx(0.0)
+
+
+def test_reset_rejects_invalid_initial_condition_scale_before_transmit():
+    bridge = object.__new__(PX4Bridge)
+    bridge.cfg = SimpleNamespace(wind_scale=1.0, pad_scale=.35, gnss_scale=1.0)
+    bridge.transact = lambda *_args, **_kwargs: pytest.fail(
+        "invalid reset must not be transmitted")
+    with pytest.raises(BridgeError, match="initial-condition curriculum"):
+        bridge.reset(12, initial_condition_scale=2.0)
 
 
 def test_physical_pad_contact_confirms_stop_when_lockstep_has_no_new_sample():

@@ -41,9 +41,11 @@ class LiveShinEnvironment:
 
     def _connect(self):
         self.bridge = PX4Bridge(self.cfg)
+        control = getattr(self.cfg, "benchmark_control", {})
         self.adapter = ShinPX4Adapter(
             self.bridge, self.image_source,
-            VelocityYawRateController(dt=float(self.cfg.sim.dt)))
+            VelocityYawRateController.from_mapping(
+                control, dt=float(self.cfg.sim.dt)))
 
     def _classify(self, actor, state, command, *, timeout=False) -> LiveStep:
         critic = critic_observation_from_state(actor, state)
@@ -75,12 +77,16 @@ class LiveShinEnvironment:
     def reset(self, seed: int, curriculum: float = 1.0,
               scenario: str = "training_random_walk") -> LiveStep:
         self.steps = 0
-        # The same scalar scales platform speed and perturbations for every arm.
-        self.bridge.cfg.pad_scale = float(np.clip(curriculum, 0.0, 1.0))
+        # The same scalar scales both platform difficulty and the UAV action
+        # envelope for every reward arm. A replacement adapter after recovery
+        # receives the same level before its reset.
+        curriculum = float(np.clip(curriculum, 0.0, 1.0))
         from .. import stack as stack_module
 
         attempts = 1 + max(0, int(self.cfg.external.reset_recoveries))
         for attempt in range(1, attempts + 1):
+            self.bridge.cfg.pad_scale = curriculum
+            self.adapter.controller.set_curriculum(curriculum)
             try:
                 actor, state = self.adapter.reset(int(seed), scenario=scenario)
                 break

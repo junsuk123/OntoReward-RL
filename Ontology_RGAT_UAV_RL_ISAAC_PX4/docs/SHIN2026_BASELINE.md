@@ -63,7 +63,9 @@ truth. Semantic state remains reward-side in the primary experiment.
 - The paper uses AerialGym; this repository retains Isaac Sim, Pegasus, and
   PX4 SITL. PX4's velocity controller replaces the paper's geometric
   velocity-to-body-rate controller. The command limits/rate limits are common
-  to all methods.
+  to all methods. The configured full envelope is 2.0/2.0/1.0 m/s body-heading
+  velocity, 1.5/1.5/1.0 m/s² acceleration, 60°/s yaw rate, and 90°/s² yaw
+  acceleration.
 - No official PACMAN-compatible code and weights are bundled. The included
   six-keypoint CNN is an independently implemented approximation and is never
   labeled PACMAN. The current simulated board is also an ArUco approximation,
@@ -83,9 +85,14 @@ truth. Semantic state remains reward-side in the primary experiment.
 - Camera frame rate is 30 Hz because the paper does not report it.
 - PPO discount, learning rates, minibatch sizes, decision-head widths,
   training length, and checkpoint rule are not specified in the paper and must
-  be reported from the experiment configuration.
+  be reported from the experiment configuration. The recurrent policy starts
+  at `log_std=-1.5` (standard deviation 0.223 per normalized action) to avoid
+  violent random commands from an untrained policy.
 - The paper gives `c` and the update interval but not its promotion rule. The
-  supplied schedule advances linearly and serializes its state.
+  supplied schedule advances linearly and serializes its state. The same `c`
+  also implements a hover/slow-follow action curriculum: the UAV command and
+  slew-rate envelope is scaled by `0.35 + 0.65c`. Paired evaluation always
+  uses `c=1`, and all five reward arms receive exactly the same envelope.
 - FLU/ENU-to-paper body-frame sign conversions are explicit in
   `benchmarks/px4_adapter.py`.
 
@@ -122,7 +129,8 @@ It also serves `http://127.0.0.1:8770/` while running. That dashboard uses a
 MATLAB-figure visual language and exposes the actor information boundary,
 method progress, actual R-GAT flight/sample/contact counts, estimator/PPO
 diagnostics, live reward components, curriculum, visibility, and paired
-scenario outcomes:
+scenario outcomes. The curriculum view includes both platform difficulty and
+the current UAV action-envelope scale:
 
 ```bash
 ../run.sh                         # publication-scale full run

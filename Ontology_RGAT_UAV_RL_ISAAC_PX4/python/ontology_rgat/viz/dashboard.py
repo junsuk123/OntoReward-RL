@@ -164,6 +164,8 @@ const CARDS=[
   series:BENCHMARK_TRAIN,x:'episode',y:'paper_success',smooth:40,ymin:0,ymax:1},
  {id:'benchmark_curriculum',view:'benchmark',title:'Platform-motion curriculum c',
   series:BENCHMARK_TRAIN,x:'episode',y:'curriculum',ymin:0,ymax:1},
+ {id:'benchmark_action_scale',view:'benchmark',title:'UAV action-envelope curriculum',
+  series:BENCHMARK_TRAIN,x:'episode',y:'action_envelope_scale',ymin:0,ymax:1},
  {id:'benchmark_position_rmse',view:'benchmark',title:'Estimator position RMSE',
   series:BENCHMARK_TRAIN,x:'episode',y:'position_rmse',smooth:12},
  {id:'benchmark_velocity_rmse',view:'benchmark',title:'Estimator velocity RMSE',
@@ -381,6 +383,8 @@ function tiles(state){
     if(latest){add('target visible',latest.in_fov?'yes':'no');
       add('position error',Number(latest.position_error).toFixed(3)+' m');}
     if(s.current_curriculum!==undefined)add('curriculum c',Number(s.current_curriculum).toFixed(3));
+    if(s.current_action_envelope_scale!==undefined)
+      add('UAV envelope',Number(s.current_action_envelope_scale).toFixed(3));
     if(s.rgat_dataset_episodes!==undefined){
       add('R-GAT flight data',`${s.rgat_dataset_episodes} ep / ${s.rgat_dataset_samples||0} samples`);
       add('R-GAT contacts',`${s.rgat_dataset_successes||0} / ${s.rgat_dataset_episodes}`);}

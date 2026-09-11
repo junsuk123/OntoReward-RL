@@ -14,7 +14,7 @@ sys.path.insert(0, str(ROOT / "isaac_sim"))
 from pad_motion import PadMotionConfig, PadTrajectory  # noqa: E402
 from ontology_rgat_px4.protocol import ProtocolError, validate_velocity_action
 
-from ontology_rgat.benchmarks.experiment import paired_seed_plan
+from ontology_rgat.benchmarks.experiment import load_experiment, paired_seed_plan
 from ontology_rgat.benchmarks.live_env import LiveShinEnvironment
 from ontology_rgat.benchmarks.px4_adapter import (actor_observation_from_state,
                                                   critic_observation_from_state)
@@ -27,7 +27,7 @@ from ontology_rgat.bridge import BridgeError
 from ontology_rgat.controllers import VelocityYawRateController
 from ontology_rgat.estimation import LSTMRelativeStateEstimator
 from ontology_rgat.ppo.recurrent import ShinRecurrentActorCritic
-from ontology_rgat.ppo.recurrent_train import update_episode
+from ontology_rgat.ppo.recurrent_train import train_live, update_episode
 from ontology_rgat.reward_modes import (OntoRewardPBRS, ShinReward,
                                         ShinRewardConfig, FrozenControlledPotential,
                                         active_perception_reward,
@@ -98,9 +98,66 @@ def test_velocity_action_dimension_is_four_and_rate_limited():
     controller = VelocityYawRateController(dt=0.1)
     command = controller.command([1, 1, 1, 1]).as_array()
     assert command.shape == (4,)
-    np.testing.assert_allclose(command[:3], [0.6, 0.6, 0.4])
+    np.testing.assert_allclose(command[:3], [0.15, 0.15, 0.1])
+    assert command[3] == pytest.approx(math.radians(9.0))
     with pytest.raises(ValueError):
         controller.command([1, 2, 3])
+
+
+def test_hover_curriculum_scales_the_shared_uav_action_envelope():
+    controller = VelocityYawRateController(dt=0.1)
+    controller.set_curriculum(0.0)
+    for _ in range(30):
+        hover_command = controller.command([1, 1, 1, 1]).as_array()
+    np.testing.assert_allclose(hover_command[:3], [0.7, 0.7, 0.35])
+    assert hover_command[3] == pytest.approx(math.radians(21.0))
+
+    controller.reset()
+    controller.set_curriculum(1.0)
+    for _ in range(30):
+        final_command = controller.command([1, 1, 1, 1]).as_array()
+    np.testing.assert_allclose(final_command[:3], [2.0, 2.0, 1.0])
+    assert final_command[3] == pytest.approx(math.radians(60.0))
+
+
+def test_all_five_ablation_arms_inherit_one_stable_control_configuration():
+    config = load_experiment(ROOT / "config/experiments/shin2026_ablation.yaml")
+    assert config["reward_modes"] == [
+        "shin2026", "sparse", "manual_no_active", "ontoreward",
+        "ontoreward_plus_active"]
+    controller = VelocityYawRateController.from_mapping(config["control"])
+    np.testing.assert_allclose(controller.max_velocity, [2.0, 2.0, 1.0])
+    np.testing.assert_allclose(controller.max_acceleration, [1.5, 1.5, 1.0])
+    assert controller.curriculum_min_action_scale == pytest.approx(0.35)
+    assert math.exp(float(config["ppo"]["init_log_std"])) == pytest.approx(
+        0.2231301601)
+
+
+def test_one_command_run_archives_an_incompatible_policy(tmp_path):
+    class TinyPolicy(torch.nn.Linear):
+        @property
+        def device(self):
+            return self.weight.device
+
+    model_dir = tmp_path / "models"
+    model_dir.mkdir()
+    checkpoint = model_dir / "shin2026.pt"
+    torch.save({
+        "format": "shin2026-recurrent-v1", "method": "shin2026",
+        "config_hash": "old-control-config",
+    }, checkpoint)
+    (model_dir / "shin2026_training.csv").write_text(
+        "episode,episode_return\n1,0\n", encoding="utf-8")
+
+    history = train_live(
+        lambda: None, TinyPolicy(1, 1), "shin2026", [], model_dir,
+        config_hash="new-control-config", restart_incompatible=True)
+
+    assert history == []
+    assert not checkpoint.exists()
+    assert len(list(model_dir.glob("shin2026.incompatible-old-control*.pt"))) == 1
+    assert len(list(model_dir.glob(
+        "shin2026.incompatible-old-control*_training.csv"))) == 1
 
 
 def test_velocity_gateway_protocol_rejects_bad_commands():
@@ -171,14 +228,18 @@ def test_live_benchmark_restarts_owned_stack_after_reset_failure(monkeypatch):
     def failed_reset(*_args, **_kwargs):
         raise BridgeError("PX4 left OFFBOARD")
 
+    scales = []
     recovered_adapter = SimpleNamespace(
+        controller=SimpleNamespace(set_curriculum=lambda value: scales.append(value)),
         reset=lambda *_args, **_kwargs: ("actor", {"state": "ready"}))
     env = LiveShinEnvironment.__new__(LiveShinEnvironment)
     env.cfg = SimpleNamespace(external=SimpleNamespace(reset_recoveries=1))
     env.bridge = SimpleNamespace(
         cfg=SimpleNamespace(pad_scale=0.0),
         close=lambda: calls.append("close"))
-    env.adapter = SimpleNamespace(reset=failed_reset)
+    env.adapter = SimpleNamespace(
+        controller=SimpleNamespace(set_curriculum=lambda value: scales.append(value)),
+        reset=failed_reset)
     env._connect = lambda: setattr(env, "adapter", recovered_adapter)
     env._classify = lambda actor, state, command: (actor, state, command.tolist())
     env.last_step = None
@@ -188,6 +249,7 @@ def test_live_benchmark_restarts_owned_stack_after_reset_failure(monkeypatch):
     result = env.reset(7, scenario="circle")
 
     assert calls == ["close", "restart"]
+    assert scales == [1.0, 1.0]
     assert result[:2] == ("actor", {"state": "ready"})
 
 

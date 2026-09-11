@@ -35,7 +35,7 @@ class ShinRecurrentActorCritic(nn.Module):
 
     def __init__(self, image_embedding=512, lstm_hidden=512, latent_dim=256,
                  actor_hidden=256, critic_hidden=256, action_dim=4,
-                 init_log_std=-0.5, freeze_keypoint=False):
+                 init_log_std=-1.5, freeze_keypoint=False):
         super().__init__()
         if action_dim != 4:
             raise ValueError("benchmark action dimension must be four")

@@ -6,7 +6,17 @@ paper:
   reproduction_claim: methodological-interface
 camera: {resolution: [512, 320], grayscale: true, horizontal_fov_deg: 90, pitch_down_deg: 60}
 estimator: {image_embedding: 512, lstm_hidden: 512, latent_dimension: 256, output_dimension: 6}
-control: {dt_seconds: 0.1, horizon_steps: 300, action: velocity_yaw_rate}
+control:
+  dt_seconds: 0.1
+  horizon_steps: 300
+  action: velocity_yaw_rate
+  # Shared by all arms: conservative tracking/landing limits in body-heading axes.
+  max_velocity_m_s: [2.0, 2.0, 1.0]
+  max_acceleration_m_s2: [1.5, 1.5, 1.0]
+  max_yaw_rate_deg_s: 60.0
+  max_yaw_acceleration_deg_s2: 90.0
+  # c=0 begins as hover/slow-follow at 35%; c=1 uses the full limits above.
+  curriculum_min_action_scale: 0.35
 ppo:
   gamma: 0.99
   gae_lambda: 0.95
@@ -19,6 +29,8 @@ ppo:
   grad_clip: 5.0
   auxiliary_estimation_coefficient: 1.0
   asymmetric_critic: true
+  # Initial action standard deviation exp(-1.5)=0.223 (formerly 0.607).
+  init_log_std: -1.5
 curriculum: {enabled: true, levels: 80, update_every_episodes: 512}
 reward:
   terminal: {success: 10.0, failure: -10.0}

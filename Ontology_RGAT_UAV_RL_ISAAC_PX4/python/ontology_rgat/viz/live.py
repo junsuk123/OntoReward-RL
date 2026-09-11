@@ -459,14 +459,16 @@ class BenchmarkMonitor:
         self.store.stage(name, detail)
 
     def reset_episode(self, *, method: str, phase: str, seed: int,
-                      scenario: str, curriculum: float) -> None:
+                      scenario: str, curriculum: float,
+                      action_scale: float = 1.0) -> None:
         self.store.replace("benchmark_step", [])
         if self.rviz is not None:
             self.rviz.clear_trails()
         self.store.set(
             benchmark_phase=str(phase), current_method=str(method),
             current_seed=int(seed), current_scenario=str(scenario),
-            current_curriculum=float(curriculum))
+            current_curriculum=float(curriculum),
+            current_action_envelope_scale=float(action_scale))
 
     def step(self, *, index: int, dt: float, method: str, reward: float,
              reward_parts: dict[str, Any], estimate, truth, in_fov: bool,

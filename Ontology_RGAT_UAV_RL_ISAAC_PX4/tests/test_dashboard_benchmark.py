@@ -14,7 +14,8 @@ def test_benchmark_monitor_publishes_refactored_contract_and_progress():
         reward_design_sha256="abc")
     monitor.reset_episode(
         method="ontoreward", phase="training", seed=42,
-        scenario="training_random_walk", curriculum=0.25)
+        scenario="training_random_walk", curriculum=0.25,
+        action_scale=0.5125)
     monitor.step(
         index=1, dt=0.1, method="ontoreward", reward=0.3,
         reward_parts={"task": 0.0, "shape": 0.3, "phi": -0.5,
@@ -28,6 +29,7 @@ def test_benchmark_monitor_publishes_refactored_contract_and_progress():
         "velocity_rmse": 0.1, "auxiliary_estimation_loss": 0.05,
         "ppo_loss": -0.01, "value_loss": 0.2, "entropy": 2.0,
         "kl_divergence": 0.001, "curriculum": 0.25,
+        "action_envelope_scale": 0.5125,
     })
 
     state = store.snapshot()
@@ -36,6 +38,7 @@ def test_benchmark_monitor_publishes_refactored_contract_and_progress():
     assert state["series"]["benchmark_step"][-1]["position_error"] == 1.0
     assert state["series"]["benchmark_step"][-1]["shape"] == 0.3
     assert state["series"]["benchmark_train_ontoreward"][-1]["episode"] == 1
+    assert state["scalars"]["current_action_envelope_scale"] == 0.5125
 
 
 def test_benchmark_monitor_restores_csv_rows_and_pairs_evaluation_series():
@@ -65,6 +68,7 @@ def test_dashboard_has_self_contained_matlab_style_benchmark_view():
     assert "benchmark_eval_scenario" in PAGE
     assert "Hard information boundary" in PAGE
     assert "recurrent estimate vs truth" in PAGE
+    assert "UAV action-envelope curriculum" in PAGE
     assert "prefers-color-scheme:dark" not in PAGE
     for color in MATLAB_COLORS:
         assert color in PAGE

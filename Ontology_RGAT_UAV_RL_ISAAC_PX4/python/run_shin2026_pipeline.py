@@ -82,13 +82,15 @@ def _live_config(mode, results_dir, system_config):
 
 def _build_model(config, device):
     estimator = config.get("estimator") or {}
+    ppo = config.get("ppo") or {}
     torch_device = torch.device(device)
     return ShinRecurrentActorCritic(
         image_embedding=int(estimator.get("image_embedding", 512)),
         lstm_hidden=int(estimator.get("lstm_hidden", 512)),
         latent_dim=int(estimator.get("latent_dimension", 256)),
-        actor_hidden=int((config.get("ppo") or {}).get("hidden", 256)),
-        critic_hidden=int((config.get("ppo") or {}).get("hidden", 256)),
+        actor_hidden=int(ppo.get("hidden", 256)),
+        critic_hidden=int(ppo.get("hidden", 256)),
+        init_log_std=float(ppo.get("init_log_std", -1.5)),
     ).to(torch_device)
 
 
@@ -176,7 +178,8 @@ def _collect_empirical_rgat_data(*, cfg, camera, model, config, config_hash,
                if seed not in completed_seeds]
     if pending:
         monitor.stage("R-GAT data", "actual Shin-policy Isaac/PX4 rollouts")
-        with LiveShinEnvironment(cfg, camera, horizon_steps=300) as env:
+        with LiveShinEnvironment(
+                cfg, camera, horizon_steps=int(cfg.sim.max_steps)) as env:
             for index, seed in pending:
                 curriculum = 1.0 if count == 1 else (index - 1) / (count - 1)
                 torch.manual_seed(seed)
@@ -323,6 +326,12 @@ def main():
 
     ensure_fastdds()
     cfg = _live_config(args.mode, args.results_dir, args.system_config)
+    control_config = dict(config.get("control") or {})
+    cfg.benchmark_control = control_config
+    cfg.sim.dt = float(control_config.get("dt_seconds", 0.1))
+    cfg.sim.max_steps = int(control_config.get("horizon_steps", 300))
+    cfg.sim.max_time = cfg.sim.dt * cfg.sim.max_steps
+    cfg.external.control_hz = 1.0 / cfg.sim.dt
     cfg.viz.dashboard.enabled = not args.no_dashboard
     if args.dashboard_port is not None:
         cfg.viz.dashboard.port = int(args.dashboard_port)
@@ -368,11 +377,13 @@ def main():
                 model = _build_model(config, args.device)
                 method_potential = potential if method.startswith("ontoreward") else None
                 history = train_live(
-                    lambda: LiveShinEnvironment(cfg, camera, horizon_steps=300),
+                    lambda: LiveShinEnvironment(
+                        cfg, camera, horizon_steps=int(cfg.sim.max_steps)),
                     model, method, range(training_seed0, training_seed0 + train_count),
                     args.results_dir / "models", config_hash=config_hash,
                     potential=method_potential, ppo=ppo_config,
-                    curriculum_config=curriculum_config, monitor=monitor)
+                    curriculum_config=curriculum_config, monitor=monitor,
+                    restart_incompatible=True)
                 models[method] = model
                 training_by_method[method] = history
                 return model
@@ -389,12 +400,13 @@ def main():
                     source_model = _build_model(config, args.device)
                     source_dir = args.results_dir / "models/rgat_design_source"
                     train_live(
-                        lambda: LiveShinEnvironment(cfg, camera, horizon_steps=300),
+                        lambda: LiveShinEnvironment(
+                            cfg, camera, horizon_steps=int(cfg.sim.max_steps)),
                         source_model, "shin2026",
                         range(training_seed0, training_seed0 + train_count),
                         source_dir, config_hash=config_hash, potential=None,
                         ppo=ppo_config, curriculum_config=curriculum_config,
-                        monitor=None)
+                        monitor=None, restart_incompatible=True)
                     source_checkpoint = source_dir / "shin2026.pt"
                 dataset, dataset_manifest, dataset_path, source_sha = (
                     _collect_empirical_rgat_data(
@@ -443,7 +455,8 @@ def main():
             }
             for method, model in models.items():
                 monitor.stage("paired evaluation", method)
-                with LiveShinEnvironment(cfg, camera, horizon_steps=300) as env:
+                with LiveShinEnvironment(
+                        cfg, camera, horizon_steps=int(cfg.sim.max_steps)) as env:
                     for item in plan:
                         if item["method"] != method:
                             continue

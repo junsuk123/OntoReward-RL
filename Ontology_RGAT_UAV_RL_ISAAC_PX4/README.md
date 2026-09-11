@@ -46,7 +46,10 @@ artifacts containing NaN are rejected. The dashboard at
 `http://127.0.0.1:8770/` automatically selects the benchmark view:
 MATLAB-style plots show each reward arm's return/success, recurrent PPO losses,
 six-state estimator errors, R-GAT flight-data counts, curriculum, current reward
-decomposition, visibility, and paired scenario success. Use
+decomposition, UAV action-envelope scale, visibility, and paired scenario
+success. Training starts with a 35% hover/slow-follow command envelope and
+linearly reaches the shared 2.0/2.0/1.0 m/s limit with curriculum `c`; the
+initial PPO action standard deviation is 0.223. Use
 `--dashboard-port PORT` to change the port or `--no-dashboard` to disable it. The
 protocol lists remaining simulator-randomization limitations that must be
 resolved before claiming a bit-exact reproduction.

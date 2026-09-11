@@ -62,10 +62,11 @@ def collect_episode(env, model: ShinRecurrentActorCritic, method: str, seed: int
                     phase="evaluation"):
     """Collect one true simulator episode without crossing the actor boundary."""
     step = env.reset(seed, curriculum, scenario=scenario)
+    action_scale = float(env.adapter.controller.action_scale)
     if monitor is not None:
         monitor.reset_episode(
             method=method, phase=phase, seed=seed, scenario=scenario,
-            curriculum=curriculum)
+            curriculum=curriculum, action_scale=action_scale)
     hidden = model.initial_state(1)
     rows = []
     visual_loss_run = 0
@@ -145,6 +146,7 @@ def collect_episode(env, model: ShinRecurrentActorCritic, method: str, seed: int
         "fov_loss_fraction": float(np.mean([not row["in_fov"] for row in rows])),
         "longest_visual_loss_s": float(longest_visual_loss * env.cfg.sim.dt),
         "visual_loss_estimation_error": float(np.mean(lost_errors)) if lost_errors else 0.0,
+        "action_envelope_scale": action_scale,
         "touchdown_time_s": float(len(rows) * env.cfg.sim.dt),
         "steps": len(rows), "status": ("success" if step.physical_contact else
                                          "timeout" if step.timeout else "failure"),
@@ -240,7 +242,7 @@ def save_recurrent_checkpoint(path, model, optimizer, *, method, episode,
 
 def train_live(env_factory: Callable, model, method, seeds, output_dir,
                *, config_hash, potential=None, ppo=None, curriculum_config=None,
-               monitor=None):
+               monitor=None, restart_incompatible=False):
     ppo = ppo or {}
     curriculum = PlatformMotionCurriculum(**(curriculum_config or {}))
     optimizer = torch.optim.Adam(model.parameters(), lr=float(ppo.get("learning_rate", 2e-4)))
@@ -251,25 +253,46 @@ def train_live(env_factory: Callable, model, method, seeds, output_dir,
     completed = 0
     if checkpoint_path.is_file():
         saved = torch.load(checkpoint_path, map_location=model.device, weights_only=False)
+        incompatibility = None
         if saved.get("format") != "shin2026-recurrent-v1":
-            raise ValueError(f"unsupported checkpoint format: {checkpoint_path}")
-        if saved.get("method") != method or saved.get("config_hash") != config_hash:
-            raise ValueError(f"checkpoint method/config mismatch: {checkpoint_path}")
+            incompatibility = "unsupported checkpoint format"
+        elif saved.get("method") != method or saved.get("config_hash") != config_hash:
+            incompatibility = "checkpoint method/config mismatch"
         expected_design = getattr(potential, "sha256", None)
         # The Shin arm never consumes the ontology potential. Older baseline
         # checkpoints may nevertheless carry the run-level artifact hash, so
         # only reward-shaped arms are coupled to a particular design artifact.
-        if (method.startswith("ontoreward") and
+        if (incompatibility is None and method.startswith("ontoreward") and
                 saved.get("reward_design_sha256") != expected_design):
-            raise ValueError(f"checkpoint reward-design mismatch: {checkpoint_path}")
-        model.load_state_dict(saved["model"])
-        optimizer.load_state_dict(saved["optimizer"])
-        curriculum.load_state_dict(saved["curriculum"])
-        completed = int(saved["episode"])
-        if history_path.is_file():
-            with history_path.open(newline="", encoding="utf-8") as stream:
-                history = list(csv.DictReader(stream))
-        print(f"Resuming {method} at episode {completed + 1} from {checkpoint_path}")
+            incompatibility = "checkpoint reward-design mismatch"
+        if incompatibility is not None:
+            if not restart_incompatible:
+                raise ValueError(f"{incompatibility}: {checkpoint_path}")
+            old_hash = str(saved.get("config_hash", "unknown"))[:12]
+            archive = checkpoint_path.with_name(
+                f"{checkpoint_path.stem}.incompatible-{old_hash}{checkpoint_path.suffix}")
+            sequence = 1
+            while archive.exists():
+                archive = checkpoint_path.with_name(
+                    f"{checkpoint_path.stem}.incompatible-{old_hash}-{sequence}"
+                    f"{checkpoint_path.suffix}")
+                sequence += 1
+            os.replace(checkpoint_path, archive)
+            if history_path.is_file():
+                history_archive = archive.with_name(
+                    f"{archive.stem}_training{history_path.suffix}")
+                os.replace(history_path, history_archive)
+            print(f"Archived incompatible {method} checkpoint as {archive.name}; "
+                  "starting with the current control configuration.")
+        else:
+            model.load_state_dict(saved["model"])
+            optimizer.load_state_dict(saved["optimizer"])
+            curriculum.load_state_dict(saved["curriculum"])
+            completed = int(saved["episode"])
+            if history_path.is_file():
+                with history_path.open(newline="", encoding="utf-8") as stream:
+                    history = list(csv.DictReader(stream))
+            print(f"Resuming {method} at episode {completed + 1} from {checkpoint_path}")
     seed_list = list(seeds)
     if completed > len(seed_list):
         raise ValueError("checkpoint has more episodes than this run requests")

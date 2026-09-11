@@ -4,6 +4,20 @@ system:
   control_hz: 10.0
   sitl_action_timeout_s: 1.0
 
+isaac:
+  # This benchmark is a landing task. Keep the disarmed Iris at a physical
+  # hover while PX4 aligns instead of balancing it on a platform only 1.5 m
+  # wide; the seeded Table-I entry pose is still flown before data collection.
+  start_airborne: true
+  viewport_follow:
+    frame: world
+
+# Shin et al.'s benchmark randomizes a moving platform in an open arena. The
+# retained urban experiment remains available through system.yaml, but its OSM
+# buildings must not occupy this profile's random-walk origin or trajectories.
+urban:
+  enabled: false
+
 landing:
   max_time_s: 30.0
   world_xy_limit_m: 60.0

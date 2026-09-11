@@ -89,7 +89,12 @@ def advance_pad_contact_latch(latched: bool, armed_clear: bool,
         return bool(latched), bool(armed_clear)
     if not raw_contact and not px4_landed and airborne_clearance:
         armed_clear = True
-    elif armed_clear:
+    # PX4 can report ``landed`` while an externally supported airborne start
+    # is hovering with its motors idle. It is useful for confirming that the
+    # vehicle has cleared the launch surface, but it must never masquerade as
+    # physical roof contact. The two signals are fused later in
+    # ``_refresh_land_detector`` without relabelling their source.
+    elif armed_clear and raw_contact:
         latched = True
     return bool(latched), bool(armed_clear)
 
@@ -263,7 +268,7 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             # actually flying it; this is how it learns that. Latched depth so a
             # simulator that comes up late still gets the current answer.
             self.flight_pub = self.create_publisher(String, "/landing_sim/flight_state", 10)
-            self.published_armed: tuple[bool, bool] | None = None
+            self.published_flight_state: tuple[bool, bool, bool, int] | None = None
 
             self.create_subscription(VehicleOdometry, _topic(cfg, "out", "vehicle_odometry"),
                                      self._on_odometry, qos)
@@ -399,6 +404,15 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                 # AUTO.LAND straight out of "Ready for takeoff".
                 if self.sample.landed or not self.sample.armed:
                     self._vehicle_command(VehicleCommand.VEHICLE_CMD_COMPONENT_ARM_DISARM, 0.0)
+                elif cfg.start_airborne:
+                    # The controlled benchmark ends one airborne episode by
+                    # flying a bounded position hold. Keep that continuous
+                    # flight state: AUTO.LAND cannot be cancelled reliably
+                    # enough to establish the next entry pose inside its reset
+                    # deadline, and every measured episode begins only after
+                    # the following goto has settled at an airborne hover.
+                    self.get_logger().info(
+                        "reset while airborne; retaining flight for next entry hover")
                 else:
                     # Cutting power to an airborne vehicle used to be harmless
                     # because Isaac teleported it anyway. It no longer does, so
@@ -816,14 +830,19 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                     self._vehicle_command(
                         VehicleCommand.VEHICLE_CMD_COMPONENT_ARM_DISARM,
                         0.0, 21196.0)
+                    relative = self.sample.truth_position_enu
+                    where = ("unknown" if relative is None else
+                             ",".join(f"{float(value):.2f}" for value in relative))
                     self.get_logger().info(
-                        "physical pad touchdown: offboard stopped and SITL force-disarm requested")
+                        "physical pad touchdown: offboard stopped and SITL "
+                        f"force-disarm requested (truth pad xyz={where})")
 
         def _on_thrust_setpoint(self, msg) -> None:
             # PX4's own normalised body thrust. While its position controller
             # holds a hover this is the hover thrust the gateway mapping must
             # be centred on; see tools/calibrate_hover_thrust.py.
             self.sample.extra["px4_thrust"] = float(-msg.xyz[2])
+            self._publish_flight_state()
 
         def _on_command_ack(self, msg) -> None:
             # A silently rejected arm used to look exactly like a vehicle that
@@ -1020,9 +1039,10 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
         def _publish_flight_state(self) -> None:
             """Tell Isaac when the autopilot takes the vehicle over.
 
-            Only on a change: this is a latch for the simulator's hover hold,
-            not telemetry, and the state sample already carries `armed` for
-            anything that wants it every tick.
+            Arming alone is not control. PX4 needs time to accept OFFBOARD
+            after the setpoint prestream; dropping Isaac's physical hover hold
+            at ARM makes the unpowered interval end on the deck. ``controlled``
+            releases that hold only after PX4 reports OFFBOARD.
             """
             armed = bool(self.sample.armed)
             # Handover is the moment the policy takes the vehicle: the entry
@@ -1030,13 +1050,24 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             # allowed to pull away, so the climb happens over a lorry standing
             # still and only the landing has to chase one.
             handover = bool(self.last_action_ns)
-            state = (armed, handover)
-            if state == self.published_armed:
+            commanded = bool(self.goto_target_enu is not None or handover)
+            controlled = bool(
+                armed and commanded and self.sample.nav_state == self.offboard_nav_state)
+            px4_thrust = float(np.clip(
+                self.sample.extra.get("px4_thrust", 0.0), 0.0, 1.0))
+            # Two-percent buckets are much finer than the handoff needs and
+            # avoid turning this state latch into a second high-rate telemetry
+            # stream at PX4's thrust-setpoint publication rate.
+            thrust_bucket = int(round(50.0 * px4_thrust))
+            state = (armed, handover, controlled, thrust_bucket)
+            if state == self.published_flight_state:
                 return
-            self.published_armed = state
+            self.published_flight_state = state
             message = String()
             message.data = json.dumps({"v": cfg.protocol_version,
-                                       "armed": armed, "handover": handover})
+                                       "armed": armed, "handover": handover,
+                                       "controlled": controlled,
+                                       "px4_thrust": px4_thrust})
             self.flight_pub.publish(message)
 
         def _on_pad_pose(self, msg) -> None:
@@ -1588,12 +1619,16 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             """
             if self.land_detected_ns == 0:
                 self.sample.extra["land_detector"] = "missing"
-                if ((stamp - self.start_ns) * 1e-9 >= 2.0
+                # The PX4 writer is change-driven and may legitimately stay
+                # quiet through the externally supported pre-arm hover. Give
+                # it through the normal arm/takeoff transition before warning.
+                if ((stamp - self.start_ns) * 1e-9 >= 10.0
                         and not self.warned_missing_land_detector):
                     self.warned_missing_land_detector = True
-                    self.get_logger().error(
-                        f"no {_topic(cfg, 'out', 'vehicle_land_detected')} received; "
-                        "rebuild PX4 with patches/px4-v1.14-publish-land-detected.patch"
+                    self.get_logger().warning(
+                        f"no {_topic(cfg, 'out', 'vehicle_land_detected')} sample "
+                        "received yet; physical pad contact remains the SITL "
+                        "touchdown authority"
                     )
             elif (stamp - self.land_detected_ns) * 1e-9 > cfg.state_timeout_s:
                 self.sample.extra["land_detector"] = "stale"

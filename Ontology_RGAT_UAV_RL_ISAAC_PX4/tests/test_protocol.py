@@ -2,6 +2,7 @@ import json
 import socket
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 
 from ontology_rgat.bridge import PX4Bridge, pacing_anchor_us
@@ -56,6 +57,9 @@ def test_pad_contact_only_latches_after_takeoff_clearance():
     latched, clear = advance_pad_contact_latch(
         latched, clear, True, False, False, True)
     assert not latched and clear           # takeoff has physically cleared it
+    latched, clear = advance_pad_contact_latch(
+        latched, clear, True, False, True, True)
+    assert not latched and clear           # PX4 landed is not pad contact
     latched, clear = advance_pad_contact_latch(latched, clear, True, True, False)
     assert latched and clear               # the next contact is touchdown
     latched, clear = advance_pad_contact_latch(latched, clear, False, False)
@@ -98,6 +102,26 @@ def test_physical_pad_contact_confirms_stop_when_lockstep_has_no_new_sample():
 
     assert bridge.stop_after_outcome()
     assert calls == ["offboard", "disarm"]
+
+
+def test_airborne_reset_hold_is_bounded_and_keeps_offboard_alive():
+    bridge = object.__new__(PX4Bridge)
+    bridge.last_state = {
+        "position": [12.0, 0.0, 12.0],
+        "quaternion_wxyz": [1.0, 0.0, 0.0, 0.0],
+        "truth": {"valid": True, "position": [12.0, 0.0, 12.0]},
+    }
+    calls = []
+    bridge.transact = lambda kind, payload, expected: calls.append(
+        (kind, payload, expected)) or {"status": "goto_started"}
+
+    bridge.hold_for_next_airborne_reset()
+
+    kind, payload, expected = calls[0]
+    assert kind == "goto" and expected == ("ack",)
+    assert np.linalg.norm(payload["position"][:2]) == pytest.approx(9.0)
+    assert payload["position"][2] == pytest.approx(8.0)
+    assert payload["frame"] == "pad" and payload["hold_s"] == 120.0
 
 
 def test_optical_position_update_is_bounded_around_dr_prediction():

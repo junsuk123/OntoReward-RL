@@ -88,6 +88,8 @@ class LiveShinEnvironment:
                 if (self.bridge.last_state.get("landed", False)
                         or extra.get("pad_contact", False)):
                     self.bridge.stop_after_outcome()
+                elif bool(self.cfg.external.get("start_airborne", False)):
+                    self.bridge.hold_for_next_airborne_reset()
                 else:
                     self.bridge.land_and_wait()
             except Exception:

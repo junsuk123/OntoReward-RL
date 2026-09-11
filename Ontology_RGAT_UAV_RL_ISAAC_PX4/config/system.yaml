@@ -50,14 +50,15 @@ isaac:
   # Clearance above the lorry roof, not above the road. Used only when
   # start_airborne is false.
   spawn_position_enu_m: [0.0, 0.0, 0.09]
-  # An airborne start would skip the entry climb entirely, but nothing holds a
-  # disarmed multirotor up: pinning its pose each tick makes the accelerometer
-  # read free fall while GPS reads a hover, and PX4 will not arm on the
-  # contradiction. Until that hold works, the vehicle starts on the deck and
-  # the lorry waits at the kerb until handover, so the climb is a few seconds
-  # over a stationary lorry rather than a chase across the block.
-  start_airborne: false
+  # Both training and benchmarking begin from a physical airborne hover.
+  # Experimental wind force starts only at policy handover, after PX4 has
+  # aligned and taken over the vehicle.
+  start_airborne: true
   hover_start_offset_pad_m: [0.0, 0.0, 4.5]
+  # Fade the external hover support after PX4 enters OFFBOARD. An instantaneous
+  # release happens before its vertical controller has built hover thrust and
+  # can turn a commanded descent into a free fall.
+  airborne_hold_release_s: 6.0
   px4_autolaunch: true
   px4_dir: external/PX4-Autopilot
   px4_vehicle_model: gazebo-classic_iris

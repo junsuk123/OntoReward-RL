@@ -14,6 +14,7 @@ from typing import Any, Iterable, Sequence
 import numpy as np
 
 from .config import Config
+from .mathx import quat_to_euler_zyx
 
 __all__ = ["PX4Bridge", "BridgeError", "GatewayRejected", "GatewayTimeout",
            "pacing_anchor_us"]
@@ -401,6 +402,29 @@ class PX4Bridge:
                 return True
             time.sleep(0.05)
         return False
+
+    def hold_for_next_airborne_reset(self) -> None:
+        """Keep an unfinished flight controlled between measured episodes.
+
+        PPO optimization can take far longer than the action deadman. A
+        bounded position hold keeps PX4 in OFFBOARD instead of entering
+        AUTO.LAND, which cannot always be cancelled before the next entry
+        timeout. The next episode is still gated on its independently seeded
+        entry hover; this target is only unmeasured staging.
+        """
+        state = self.last_state or self.get_state()
+        truth = state.get("truth") if isinstance(state.get("truth"), dict) else {}
+        position = np.asarray(
+            truth.get("position") if truth.get("valid", False) else state["position"],
+            dtype=float).reshape(3)
+        radius = float(np.linalg.norm(position[:2]))
+        if radius > 9.0:
+            position[:2] *= 9.0 / radius
+        position[2] = float(np.clip(position[2], 2.0, 8.0))
+        yaw = float(quat_to_euler_zyx(state["quaternion_wxyz"])[2])
+        self.transact(
+            "goto", {"position": position.tolist(), "yaw": yaw,
+                     "frame": "pad", "hold_s": 120.0}, ("ack",))
 
     def stop_after_outcome(self, timeout: float | None = None) -> bool:
         """Stop control and confirm PX4 has landed before the next reset."""

@@ -20,6 +20,7 @@ def test_configuration_loads():
     assert cfg.control_hz == 50.0
     assert cfg.namespace == "/fmu"
     assert cfg.gnss_dr_enter_quality == 0.45
+    assert cfg.start_airborne is True
 
 
 def test_gateway_loads_metasejong_overlay_with_the_simulator_datum():

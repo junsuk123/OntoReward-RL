@@ -327,8 +327,9 @@ class DownwardCamera:
         cv2.imwrite(str(path / f"frame_{self.frames:06d}.png"), canvas)
 
 
-# Only the hover hold uses this: it cancels the vehicle's weight so a disarmed
-# multirotor can wait in the air. Isaac owns the physics everywhere else.
+# Only the airborne-start hold uses this: it cancels the vehicle's weight so a
+# disarmed multirotor can wait in the air. Isaac owns the physics everywhere
+# else, including contact with the deck.
 GRAVITY_M_S2 = 9.81
 
 
@@ -946,13 +947,20 @@ class LandingWorld:
         self.hover_start_pad_m = np.array(
             [float(v) for v in isaac_cfg.get("hover_start_offset_pad_m", (0.0, 0.0, 4.5))],
             dtype=float)
+        self.hover_hold_release_s = float(
+            isaac_cfg.get("airborne_hold_release_s", 2.0))
+        if not math.isfinite(self.hover_hold_release_s) or self.hover_hold_release_s < 0.0:
+            raise ValueError("isaac.airborne_hold_release_s must be finite and non-negative")
         self.deck_clearance_pad_m = np.array(
             [float(v) for v in isaac_cfg["spawn_position_enu_m"]], dtype=float)
-        # Only the hover hold prices weight with this; it is not the vehicle's
-        # inertia and nothing else reads it. An error here is a steady-state
-        # offset the PD closes, not a wrong flight model.
+        # Only the airborne pre-arm hold prices weight with this; it is not the
+        # vehicle's inertia and nothing else reads it. An error here is a
+        # steady-state offset the PD closes, not a wrong flight model.
         self.hover_hold_mass_kg = float(
             (CONFIG.get("battery") or {}).get("vehicle_mass_kg", 1.5))
+        self.px4_hover_thrust = float(
+            (CONFIG.get("px4") or {}).get("hover_thrust", 0.58))
+        self.px4_normalized_thrust = 0.0
         clearance = (self.hover_start_pad_m if self.start_airborne
                      else self.deck_clearance_pad_m)
         spawn = self.deck.world_from_pad(clearance).tolist()
@@ -1026,6 +1034,13 @@ class LandingWorld:
         # can hold a disarmed multirotor in the air, and dropping it for the
         # second PX4 spends arming is the takeoff this start exists to avoid.
         self.autopilot_flying = False
+        self.hover_hold_release_started: float | None = None
+        # Wind belongs to the measured landing episode. Applying it while PX4
+        # spends tens of seconds booting on a 1.5 m deck can push the unpowered
+        # vehicle off the roof before the estimator has even fixed its origin.
+        # Keep the field and sensor alive, but apply aerodynamic force only
+        # after the first policy action marks the true episode handover.
+        self.policy_handover = False
         self.last_pad_contact = False
 
         # A live 3D view of the episode inside the simulator window: the two
@@ -1111,6 +1126,7 @@ class LandingWorld:
         original in-process simulator -- and flown by PX4 itself.
         """
         req, self.pending_reset = self.pending_reset, None
+        self.policy_handover = False
         rng = np.random.default_rng(req["seed"])
         benchmark = CONFIG.get("benchmark") or {}
         initial = benchmark.get("initial_conditions") or {}
@@ -1239,14 +1255,18 @@ class LandingWorld:
         so that PX4's estimator is never stepped mid-flight -- that is the rule
         the whole reset design is built on and it does not change.
 
-        A grounded one is re-seated. It has usually slid: the deck is redrawn
-        with a new cruise speed at every reset, and a kinematic body whose speed
-        steps in one physics tick shears whatever is resting on it. It may also
-        have ended the last episode beside the lorry rather than on it. Either
-        way the correction is sub-metre, because the deck itself no longer
-        teleports between episodes (``pad.route_start``), so the estimator step
-        is far smaller than the GNSS errors this environment models anyway.
+        In a deck-start run a grounded vehicle is re-seated. It has usually
+        slid: the deck is redrawn with a new cruise speed at every reset, and a
+        kinematic body whose speed steps in one physics tick shears whatever is
+        resting on it. Airborne-start runs return above and never write a pose;
+        their physical hover support and PX4 entry flight own all repositioning.
         """
+        # Airborne-start runs never teleport the PX4 estimator. After a
+        # touchdown the same physical support used at process startup lifts
+        # the disarmed vehicle smoothly toward its hover; after a timeout PX4
+        # remains airborne and flies the next entry pose itself.
+        if self.start_airborne:
+            return False
         state = self.vehicle.state
         roll, pitch, _ = Rotation.from_quat(state.attitude).as_euler("XYZ")
         tipped = math.hypot(roll, pitch) > math.radians(
@@ -1257,24 +1277,19 @@ class LandingWorld:
         grounded = float(state.position[2]) <= self.deck.surface_z + 1.0
         if not (tipped or grounded):
             return False
-        # With an airborne start the vehicle goes back to the hover point, not
-        # onto the roof: the next episode is a landing, and putting it back on
-        # the deck would only make PX4 fly the takeoff again. The hover hold
-        # keeps it there until the autopilot is armed.
-        clearance = (self.hover_start_pad_m if self.start_airborne
-                     else self.deck_clearance_pad_m)
-        spawn = self.deck.world_from_pad(clearance)
+        spawn = self.deck.world_from_pad(self.deck_clearance_pad_m)
         moved = float(np.linalg.norm(np.asarray(state.position, dtype=float) - spawn))
-        self.vehicle.set_world_pose(position=spawn, orientation=np.array([1.0, 0.0, 0.0, 0.0]))
+        # Vehicle inherits Isaac Robot.set_world_pose, whose direct API is
+        # scalar-first [w,x,y,z] even though Pegasus vehicle state is xyzw.
+        self.vehicle.set_world_pose(
+            position=spawn, orientation=np.array([1.0, 0.0, 0.0, 0.0]))
         self.vehicle.set_linear_velocity(
-            np.asarray(self.deck.velocity, dtype=float) if self.start_airborne
-            else np.zeros(3))
+            np.zeros(3))
         self.vehicle.set_angular_velocity(np.zeros(3))
-        where = "at the hover start" if self.start_airborne else "on the deck"
         if tipped:
-            carb.log_warn(f"Vehicle had tipped over; re-placed {where} ({moved:.2f} m).")
+            carb.log_warn(f"Vehicle had tipped over; re-placed on the deck ({moved:.2f} m).")
         elif moved > 0.5:
-            carb.log_info(f"Vehicle re-placed {where} ({moved:.2f} m).")
+            carb.log_info(f"Vehicle re-placed on the deck ({moved:.2f} m).")
         return True
 
     def _on_flight_state(self, msg: String) -> None:
@@ -1285,10 +1300,21 @@ class LandingWorld:
                 raise ValueError("protocol version mismatch")
             flying = bool(state["armed"])
             handover = bool(state.get("handover", False))
+            controlled = bool(state.get("controlled", flying))
+            px4_thrust = float(state.get("px4_thrust", 0.0))
+            if not math.isfinite(px4_thrust):
+                raise ValueError("non-finite PX4 thrust")
         except (ValueError, TypeError, KeyError, json.JSONDecodeError) as exc:
             carb.log_warn(f"Ignored malformed flight state: {exc}")
             return
-        self.autopilot_flying = flying
+        previous_control = self.autopilot_flying
+        self.autopilot_flying = bool(flying and controlled)
+        self.px4_normalized_thrust = float(np.clip(px4_thrust, 0.0, 1.0))
+        if self.autopilot_flying and not previous_control:
+            self.hover_hold_release_started = float(self.world.current_time)
+        elif not self.autopilot_flying:
+            self.hover_hold_release_started = None
+        self.policy_handover = bool(flying and handover)
         # The gateway starts only after PX4 reports Ready for takeoff.  Its
         # first valid state therefore releases the cheap startup render loop
         # even for viewers such as run_metasejong_demo that do not reset first.
@@ -1297,12 +1323,17 @@ class LandingWorld:
             carb.log_warn("Policy has the vehicle; the lorry pulls away.")
             self.deck.release(self.world.current_time)
 
-    def _hold_hover_start(self, dt: float) -> None:
-        """Keep a disarmed vehicle parked at its hover start, on the deck's twist.
+    def _hold_prearm_start(self, dt: float) -> None:
+        """Keep a disarmed airborne start aloft until PX4 takes over.
 
-        Only until PX4 arms. A multirotor with no autopilot has nothing holding
-        it up, so without this the airborne start is a free fall through the
-        seconds PX4 spends aligning its estimator and accepting an arm command.
+        A deck-start vehicle must keep its weight on the roof so its configured
+        friction can hold it. Cancelling gravity there removes the normal force
+        and lets even a small disturbance slide it away. Pre-handover wind is
+        gated separately in :meth:`_apply_wind`, so deck starts need no
+        artificial force at all.
+
+        An airborne start does need a real force: a multirotor with no
+        autopilot has nothing holding it up while PX4 aligns and arms.
 
         It is held by force rather than by writing the pose, because the IMU is
         differentiated from successive velocities: pinning the transform every
@@ -1316,8 +1347,26 @@ class LandingWorld:
         It is held *with* the deck, so the pad-relative pose the episode starts
         from is the one the reset drew.
         """
-        if self.autopilot_flying or not self.start_airborne:
+        if not self.start_airborne:
             return
+        gain = 1.0
+        if self.autopilot_flying:
+            elapsed = (float(self.world.current_time)
+                       - float(self.hover_hold_release_started
+                               if self.hover_hold_release_started is not None
+                               else self.world.current_time))
+            if self.hover_hold_release_s <= 0.0 or elapsed >= self.hover_hold_release_s:
+                return
+            scheduled_gain = max(0.0, 1.0 - elapsed / self.hover_hold_release_s)
+            # Do not add a full gravity-cancelling force on top of PX4's own
+            # hover thrust. For a commanded descent PX4 initially asks for
+            # almost zero thrust, so the scheduled taper lets it descend gently
+            # until the controller catches the velocity. For a climb, thrust
+            # rises immediately and the assist gets out of the way.
+            thrust_gain = max(
+                0.0,
+                1.0 - self.px4_normalized_thrust / max(self.px4_hover_thrust, 1e-6))
+            gain = min(scheduled_gain, thrust_gain)
         state = self.vehicle.state
         position = np.asarray(state.position, dtype=float)
         velocity = np.asarray(state.linear_velocity, dtype=float)
@@ -1328,7 +1377,7 @@ class LandingWorld:
         accel = (np.array([0.0, 0.0, GRAVITY_M_S2])
                  + 4.0 * (target - position)
                  + 3.5 * (target_velocity - velocity))
-        force_world = self.hover_hold_mass_kg * accel
+        force_world = gain * self.hover_hold_mass_kg * accel
         force_body = Rotation.from_quat(state.attitude).inv().apply(force_world)
         self.vehicle.apply_force(force_body.tolist(), body_part="/body")
         # And hold it level. A disarmed multirotor has no rotors to stabilise
@@ -1342,7 +1391,7 @@ class LandingWorld:
         self.deck.advance(self.world.current_time, dt)
         # After the deck, so the vehicle is held against the pose the deck has
         # this tick rather than the one it had last tick.
-        self._hold_hover_start(dt)
+        self._hold_prearm_start(dt)
         self._report_deck_carry()
 
     def _report_deck_carry(self) -> None:
@@ -1378,8 +1427,14 @@ class LandingWorld:
         wind, force_enu, force_body = self.wind.force(
             self.world.current_time, state.linear_velocity, state.attitude
         )
-        self.vehicle.apply_force(force_body.tolist(), body_part="/body")
-        self.last_wind, self.last_force = wind, force_enu
+        if self.policy_handover:
+            self.vehicle.apply_force(force_body.tolist(), body_part="/body")
+            self.last_force = force_enu
+        else:
+            # Wind speed remains observable during reset, but this is the
+            # physical force actually applied to the vehicle.
+            self.last_force = np.zeros(3)
+        self.last_wind = wind
 
     def _update_environment_sensors(self, dt: float) -> None:
         """Both receivers' fixes and the local wind geometry, once per frame.

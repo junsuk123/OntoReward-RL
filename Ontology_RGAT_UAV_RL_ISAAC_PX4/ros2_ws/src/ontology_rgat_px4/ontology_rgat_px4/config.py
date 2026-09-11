@@ -33,6 +33,7 @@ class GatewayConfig:
     max_yaw_rate_rad_s: float
     offboard_prestream_count: int
     estimator_warmup_s: float
+    start_airborne: bool
     marker_pose_drives_policy: bool
     # Seconds over which a camera/PX4 position handover is faded out, so
     # losing the pad from frame does not step the state the policy flies on.
@@ -74,6 +75,7 @@ class GatewayConfig:
         system = data["system"]
         network = data["network"]
         px4 = data["px4"]
+        isaac = data.get("isaac", {}) or {}
         vision = data.get("vision", {})
         pad = data.get("pad", {}) or {}
         landing = data.get("landing", {}) or {}
@@ -119,6 +121,7 @@ class GatewayConfig:
             max_yaw_rate_rad_s=math.radians(float(px4["max_yaw_rate_deg_s"])),
             offboard_prestream_count=int(px4["offboard_prestream_count"]),
             estimator_warmup_s=float(px4["estimator_warmup_s"]),
+            start_airborne=bool(isaac.get("start_airborne", False)),
             marker_pose_drives_policy=bool(vision.get("pose_source_for_policy", False)),
             vision_handover_tau_s=float(vision.get("handover_tau_s", 0.6)),
             marker_pose_max_step_m=float(vision.get("pose_max_step_m", 0.75)),

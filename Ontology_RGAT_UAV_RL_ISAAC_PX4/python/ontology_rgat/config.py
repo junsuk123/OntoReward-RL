@@ -390,6 +390,7 @@ def default_config(mode: str = "quick", target: str = "sitl") -> Config:
         "timeout": 2.0,
         "estimator_warmup": 5.0,
         "auto_arm": target == "sitl",
+        "start_airborne": True,
         "prestream_count": 24,
         "control_hz": 50.0,
         "reset_settle": 0.15,

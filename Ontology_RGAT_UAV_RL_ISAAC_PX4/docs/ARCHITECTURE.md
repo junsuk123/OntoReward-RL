@@ -1,5 +1,8 @@
 # Architecture and migration boundary
 
+[System overview](SYSTEM_OVERVIEW.md) · [Operations](OPERATIONS.md) ·
+[Hardware safety](HARDWARE_SAFETY.md) · [References](REFERENCES.md)
+
 ## What was replaced
 
 Two migrations happened, and they are separate. The first moved the *simulator*

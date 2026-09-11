@@ -1,5 +1,8 @@
 # Hardware safety gate
 
+[System overview](SYSTEM_OVERVIEW.md) · [Architecture](ARCHITECTURE.md) ·
+[Operations](OPERATIONS.md) · [References](REFERENCES.md)
+
 This code can command thrust. Hardware use requires an independent pilot and a
 tested manual takeover path.
 

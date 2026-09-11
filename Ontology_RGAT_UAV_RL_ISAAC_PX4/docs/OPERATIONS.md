@@ -1,5 +1,8 @@
 # Operations
 
+[System overview](SYSTEM_OVERVIEW.md) · [Architecture](ARCHITECTURE.md) ·
+[Hardware safety](HARDWARE_SAFETY.md) · [References](REFERENCES.md)
+
 ## Upgrading a running stack to the urban environment
 
 Nothing in a live stack picks these changes up on its own. A session started
@@ -344,7 +347,7 @@ Two things a real extract needs watching for:
 ## Failure diagnosis
 
 - UAV motionless while the run prints `R-GAT epoch`: this is the offline
-  potential-training stage. Isaac/PX4 stays online and the disarmed vehicle
+  R-GAT training stage. Isaac/PX4 stays online and the disarmed vehicle
   waits on the pad until PPO flight starts. Run `scripts/stack_status.sh`; a
   changing odometry stream confirms the simulation loop is healthy.
 - `no /fmu/out/vehicle_land_detected received`: PX4 was built without
@@ -437,7 +440,7 @@ Everything lands under `results/` (`cfg.paths.*`), which is git-ignored:
 | Path | Written by |
 |---|---|
 | `results/data/rgat_dataset_external.npz` (+ `.graph.pkl`) | stage 2, dataset generation |
-| `results/models/rgat_model_external.pt` | stage 3, R-GAT potential (CPU float32, with the schema it was trained against) |
+| `results/models/rgat_model_external.pt` | stage 3, R-GAT safe-landing outcome model (CPU float32, with the schema it was trained against) |
 | `results/models/rgat_fixed_reward_external.json` | stage 4, frozen R-GAT-distilled reward coefficients, ranges and provenance |
 | `results/rgat_fixed_reward_weights.csv` | stage 4, tabular fixed coefficients and R-GAT sensitivities |
 | `results/models/ppo_manual_external.pt` | stage 5, baseline PPO |

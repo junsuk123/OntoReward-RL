@@ -1,5 +1,9 @@
 # Ontology-RGAT UAV landing: Isaac Sim + PX4
 
+**Documentation:** [system overview](docs/SYSTEM_OVERVIEW.md) ·
+[architecture](docs/ARCHITECTURE.md) · [operations](docs/OPERATIONS.md) ·
+[hardware safety](docs/HARDWARE_SAFETY.md) · [references](docs/REFERENCES.md)
+
 This workspace replaces the in-process MATLAB rigid-body simulator in
 `../Ontology_RGAT_UAV_RL_MATLAB/Ontology_RGAT_UAV_RL_MATLAB` with an external,
 flight-stack-in-the-loop system. The original directory is not modified.
@@ -31,7 +35,7 @@ runtime values.
 
 ### End-to-end system
 
-![End-to-end Ontology-RGAT UAV landing system on the Meta-Sejong compact UGV](docs/images/system_architecture-metasejong-v2.png)
+![End-to-end Ontology-RGAT UAV landing system on the Meta-Sejong compact UGV](docs/images/system_architecture-metasejong-v3.png)
 
 The control loop runs through Isaac Sim/Pegasus, PX4 SITL, the ROS 2 gateway
 and the Python learner. Policy input is restricted to observable sensor and
@@ -41,19 +45,21 @@ navigation telemetry and the visual touchdown outcome.
 
 ### Ontology R-GAT
 
-![Ontology R-GAT potential network](docs/images/rgat_network-v3.png)
+![Ontology R-GAT and fixed reward-weight network](docs/images/rgat_network-v4.png)
 
 Each state populates a fixed 14-node, 38-edge semantic graph. Every node has an
 18-D feature (`value`, `1-value`, risk flag, bias and a 14-D node identity).
 Two 24-wide relational attention layers, with a residual around the second,
-read the `SafeLanding` goal node into the bounded potential
-`Phi(G) in [-1, 1]`. The graph drawing shows a representative subset of edges
-for readability; the implementation uses all four relation types and all 38
-edges.
+read the `SafeLanding` goal node into a bounded training-time potential
+`Phi_R-GAT(G) in [-1, 1]`. Counterfactual output sensitivities are averaged over
+the dataset and projected into eight fixed reward coefficients. R-GAT therefore
+learns the reward design, but its live attention does not mutate the PPO reward.
+The graph drawing shows a representative subset of edges for readability; the
+implementation uses all four relation types and all 38 edges.
 
 ### Reward-function comparison
 
-![Manual, sparse and proposed PBRS reward functions](docs/images/reward_function-v2.png)
+![Sparse task contract, R-GAT attribution, frozen reward and dual acceptance](docs/images/reward_function-v3.png)
 
 The experiment compares the hand-weighted dense baseline, the sparse task
 reward and the proposed fixed-weight potential-based reward shaping (PBRS).
@@ -83,13 +89,15 @@ channels, three motion/energy channels and three GNSS self-assessment channels.
 Its actor and critic are separate `23 -> 64 -> 64` networks; the actor emits
 collective, roll, pitch and yaw-rate commands. Selected semantic values appear
 in the policy observation, while the complete 14-node ontology is the parallel
-state representation used to calculate `Phi(G)` for reward shaping.
+state representation used for R-GAT training and for calculating the frozen
+eight-term `Phi_w(s)` reward input.
 
 The landing context includes `WindRisk`, computed from the UAV's simulated
 three-axis anemometer rather than simulator truth. The sensor has seeded bias,
 white noise and first-order response. Its measured speed, acceleration and
 direction change drive the `WindRisk` ontology node; that node reaches PPO,
-the manual reward and the R-GAT potential used by PBRS. The MetaSejong research
+the manual reward, R-GAT attribution, and the fixed PBRS wind term. The
+MetaSejong research
 pipeline enables this wind sensor, turbulence and seeded gusts together with
 the moving UGV. The simpler visual demo deliberately leaves wind disabled.
 
@@ -303,58 +311,50 @@ but reads nothing from them.
 
 ## Run everything with one command
 
-On this PC the verified Isaac Sim release is
-`/home/j/isaacsim/_build/linux-x86_64/release`. Start MATLAB from the desktop
-session and run:
+Run the launcher from this active project directory. It finds the verified
+Isaac Sim installation on this PC automatically; another installation can be
+selected with `ISAACSIM_PATH` or `--isaac-sim-path`.
 
-```matlab
-cd('/home/j/SynologyDrive/junsuk/학술대회/CICS2026/codes/Ontology_RGAT_UAV_RL_ISAAC_PX4/matlab')
-setenv('ISAACSIM_PATH','/home/j/isaacsim/_build/linux-x86_64/release')
-clear classes
-out = run_pipeline();                        % quick mode
-out = run_pipeline('Mode','full');           % the paper-scale sweep
+```bash
+./scripts/run_metasejong_pipeline.sh --mode full
 ```
 
-`run_pipeline` starts the DDS agent, Isaac/Pegasus/PX4 and the gateway in the
-order below, waits for each readiness signal, flies one expert episode as a
-pre-flight check, runs dataset generation, R-GAT training, both PPO runs, the
-paired evaluation and the plots, then stops whatever it started. Processes that
-were already running are adopted and left running.
+The launcher starts or adopts DDS, Isaac/Pegasus/PX4, the gateway, dashboard,
+and RViz; waits for each readiness signal; flies a preflight episode; updates
+the cumulative ontology dataset and R-GAT; distills the fixed reward weights;
+updates both PPO policies; runs paired evaluation and dynamic-condition sweeps;
+and exports the figures and run summary. It stops only processes it started.
 
-```matlab
-run_pipeline('SmokeTestOnly',true)     % bring the stack up, fly one episode, stop
-run_pipeline('UseRunningStack',true)   % attach to a stack you started yourself
-run_pipeline('KeepStack',true)         % leave the simulator up afterwards
-run_pipeline('Headless',true)          % no window, for unattended runs
+Useful variants are:
+
+```bash
+./scripts/run_metasejong_pipeline.sh --mode quick
+./scripts/run_metasejong_pipeline.sh --smoke-test-only
+./scripts/run_metasejong_pipeline.sh --use-running-stack
+./scripts/run_metasejong_pipeline.sh --keep-stack
+./scripts/run_metasejong_pipeline.sh --headless
 ```
 
-The Isaac Sim window opens by default whenever `DISPLAY` is set, and the run
-falls back to headless on a machine without one. MATLAB itself must be started
-from the graphical session, because the window is opened on the `DISPLAY` that
-MATLAB sees. Rendering costs simulation speed even though it is throttled to
-`isaac.rendering_dt`: PX4 runs in lockstep, so a slower frame rate slows the
-flight stack too. Raise `isaac.rendering_dt` in `config/system.yaml` for a
-cheaper picture, or run long sweeps headless.
+The Isaac Sim window opens by default whenever `DISPLAY` is set; otherwise the
+run falls back to headless. Rendering costs simulation speed even though it is
+throttled to `isaac.rendering_dt`: PX4 runs in lockstep, so a slower frame rate
+slows the flight stack too. Raise `isaac.rendering_dt` in the system config for
+a cheaper picture, or use `--headless` for long sweeps.
 
-After pulling changes, run `clear classes` before `run_pipeline` if a MATLAB
-session is already open. `bridge.PX4Bridge` and `stack.ExternalStack` are
-classdef files, and MATLAB keeps running the copy it loaded first: a session
-that predates an update will fly the old control loop and report failures that
-are already fixed on disk.
-
-PX4 runs in real time: quick mode flies roughly 400 episodes and full mode
-roughly 7000, so budget hours and days respectively. If PX4 stops accepting arm
-commands mid-sweep, `sim.resetState` cycles the simulator and retries
-(`cfg.external.resetRecoveries`). Process logs are under
+PX4 runs in real time: quick mode flies roughly 550 episodes and full mode
+roughly 8,500, so budget hours and days respectively. If PX4 stops accepting arm
+commands mid-sweep, the learner cycles the simulator and retries according to
+`cfg.external.reset_recoveries`. Process logs are under
 `/tmp/ontology_rgat_stack/`.
 
 After dataset collection, stage 3 trains R-GAT offline. During that stage the
 Isaac/PX4 loop remains live but receives no flight commands, so the disarmed UAV
 stays motionless on the pad. This is not a stopped simulation; flight resumes
-at stage 4 (PPO). Check the live odometry rate and gateway state from a terminal:
+at stage 5 (manual PPO). Check the live odometry rate and gateway state from a
+terminal:
 
 ```bash
-cd '/home/j/SynologyDrive/junsuk/학술대회/CICS2026/codes/Ontology_RGAT_UAV_RL_ISAAC_PX4'
+cd Ontology_RGAT_UAV_RL_ISAAC_PX4
 ./scripts/stack_status.sh
 ```
 
@@ -387,7 +387,7 @@ Git:
 # then takes off to a stable 2.5 m hold above the moving UGV.
 ./scripts/run_metasejong_demo.sh
 
-# Complete learning experiment: adds the ontology dataset, R-GAT potential,
+# Complete learning experiment: adds the ontology dataset, R-GAT outcome model,
 # fixed reward-weight distillation, manual/PBRS PPO training, dual-gate
 # evaluation, dashboard and figures.
 ./scripts/run_metasejong_pipeline.sh --mode quick
@@ -578,6 +578,7 @@ python3 tools/calibrate_hover_thrust.py
   ceiling is reached. A vehicle hovering at 58% throttle cannot deliver the
   full modelled +85% span in any case.
 
-See `docs/ARCHITECTURE.md`, `docs/OPERATIONS.md`, and
-`docs/HARDWARE_SAFETY.md` before flight. Protocol/API sources are collected in
-`docs/REFERENCES.md`.
+See the [system overview](docs/SYSTEM_OVERVIEW.md),
+[architecture](docs/ARCHITECTURE.md), [operations](docs/OPERATIONS.md), and
+[hardware safety](docs/HARDWARE_SAFETY.md) before flight. Protocol/API sources
+are collected in [references](docs/REFERENCES.md).

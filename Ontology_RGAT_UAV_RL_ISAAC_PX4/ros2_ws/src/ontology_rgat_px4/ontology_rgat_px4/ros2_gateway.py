@@ -111,13 +111,25 @@ FAILSAFE_HARD_FIELDS = frozenset({
     "fd_imbalanced_prop", "fd_motor_failure",
 })
 
+# These inputs are expected to be absent in autonomous SITL. Immediately after
+# a real OFFBOARD heartbeat loss clears, ``failsafe_flags`` can publish the
+# cleared offboard bit before ``vehicle_status.failsafe`` clears. In that one
+# callback-ordering window only these benign inputs remain. Treating the
+# snapshot as a hard vehicle fault aborts a resumable multi-hour run.
+FAILSAFE_SITL_INFRASTRUCTURE_FIELDS = frozenset({
+    "auto_mission_missing", "offboard_control_signal_lost",
+    "manual_control_signal_lost", "gcs_connection_lost",
+})
+
 
 def failsafe_detail(message: Any, *, target: str = "sitl") -> dict[str, Any]:
     """Expose PX4 failsafe inputs and classify safe automatic recovery.
 
-    A pure OFFBOARD signal loss in SITL is a ROS 2/uXRCE transport failure and
-    may be retried after cycling the simulator. Any simultaneous hard flag, or
-    any hardware failsafe, remains non-recoverable.
+    An OFFBOARD signal loss in SITL is a ROS 2/uXRCE transport failure and may
+    be retried after cycling the simulator. PX4 can clear that bit one callback
+    before ``VehicleStatus.failsafe``; the remaining mission/RC/GCS-missing
+    inputs are therefore the same recoverable transition. Any hard input or
+    any hardware failsafe remains non-recoverable.
     """
     active = [name for name in FAILSAFE_BOOLEAN_FIELDS
               if bool(getattr(message, name, False))]
@@ -127,7 +139,8 @@ def failsafe_detail(message: Any, *, target: str = "sitl") -> dict[str, Any]:
     hard = bool(FAILSAFE_HARD_FIELDS.intersection(active) or battery_warning)
     recoverable = bool(
         str(target).lower() == "sitl"
-        and "offboard_control_signal_lost" in active
+        and active
+        and set(active).issubset(FAILSAFE_SITL_INFRASTRUCTURE_FIELDS)
         and not hard)
     return {
         "reasons": active,

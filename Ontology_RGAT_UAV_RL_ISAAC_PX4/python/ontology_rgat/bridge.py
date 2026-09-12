@@ -40,9 +40,10 @@ class GatewayTimeout(BridgeError):
 class PX4Failsafe(BridgeError):
     """PX4 entered a failsafe while an episode was being measured.
 
-    The gateway classifies only a pure OFFBOARD heartbeat loss as a recoverable
-    transport fault. Battery, estimator, geofence and failure-detector events
-    remain hard failures so a retry cannot hide a vehicle or policy problem.
+    The gateway classifies OFFBOARD heartbeat loss and its benign autonomous
+    SITL status-clear race as recoverable transport faults. Battery, estimator,
+    geofence and failure-detector events remain hard failures so a retry cannot
+    hide a vehicle or policy problem.
     """
 
     def __init__(self, reasons: Sequence[str] = (), *, recoverable: bool = False):

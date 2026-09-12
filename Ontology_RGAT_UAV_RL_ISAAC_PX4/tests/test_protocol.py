@@ -25,7 +25,7 @@ from ontology_rgat_px4.ros2_gateway import (ContinuousPx4Clock,
                                             failsafe_detail)
 
 
-def test_failsafe_detail_classifies_only_pure_sitl_offboard_loss_as_recoverable():
+def test_failsafe_detail_classifies_only_benign_sitl_link_loss_as_recoverable():
     offboard = type("Flags", (), {
         "offboard_control_signal_lost": True,
         "manual_control_signal_lost": True,
@@ -36,6 +36,24 @@ def test_failsafe_detail_classifies_only_pure_sitl_offboard_loss_as_recoverable(
     assert "offboard_control_signal_lost" in detail["reasons"]
     assert detail["recoverable_infrastructure"] is True
     assert failsafe_detail(offboard, target="hardware")[
+        "recoverable_infrastructure"] is False
+
+    # PX4 may clear the offboard bit before VehicleStatus.failsafe. The
+    # autonomous SITL missing-input flags left in that callback window must
+    # retain the same recovery classification observed in the real run.
+    status_clear_race = type("Flags", (), {
+        "auto_mission_missing": True,
+        "manual_control_signal_lost": True,
+        "gcs_connection_lost": True,
+        "battery_warning": 0,
+    })()
+    detail = failsafe_detail(status_clear_race, target="sitl")
+    assert detail["recoverable_infrastructure"] is True
+    assert failsafe_detail(status_clear_race, target="hardware")[
+        "recoverable_infrastructure"] is False
+
+    no_flags = type("Flags", (), {"battery_warning": 0})()
+    assert failsafe_detail(no_flags, target="sitl")[
         "recoverable_infrastructure"] is False
 
     hard = type("Flags", (), {

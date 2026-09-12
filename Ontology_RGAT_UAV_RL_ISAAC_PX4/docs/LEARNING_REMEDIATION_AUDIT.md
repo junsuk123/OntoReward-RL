@@ -42,6 +42,16 @@ It is calibration evidence, not benchmark evidence:
 One warm-up episode cannot establish landing-rate or RMSE convergence. Those
 claims require the complete run and remain guarded by the new health checks.
 
+## Full-run launch check
+
+Commit `3e1f4ff` was pushed to `main`, then `./run.sh --mode full` was started.
+The launcher archived the incompatible v2 checkpoint, opened the dashboard and
+RViz, and began a fresh v3 run. Its 48-frame empirical calibration improved
+held-out keypoint RMSE from 76.66 px to 9.83 px and PCK@20 from 0.0% to 98.6%.
+The first atomic full-run episode recorded normalized loss 0.308, active-reward
+saturation 0%, nonzero active signal variation 0.00947, Table-II randomization,
+and no curriculum advancement after the unsuccessful outcome.
+
 ## Interpretation
 
 These checks prove that the former structural blockers are removed; they do

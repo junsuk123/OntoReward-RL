@@ -31,7 +31,8 @@ from ontology_rgat.controllers import VelocityYawRateController
 from ontology_rgat.curriculum import (PlatformMotionCurriculum,
                                       fitted_update_interval)
 from ontology_rgat.initialization import (camera_centered_hover_offset,
-                                          curriculum_motion_scale)
+                                          curriculum_motion_scale,
+                                          yaw_aligned_hover_offset)
 from ontology_rgat.estimation import LSTMRelativeStateEstimator
 from ontology_rgat.perception import (PRETRAIN_FORMAT, ShinKeypointEncoder,
                                       prepare_keypoint_encoder,
@@ -259,6 +260,13 @@ def test_beginner_hover_centres_pad_on_sixty_degree_camera_axis():
     np.testing.assert_allclose(pad_intersection, np.zeros(3), atol=1e-9)
     config = load_config(ROOT / "config" / "shin2026-system.yaml")
     assert config["isaac"]["center_hover_on_landing_camera"] is True
+
+
+def test_camera_centered_hover_rotates_with_entry_yaw():
+    hover = camera_centered_hover_offset(4.5)
+    north_facing = yaw_aligned_hover_offset(hover, math.pi / 2.0)
+    np.testing.assert_allclose(
+        north_facing, [0.0, hover[0], hover[2]], atol=1e-9)
 
 
 def test_keypoint_heatmaps_drive_the_descriptor_embedding():

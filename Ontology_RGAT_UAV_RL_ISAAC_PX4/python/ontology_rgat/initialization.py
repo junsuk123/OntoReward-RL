@@ -29,6 +29,22 @@ def camera_centered_hover_offset(
     return np.array([-forward_reach - mount[0], -mount[1], altitude], dtype=float)
 
 
+def yaw_aligned_hover_offset(offset_flu, yaw_enu_rad: float) -> np.ndarray:
+    """Rotate a camera-centred body/FLU hover offset into translated ENU.
+
+    The live pad state uses gravity-aligned ENU axes translated to the deck,
+    while the forward/down camera turns with vehicle yaw. Leaving the camera
+    offset in unrotated ENU centres the target only when yaw happens to be zero.
+    """
+    offset = np.asarray(offset_flu, dtype=float).reshape(-1)
+    yaw = float(yaw_enu_rad)
+    if offset.shape != (3,) or not np.isfinite(offset).all() or not math.isfinite(yaw):
+        raise ValueError("hover offset and yaw must be finite")
+    c, s = math.cos(yaw), math.sin(yaw)
+    return np.array([c * offset[0] - s * offset[1],
+                     s * offset[0] + c * offset[1], offset[2]], dtype=float)
+
+
 def curriculum_motion_scale(curriculum: float, minimum_scale: float) -> float:
     """Keep the platform moving slowly while its difficulty ramps to full."""
     c = float(curriculum)

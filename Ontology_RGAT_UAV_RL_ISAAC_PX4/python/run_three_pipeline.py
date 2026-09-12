@@ -640,4 +640,9 @@ def main():
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        exit_code = main()
+    except KeyboardInterrupt:
+        print("Pipeline interrupted by user; checkpoints and completed rows were preserved.")
+        exit_code = 130
+    raise SystemExit(exit_code)

@@ -62,9 +62,10 @@ benchmark:
   # c=0 starts at the already-stationary airborne hover support. It blends
   # back to the exact Table-I draw and is unchanged at paired evaluation c=1.
   initial_condition_curriculum_min_scale: 0.0
-  # Policy control begins only after a genuine stationary hover, not while
-  # the PX4 position loop is merely passing through the entry tolerance.
-  entry_speed_tolerance_m_s: 0.15
+  # Setup-only handover gate, not the touchdown-success threshold. The real
+  # PX4/Pegasus hover limit cycle observed in this rendered scene is about
+  # 0.34 m/s; 0.40 rejects a fly-through but does not wait forever for 0.15.
+  entry_speed_tolerance_m_s: 0.40
   entry_settle_s: 1.0
   # The rendered ArUco solve is intermittent during PX4 settling. A recent
   # real detection proves visibility without requiring every 20 Hz frame to

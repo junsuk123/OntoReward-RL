@@ -30,7 +30,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(WORKSPACE / "python"))
 from config_loader import load_config
 from ontology_rgat.initialization import (camera_centered_hover_offset,
-                                          curriculum_camera_entry)
+                                          curriculum_camera_entry,
+                                          yaw_aligned_hover_offset)
 
 CONFIG = load_config(CONFIG_PATH)
 from sensor_profiles import isaac_runtime_profile
@@ -1203,7 +1204,11 @@ class LandingWorld:
                     req.get("pad_scale", 1.0), 1.0)),
                 minimum_scale=float(benchmark.get(
                     "initial_condition_curriculum_min_scale", 0.0)),
-                hover_offset_pad_m=self.hover_start_pad_m,
+                # The gateway's pad-relative state is translated ENU, not the
+                # yawing deck's local coordinates. Rotate the forward-camera
+                # hover with the UGV heading or it is centred only at yaw=0.
+                hover_offset_pad_m=yaw_aligned_hover_offset(
+                    self.hover_start_pad_m, self.deck.yaw),
             )
         else:
             # Retained urban distribution, expressed as an offset from the

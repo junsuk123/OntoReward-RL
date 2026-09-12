@@ -25,6 +25,13 @@ ontology/R-GAT reward 방식을 포함한다.
 ./run.sh --seminar-fast
 ```
 
+완료된 결과와 checkpoint는 그대로 두고 Isaac/PX4, RViz와 대시보드를 계속 띄워
+상태를 확인하려면 다음처럼 실행한다. 종료는 `Ctrl-C`로 안전하게 수행한다.
+
+```bash
+./run.sh --seminar-fast --stay-open
+```
+
 이 명령은 기존 full 결과를 건드리지 않고 `results/seminar_fast/core3`에 저장한다.
 실제 Isaac/PX4에서 성공한 training-only PD 교사 착륙 4회를 먼저 수집하고, 압축된
 공통 camera embedding/action으로 세 actor를 behavior-cloning 초기화한다. 교사는
@@ -58,6 +65,8 @@ ontology/R-GAT reward 방식을 포함한다.
 
 Flight stack은 launcher 하나만 소유할 수 있다. 두 번째 `run.sh`는 vehicle을 reset하거나
 result를 수정하기 전에 종료된다. 호환 checkpoint와 완료 CSV row는 자동 재개한다.
+기본 실행은 보고서 생성까지 끝나면 정상 종료하며, `--stay-open`은 완료 후에도 전체
+시각화 stack을 유지하고 죽은 owned process가 있으면 자동 재시작한다.
 
 ## 비교 대상
 

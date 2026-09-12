@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import sys
+import time
 
 import numpy as np
 import torch
@@ -59,6 +60,23 @@ def _write_json(path: Path, value) -> None:
     temporary.write_text(json.dumps(value, indent=2, allow_nan=False),
                          encoding="utf-8")
     os.replace(temporary, path)
+
+
+def _hold_after_complete(owned, monitor, *, sleep=time.sleep) -> None:
+    """Keep the completed simulator and monitoring UI alive until Ctrl-C.
+
+    This runs only after every checkpoint, evaluation row and report has been
+    committed. If an owned flight process dies while the completed dashboard
+    is displayed, rebuild the stack instead of silently leaving a stale UI.
+    """
+    monitor.stage("complete", "results saved · simulator monitoring active")
+    print("Experiment complete; dashboard, RViz and Isaac/PX4 remain active. "
+          "Press Ctrl-C for a controlled shutdown.")
+    while True:
+        if owned is not None and not owned.is_ready():
+            print("WARNING: completed flight stack is no longer ready; restarting it.")
+            owned.restart()
+        sleep(2.0)
 
 
 def _behavior_transform(variant: int, *, policy_blend: float = .35,
@@ -712,6 +730,9 @@ def main():
     parser.add_argument("--headless", action="store_true")
     parser.add_argument("--use-running-stack", action="store_true")
     parser.add_argument("--keep-stack", action="store_true")
+    parser.add_argument(
+        "--stay-open", action="store_true",
+        help="after successful completion keep Isaac/PX4, RViz and dashboard active")
     parser.add_argument("--isaac-sim-path")
     parser.add_argument("--isaac-timeout", type=float)
     parser.add_argument("--no-dashboard", action="store_true")
@@ -1350,6 +1371,8 @@ def main():
                 "reports": reports,
             })
             _write_json(manifest_path, manifest)
+            if args.stay_open:
+                _hold_after_complete(owned, monitor)
     finally:
         stack_module.current(None)
         if owned is not None and not args.keep_stack:

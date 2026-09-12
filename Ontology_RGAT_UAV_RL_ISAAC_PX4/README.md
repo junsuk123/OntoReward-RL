@@ -33,6 +33,15 @@ estimator-free baseline, estimator-free ontology/R-GAT reward 방식을 비교�
 ../run.sh --seminar-fast
 ```
 
+완료 뒤에도 Isaac/PX4, RViz와 대시보드를 유지하려면 다음 명령을 사용한다.
+
+```bash
+../run.sh --seminar-fast --stay-open
+```
+
+완료 결과와 checkpoint를 다시 만들지 않고 로드하며, `Ctrl-C`에서 전체 stack을
+안전하게 종료한다.
+
 별도 `results/seminar_fast/core3` 폴더에서 실제 training-only PD 교사 성공 착륙
 4회를 공통 behavior-cloning 자료로 만든 뒤 `shin_se_fixed`, `no_se_fixed`,
 `onto_rgat_adaptive_weight_no_se`를 PPO 16회씩 학습한다. 교사는 움직이는 UGV 속도

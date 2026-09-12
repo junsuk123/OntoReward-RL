@@ -42,11 +42,45 @@ from ontology_rgat.rgat import (FrozenSemanticRGATPotential,
 from ontology_rgat.rgat.semantic_dataset import semantic_rgat_config
 from ontology_rgat.rgat.train import train_potential
 from run_three_pipeline import (_behavior_transform,
+                                _hold_after_complete,
                                 _privileged_velocity_teacher_action,
                                 _reward_design_collection_contract)
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_completed_system_hold_restarts_a_dead_owned_stack():
+    events = []
+
+    class Stack:
+        checks = 0
+
+        def is_ready(self):
+            self.checks += 1
+            return self.checks > 1
+
+        def restart(self):
+            events.append("restart")
+
+    class Monitor:
+        def stage(self, stage, detail):
+            events.append((stage, detail))
+
+    sleeps = []
+
+    def stop_after_two_polls(seconds):
+        sleeps.append(seconds)
+        if len(sleeps) == 2:
+            raise KeyboardInterrupt
+
+    with pytest.raises(KeyboardInterrupt):
+        _hold_after_complete(Stack(), Monitor(), sleep=stop_after_two_polls)
+
+    assert events[0] == (
+        "complete", "results saved · simulator monitoring active")
+    assert events.count("restart") == 1
+    assert sleeps == [2.0, 2.0]
 
 
 def _model(name):

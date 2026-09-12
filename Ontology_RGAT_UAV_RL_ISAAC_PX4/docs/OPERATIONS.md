@@ -109,6 +109,12 @@ Runner는 다음 순서로 시작한다.
 시작한 process만 소유하며 `--keep-stack`이 없으면 run 종료 때 중단한다. Recovery도
 소유 stack만 재시작하며 직접 시작한 simulator를 종료하지 않는다.
 
+정상 완료 뒤 simulator, RViz와 dashboard가 닫히는 기본 동작을 원하지 않으면
+`../run.sh --seminar-fast --stay-open`을 사용한다. 이 모드는 모든 결과 파일을 먼저
+commit한 다음 UI와 flight stack을 유지하며, owned stack이 죽으면 자동 재시작한다.
+`Ctrl-C`를 누르면 기존 cleanup 경로로 안전하게 종료한다. `--keep-stack`은 runner가
+종료된 뒤 외부 stack만 남기는 별도 옵션으로 dashboard/RViz 유지 옵션이 아니다.
+
 Runtime log는 다음과 같다.
 
 ```text

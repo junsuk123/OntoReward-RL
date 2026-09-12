@@ -1,10 +1,23 @@
 #!/usr/bin/env bash
-# Repository entry point for the complete Shin/OntoReward flight benchmark.
+# Repository entry point for the controlled three-pipeline flight benchmark.
 set -Eeuo pipefail
 
 repository_root=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 project_root="$repository_root/Ontology_RGAT_UAV_RL_ISAAC_PX4"
-launcher="$project_root/scripts/run_shin2026_benchmark.sh"
+launcher="$project_root/scripts/run_three_pipeline.sh"
+
+# Preserve the former reward-mode CLI explicitly. Legacy invocations continue
+# to use the old runner; a bare run and the new --pipelines interface use the
+# scientifically separated three-pipeline runner.
+legacy_invocation=false
+for argument in "$@"; do
+  case "$argument" in
+    --methods|--methods=*|--reward|--reward=*) legacy_invocation=true ;;
+  esac
+done
+if [[ "$legacy_invocation" == true ]]; then
+  launcher="$project_root/scripts/run_shin2026_benchmark.sh"
+fi
 
 if [[ ! -x "$launcher" ]]; then
   echo "ERROR: benchmark launcher is missing or not executable: $launcher" >&2
@@ -47,8 +60,10 @@ if [[ "$mode_supplied" == false ]]; then
   arguments=(--mode full "${arguments[@]}")
 fi
 if [[ "$selected_mode" == full ]]; then
-  # Default two-method run: 400 Shin + 400 OntoReward episodes. Five explicitly
-  # selected ablation methods receive 160 each; a single --reward receives 800.
+  # Equal PPO budgets: 264 x 3, plus the Shin-only 8-episode estimator warm-up,
+  # gives exactly 800 live training episodes in the default seminar run.
+  # The runner subtracts that explicit overhead before dividing the remaining
+  # PPO budget equally, including when --pipelines selects a subset.
   if [[ "$training_budget_supplied" == false ]]; then
     arguments+=(--total-train-episodes 800)
   fi

@@ -31,7 +31,7 @@ from ontology_rgat.curriculum import fitted_update_interval
 from ontology_rgat.evaluation.shin2026 import write_benchmark_outputs
 from ontology_rgat.perception import (RosGrayscaleSource,
                                       prepare_keypoint_encoder)
-from ontology_rgat.ppo.recurrent import ShinRecurrentActorCritic
+from ontology_rgat.ppo.recurrent import PipelineActorCritic
 from ontology_rgat.ppo.recurrent_train import collect_episode, train_live
 from ontology_rgat.reward_modes import (FrozenControlledPotential,
                                         episode_rollout_dataset,
@@ -89,7 +89,7 @@ def _live_config(mode, results_dir, system_config):
     return cfg
 
 
-def _build_model(config, device, keypoint_pretraining=None):
+def _build_model(config, device, keypoint_pretraining=None, pipeline="shin_se"):
     estimator = config.get("estimator") or {}
     ppo = config.get("ppo") or {}
     torch_device = torch.device(device)
@@ -97,7 +97,7 @@ def _build_model(config, device, keypoint_pretraining=None):
         (estimator.get("keypoint_pretraining") or {}).get("enabled", False))
     if pretraining_enabled and keypoint_pretraining is None:
         raise ValueError("enabled keypoint pretraining artifact was not prepared")
-    model = ShinRecurrentActorCritic(
+    model = PipelineActorCritic(
         image_embedding=int(estimator.get("image_embedding", 512)),
         lstm_hidden=int(estimator.get("lstm_hidden", 512)),
         latent_dim=int(estimator.get("latent_dimension", 256)),
@@ -106,6 +106,7 @@ def _build_model(config, device, keypoint_pretraining=None):
         init_log_std=float(ppo.get("init_log_std", -1.5)),
         actor_output_gain=float(ppo.get("actor_output_gain", 0.01)),
         freeze_keypoint=pretraining_enabled,
+        pipeline=pipeline,
     )
     if keypoint_pretraining is not None:
         model.encoder.load_state_dict(keypoint_pretraining["encoder"])

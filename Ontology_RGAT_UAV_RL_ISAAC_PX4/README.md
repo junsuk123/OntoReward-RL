@@ -3,68 +3,55 @@
 **Documentation:** [system overview](docs/SYSTEM_OVERVIEW.md) ·
 [architecture](docs/ARCHITECTURE.md) · [operations](docs/OPERATIONS.md) ·
 [hardware safety](docs/HARDWARE_SAFETY.md) · [references](docs/REFERENCES.md) ·
-[Shin-2026 benchmark](docs/SHIN2026_BASELINE.md)
+[three-pipeline comparison](docs/THREE_PIPELINE_COMPARISON.md) ·
+[legacy Shin-2026 benchmark](docs/SHIN2026_BASELINE.md)
 
 This workspace replaces the in-process MATLAB rigid-body simulator in
 `../Ontology_RGAT_UAV_RL_MATLAB/Ontology_RGAT_UAV_RL_MATLAB` with an external,
 flight-stack-in-the-loop system. The original directory is not modified.
 
-## Shin-2026 controlled reward benchmark
+## Primary controlled three-pipeline experiment
 
-The new benchmark keeps this Isaac Sim + Pegasus + PX4 stack but provides a
-non-cooperative actor compatible with Shin et al. (2026): raw 512×320 grayscale
-pixels, UAV body velocity, and attitude in; body-heading velocity plus yaw rate
-out. Simulator platform truth is isolated to the training critic, auxiliary
-estimation target, terminal scoring, and evaluation. All five reward modes use
-the same recurrent actor/critic and paired seed plan.
+The default experiment compares three explicit pipelines rather than attaching
+different reward strings to one estimator-enabled model:
+
+- `shin_se`: Shin-style state-estimation-supervised latent representation,
+  Table-III shaping and active perception;
+- `no_se`: the same encoder, temporal LSTM, actor/critic and Table-III physical
+  shaping, without estimator head/loss/warm-up or active perception;
+- `onto_no_se`: the same estimator-free actor with sparse task reward plus PBRS
+  from the frozen direct output of a semantic R-GAT.
+
+The proposed graph uses only keypoints/heatmaps, UAV proprioception and onboard
+battery reserve. Estimated relative state and platform truth are rejected at
+the graph and dataset boundaries. Exact diagrams, equations and ontology are in
+[the comparison protocol](docs/THREE_PIPELINE_COMPARISON.md).
 
 ```bash
-# One command: stack startup, Shin PPO, actual rollout collection, controlled
-# R-GAT freeze, OntoReward PPO, live dashboard, paired scenario evaluation,
-# CSV tables, confidence intervals, and plots.
-../run.sh                         # seminar run: 800 total training episodes
-../run.sh --mode quick --headless # smaller integration run
-
-# CPU-only contract smoke tests (not flight results)
-./scripts/run_metasejong_pipeline.sh --experiment shin2026 --reward shin2026 --mode quick --smoke-test
-./scripts/run_metasejong_pipeline.sh --experiment shin2026 --reward ontoreward --mode quick --smoke-test
-
-# Full paired evaluation plan; then summarize real collected episode records
-python python/run_shin2026_benchmark.py --methods shin2026 ontoreward --mode full --paired-seeds --plan-only
-python python/run_shin2026_benchmark.py --methods shin2026 ontoreward --mode full --paired-seeds \
-  --input-results results/shin2026/per_episode.csv
+# Final command: stack, three PPO pipelines, estimator-free reward-design data,
+# direct R-GAT, MATLAB-style dashboard/RViz, paired evaluation and reports.
+../run.sh                         # 264 x 3 PPO + 8 Shin warm-up = 800 flights
+../run.sh --mode quick --headless # smaller real integration run
+pytest -q                         # contracts; not flight results
 ```
 
-The bare seminar command divides an exact 800-episode training budget across
-the selected methods (400 each for the default Shin/OntoReward pair), collects
-40 empirical R-GAT flights, and evaluates five paired seeds per scenario and
-method. It retains all seven scenarios but is a preliminary seminar benchmark,
-not the original publication-size sample. An explicit `--train-episodes`,
-`--eval-episodes`, or `--rgat-data-episodes` overrides the corresponding
-deadline default. The shortened curriculum still traverses all 80 levels; for
-400 episodes per method it advances every five episodes. Compatible checkpoints
-are rescaled and resumed rather than discarded.
+The bare command is a seminar preview with equal 264-episode PPO budgets, 40
+estimator-free reward-design flights and five paired seeds per scenario. It is
+not publication-scale evidence. Explicit budget options override these values.
+Legacy `--methods` and `--reward` invocations are still routed to the prior
+reward-arm runner.
 
-The PACMAN encoder/target and the paper's geometric controller are not publicly
-bundled here. Their Isaac/PX4 substitutes are explicitly marked as
-approximations in [the benchmark protocol](docs/SHIN2026_BASELINE.md). The
-existing 23-channel cooperative urban experiment below remains unchanged and
-is not used for the primary controlled comparison. The live command checkpoints
-after each training episode and writes the held-out real-flight R-GAT dataset
-after every collection episode. Synthetic controlled-R-GAT artifacts and
-artifacts containing NaN are rejected. The dashboard at
-`http://127.0.0.1:8770/` automatically selects the benchmark view:
-MATLAB-style plots show each reward arm's return/success, recurrent PPO losses,
-six-state estimator errors, R-GAT flight-data counts, curriculum, current reward
-decomposition, UAV action-envelope scale, visibility, and paired scenario
-success. Training starts with a 35% hover/slow-follow command envelope and
-linearly reaches the shared 2.0/2.0/1.0 m/s limit with curriculum `c`. The UGV
-also starts at 35% of its sampled road speed, so it moves from the first
-episode even while initial-condition geometry remains at `c=0`; the initial
-PPO action standard deviation is 0.223. Use
-`--dashboard-port PORT` to change the port or `--no-dashboard` to disable it. The
-protocol lists remaining simulator-randomization limitations that must be
-resolved before claiming a bit-exact reproduction.
+The live run checkpoints every episode. One-class semantic datasets, privileged
+graph fields, mutable/non-finite R-GAT artifacts and synthetic outcomes are
+rejected. The dashboard at `http://127.0.0.1:8770/` identifies the current
+pipeline, hides estimator panels for estimator-free methods, and displays
+semantic values plus direct `Phi(G)`/PBRS for `onto_no_se`. The UAV envelope
+starts at 50%; the UGV starts at 35% of sampled road speed. Shared acceleration
+slew limits remain active.
+
+The older cooperative urban ontology and five reward-arm Shin runner remain as
+legacy/secondary experiments. Their estimate-based distilled potential is not
+the primary `onto_no_se` method.
 
 ## Data path
 

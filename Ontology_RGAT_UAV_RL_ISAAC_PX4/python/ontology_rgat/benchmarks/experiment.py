@@ -8,8 +8,10 @@ from pathlib import Path
 import yaml
 
 
-METHODS = ("shin2026", "sparse", "manual_no_active", "ontoreward",
-           "ontoreward_plus_active")
+PRIMARY_PIPELINES = ("shin_se", "no_se", "onto_no_se")
+LEGACY_METHODS = ("shin2026", "sparse", "manual_no_active", "ontoreward",
+                  "ontoreward_plus_active")
+METHODS = PRIMARY_PIPELINES + LEGACY_METHODS
 
 
 def _merge(base: dict, overlay: dict) -> dict:
@@ -43,16 +45,46 @@ def configuration_hash(config: dict) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
-def episodes_per_method(total_episodes: int, method_count: int) -> int:
-    """Divide an exact run-wide training budget across paired methods."""
+def episodes_per_method(total_episodes: int, method_count: int,
+                        overhead_episodes: int = 0) -> int:
+    """Divide an exact run-wide budget after explicit non-PPO overhead.
+
+    ``overhead_episodes`` is used by the three-pipeline experiment for the
+    Shin-only estimator warm-up.  Legacy callers omit it and retain the old
+    exact-division behavior.
+    """
     total = int(total_episodes)
     count = int(method_count)
-    if total < 1 or count < 1:
+    overhead = int(overhead_episodes)
+    if total < 1 or count < 1 or overhead < 0:
         raise ValueError("episode budget and method count must be positive")
-    if total % count:
+    ppo_total = total - overhead
+    if ppo_total < count:
         raise ValueError(
-            f"total training budget {total} is not divisible by {count} methods")
-    return total // count
+            f"total training budget {total} leaves fewer than one PPO episode "
+            f"per method after {overhead} overhead episodes")
+    if ppo_total % count:
+        raise ValueError(
+            f"PPO budget {ppo_total} (total {total} minus overhead {overhead}) "
+            f"is not divisible by {count} methods")
+    return ppo_total // count
+
+
+def controlled_training_seeds(ppo_seed0: int, ppo_episodes: int, *,
+                              warmup_episodes: int = 0,
+                              warmup_seed0: int | None = None) -> list[int]:
+    """Put disjoint estimator warm-up seeds before a common PPO seed range."""
+    count = int(ppo_episodes)
+    warmup = int(warmup_episodes)
+    if count < 1 or warmup < 0:
+        raise ValueError("PPO episodes must be positive and warm-up non-negative")
+    start = int(ppo_seed0)
+    warm_start = start - warmup if warmup_seed0 is None else int(warmup_seed0)
+    warm_seeds = list(range(warm_start, warm_start + warmup))
+    ppo_seeds = list(range(start, start + count))
+    if set(warm_seeds) & set(ppo_seeds):
+        raise ValueError("estimator warm-up and PPO seed ranges must be disjoint")
+    return warm_seeds + ppo_seeds
 
 
 def paired_seed_plan(methods, scenarios: dict[str, int], seed0=5000):

@@ -1,0 +1,64 @@
+extends: shin2026_baseline.yaml
+experiment: three_pipeline
+pipelines: [shin_se, no_se, onto_no_se]
+paired_seeds: true
+
+# These fields define only the intended experimental factors. Architecture,
+# controller, camera, curriculum, PPO hyperparameters and seeds are inherited
+# identically from the controlled Shin profile.
+pipeline_contract:
+  shin_se:
+    state_estimation: true
+    auxiliary_estimation_loss: true
+    active_perception: true
+    reward_mode: shin_table_active
+    ontology_enabled: false
+    ontology_input_mode: null
+    use_direct_rgat_potential: false
+  no_se:
+    state_estimation: false
+    auxiliary_estimation_loss: false
+    active_perception: false
+    reward_mode: shin_table_no_active
+    ontology_enabled: false
+    ontology_input_mode: null
+    use_direct_rgat_potential: false
+  onto_no_se:
+    state_estimation: false
+    auxiliary_estimation_loss: false
+    active_perception: false
+    reward_mode: semantic_pbrs
+    ontology_enabled: true
+    ontology_input_mode: semantic_observation
+    use_direct_rgat_potential: true
+
+ppo:
+  shaping_lambda: 1.0
+
+seeds:
+  # These warm-up flights are deliberately disjoint. PPO episodes for A/B/C
+  # all use the inherited common range beginning at training_start=20000.
+  estimator_warmup_start: 19000
+  independent_training_starts_full: [20000, 120000, 220000]
+
+rgat_design:
+  # Estimator-free trained no_se actor plus deterministic visual
+  # servo/noise mixture. The dataset is rejected unless both outcomes occur.
+  source_pipeline: no_se
+  behavior_policy: semantic_visual_servo_noisy_no_se_mixture_v1
+  episodes_quick: 8
+  episodes_full: 40
+  sample_stride: 3
+  outcome_discount: 0.99
+  epochs_quick: 10
+  epochs_full: 80
+  batch_size: 64
+  learning_rate: 0.0005
+  validation_fraction: 0.2
+
+# Full publication budgets remain explicitly distinct from the outer run.sh
+# seminar budget. Multiple seeds can be supplied by repeated full runs.
+training:
+  episodes_quick: 8
+  episodes_full: 40960
+  independent_seeds_full: [42, 1042, 2042]

@@ -1,5 +1,11 @@
 # Shin et al. (2026) benchmark profile
 
+> This document preserves the former reward-arm baseline and its secondary
+> estimate-based distilled ontology ablation. The default primary experiment
+> is now the estimator-controlled three-pipeline comparison in
+> [THREE_PIPELINE_COMPARISON.md](THREE_PIPELINE_COMPARISON.md). The primary
+> `onto_no_se` method does not use the estimate-based path described below.
+
 This profile evaluates reward design while holding the perception, estimation,
 PPO, critic, action, controller, curriculum, initialization, and evaluation
 interfaces fixed. It is a methodological-interface reproduction, not a
@@ -171,12 +177,13 @@ scenario outcomes. The curriculum view includes both platform difficulty and
 the current UAV action-envelope scale:
 
 ```bash
-../run.sh                         # seminar deadline run, 800 training episodes total
-../run.sh --mode quick --headless # smaller integration run
+../run.sh --methods shin2026 ontoreward --mode full  # legacy reward-arm run
+../run.sh --methods shin2026 ontoreward --mode quick --headless
 ```
 
-The outer `run.sh` keeps full-fidelity flight dynamics but applies a seminar
-budget: 800 training episodes total across selected methods, 40 empirical
+When invoked with legacy `--methods`/`--reward`, the outer `run.sh` keeps
+full-fidelity flight dynamics but applies the former seminar budget: 800
+training episodes total across selected methods, 40 empirical
 R-GAT-data flights, and five paired evaluation seeds per scenario and method.
 For the default two methods that is 400 training episodes each and 70 evaluation
 flights. This preview budget is not publication-scale statistical evidence.

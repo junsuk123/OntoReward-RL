@@ -118,10 +118,10 @@ def _geometry(src, dst, n_nodes: int, goal_node: int) -> tuple[np.ndarray, np.nd
     return cached
 
 
-def _role(index: int, goal_node: int) -> str:
+def _role(index: int, goal_node: int, name: str = "") -> str:
     if index == goal_node:
         return "goal"
-    return "risk" if index in RISK_NODES else "support"
+    return "risk" if index in RISK_NODES or "risk" in name.lower() else "support"
 
 
 def graph_payload(graph, values: Sequence[float] | None = None, *,
@@ -161,7 +161,7 @@ def graph_payload(graph, values: Sequence[float] | None = None, *,
         "value": float(values[i]) if i < values.size else 0.0,
         "pos": [round(float(c), 4) for c in pos[i]],
         "layer": int(layer),
-        "role": _role(i, int(graph.goal_node)),
+        "role": _role(i, int(graph.goal_node), str(name)),
     } for i, (name, layer) in enumerate(zip(graph.node_names, layers))]
 
     edges = []

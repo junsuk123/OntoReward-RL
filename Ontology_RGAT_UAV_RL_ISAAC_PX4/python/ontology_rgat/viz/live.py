@@ -408,6 +408,7 @@ class BenchmarkMonitor:
     def __init__(self, store: LiveStore | None = None, rviz=None):
         self.store = store or STORE
         self.rviz = rviz
+        self.potential = None
         self.methods: tuple[str, ...] = ()
         self.training_total = 0
         self.evaluation_total = 0
@@ -449,11 +450,14 @@ class BenchmarkMonitor:
             actor_contract={
                 "camera": "512x320 mono / 90 deg HFOV / -60 deg pitch",
                 "proprioception": "7: body velocity (3) + quaternion (4)",
-                "estimator": "6-keypoint CNN -> 512 LSTM -> latent y[256]",
+                "temporal": "6-keypoint CNN -> generic 512 LSTM -> latent y[256]",
                 "actor": "y[6:256] + proprioception -> action[4]",
                 "critic": "training only: proprioception[7] + truth[6]",
-                "reward_side": "visual estimate + onboard battery reserve -> 6-node R-GAT",
-                "forbidden": "pad pose/velocity, GNSS, V2V and simulator truth",
+                "reward_side": ("A/B: training truth -> Table III; C: keypoints + "
+                                "UAV proprioception + battery reserve -> direct R-GAT"),
+                "state_estimation": "shin_se only: y[0:6] auxiliary supervision",
+                "forbidden": ("deployed actor: platform/GNSS/truth; onto graph: "
+                              "relative estimate, simulator truth and critic truth"),
             })
 
     def stage(self, name: str, detail: str = "") -> None:
@@ -466,8 +470,19 @@ class BenchmarkMonitor:
         self.store.replace("benchmark_step", [])
         if self.rviz is not None:
             self.rviz.clear_trails()
+        try:
+            from ..pipelines import get_pipeline
+            pipeline = get_pipeline(method)
+            pipeline_name = pipeline.name
+            estimation_status = ("ENABLED" if pipeline.state_estimation_enabled
+                                 else "DISABLED")
+        except ValueError:
+            pipeline_name = str(method)
+            estimation_status = "ENABLED" if method == "shin2026" else "LEGACY"
         self.store.set(
             benchmark_phase=str(phase), current_method=str(method),
+            current_pipeline=pipeline_name,
+            state_estimation_status=estimation_status,
             current_seed=int(seed), current_scenario=str(scenario),
             current_curriculum=float(curriculum),
             current_pad_motion_scale=float(
@@ -476,23 +491,40 @@ class BenchmarkMonitor:
 
     def step(self, *, index: int, dt: float, method: str, reward: float,
              reward_parts: dict[str, Any], estimate, truth, in_fov: bool,
-             estimation_loss: float, state: dict[str, Any] | None = None,
+             estimation_loss: float | None,
+             state: dict[str, Any] | None = None, pipeline_spec=None,
+             semantic_features=None, semantic_graph=None,
              scenario: str = "", status: str = "running") -> None:
-        estimate = np.asarray(estimate, dtype=float)
-        truth = np.asarray(truth, dtype=float)
         parts = reward_parts or {}
         point = {
             "step": int(index), "t": float(index * dt), "method": str(method),
             "status": str(status),
             "reward": float(reward), "in_fov": float(bool(in_fov)),
-            "estimation_loss": float(estimation_loss),
-            "position_error": float(np.linalg.norm(estimate[:3] - truth[:3])),
-            "velocity_error": float(np.linalg.norm(estimate[3:] - truth[3:])),
-            "estimated_distance": float(np.linalg.norm(estimate[:3])),
-            "true_distance": float(np.linalg.norm(truth[:3])),
-            "estimated_speed": float(np.linalg.norm(estimate[3:])),
-            "true_speed": float(np.linalg.norm(truth[3:])),
+            "pipeline": str(getattr(pipeline_spec, "name", method)),
+            "state_estimation_enabled": bool(
+                getattr(pipeline_spec, "state_estimation_enabled", estimate is not None)),
         }
+        if estimate is not None and estimation_loss is not None:
+            estimate = np.asarray(estimate, dtype=float)
+            truth = np.asarray(truth, dtype=float)
+            point.update({
+                "estimation_loss": float(estimation_loss),
+                "position_error": float(np.linalg.norm(estimate[:3] - truth[:3])),
+                "velocity_error": float(np.linalg.norm(estimate[3:] - truth[3:])),
+                "estimated_distance": float(np.linalg.norm(estimate[:3])),
+                "estimated_speed": float(np.linalg.norm(estimate[3:])),
+            })
+        if semantic_features is not None:
+            from ..perception import SEMANTIC_FEATURE_NAMES
+            values = np.asarray(semantic_features, dtype=float).reshape(-1)
+            if values.shape == (len(SEMANTIC_FEATURE_NAMES),):
+                point.update({f"semantic_{name}": float(value)
+                              for name, value in zip(SEMANTIC_FEATURE_NAMES, values)})
+        if semantic_graph is not None:
+            from .graph3d import graph_payload
+            self.store.graph(graph_payload(
+                semantic_graph, potential=self.potential,
+                source=f"{method} step {index}", phi=parts.get("phi")))
         for key in ("task", "lateral_progress", "vertical_progress",
                     "vertical_speed_penalty", "undershoot_penalty",
                     "yaw_rate_penalty", "active_perception", "shape",
@@ -537,6 +569,10 @@ class BenchmarkMonitor:
         self.store.set(**{
             f"benchmark_{method}_episode": point["episode"],
             "benchmark_phase": "training", "current_method": str(method),
+            "current_pipeline": str(point.get("pipeline", method)),
+            "state_estimation_status": (
+                "ENABLED" if point.get("state_estimation_enabled", False)
+                else "DISABLED"),
         })
 
     def restore_evaluation(self, rows: Sequence[dict[str, Any]]) -> None:

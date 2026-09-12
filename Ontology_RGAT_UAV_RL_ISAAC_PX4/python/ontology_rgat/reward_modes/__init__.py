@@ -6,11 +6,15 @@ from .controlled_rgat import (episode_rollout_dataset, load_rollout_dataset,
                               prepare_controlled_rgat_artifact,
                               save_rollout_dataset)
 from .ontoreward import OntoRewardPBRS
+from .contexts import (NoSERewardContext, OntologyRewardContext,
+                       ShinSERewardContext, TerminalFlags)
 from .shin2026 import (ShinReward, ShinRewardConfig,
                        active_perception_approximation, active_perception_reward)
 from .sparse import sparse_terminal_reward
 
 __all__ = ["OntoRewardPBRS", "FrozenControlledPotential",
+           "NoSERewardContext", "OntologyRewardContext",
+           "ShinSERewardContext", "TerminalFlags",
            "prepare_controlled_rgat_artifact", "episode_rollout_dataset",
            "load_rollout_dataset", "merge_rollout_datasets",
            "save_rollout_dataset", "ShinReward", "ShinRewardConfig",

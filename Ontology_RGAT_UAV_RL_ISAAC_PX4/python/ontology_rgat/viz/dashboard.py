@@ -150,15 +150,15 @@ border:1px solid var(--line)}.gate.pass{border-left:4px solid #77AC30}.gate.fail
 <script>
 // MATLAB default color order (R2025a), shared with the PNG exporters.
 const PALETTE=['#0072BD','#D95319','#EDB120','#7E2F8E','#77AC30','#4DBEEE','#A2142F'];
-const BENCHMARK_METHODS=['shin2026','sparse','manual_no_active','ontoreward',
-  'ontoreward_plus_active'];
+const BENCHMARK_METHODS=['shin_se','no_se','onto_no_se','shin2026','sparse',
+  'manual_no_active','ontoreward','ontoreward_plus_active'];
 const BENCHMARK_TRAIN=BENCHMARK_METHODS.map(x=>'benchmark_train_'+x);
 const BENCHMARK_EVAL=BENCHMARK_METHODS.map(x=>'benchmark_eval_'+x);
 const CARDS=[
  {id:'tiles',title:null},
  {id:'benchmark_contract',view:'benchmark',kind:'contract',
   title:'Shin 2026 controlled benchmark · information boundary'},
- {id:'benchmark_return',view:'benchmark',title:'Training episode return',
+ {id:'benchmark_return',view:'benchmark',title:'Training episode return (debug only)',
   series:BENCHMARK_TRAIN,x:'episode',y:'episode_return',smooth:20},
  {id:'benchmark_success',view:'benchmark',title:'Training moving success rate',
   series:BENCHMARK_TRAIN,x:'episode',y:'paper_success',smooth:40,ymin:0,ymax:1},
@@ -202,6 +202,17 @@ const CARDS=[
   series:['benchmark_step'],x:'step',
   y:['position_error','velocity_error','estimation_loss','in_fov'],
   labels:['position error','velocity error','6-state MSE','target in FOV']},
+ {id:'benchmark_live_semantic',view:'benchmark',title:'Current episode · estimator-free visual semantics',
+  series:['benchmark_step'],x:'step',
+  y:['semantic_keypoint_confidence','semantic_image_alignment',
+     'semantic_apparent_target_scale','semantic_image_plane_motion_safety',
+     'semantic_scale_rate_safety','semantic_vertical_motion_safety',
+     'semantic_attitude_stability','semantic_battery_risk'],
+  labels:['keypoint confidence','image alignment','apparent scale','image motion safety',
+          'scale-rate safety','vertical safety','attitude stability','battery risk'],ymin:0,ymax:1},
+ {id:'benchmark_live_phi',view:'benchmark',title:'Current episode · direct R-GAT potential and PBRS',
+  series:['benchmark_step'],x:'step',y:['phi','phi_next','shape'],
+  labels:['Phi(G_t)','Phi(G_t+1)','PBRS shaping']},
  {id:'benchmark_live_motion',view:'benchmark',title:'Current episode · vehicle motion (m/s)',
   series:['benchmark_step'],x:'step',y:['uav_speed_m_s','ugv_speed_m_s'],
   labels:['UAV world speed','UGV road speed'],ymin:0},
@@ -218,7 +229,7 @@ const CARDS=[
  {id:'benchmark_eval_visual_loss',view:'benchmark',
   title:'Estimation error while target is out of view',
   series:BENCHMARK_EVAL,x:'evaluation_index',y:'visual_loss_estimation_error',smooth:8},
- {id:'graph3d',view:'urban',kind:'graph',title:'Learned ontology graph (3D, R-GAT attention)'},
+ {id:'graph3d',view:'common',kind:'graph',title:'Learned ontology graph (3D, R-GAT attention)'},
  {id:'rgat_reward',view:'urban',kind:'reward',title:'R-GAT-shaped RL reward / R-GAT 보상함수',
   series:['reward','episode'],x:'t',y:['reward','base','shape','phi','phi_next'],
   labels:['final reward','sparse/base','PBRS shaping','Phi(s)','Phi(s next)']},
@@ -253,6 +264,10 @@ const CARDS=[
 ];
 const LABELS={ppo_manual:'Manual',ppo_proposed:'Ontology-RGAT',rgat:'R-GAT',
  dataset:'expert',episode:'episode',reward:'live',benchmark_step:'current episode',
+ benchmark_train_shin_se:'A · Shin SE',benchmark_train_no_se:'B · No SE',
+ benchmark_train_onto_no_se:'C · Onto No SE',
+ benchmark_eval_shin_se:'A · Shin SE',benchmark_eval_no_se:'B · No SE',
+ benchmark_eval_onto_no_se:'C · Onto No SE',
  benchmark_train_shin2026:'Shin + active',benchmark_train_sparse:'Sparse',
  benchmark_train_manual_no_active:'Shin − active',benchmark_train_ontoreward:'OntoReward',
  benchmark_train_ontoreward_plus_active:'OntoReward + active',
@@ -391,14 +406,16 @@ function tiles(state){
     const methods=s.benchmark_methods||[];
     const trained=methods.reduce((n,m)=>n+(state.series['benchmark_train_'+m]||[]).length,0);
     add('phase',s.benchmark_phase||'initializing');
-    if(s.current_method)add('reward arm',s.current_method);
+    if(s.current_pipeline||s.current_method)add('pipeline',s.current_pipeline||s.current_method);
+    if(s.state_estimation_status)add('state estimation',s.state_estimation_status);
     add('run mode',s.benchmark_mode||'--');
     add('training progress',`${trained} / ${s.training_total||0}`);
     add('paired evaluation',`${s.evaluation_completed||0} / ${s.evaluation_total||0}`);
     if(s.current_scenario)add('scenario',s.current_scenario.replaceAll('_',' '));
     const step=state.series.benchmark_step||[],latest=step.length?step[step.length-1]:null;
     if(latest){add('target visible',latest.in_fov?'yes':'no');
-      add('position error',Number(latest.position_error).toFixed(3)+' m');
+      if(latest.state_estimation_enabled&&Number.isFinite(Number(latest.position_error)))
+        add('estimator error',Number(latest.position_error).toFixed(3)+' m');
       add('UAV speed',Number(latest.uav_speed_m_s||0).toFixed(3)+' m/s');
       add('UGV speed',Number(latest.ugv_speed_m_s||0).toFixed(3)+' m/s');
       add('battery reserve',(100*Number(latest.battery_reserve||0)).toFixed(1)+'%');
@@ -439,7 +456,8 @@ function escapeHTML(value){return String(value??'--').replace(/[&<>"']/g,c=>
 function benchmarkPanel(state){
   const s=state.scalars||{},contract=s.actor_contract||{};
   const labels={camera:'Actor image',proprioception:'Actor proprioception',
-    estimator:'Recurrent estimator',actor:'Deployment actor',critic:'Asymmetric critic',
+    temporal:'Shared temporal backbone',state_estimation:'Optional state supervision',
+    actor:'Deployment actor',critic:'Asymmetric critic',
     reward_side:'Reward-side ontology state',
     forbidden:'Hard information boundary'};
   document.getElementById('benchmark-contract').innerHTML=Object.entries(labels).map(([key,label])=>
@@ -800,11 +818,25 @@ function applyProfile(state){
   const profile=state.scalars.dashboard_profile==='shin2026'?'benchmark':'urban';
   document.body.dataset.profile=profile;
   document.getElementById('page-title').textContent=profile==='benchmark'
-    ?'Shin 2026 · recurrent vision landing benchmark'
+    ?'Three-pipeline · recurrent vision landing benchmark'
     :'Ontology-RGAT · Isaac Sim + PX4';
   for(const c of CARDS){
     const el=document.getElementById('card-'+c.id);
-    el.hidden=Boolean(c.view&&c.view!==profile);
+    el.hidden=Boolean(c.view&&c.view!=='common'&&c.view!==profile);
+  }
+  if(profile==='benchmark'){
+    const pipeline=state.scalars.current_pipeline||state.scalars.current_method||'';
+    const estimator=pipeline==='shin_se'||pipeline==='shin2026';
+    for(const id of ['benchmark_position_rmse','benchmark_velocity_rmse','benchmark_aux',
+                     'benchmark_live_state','benchmark_live_error',
+                     'benchmark_eval_position','benchmark_eval_velocity',
+                     'benchmark_eval_visual_loss']){
+      const el=document.getElementById('card-'+id);if(el)el.hidden=!estimator;
+    }
+    const ontology=pipeline==='onto_no_se';
+    for(const id of ['benchmark_live_semantic','benchmark_live_phi']){
+      const el=document.getElementById('card-'+id);if(el)el.hidden=!ontology;
+    }
   }
   return profile;
 }
@@ -821,7 +853,7 @@ async function tick(){
       tiles(state);
       for(const c of CARDS){
         if(c.id==='tiles'||c.kind==='graph'||c.kind==='contract'||
-           (c.view&&c.view!==profile))continue;
+           (c.view&&c.view!=='common'&&c.view!==profile))continue;
         c.kind==='evalbars'?drawEvaluationBars(c,state):draw(c,state);
       }
       if(profile==='benchmark')benchmarkPanel(state);
@@ -904,7 +936,7 @@ class Dashboard:
         self.store.set(
             reward_lambda=float(self.cfg.reward.pbrs["lambda"]),
             reward_gamma=float(self.cfg.reward.pbrs.gamma),
-            reward_formula="r_sparse + lambda * (gamma * Phi_w(s') - Phi_w(s))",
+            reward_formula="r_sparse + lambda * (gamma * frozen_R_GAT(G') - frozen_R_GAT(G))",
             **_saved_reward_scalars(self.cfg),
         )
         handler = type("BoundHandler", (_Handler,), {"store": self.store})

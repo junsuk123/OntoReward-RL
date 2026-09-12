@@ -12,10 +12,14 @@ import torch
 
 from ..curriculum import PlatformMotionCurriculum
 from ..mathx import quat_to_euler_zyx
-from ..perception import grayscale_image_tensor
+from ..perception import (grayscale_image_tensor, semantic_graph,
+                          semantic_observation)
+from ..pipelines import get_pipeline, primary_pipeline_ids
 from ..reward_modes import (OntoRewardPBRS, ShinReward, ShinRewardConfig,
+                            NoSERewardContext, OntologyRewardContext,
+                            ShinSERewardContext, TerminalFlags,
                             active_perception_reward, sparse_terminal_reward)
-from .recurrent import ShinRecurrentActorCritic, recurrent_ppo_loss
+from .recurrent import PipelineActorCritic, recurrent_ppo_loss
 
 
 def _battery_sample(state):
@@ -35,17 +39,65 @@ def _tensor_observation(model, observation):
     return image, proprio
 
 
-def _reward(method, previous, following, estimate, next_estimate, potential,
-            *, gamma=0.99, shaping_lambda=1.0):
-    terminal = dict(
+def _terminal_flags(following) -> TerminalFlags:
+    return TerminalFlags(
         physical_contact=following.physical_contact, crash=following.crash,
         excessive_drift=following.excessive_drift,
         battery_depleted=following.battery_depleted,
         terminal=following.terminal)
-    next_loss = float(np.mean((next_estimate - following.critic.true_relative_state) ** 2))
+
+
+def _reward(method, previous, following, estimate, next_estimate, potential,
+            *, gamma=0.99, shaping_lambda=1.0,
+            current_semantic_graph=None, next_semantic_graph=None):
+    """Dispatch reward through the selected pipeline's narrow data contract."""
+    terminal = _terminal_flags(following)
+    try:
+        spec = get_pipeline(method)
+    except ValueError:
+        spec = None
+    next_loss = None
+    needs_estimation_loss = bool(
+        spec is not None and spec.state_estimation_enabled)
+    # Legacy modes retain their old behavior. The new no_se and onto_no_se
+    # branches never calculate an estimation loss at all.
+    if needs_estimation_loss or method in {
+            "shin2026", "manual_no_active", "ontoreward",
+            "ontoreward_plus_active", "sparse"}:
+        if estimate is not None and next_estimate is not None:
+            next_loss = float(np.mean(
+                (next_estimate - following.critic.true_relative_state) ** 2))
+        elif needs_estimation_loss:
+            raise ValueError("shin_se reward requires its supervised estimate")
     if method == "sparse":
-        value = sparse_terminal_reward(**terminal)
+        value = sparse_terminal_reward(**terminal.as_kwargs())
         return value, {"task": value}, next_loss
+    if spec is not None and spec.reward_mode in {
+            "shin_table_active", "shin_table_no_active"}:
+        if spec.active_perception_enabled:
+            context = ShinSERewardContext(
+                current_training_relative_state=previous.critic.true_relative_state,
+                next_training_relative_state=following.critic.true_relative_state,
+                next_estimation_loss=float(next_loss), action=following.command,
+                uav_vertical_velocity=float(previous.actor.body_velocity[2]),
+                terminal=terminal)
+        else:
+            context = NoSERewardContext(
+                current_training_relative_state=previous.critic.true_relative_state,
+                next_training_relative_state=following.critic.true_relative_state,
+                action=following.command,
+                uav_vertical_velocity=float(previous.actor.body_velocity[2]),
+                terminal=terminal)
+        value, parts = ShinReward(ShinRewardConfig(
+            active_enabled=spec.active_perception_enabled))(
+                context.current_training_relative_state,
+                context.next_training_relative_state, context.action,
+                drone_vertical_velocity=context.uav_vertical_velocity,
+                next_estimation_loss=(context.next_estimation_loss
+                                      if isinstance(context, ShinSERewardContext)
+                                      else None),
+                **context.terminal.as_kwargs())
+        return value, parts, next_loss
     if method in {"shin2026", "manual_no_active"}:
         # Table III uses the un-tilded physical relative geometry. Only the
         # active-perception term is coupled to the tilded estimator output.
@@ -56,8 +108,23 @@ def _reward(method, previous, following, estimate, next_estimate, potential,
                 previous.critic.true_relative_state,
                 following.critic.true_relative_state, following.command,
                 drone_vertical_velocity=previous.actor.body_velocity[2],
-                next_estimation_loss=next_loss, **terminal)
+                next_estimation_loss=next_loss, **terminal.as_kwargs())
         return value, parts, next_loss
+    if spec is not None and spec.reward_mode == "semantic_pbrs":
+        if current_semantic_graph is None or next_semantic_graph is None:
+            raise ValueError("onto_no_se reward requires semantic observation graphs")
+        if potential is None:
+            raise ValueError("onto_no_se requires a frozen direct R-GAT potential")
+        context = OntologyRewardContext(
+            graph=current_semantic_graph, next_graph=next_semantic_graph,
+            terminal=terminal)
+        pbrs = OntoRewardPBRS(
+            potential, gamma=gamma, ppo_gamma=gamma,
+            shaping_lambda=shaping_lambda, design_id=potential.design_id,
+            frozen=True)
+        value, parts = pbrs(
+            context.graph, context.next_graph, **context.terminal.as_kwargs())
+        return value, parts, None
     if potential is None:
         raise ValueError(f"{method} requires a frozen controlled R-GAT potential")
     pbrs = OntoRewardPBRS(
@@ -67,7 +134,8 @@ def _reward(method, previous, following, estimate, next_estimate, potential,
         {"estimated_relative_state": estimate,
          "battery_reserve": _battery_reserve(previous.state)},
         {"estimated_relative_state": next_estimate,
-         "battery_reserve": _battery_reserve(following.state)}, **terminal)
+         "battery_reserve": _battery_reserve(following.state)},
+        **terminal.as_kwargs())
     if method == "ontoreward_plus_active" and not following.terminal:
         active = active_perception_reward(next_loss, ShinRewardConfig())
         value += active
@@ -75,12 +143,30 @@ def _reward(method, previous, following, estimate, next_estimate, potential,
     return value, parts, next_loss
 
 
-def collect_episode(env, model: ShinRecurrentActorCritic, method: str, seed: int,
+def _semantic_from_output(output, proprioception, state, *, previous, dt):
+    observation = semantic_observation(
+        output.keypoints[0, -1].detach().cpu().numpy(),
+        output.heatmaps[0, -1].detach().cpu().numpy(),
+        np.asarray(proprioception, dtype=np.float32).reshape(-1),
+        battery_reserve=_battery_reserve(state), previous=previous, dt=dt)
+    return observation, semantic_graph(observation)
+
+
+def collect_episode(env, model: PipelineActorCritic, method: str, seed: int,
                     *, curriculum=1.0, potential=None, deterministic=False,
                     gamma=0.99, shaping_lambda=1.0,
                     scenario="training_random_walk", monitor=None,
-                    phase="evaluation"):
-    """Collect one true simulator episode without crossing the actor boundary."""
+                    phase="evaluation", action_transform=None):
+    """Collect one real episode while keeping actor/reward contracts separate."""
+    model_spec = model.pipeline_spec
+    try:
+        requested_spec = get_pipeline(method)
+    except ValueError:
+        requested_spec = None
+    if (method in primary_pipeline_ids() and requested_spec is not None
+            and requested_spec.name != model_spec.name):
+        raise ValueError(
+            f"model pipeline {model_spec.name} cannot run reward pipeline {method}")
     step = env.reset(seed, curriculum, scenario=scenario)
     initial_battery = dict(_battery_sample(step.state))
     action_scale = float(env.adapter.controller.action_scale)
@@ -93,17 +179,33 @@ def collect_episode(env, model: ShinRecurrentActorCritic, method: str, seed: int
     rows = []
     visual_loss_run = 0
     longest_visual_loss = 0
+    action_rng = np.random.default_rng(int(seed) + 9187)
+    action_generator = torch.Generator(device="cpu").manual_seed(int(seed) + 2718)
     with torch.no_grad():
         image, proprio = _tensor_observation(model, step.actor)
         truth = torch.as_tensor(step.critic.true_relative_state[None],
                                 dtype=torch.float32, device=model.device)
         output = model(image, proprio, true_relative_state=truth, hidden=hidden,
                        episode_start=torch.tensor([True], device=model.device))
+        semantic, graph = _semantic_from_output(
+            output, step.actor.proprioception, step.state,
+            previous=None, dt=float(env.cfg.sim.dt))
         while True:
             mean = output.action_mean[:, -1]
             std = output.action_std[:, -1]
-            pre_squash = mean if deterministic else mean + std * torch.randn_like(mean)
+            noise = torch.randn(mean.shape, generator=action_generator).to(mean.device)
+            pre_squash = mean if deterministic else mean + std * noise
             action = torch.tanh(pre_squash)
+            if action_transform is not None:
+                transformed = np.asarray(action_transform(
+                    len(rows), action.cpu().numpy()[0], semantic, action_rng),
+                    dtype=np.float32).reshape(-1)
+                if transformed.shape != (4,) or not np.isfinite(transformed).all():
+                    raise ValueError("estimator-free behavior transform returned invalid action")
+                transformed = np.clip(transformed, -0.999999, 0.999999)
+                action = torch.as_tensor(
+                    transformed[None], dtype=mean.dtype, device=mean.device)
+                pre_squash = torch.atanh(action)
             log_prob = model.log_prob(pre_squash, action, mean, std)
             following = env.step(action.cpu().numpy()[0])
             next_image, next_proprio = _tensor_observation(model, following.actor)
@@ -112,14 +214,20 @@ def collect_episode(env, model: ShinRecurrentActorCritic, method: str, seed: int
             next_output = model(next_image, next_proprio,
                                 true_relative_state=next_truth,
                                 hidden=output.hidden)
-            estimate = output.relative_state[0, -1].cpu().numpy()
-            next_estimate = next_output.relative_state[0, -1].cpu().numpy()
+            next_semantic, next_graph = _semantic_from_output(
+                next_output, following.actor.proprioception, following.state,
+                previous=semantic, dt=float(env.cfg.sim.dt))
+            estimate = (None if output.relative_state is None else
+                        output.relative_state[0, -1].cpu().numpy())
+            next_estimate = (None if next_output.relative_state is None else
+                             next_output.relative_state[0, -1].cpu().numpy())
             reward, parts, estimation_loss = _reward(
                 method, step, following, estimate, next_estimate, potential,
-                gamma=gamma, shaping_lambda=shaping_lambda)
+                gamma=gamma, shaping_lambda=shaping_lambda,
+                current_semantic_graph=graph, next_semantic_graph=next_graph)
             visual_loss_run = visual_loss_run + 1 if not following.pad_in_fov else 0
             longest_visual_loss = max(longest_visual_loss, visual_loss_run)
-            rows.append({
+            row = {
                 "image": np.asarray(step.actor.image, dtype=np.uint8),
                 "proprioception": step.actor.proprioception.copy(),
                 "truth": step.critic.true_relative_state.copy(),
@@ -127,15 +235,20 @@ def collect_episode(env, model: ShinRecurrentActorCritic, method: str, seed: int
                 "action": action.cpu().numpy()[0],
                 "log_prob": float(log_prob.item()),
                 "value": float(output.value.item()), "reward": float(reward),
-                "done": float(following.terminal), "estimate": estimate,
-                "estimation_loss": estimation_loss, "in_fov": following.pad_in_fov,
+                "done": float(following.terminal), "in_fov": following.pad_in_fov,
                 "battery_reserve": _battery_reserve(step.state),
                 "battery_energy_j": float(_battery_sample(step.state).get(
                     "remaining_j", 0.0)),
                 "reward_parts": parts,
+                "semantic_graph_X": graph.X.copy(),
+                "semantic_features": semantic.feature_vector.copy(),
                 "hidden_h": hidden[0].cpu().numpy(),
                 "hidden_c": hidden[1].cpu().numpy(),
-            })
+            }
+            if estimate is not None:
+                row["estimate"] = estimate
+                row["estimation_loss"] = float(estimation_loss)
+            rows.append(row)
             if monitor is not None:
                 status = ("success" if following.physical_contact
                           else "battery_depleted" if following.battery_depleted
@@ -146,15 +259,16 @@ def collect_episode(env, model: ShinRecurrentActorCritic, method: str, seed: int
                     truth=following.critic.true_relative_state,
                     in_fov=following.pad_in_fov,
                     estimation_loss=estimation_loss, state=following.state,
+                    pipeline_spec=model_spec,
+                    semantic_features=next_semantic.feature_vector,
+                    semantic_graph=next_graph,
                     scenario=scenario, status=status)
             hidden = output.hidden
             step, output = following, next_output
+            semantic, graph = next_semantic, next_graph
             if following.terminal:
                 break
     env.finish_episode()
-    position_error = np.asarray([row["estimate"][:3] - row["truth"][:3] for row in rows])
-    velocity_error = np.asarray([row["estimate"][3:] - row["truth"][3:] for row in rows])
-    lost_errors = [row["estimation_loss"] for row in rows if not row["in_fov"]]
     truth_final = step.critic.true_relative_state
     state = step.state
     final_battery = _battery_sample(state)
@@ -163,8 +277,8 @@ def collect_episode(env, model: ShinRecurrentActorCritic, method: str, seed: int
         "seed": int(seed), "episode_return": float(sum(row["reward"] for row in rows)),
         "paper_success": float(step.physical_contact),
         "strict_success": float(step.strict_success),
-        "position_rmse": float(np.sqrt(np.mean(position_error ** 2))),
-        "velocity_rmse": float(np.sqrt(np.mean(velocity_error ** 2))),
+        "crash_failure": float(step.crash),
+        "failure": float(not step.physical_contact),
         "touchdown_lateral_error": float(np.linalg.norm(truth_final[:2])),
         "touchdown_vertical_velocity": float(step.actor.body_velocity[2]),
         "touchdown_relative_horizontal_velocity": float(np.linalg.norm(truth_final[3:5])),
@@ -172,7 +286,6 @@ def collect_episode(env, model: ShinRecurrentActorCritic, method: str, seed: int
         "touchdown_angular_rate": float(np.linalg.norm(state["angular_velocity"])),
         "fov_loss_fraction": float(np.mean([not row["in_fov"] for row in rows])),
         "longest_visual_loss_s": float(longest_visual_loss * env.cfg.sim.dt),
-        "visual_loss_estimation_error": float(np.mean(lost_errors)) if lost_errors else 0.0,
         "action_envelope_scale": action_scale,
         "touchdown_time_s": float(len(rows) * env.cfg.sim.dt),
         "battery_reserve_initial": float(initial_battery.get("reserve", 1.0)),
@@ -184,7 +297,36 @@ def collect_episode(env, model: ShinRecurrentActorCritic, method: str, seed: int
         "steps": len(rows), "status": ("success" if step.physical_contact else
                                          "battery_depleted" if step.battery_depleted else
                                          "timeout" if step.timeout else "failure"),
+        "pipeline": (model_spec.name if method in primary_pipeline_ids()
+                     else str(method)),
+        "state_estimation_enabled": bool(model_spec.state_estimation_enabled),
+        "active_perception_enabled": bool(
+            model_spec.active_perception_enabled
+            if method in primary_pipeline_ids()
+            else method in {"shin2026", "ontoreward_plus_active"}),
+        "ontology_enabled": bool(
+            model_spec.ontology_enabled
+            if method in primary_pipeline_ids()
+            else method.startswith("ontoreward")),
+        "reward_source": (model_spec.reward_mode
+                          if method in primary_pipeline_ids() else str(method)),
+        "rgat_design_id": (getattr(potential, "design_id", "")
+                           if (model_spec.ontology_enabled
+                               or method.startswith("ontoreward")) else ""),
     }
+    if model_spec.state_estimation_enabled:
+        position_error = np.asarray([
+            row["estimate"][:3] - row["truth"][:3] for row in rows])
+        velocity_error = np.asarray([
+            row["estimate"][3:] - row["truth"][3:] for row in rows])
+        lost_errors = [row["estimation_loss"]
+                       for row in rows if not row["in_fov"]]
+        metric.update({
+            "position_rmse": float(np.sqrt(np.mean(position_error ** 2))),
+            "velocity_rmse": float(np.sqrt(np.mean(velocity_error ** 2))),
+            "visual_loss_estimation_error": (
+                float(np.mean(lost_errors)) if lost_errors else 0.0),
+        })
     return rows, metric
 
 
@@ -205,10 +347,13 @@ def _gae(rows, gamma, gae_lambda):
 def update_estimator_episode(model, optimizer, rows, *, epochs=2,
                              grad_clip=5.0, sequence_length=32):
     """Supervise vision/LSTM on actual hover frames before changing the actor."""
+    if not model.pipeline_spec.auxiliary_estimation_loss_enabled:
+        raise ValueError("estimator-only update is illegal for an estimator-free pipeline")
     device = model.device
     losses = []
-    estimator_parameters = [
-        *model.encoder.parameters(), *model.estimator.parameters()]
+    estimator_parameters = [parameter for parameter in [
+        *model.encoder.parameters(), *model.temporal_backbone.parameters(),
+        *model.relative_state_head.parameters()] if parameter.requires_grad]
     for _ in range(int(epochs)):
         for start in range(0, len(rows), int(sequence_length)):
             chunk = rows[start:min(start + int(sequence_length), len(rows))]
@@ -228,7 +373,7 @@ def update_estimator_episode(model, optimizer, rows, *, epochs=2,
             truth = torch.as_tensor(
                 np.stack([row["truth"] for row in chunk])[None],
                 dtype=torch.float32, device=device)
-            loss = model.estimator.auxiliary_loss(output.relative_state, truth)
+            loss = model.relative_state_head.loss(output.relative_state, truth)
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(estimator_parameters, float(grad_clip))
@@ -358,8 +503,10 @@ def save_recurrent_checkpoint(path, model, optimizer, *, method, episode,
                               config_hash, curriculum, potential=None):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
+    model_spec = getattr(model, "pipeline_spec", None)
     payload = {
-        "format": "shin2026-recurrent-v1", "method": method,
+        "format": "three-pipeline-recurrent-v2", "method": method,
+        "pipeline_spec": (model_spec.to_manifest() if model_spec is not None else None),
         "episode": int(episode), "config_hash": config_hash,
         "model": model.state_dict(), "optimizer": optimizer.state_dict(),
         "curriculum": curriculum.state_dict(),
@@ -369,6 +516,23 @@ def save_recurrent_checkpoint(path, model, optimizer, *, method, episode,
     temporary = path.with_suffix(path.suffix + ".tmp")
     torch.save(payload, temporary)
     os.replace(temporary, path)
+
+
+def _migrate_legacy_shin_state_dict(state_dict):
+    """Rename the pre-refactor estimator container without changing weights."""
+    replacements = {
+        "estimator.lstm.": "temporal_backbone.lstm.",
+        "estimator.latent_head.": "temporal_backbone.latent_head.",
+    }
+    migrated = {}
+    for name, value in state_dict.items():
+        target = name
+        for old, new in replacements.items():
+            if name.startswith(old):
+                target = new + name[len(old):]
+                break
+        migrated[target] = value
+    return migrated
 
 
 def train_live(env_factory: Callable, model, method, seeds, output_dir,
@@ -382,19 +546,39 @@ def train_live(env_factory: Callable, model, method, seeds, output_dir,
     history_path = output_dir / f"{method}_training.csv"
     history = []
     completed = 0
-    warmup_episodes = max(0, int(ppo.get("perception_warmup_episodes", 0)))
+    model_spec = getattr(model, "pipeline_spec", None)
+    if model_spec is None:
+        try:
+            model_spec = get_pipeline(method)
+        except ValueError:
+            model_spec = get_pipeline("shin_se")
+    warmup_episodes = (max(0, int(ppo.get("perception_warmup_episodes", 0)))
+                       if model_spec.state_estimation_enabled else 0)
     if checkpoint_path.is_file():
         saved = torch.load(checkpoint_path, map_location=model.device, weights_only=False)
         incompatibility = None
-        if saved.get("format") != "shin2026-recurrent-v1":
+        legacy_test_model = not hasattr(model, "pipeline_spec")
+        saved_format = saved.get("format")
+        legacy_shin_checkpoint = (
+            saved_format == "shin2026-recurrent-v1"
+            and (legacy_test_model or (
+                model_spec.state_estimation_enabled
+                and method not in primary_pipeline_ids())))
+        if (saved_format != "three-pipeline-recurrent-v2"
+                and not legacy_shin_checkpoint):
             incompatibility = "unsupported checkpoint format"
         elif saved.get("method") != method or saved.get("config_hash") != config_hash:
             incompatibility = "checkpoint method/config mismatch"
+        elif (saved_format == "three-pipeline-recurrent-v2"
+              and not legacy_test_model
+              and saved.get("pipeline_spec") != model_spec.to_manifest()):
+            incompatibility = "checkpoint pipeline information-boundary mismatch"
         expected_design = getattr(potential, "sha256", None)
         # The Shin arm never consumes the ontology potential. Older baseline
         # checkpoints may nevertheless carry the run-level artifact hash, so
         # only reward-shaped arms are coupled to a particular design artifact.
-        if (incompatibility is None and method.startswith("ontoreward") and
+        if (incompatibility is None
+                and (model_spec.ontology_enabled or method.startswith("ontoreward")) and
                 saved.get("reward_design_sha256") != expected_design):
             incompatibility = "checkpoint reward-design mismatch"
         if incompatibility is not None:
@@ -417,7 +601,11 @@ def train_live(env_factory: Callable, model, method, seeds, output_dir,
             print(f"Archived incompatible {method} checkpoint as {archive.name}; "
                   "starting with the current control configuration.")
         else:
-            model.load_state_dict(saved["model"])
+            state_dict = saved["model"]
+            if legacy_shin_checkpoint and not legacy_test_model:
+                state_dict = _migrate_legacy_shin_state_dict(state_dict)
+                print(f"Migrating legacy Shin checkpoint module names: {checkpoint_path}")
+            model.load_state_dict(state_dict)
             optimizer.load_state_dict(saved["optimizer"])
             completed = int(saved["episode"])
             saved_curriculum = dict(saved["curriculum"])
@@ -463,8 +651,10 @@ def train_live(env_factory: Callable, model, method, seeds, output_dir,
 
     with env_factory() as env:
         for episode, seed in enumerate(seed_list[completed:], start=completed + 1):
-            c = curriculum.update(episode - 1)
             perception_warmup = episode <= warmup_episodes
+            ppo_episode = max(0, episode - warmup_episodes)
+            c = (curriculum.update(0) if perception_warmup
+                 else curriculum.update(ppo_episode - 1))
             rows, metric = collect_episode(
                 env, model, method, seed, curriculum=c, potential=potential,
                 gamma=float(ppo.get("gamma", .99)),
@@ -472,8 +662,8 @@ def train_live(env_factory: Callable, model, method, seeds, output_dir,
                 monitor=monitor, phase=("perception warm-up" if perception_warmup
                                         else "training"),
                 # Position-backed velocity setpoints bound this exploration.
-                # Sampling during estimator-only warm-up avoids collecting 32
-                # copies of an almost perfectly static hover trajectory.
+                # Sampling during the short Shin-only estimator warm-up avoids
+                # collecting copies of an almost perfectly static trajectory.
                 deterministic=bool(
                     perception_warmup and not ppo.get(
                         "perception_warmup_safe_exploration", True)))
@@ -498,12 +688,18 @@ def train_live(env_factory: Callable, model, method, seeds, output_dir,
                     minimum_learning_rate=float(ppo.get(
                         "minimum_learning_rate", 5e-6)))
             metric.update(loss)
+            prior_steps = sum(
+                int(float(row.get("steps", 0))) for row in history
+                if row.get("optimization_phase") == "ppo")
             metric.update({"method": method, "scenario": "training_random_walk",
                            "episode": episode, "curriculum_level": curriculum.level,
                            "curriculum": float(c),
                            "optimization_phase": ("perception_warmup"
                                                   if perception_warmup else "ppo"),
-                           "training_sample_efficiency": episode})
+                           "training_sample_efficiency": ppo_episode,
+                           "ppo_episode": ppo_episode,
+                           "ppo_environment_steps": (prior_steps
+                               + (0 if perception_warmup else int(metric["steps"])))})
             history.append(metric)
             if monitor is not None:
                 monitor.training_update(method, metric)

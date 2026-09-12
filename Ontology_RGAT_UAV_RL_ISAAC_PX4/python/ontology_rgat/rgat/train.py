@@ -140,6 +140,10 @@ def train_potential(dataset: dict[str, Any], cfg: Config, *,
         train_idx = torch.nonzero(train_mask, as_tuple=False).squeeze(1).to(device)
         val_idx = torch.nonzero(~train_mask, as_tuple=False).squeeze(1).to(device)
         split_unit = "episode"
+        train_episode_ids = [int(value) for value in
+                             episodes[:n_train_episodes].tolist()]
+        validation_episode_ids = [int(value) for value in
+                                  episodes[n_train_episodes:].tolist()]
     else:
         order = torch.randperm(n, generator=generator)
         n_train = max(1, int(round((1.0 - cfg.rgat.val_fraction) * n)))
@@ -147,6 +151,8 @@ def train_potential(dataset: dict[str, Any], cfg: Config, *,
         val_idx = order[n_train:].to(device)
         if val_idx.numel() == 0:
             val_idx = train_idx
+        train_episode_ids = []
+        validation_episode_ids = []
 
     optimizer = torch.optim.Adam(model.parameters(), lr=float(cfg.rgat.lr),
                                  betas=(0.9, 0.999), eps=1e-8)
@@ -166,6 +172,8 @@ def train_potential(dataset: dict[str, Any], cfg: Config, *,
         device=device.type, device_reason=why,
         samples=int(n), train_samples=int(train_idx.numel()),
         val_samples=int(val_idx.numel()), split_unit=split_unit)
+    history["train_episode_ids"] = train_episode_ids
+    history["validation_episode_ids"] = validation_episode_ids
     completed_epochs = len(history["train_loss"])
 
     for epoch in range(1, int(cfg.rgat.epochs) + 1):

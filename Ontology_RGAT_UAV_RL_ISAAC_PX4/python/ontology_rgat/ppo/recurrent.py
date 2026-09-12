@@ -9,8 +9,10 @@ import torch
 from torch import nn
 
 from ..benchmarks.shin2026 import ActorObservation
-from ..estimation import LSTMRelativeStateEstimator
+from ..estimation import RelativeStateAuxiliaryHead
 from ..perception import ShinKeypointEncoder, grayscale_image_tensor
+from ..pipelines import PipelineSpec, get_pipeline
+from .temporal_backbone import TemporalVisualBackbone
 
 
 LOG_SQRT_2PI = 0.5 * math.log(2.0 * math.pi)
@@ -21,34 +23,47 @@ class RecurrentOutput:
     action_mean: torch.Tensor
     action_std: torch.Tensor
     value: torch.Tensor | None
-    relative_state: torch.Tensor
+    relative_state: torch.Tensor | None
     latent: torch.Tensor
     hidden: tuple[torch.Tensor, torch.Tensor]
+    keypoints: torch.Tensor
+    heatmaps: torch.Tensor
 
 
-class ShinRecurrentActorCritic(nn.Module):
-    """Paper-compatible information flow with an asymmetric training critic.
+class PipelineActorCritic(nn.Module):
+    """Common recurrent actor/critic with optional Shin auxiliary supervision.
 
-    The actor head receives only ``y[6:256]`` and UAV proprioception.  True
-    relative state is accepted solely by the separately evaluated critic head.
+    Every pipeline deploys image + UAV proprioception, an identical keypoint
+    encoder/LSTM/latent/actor and the literal ``latent[..., 6:]`` actor slice.
+    Only ``shin_se`` constructs ``relative_state_head``.  Critic truth is
+    accepted solely by the separately evaluated training critic.
     """
 
     def __init__(self, image_embedding=512, lstm_hidden=512, latent_dim=256,
                  actor_hidden=256, critic_hidden=256, action_dim=4,
                  init_log_std=-1.5, actor_output_gain=0.01,
-                 freeze_keypoint=False):
+                 freeze_keypoint=False,
+                 pipeline: PipelineSpec | str = "shin_se"):
         super().__init__()
+        self.pipeline_spec = (get_pipeline(pipeline) if isinstance(pipeline, str)
+                              else pipeline)
+        if not isinstance(self.pipeline_spec, PipelineSpec):
+            raise TypeError("pipeline must be a PipelineSpec or registered pipeline ID")
         if action_dim != 4:
             raise ValueError("benchmark action dimension must be four")
         self.encoder = ShinKeypointEncoder(image_embedding, keypoints=6)
         if freeze_keypoint:
             for parameter in self.encoder.parameters():
                 parameter.requires_grad_(False)
-        self.estimator = LSTMRelativeStateEstimator(
+        self.temporal_backbone = TemporalVisualBackbone(
             image_embedding=image_embedding, proprioception=7,
-            hidden_size=lstm_hidden, latent_size=latent_dim, output_size=6)
+            hidden_size=lstm_hidden, latent_size=latent_dim)
+        self.relative_state_head = (
+            RelativeStateAuxiliaryHead()
+            if self.pipeline_spec.state_estimation_enabled else None)
         self.actor = nn.Sequential(
-            nn.Linear(latent_dim - 6 + 7, actor_hidden), nn.Tanh(),
+            nn.Linear(latent_dim - self.pipeline_spec.reserved_latent_dimensions + 7,
+                      actor_hidden), nn.Tanh(),
             nn.Linear(actor_hidden, actor_hidden), nn.Tanh(),
             nn.Linear(actor_hidden, action_dim))
         output_gain = float(actor_output_gain)
@@ -69,7 +84,7 @@ class ShinRecurrentActorCritic(nn.Module):
         return self.log_std.device
 
     def initial_state(self, batch_size: int):
-        return self.estimator.initial_state(
+        return self.temporal_backbone.initial_state(
             batch_size, device=self.device, dtype=self.log_std.dtype)
 
     def forward(self, images: torch.Tensor, proprioception: torch.Tensor,
@@ -82,10 +97,15 @@ class ShinRecurrentActorCritic(nn.Module):
         if images.ndim != 5 or images.shape[2] != 1:
             raise ValueError("images must have shape BxTx1xHxW")
         batch, steps = images.shape[:2]
-        encoded = self.encoder(images.reshape(batch * steps, *images.shape[2:])).embedding
-        encoded = encoded.reshape(batch, steps, -1)
-        estimate = self.estimator(encoded, proprioception, hidden, episode_start)
-        actor_features = torch.cat((estimate.latent[..., 6:], proprioception), -1)
+        visual = self.encoder(images.reshape(batch * steps, *images.shape[2:]))
+        encoded = visual.embedding.reshape(batch, steps, -1)
+        temporal = self.temporal_backbone(
+            encoded, proprioception, hidden, episode_start)
+        relative_state = (None if self.relative_state_head is None
+                          else self.relative_state_head(temporal.latent))
+        actor_features = torch.cat(
+            (temporal.latent[..., self.pipeline_spec.actor_latent_slice],
+             proprioception), -1)
         mean = self.actor(actor_features)
         std = self.log_std.exp().expand_as(mean)
         value = None
@@ -95,8 +115,12 @@ class ShinRecurrentActorCritic(nn.Module):
             if true_relative_state.shape != (batch, steps, 6):
                 raise ValueError("critic truth must have shape BxTx6")
             value = self.critic(torch.cat((proprioception, true_relative_state), -1)).squeeze(-1)
-        return RecurrentOutput(mean, std, value, estimate.relative_state,
-                               estimate.latent, estimate.hidden)
+        return RecurrentOutput(
+            mean, std, value, relative_state, temporal.latent, temporal.hidden,
+            visual.keypoints.reshape(batch, steps, 6, 2),
+            visual.heatmaps.reshape(batch, steps, 6,
+                                    visual.heatmaps.shape[-2],
+                                    visual.heatmaps.shape[-1]))
 
     @staticmethod
     def log_prob(pre_squash, action, mean, std):
@@ -104,10 +128,10 @@ class ShinRecurrentActorCritic(nn.Module):
         return (gaussian - torch.log(1.0 - action.square() + 1e-6)).sum(-1)
 
 
-class StatefulShinPolicy:
+class StatefulPipelinePolicy:
     """Deployment wrapper; it has no API through which critic truth can enter."""
 
-    def __init__(self, model: ShinRecurrentActorCritic, seed: int = 0):
+    def __init__(self, model: PipelineActorCritic, seed: int = 0):
         self.model = model
         self.generator = torch.Generator(device="cpu").manual_seed(int(seed))
         self.hidden = None
@@ -131,7 +155,7 @@ class StatefulShinPolicy:
         return torch.tanh(pre_squash).cpu().numpy()[0]
 
 
-def recurrent_ppo_loss(model: ShinRecurrentActorCritic, batch: dict,
+def recurrent_ppo_loss(model: PipelineActorCritic, batch: dict,
                        *, clip=0.2, value_coef=0.5, entropy_coef=0.003,
                        auxiliary_coef=1.0):
     """One differentiable recurrent minibatch objective and named telemetry."""
@@ -148,10 +172,15 @@ def recurrent_ppo_loss(model: ShinRecurrentActorCritic, batch: dict,
     entropy = torch.log(output.action_std * math.sqrt(2.0 * math.pi * math.e)).sum(-1).mean()
     policy_loss = -surrogate.mean()
     value_loss = (output.value - batch["return"]).square().mean()
-    auxiliary_loss = model.estimator.auxiliary_loss(
-        output.relative_state, batch["true_relative_state"], batch.get("truth_valid"))
-    loss = (policy_loss + value_coef * value_loss - entropy_coef * entropy
-            + auxiliary_coef * auxiliary_loss)
+    loss = policy_loss + value_coef * value_loss - entropy_coef * entropy
+    auxiliary_loss = None
+    if model.pipeline_spec.auxiliary_estimation_loss_enabled:
+        if output.relative_state is None:
+            raise RuntimeError("supervised pipeline did not produce a relative-state estimate")
+        auxiliary_loss = model.relative_state_head.loss(
+            output.relative_state, batch["true_relative_state"],
+            batch.get("truth_valid"))
+        loss = loss + auxiliary_coef * auxiliary_loss
     with torch.no_grad():
         # Non-negative second-order approximation used by PPO early stopping.
         # A signed mean(old-new) can cancel across samples and hid the policy
@@ -162,6 +191,22 @@ def recurrent_ppo_loss(model: ShinRecurrentActorCritic, batch: dict,
         "loss": loss.detach(), "ppo_loss": policy_loss.detach(),
         "value_loss": value_loss.detach(), "entropy": entropy.detach(),
         "kl_divergence": approximate_kl.detach(),
-        "auxiliary_estimation_loss": auxiliary_loss.detach(),
+        "state_estimation_enabled": float(
+            model.pipeline_spec.state_estimation_enabled),
+        "active_perception_enabled": float(
+            model.pipeline_spec.active_perception_enabled),
+        "ontology_enabled": float(model.pipeline_spec.ontology_enabled),
     }
+    if auxiliary_loss is not None:
+        metrics["auxiliary_estimation_loss"] = auxiliary_loss.detach()
     return loss, metrics
+
+
+class ShinRecurrentActorCritic(PipelineActorCritic):
+    """Backward-compatible name for the explicit-supervision Shin pipeline."""
+
+    def __init__(self, *args, pipeline: PipelineSpec | str = "shin_se", **kwargs):
+        super().__init__(*args, pipeline=pipeline, **kwargs)
+
+
+StatefulShinPolicy = StatefulPipelinePolicy

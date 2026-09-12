@@ -7,7 +7,43 @@ the scripts under `scripts/`.
 
 ![End-to-end system architecture](images/system_architecture-metasejong-v3.png)
 
-## Objective and experimental boundary
+## Default primary experiment
+
+`./run.sh` now executes the controlled `shin_se / no_se / onto_no_se`
+comparison documented in
+[THREE_PIPELINE_COMPARISON.md](THREE_PIPELINE_COMPARISON.md). All three deploy
+the same grayscale-image/UAV-proprioception boundary, frozen keypoint encoder,
+generic temporal LSTM, `y[6:256]` actor features, action/controller, curriculum,
+PPO budget and paired seeds.
+
+Only `shin_se` attaches six-state auxiliary supervision to `y[0:6]` and uses
+estimation-error active perception. `no_se` removes both while retaining the
+LSTM. `onto_no_se` also has no estimator and constructs a 13-node ontology from
+direct keypoint semantics, UAV motion/attitude and battery reserve. A frozen
+R-GAT output is used directly as `Phi(G)` in PBRS. Graph and dataset APIs reject
+relative-state estimates and simulator/platform truth.
+
+The default runtime order is:
+
+| Stage | Operation | Principal output |
+|---:|---|---|
+| 1 | Validate explicit pipeline contracts and common configuration | manifest |
+| 2 | Start/adopt DDS, Isaac, Pegasus, PX4, gateway, dashboard and RViz | live stack |
+| 3 | Train `shin_se` and `no_se` with equal PPO budgets | frozen policy checkpoints |
+| 4 | Collect estimator-free semantic behavior trajectories | versioned semantic dataset |
+| 5 | Regress discounted terminal outcome and freeze direct R-GAT | R-GAT model + provenance |
+| 6 | Train `onto_no_se` with the same PPO budget | proposed checkpoint |
+| 7 | Run paired evaluation and physical-metric reporting | raw pairs, CIs, tables, plots |
+
+```bash
+./run.sh
+```
+
+The bare command is a deadline preview, not publication evidence. It reports
+the separate PPO and reward-design interaction costs. Raw return is debugging
+telemetry and is excluded from the cross-pipeline comparison.
+
+## Legacy cooperative-profile objective and boundary
 
 The UAV must land on a moving UGV pad in a dynamic environment that combines
 wind, visual-marker intermittency, GNSS degradation, vehicle motion, and limited
@@ -35,7 +71,7 @@ input.
 | 7 | Run paired nominal evaluation and wind/pad/GNSS/energy strata | metrics and dual-gate decision |
 | 8 | Export tables, plots, dashboards, and run provenance | run summary and figures |
 
-One command runs the complete sequence:
+The legacy cooperative profile still runs with:
 
 ```bash
 ./scripts/run_metasejong_pipeline.sh --mode full

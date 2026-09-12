@@ -13,7 +13,8 @@ troubleshooting guide:
 **[Open the full project README](Ontology_RGAT_UAV_RL_ISAAC_PX4/README.md)** ·
 [System overview](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/SYSTEM_OVERVIEW.md) ·
 [Operations](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/OPERATIONS.md) ·
-[Architecture](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/ARCHITECTURE.md)
+[Architecture](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/ARCHITECTURE.md) ·
+[Three-pipeline protocol](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/THREE_PIPELINE_COMPARISON.md)
 
 ## Research contract
 
@@ -25,13 +26,12 @@ Policy observations contain only measurable
 sensor/estimator values; simulator truth is isolated to reset, terminal reward,
 and evaluation scoring.
 
-In the default Shin-2026 benchmark, R-GAT learns safe-landing structure from
-held-out, actual Isaac/Pegasus/PX4 rollouts by a trained recurrent Shin policy.
-Graph inputs come from the policy's six-state visual estimate; labels are the
-discounted physical pad-contact outcome recorded by the simulator. Truth never
-enters an R-GAT graph. Four counterfactual attributions are distilled into
-bounded coefficients that sum to one and are frozen before OntoReward PPO. The
-separate cooperative urban profile retains its 14-node/eight-weight ontology.
+The default `./run.sh` compares `shin_se`, `no_se`, and `onto_no_se` under one
+camera, temporal backbone, actor/critic, controller, PPO budget and paired seed
+plan. The proposed pipeline has no relative-state estimator. Its ontology uses
+direct visual semantics and UAV onboard signals, and the frozen R-GAT output is
+used directly as the PBRS potential. Simulator truth is permitted only for the
+asymmetric critic, terminal labels, reset logic and physical evaluation.
 
 An experiment passes only when both independent criteria pass:
 
@@ -48,21 +48,23 @@ From the repository root:
 ./run.sh
 ```
 
-The root entry point defaults to the publication-scale Shin/OntoReward run. It
-starts DDS, Isaac Sim, Pegasus, PX4, the ROS gateway and MATLAB-style dashboard;
-trains the Shin recurrent PPO baseline; collects a held-out real-flight R-GAT
-dataset; trains and freezes the controlled R-GAT reward; trains OntoReward PPO;
-runs paired scenario evaluation; and exports checkpoints, provenance, CSV
-tables, confidence intervals and publication figures. It is independent of the
-current working directory and forwards all benchmark options:
+The root entry point starts DDS, Isaac Sim, Pegasus, PX4, the ROS gateway and
+MATLAB-style dashboard; trains the three controlled pipelines; collects an
+estimator-free semantic R-GAT dataset; freezes the direct R-GAT potential; runs
+paired evaluation; and exports physical-metric tables, confidence intervals and
+figures. The bare command uses 264 PPO episodes per pipeline plus eight
+Shin-only estimator warm-up flights (800 training flights total). It is
+independent of the current working directory and forwards all
+comparison options:
 
 ```bash
 ./run.sh --mode quick --headless
-./run.sh --methods shin2026 sparse manual_no_active ontoreward ontoreward_plus_active --headless
+./run.sh --pipelines shin_se no_se onto_no_se --mode full
 ./run.sh --help
 ```
 
-The second command runs every ablation arm. Use
+Legacy `--methods`/`--reward` commands are routed to the former reward-arm
+runner. Use
 `Ontology_RGAT_UAV_RL_ISAAC_PX4/scripts/run_metasejong_pipeline.sh` directly for
 the separate legacy 23-channel cooperative urban experiment.
 

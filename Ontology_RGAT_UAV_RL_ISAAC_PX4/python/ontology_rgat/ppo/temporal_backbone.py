@@ -25,9 +25,15 @@ class TemporalVisualBackbone(nn.Module):
         self.latent_size = int(latent_size)
         self.lstm = nn.LSTM(image_embedding + proprioception, hidden_size,
                             batch_first=True)
+        # The first six values are supervised relative-state coordinates.  A
+        # global Tanh used to cap those physical predictions to [-1, 1], even
+        # though the benchmark starts as high as 8 m and can move faster than
+        # 1 m/s.  Keep that estimator channel unbounded; only the policy-only
+        # representation is squashed.  Retaining the Sequential container
+        # preserves the Linear parameter names for explicit checkpoint
+        # incompatibility handling in recurrent_train.py.
         self.latent_head = nn.Sequential(
-            nn.Linear(hidden_size + image_embedding + proprioception, latent_size),
-            nn.Tanh())
+            nn.Linear(hidden_size + image_embedding + proprioception, latent_size))
 
     def initial_state(self, batch_size: int, *, device=None, dtype=None):
         shape = (1, int(batch_size), self.hidden_size)
@@ -65,6 +71,8 @@ class TemporalVisualBackbone(nn.Module):
         else:
             hidden = self.reset_hidden(hidden, episode_start)
             sequence, hidden = self.lstm(recurrent_input, hidden)
-        latent = self.latent_head(
+        raw_latent = self.latent_head(
             torch.cat((image_embedding, sequence, proprioception), -1))
+        latent = torch.cat((raw_latent[..., :6],
+                            torch.tanh(raw_latent[..., 6:])), dim=-1)
         return TemporalBackboneOutput(latent=latent, hidden=hidden)

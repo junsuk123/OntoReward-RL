@@ -1,4 +1,4 @@
-"""Deterministic synthetic pretraining for the six-keypoint image encoder.
+"""Synthetic pretraining plus empirical Isaac validation/fine-tuning.
 
 The paper's PACMAN weights are not public.  This module does not pretend to be
 PACMAN: it renders the repository's deployed multi-scale ArUco board under the
@@ -22,7 +22,7 @@ from ..initialization import camera_centered_hover_offset
 from .keypoint_encoder import ShinKeypointEncoder
 
 
-PRETRAIN_FORMAT = "shin2026-synthetic-keypoint-pretrain-v1"
+PRETRAIN_FORMAT = "shin2026-hybrid-keypoint-pretrain-v2"
 
 
 def _rotation_z(yaw: float) -> np.ndarray:
@@ -225,6 +225,219 @@ def synthetic_keypoint_dataset(system: Mapping[str, Any], *, samples: int,
             "coordinates": coordinates, "visible": visible, "poses": poses}
 
 
+def empirical_keypoint_dataset(frames, system: Mapping[str, Any]) -> dict[str, np.ndarray]:
+    """Label real rendered frames from detected board-plane correspondences.
+
+    The image is never annotated and simulator pose truth is not injected into
+    the actor.  Known metric marker corners establish a pad-plane homography;
+    that homography labels the same six hexagonal landmarks used in synthetic
+    pretraining. Frames without a valid deployed-board solve are rejected.
+    """
+    import cv2
+
+    vision = dict(system.get("vision") or {})
+    camera = dict(vision.get("camera") or {})
+    width, height = (int(v) for v in camera.get("resolution", (512, 320)))
+    board = {int(entry["id"]): dict(entry)
+             for entry in vision.get("board") or ()}
+    if not board:
+        raise ValueError("empirical keypoint calibration requires vision.board")
+    dictionary_name = str(vision.get("dictionary", "DICT_4X4_100"))
+    if not hasattr(cv2.aruco, dictionary_name):
+        raise ValueError(f"unknown ArUco dictionary: {dictionary_name}")
+    detector = cv2.aruco.ArucoDetector(
+        cv2.aruco.getPredefinedDictionary(getattr(cv2.aruco, dictionary_name)))
+    landmarks = _hexagonal_landmarks()[:, :2].astype(np.float32)
+    feature_h, feature_w = height // 16, width // 16
+    grid_y, grid_x = np.mgrid[0:feature_h, 0:feature_w]
+    labelled = []
+    for value in frames:
+        image = np.asarray(value, dtype=np.uint8)
+        if image.shape != (height, width):
+            continue
+        corners, ids, _ = detector.detectMarkers(image)
+        if ids is None:
+            continue
+        object_xy, image_xy = [], []
+        for quad, marker_id in zip(corners, ids.flatten()):
+            entry = board.get(int(marker_id))
+            if entry is None:
+                continue
+            object_xy.append(_square(
+                entry.get("center_xy_m", (0.0, 0.0)),
+                float(entry["side_m"]))[:, :2])
+            image_xy.append(np.asarray(quad, dtype=np.float32).reshape(4, 2))
+        if not object_xy:
+            continue
+        homography, inliers = cv2.findHomography(
+            np.concatenate(object_xy).astype(np.float32),
+            np.concatenate(image_xy).astype(np.float32), cv2.RANSAC, 3.0)
+        if homography is None or inliers is None or int(inliers.sum()) < 4:
+            continue
+        pixels = cv2.perspectiveTransform(
+            landmarks[None], homography).reshape(6, 2)
+        if not np.isfinite(pixels).all():
+            continue
+        visible = ((pixels[:, 0] >= 0.0) & (pixels[:, 0] <= width - 1.0)
+                   & (pixels[:, 1] >= 0.0) & (pixels[:, 1] <= height - 1.0))
+        heatmaps = np.zeros((6, feature_h, feature_w), dtype=np.float32)
+        for point in np.flatnonzero(visible):
+            px = pixels[point, 0] / (width - 1.0) * (feature_w - 1.0)
+            py = pixels[point, 1] / (height - 1.0) * (feature_h - 1.0)
+            gaussian = np.exp(-((grid_x - px) ** 2 + (grid_y - py) ** 2)
+                              / (2.0 * 0.85 ** 2))
+            heatmaps[point] = gaussian / max(float(gaussian.sum()), 1e-9)
+        coordinates = np.column_stack((
+            2.0 * pixels[:, 0] / (width - 1.0) - 1.0,
+            2.0 * pixels[:, 1] / (height - 1.0) - 1.0)).astype(np.float32)
+        labelled.append((image.copy(), heatmaps, coordinates,
+                         visible.astype(np.float32)))
+    if not labelled:
+        return {
+            "images": np.empty((0, height, width), dtype=np.uint8),
+            "heatmaps": np.empty((0, 6, feature_h, feature_w), dtype=np.float32),
+            "coordinates": np.empty((0, 6, 2), dtype=np.float32),
+            "visible": np.empty((0, 6), dtype=np.float32),
+        }
+    return {name: np.stack([item[index] for item in labelled])
+            for index, name in enumerate(
+                ("images", "heatmaps", "coordinates", "visible"))}
+
+
+@torch.no_grad()
+def _empirical_metrics(encoder, dataset, indices, device) -> dict:
+    images = torch.as_tensor(dataset["images"][indices, None],
+                             dtype=torch.float32, device=device) / 255.0
+    target = torch.as_tensor(dataset["coordinates"][indices],
+                             dtype=torch.float32, device=device)
+    visible = torch.as_tensor(dataset["visible"][indices],
+                              dtype=torch.bool, device=device)
+    predicted = encoder(images).keypoints
+    scale = torch.tensor([511.0 / 2.0, 319.0 / 2.0], device=device)
+    pixel_error = torch.linalg.vector_norm((predicted - target) * scale, dim=-1)
+    selected = pixel_error[visible]
+    if selected.numel() == 0:
+        return {"coordinate_rmse_px": float("inf"), "pck_20px": 0.0}
+    return {
+        "coordinate_rmse_px": float(torch.sqrt(selected.square().mean()).cpu()),
+        "pck_20px": float((selected <= 20.0).float().mean().cpu()),
+    }
+
+
+def calibrate_keypoint_encoder(
+        path: str | Path, artifact: dict, camera_source,
+        *, system: Mapping[str, Any], experiment: Mapping[str, Any],
+        mode: str, device: str | torch.device) -> dict:
+    """Validate and optionally fine-tune a frozen encoder on live Isaac RGB output."""
+    if artifact is None:
+        return None
+    empirical = artifact.get("empirical_calibration") or {}
+    if empirical.get("validated"):
+        print(f"Using empirically validated Isaac keypoint encoder from {path}.")
+        return artifact
+    estimator = dict(experiment.get("estimator") or {})
+    settings = dict(estimator.get("keypoint_pretraining") or {})
+    requested = int(settings.get(
+        f"empirical_samples_{mode}", settings.get("empirical_samples", 48)))
+    minimum = max(8, int(settings.get("minimum_empirical_samples", 8)))
+    frames = []
+    dataset = empirical_keypoint_dataset(frames, system)
+    for _ in range(max(requested * 5, minimum)):
+        frames.append(camera_source())
+        if len(frames) >= minimum:
+            dataset = empirical_keypoint_dataset(frames, system)
+            if len(dataset["images"]) >= requested:
+                break
+    count = len(dataset["images"])
+    if count < minimum:
+        raise RuntimeError(
+            f"Isaac keypoint calibration found only {count} labelled frames "
+            f"(minimum {minimum}); refusing a synthetic-only frozen encoder")
+    if count > requested:
+        dataset = {name: value[:requested] for name, value in dataset.items()}
+        count = requested
+    seed = int(settings.get("seed", 41026)) + 73
+    rng = np.random.default_rng(seed)
+    order = rng.permutation(count)
+    validation_count = max(4, int(round(count * float(
+        settings.get("empirical_validation_fraction", .25)))))
+    validation_count = min(validation_count, count - 4)
+    validation, training = order[:validation_count], order[validation_count:]
+    torch_device = torch.device(device)
+    encoder = ShinKeypointEncoder(
+        int(estimator.get("image_embedding", 512)), keypoints=6).to(torch_device)
+    encoder.load_state_dict(artifact["encoder"])
+    before = _empirical_metrics(encoder, dataset, validation, torch_device)
+    best = {name: value.detach().cpu().clone()
+            for name, value in encoder.state_dict().items()}
+    best_metrics = before
+    optimizer = torch.optim.Adam(
+        encoder.parameters(), lr=float(settings.get(
+            "empirical_learning_rate", 1e-4)))
+    batch_size = int(settings.get("batch_size", 16))
+    epochs = int(settings.get("empirical_epochs", 2))
+    for _ in range(max(1, epochs)):
+        for start in range(0, len(training), batch_size):
+            indices = training[start:start + batch_size]
+            images = torch.as_tensor(
+                dataset["images"][indices, None], dtype=torch.float32,
+                device=torch_device) / 255.0
+            target_heatmaps = torch.as_tensor(
+                dataset["heatmaps"][indices], dtype=torch.float32,
+                device=torch_device)
+            target_coordinates = torch.as_tensor(
+                dataset["coordinates"][indices], dtype=torch.float32,
+                device=torch_device)
+            mask = torch.as_tensor(
+                dataset["visible"][indices], dtype=torch.float32,
+                device=torch_device)
+            output = encoder(images)
+            denominator = mask.sum().clamp_min(1.0)
+            heatmap_loss = (-(target_heatmaps.flatten(2)
+                              * F.log_softmax(output.heatmaps.flatten(2), -1))
+                            .sum(-1) * mask).sum() / denominator
+            coordinate_loss = (((output.keypoints - target_coordinates)
+                                .square().sum(-1) * mask).sum() / denominator)
+            loss = heatmap_loss + 3.0 * coordinate_loss
+            optimizer.zero_grad(set_to_none=True)
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(encoder.parameters(), 5.0)
+            optimizer.step()
+        candidate = _empirical_metrics(
+            encoder, dataset, validation, torch_device)
+        if candidate["coordinate_rmse_px"] < best_metrics["coordinate_rmse_px"]:
+            best_metrics = candidate
+            best = {name: value.detach().cpu().clone()
+                    for name, value in encoder.state_dict().items()}
+    artifact = dict(artifact)
+    artifact["encoder"] = best
+    artifact["training_source"] = (
+        "synthetic board projections plus labelled Isaac camera frames")
+    artifact["empirical_calibration"] = {
+        "validated": True, "label_source": "ArUco board-plane homography",
+        "samples": count, "training_samples": len(training),
+        "validation_samples": len(validation), "before": before,
+        "after": best_metrics,
+        "fine_tune_selected": bool(
+            best_metrics["coordinate_rmse_px"] < before["coordinate_rmse_px"]),
+    }
+    dataset_path = Path(path).with_name("keypoint_isaac_calibration.npz")
+    np.savez_compressed(dataset_path, **dataset)
+    artifact["empirical_dataset"] = str(dataset_path.resolve())
+    temporary = Path(path).with_suffix(Path(path).suffix + ".tmp")
+    torch.save(artifact, temporary)
+    os.replace(temporary, path)
+    print(
+        "Isaac keypoint validation complete: "
+        f"{before['coordinate_rmse_px']:.1f}px -> "
+        f"{best_metrics['coordinate_rmse_px']:.1f}px, "
+        f"PCK@20 {before['pck_20px']:.1%} -> {best_metrics['pck_20px']:.1%}.")
+    del encoder, optimizer
+    if torch_device.type == "cuda":
+        torch.cuda.empty_cache()
+    return artifact
+
+
 def _train_encoder(system: Mapping[str, Any], settings: Mapping[str, Any],
                    *, mode: str, device: torch.device) -> tuple[dict, dict]:
     samples = int(settings.get(
@@ -323,6 +536,7 @@ def prepare_keypoint_encoder(
         "frozen_for_ppo": True,
         "landmark_layout": "six vertices of a 0.52 m pad-centred hexagon",
         "training_source": "synthetic projections of configured deployed marker board",
+        "empirical_calibration": None,
         "metrics": metrics,
         "encoder": state,
     }

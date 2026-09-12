@@ -32,6 +32,8 @@ from config_loader import load_config
 from ontology_rgat.initialization import (camera_centered_hover_offset,
                                           curriculum_camera_entry,
                                           yaw_aligned_hover_offset)
+from ontology_rgat.benchmarks.randomization import (
+    px4_gain_parameters, sample_domain_randomization)
 
 CONFIG = load_config(CONFIG_PATH)
 from sensor_profiles import isaac_runtime_profile
@@ -135,6 +137,20 @@ class ParameterizedPX4MavlinkBackend(PX4MavlinkBackend):
                 self.px4_dir, self._vehicle_id, self.px4_vehicle_model,
                 self._startup_parameters)
             self.px4_tool.launch_px4()
+
+    def set_runtime_parameters(self, values: dict[str, float]) -> None:
+        """Send episode gain randomization over the live HIL MAVLink link."""
+        if self._connection is None:
+            raise RuntimeError("PX4 MAVLink is unavailable for gain randomization")
+        target_system = int(getattr(self._connection, "target_system", 0) or 1)
+        target_component = int(getattr(self._connection, "target_component", 0) or 1)
+        from pymavlink import mavutil
+        for name, value in values.items():
+            self._connection.mav.param_set_send(
+                target_system, target_component, name.encode("ascii"),
+                float(value), mavutil.mavlink.MAV_PARAM_TYPE_REAL32)
+        carb.log_info("[domain-randomization] PX4 gains sent: " + ", ".join(
+            f"{name}={value:.4g}" for name, value in values.items()))
 
 
 def _quat_wxyz_to_matrix(q):
@@ -245,6 +261,7 @@ class DownwardCamera:
         self.debug_every = int(os.environ.get("ONTOLOGY_RGAT_VISION_DEBUG_EVERY", "30"))
         self.frames = 0
         self.annotated_rgb = None
+        self.domain_visual = None
         carb.log_info(
             f"[landing-camera] {camera_cfg.get('model', 'camera')}: "
             f"{self.width}x{self.height}@{self.rate_hz:g} Hz runtime "
@@ -346,6 +363,8 @@ class DownwardCamera:
             self.frames += 1
             return None
         image = frame[:, :, :3]
+        if self.domain_visual is not None:
+            image = self._randomize_visual(image)
         # Actor topic: unannotated grayscale pixels only.  No pose, marker
         # solve or simulator overlay is rendered into this image.
         self.raw_gray = np.ascontiguousarray(
@@ -355,6 +374,33 @@ class DownwardCamera:
         if self.debug_dir and self.frames % max(1, self.debug_every) == 0:
             self._dump(self.annotated_rgb)
         return observation
+
+    def configure_domain_randomization(self, sample) -> None:
+        """Apply Table-II appearance ranges to the actual actor camera stream."""
+        self.domain_visual = None if sample is None else sample.to_dict()
+
+    def _randomize_visual(self, image: np.ndarray) -> np.ndarray:
+        values = self.domain_visual
+        rgb = np.asarray(image[:, :, :3], dtype=np.float32)
+        if float(np.nanmax(rgb)) <= 1.0:
+            rgb *= 255.0
+        yy, xx = np.mgrid[-1.0:1.0:complex(0, self.height),
+                          -1.0:1.0:complex(0, self.width)]
+        texture_id = int(values["ground_texture_id"])
+        texture_scale = float(values["ground_texture_scale"])
+        phase = texture_id * 0.61803398875
+        frequency = (1.5 + texture_id % 7) / max(texture_scale, 1e-3)
+        texture = 0.90 + 0.10 * np.sin(
+            frequency * (xx + 0.73 * yy) + phase)
+        angle = math.radians(float(values["light_direction_deg"]))
+        directional = np.clip(
+            1.0 + 0.10 * (math.cos(angle) * xx + math.sin(angle) * yy),
+            0.75, 1.25)
+        transform = (float(values["brightness"])
+                     * np.asarray(values["rgb_scale"], dtype=np.float32))
+        rgb *= transform[None, None, :]
+        rgb *= (texture * directional)[:, :, None]
+        return np.ascontiguousarray(np.clip(rgb, 0.0, 255.0).astype(np.uint8))
 
     def _dump(self, annotated_rgb) -> None:
         import cv2
@@ -1091,6 +1137,9 @@ class LandingWorld:
         # Keep the field and sensor alive, but apply aerodynamic force only
         # after the first policy action marks the true episode handover.
         self.policy_handover = False
+        self.domain_randomization = None
+        self.domain_px4_gains = {}
+        self.domain_initial_perturbation_pending = False
         self.last_pad_contact = False
 
         # A live 3D view of the episode inside the simulator window: the two
@@ -1185,6 +1234,22 @@ class LandingWorld:
         self.policy_handover = False
         rng = np.random.default_rng(req["seed"])
         benchmark = CONFIG.get("benchmark") or {}
+        domain_cfg = CONFIG.get("domain_randomization") or {}
+        self.domain_randomization = (
+            sample_domain_randomization(req["seed"])
+            if bool(domain_cfg.get("enabled", False)) else None)
+        self.domain_initial_perturbation_pending = self.domain_randomization is not None
+        self.domain_px4_gains = {}
+        if self.domain_randomization is not None:
+            self.domain_px4_gains = px4_gain_parameters(
+                self.domain_randomization,
+                dict(domain_cfg.get("px4_nominal_gains") or {}))
+            self.px4_backend.set_runtime_parameters(self.domain_px4_gains)
+            if self.camera is not None:
+                self.camera.configure_domain_randomization(
+                    self.domain_randomization)
+        elif self.camera is not None:
+            self.camera.configure_domain_randomization(None)
         initial = benchmark.get("initial_conditions") or {}
         if str(benchmark.get("profile", "")).lower() == "shin2026":
             # The raw draw is exactly Table I. During training its curriculum
@@ -1273,6 +1338,13 @@ class LandingWorld:
                                "entry_yaw_enu_rad": entry_yaw_enu,
                                "battery_hover_seconds":
                                    (hover_seconds if self.battery_enabled else None),
+                               "domain_randomization": (
+                                   None if self.domain_randomization is None else {
+                                       **self.domain_randomization.to_dict(),
+                                       "applied_px4_gains": self.domain_px4_gains,
+                                       "visual_application":
+                                           "live camera photometric/procedural texture",
+                                   }),
                                "pad": deck,
                                "reseated_on_deck": bool(reseated)})
         self.reset_ack_pub.publish(ack)
@@ -1380,6 +1452,7 @@ class LandingWorld:
             carb.log_warn(f"Ignored malformed flight state: {exc}")
             return
         previous_control = self.autopilot_flying
+        previous_handover = self.policy_handover
         self.autopilot_flying = bool(flying and controlled)
         self.px4_normalized_thrust = float(np.clip(px4_thrust, 0.0, 1.0))
         if self.autopilot_flying and not previous_control:
@@ -1387,6 +1460,21 @@ class LandingWorld:
         elif not self.autopilot_flying:
             self.hover_hold_release_started = None
         self.policy_handover = bool(flying and handover)
+        if (self.policy_handover and not previous_handover
+                and self.domain_initial_perturbation_pending
+                and self.domain_randomization is not None):
+            state_now = self.vehicle.state
+            rotation = Rotation.from_quat(state_now.attitude)
+            velocity = (np.asarray(state_now.linear_velocity, dtype=float)
+                        + rotation.apply(
+                            self.domain_randomization.initial_velocity_m_s))
+            angular_rate = (np.asarray(state_now.angular_velocity, dtype=float)
+                            + self.domain_randomization.initial_angular_rate_rad_s)
+            self.vehicle.set_linear_velocity(velocity)
+            self.vehicle.set_angular_velocity(angular_rate)
+            self.domain_initial_perturbation_pending = False
+            carb.log_info(
+                "[domain-randomization] applied policy-handover velocity/rate perturbation")
         # The gateway starts only after PX4 reports Ready for takeoff.  Its
         # first valid state therefore releases the cheap startup render loop
         # even for viewers such as run_metasejong_demo that do not reset first.
@@ -1500,8 +1588,18 @@ class LandingWorld:
             self.world.current_time, state.linear_velocity, state.attitude
         )
         if self.policy_handover:
-            self.vehicle.apply_force(force_body.tolist(), body_part="/body")
-            self.last_force = force_enu
+            domain_force_body = (np.zeros(3) if self.domain_randomization is None
+                                 else self.domain_randomization.external_force_n)
+            domain_torque_body = (np.zeros(3) if self.domain_randomization is None
+                                  else self.domain_randomization.external_torque_nm)
+            total_force_body = force_body + domain_force_body
+            self.vehicle.apply_force(total_force_body.tolist(), body_part="/body")
+            if np.any(domain_torque_body):
+                self.vehicle.apply_torque(
+                    domain_torque_body.tolist(), body_part="/body")
+            self.last_force = (force_enu
+                               + Rotation.from_quat(state.attitude).apply(
+                                   domain_force_body))
         else:
             # Wind speed remains observable during reset, but this is the
             # physical force actually applied to the vehicle.

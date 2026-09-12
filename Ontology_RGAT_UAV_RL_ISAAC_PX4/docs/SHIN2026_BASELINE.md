@@ -93,13 +93,14 @@ document.
 |---|---|---|
 | simulator | Isaac Sim 5.1 + Pegasus + PX4 SITL | The paper uses AerialGym; results are not backend-identical. |
 | low-level controller | PX4 velocity controller | The exact paper geometric controller is not public. Limits are common across pipelines. |
-| keypoint network | synthetic-pretrained six-keypoint encoder, frozen before PPO | PACMAN-compatible weights/code are not public; never label this artifact PACMAN. |
+| keypoint network | synthetic initialization, live-Isaac board-plane fine-tuning, held-out validation, then frozen before PPO | PACMAN-compatible weights/code are not public; never label this artifact PACMAN. |
 | landing target | multi-scale ArUco board | Approximation of the paper's known landing geometry, designed for far-to-near visibility. |
 | scene | Meta-Sejong S5/Gwanggaeto road loop | Campus adaptation shared by every pipeline. |
 | platform speed | 0.25–0.60 m/s draw, 1.0 m/s carrier ceiling | The paper's 0–8 m/s envelope is not claimed for this curved-road profile. |
 | episode start | PX4-flown camera-centred hover | Airborne teleport would corrupt the EKF. |
 | initial exploration | `log_std=-1.2`, actor output gain 0.03 | Avoid a nearly halted initial policy while acceleration slew limits bound commands. |
-| early curriculum | UAV envelope starts at 50%; UGV motion at 35% | Avoid a passive/parked early dataset while retaining bounded control. |
+| early curriculum | UAV envelope starts at 50%; UGV motion at 35%; advancement is success/FOV/common physical-RMSE-gated | Avoid a passive/parked dataset and prevent difficulty rising while learning is stalled without changing criteria between arms. |
+| Table-II randomization | seeded PX4-relative gain spread, Isaac force/torque and handover state, live camera appearance | Maps geometric-controller gains by relative range because the low-level controller is PX4. |
 | battery | physical-capacity 3S 3500 mAh model with 9–55 hover-second seeded reserve | Makes energy state measurable within a 30 s episode; does not invent a smaller pack. |
 
 The 45-tag board has four 0.32 m far tags, four 0.12 m transition tags, and
@@ -112,6 +113,12 @@ At low curriculum, the UAV entry blends from a stationary camera-centred hover
 to the full Table-I initial-condition draw. The target already moves at
 0.0875–0.21 m/s at `c=0` rather than remaining parked for hundreds of episodes.
 Paired evaluation uses `c=1`.
+
+The first six latent outputs are unbounded normalized coordinates decoded into
+physical `[m, m/s]` units. The auxiliary and active-perception losses divide by
+`[3,3,8,3,3,2]` before the six-axis MSE; the actor-only `y[6:256]` channels
+remain `tanh` bounded. This removes the former ±1 physical-unit ceiling and
+keeps the paper's active reward out of constant clipping.
 
 During the eight full-mode `shin_se` warm-up flights, actions are sampled from
 the bounded initial policy distribution. This excites both images and vehicle

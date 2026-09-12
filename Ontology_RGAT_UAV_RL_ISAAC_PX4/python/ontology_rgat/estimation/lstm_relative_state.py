@@ -55,8 +55,7 @@ class LSTMRelativeStateEstimator(nn.Module):
         relative = self.auxiliary_head(output.latent)
         return EstimatorOutput(relative, output.latent, output.hidden)
 
-    @staticmethod
-    def auxiliary_loss(prediction: torch.Tensor, privileged_target: torch.Tensor,
+    def auxiliary_loss(self, prediction: torch.Tensor,
+                       privileged_target: torch.Tensor,
                        valid: torch.Tensor | None = None) -> torch.Tensor:
-        return RelativeStateAuxiliaryHead.loss(
-            prediction, privileged_target, valid)
+        return self.auxiliary_head.loss(prediction, privileged_target, valid)

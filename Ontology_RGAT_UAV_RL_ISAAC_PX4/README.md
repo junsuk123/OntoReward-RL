@@ -285,8 +285,11 @@ python3 tools/protocol_probe.py state
 
 - This is a methodological-interface implementation of Shin et al. (2026),
   not a bit-exact reproduction. PACMAN weights and the paper's exact geometric
-  controller are unavailable; the repository uses a synthetic-pretrained
-  six-keypoint encoder and PX4 velocity control.
+  controller are unavailable; the repository uses a synthetic-initialized,
+  held-out-Isaac-validated six-keypoint encoder and PX4 velocity control.
+- The estimator/reward/curriculum/runtime remediation and its before/after
+  evidence are recorded in
+  [`docs/LEARNING_REMEDIATION_AUDIT.md`](docs/LEARNING_REMEDIATION_AUDIT.md).
 - The paper's 0–8 m/s platform range is not claimed for the campus run. The
   default curved-road UGV draw is deliberately 0.25–0.60 m/s.
 - The six named evaluation maneuvers are executable approximations because the

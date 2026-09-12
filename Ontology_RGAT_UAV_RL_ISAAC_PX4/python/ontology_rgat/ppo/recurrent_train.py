@@ -50,7 +50,8 @@ def _terminal_flags(following) -> TerminalFlags:
 
 def _reward(method, previous, following, estimate, next_estimate, potential,
             *, gamma=0.99, shaping_lambda=1.0,
-            current_semantic_graph=None, next_semantic_graph=None):
+            current_semantic_graph=None, next_semantic_graph=None,
+            estimation_loss_fn=None):
     """Dispatch reward through the selected pipeline's narrow data contract."""
     terminal = _terminal_flags(following)
     try:
@@ -66,8 +67,12 @@ def _reward(method, previous, following, estimate, next_estimate, potential,
             "shin2026", "manual_no_active", "ontoreward",
             "ontoreward_plus_active", "sparse"}:
         if estimate is not None and next_estimate is not None:
-            next_loss = float(np.mean(
-                (next_estimate - following.critic.true_relative_state) ** 2))
+            if estimation_loss_fn is None:
+                next_loss = float(np.mean(
+                    (next_estimate - following.critic.true_relative_state) ** 2))
+            else:
+                next_loss = float(estimation_loss_fn(
+                    next_estimate, following.critic.true_relative_state))
         elif needs_estimation_loss:
             raise ValueError("shin_se reward requires its supervised estimate")
     if method == "sparse":
@@ -169,6 +174,9 @@ def collect_episode(env, model: PipelineActorCritic, method: str, seed: int,
         raise ValueError(
             f"model pipeline {model_spec.name} cannot run reward pipeline {method}")
     step = env.reset(seed, curriculum, scenario=scenario)
+    reset_detail = ((getattr(env.bridge, "last_reset_ack", {}) or {}).get(
+        "detail") or {})
+    domain_randomization = reset_detail.get("domain_randomization") or {}
     initial_battery = dict(_battery_sample(step.state))
     action_scale = float(env.adapter.controller.action_scale)
     if monitor is not None:
@@ -225,7 +233,10 @@ def collect_episode(env, model: PipelineActorCritic, method: str, seed: int,
             reward, parts, estimation_loss = _reward(
                 method, step, following, estimate, next_estimate, potential,
                 gamma=gamma, shaping_lambda=shaping_lambda,
-                current_semantic_graph=graph, next_semantic_graph=next_graph)
+                current_semantic_graph=graph, next_semantic_graph=next_graph,
+                estimation_loss_fn=(
+                    None if model.relative_state_head is None else
+                    model.relative_state_head.numpy_loss))
             visual_loss_run = visual_loss_run + 1 if not following.pad_in_fov else 0
             longest_visual_loss = max(longest_visual_loss, visual_loss_run)
             row = {
@@ -286,6 +297,10 @@ def collect_episode(env, model: PipelineActorCritic, method: str, seed: int,
         "touchdown_tilt": float(np.linalg.norm(rpy[:2])),
         "touchdown_angular_rate": float(np.linalg.norm(state["angular_velocity"])),
         "fov_loss_fraction": float(np.mean([not row["in_fov"] for row in rows])),
+        # Reward-independent physical tracking error, available to every arm
+        # and therefore safe to use for a common performance curriculum.
+        "relative_position_rmse_m": float(np.sqrt(np.mean(np.asarray([
+            row["truth"][:3] for row in rows], dtype=float) ** 2))),
         "longest_visual_loss_s": float(longest_visual_loss * env.cfg.sim.dt),
         "action_envelope_scale": action_scale,
         "touchdown_time_s": float(len(rows) * env.cfg.sim.dt),
@@ -314,17 +329,35 @@ def collect_episode(env, model: PipelineActorCritic, method: str, seed: int,
         "rgat_design_id": (getattr(potential, "design_id", "")
                            if (model_spec.ontology_enabled
                                or method.startswith("ontoreward")) else ""),
+        "domain_randomization_enabled": float(bool(domain_randomization)),
+        "domain_external_force_n": float(np.linalg.norm(
+            domain_randomization.get("external_force_n", (0.0, 0.0, 0.0)))),
+        "domain_external_torque_nm": float(np.linalg.norm(
+            domain_randomization.get("external_torque_nm", (0.0, 0.0, 0.0)))),
+        "domain_ground_texture_id": int(
+            domain_randomization.get("ground_texture_id", 0)),
+        "domain_brightness": float(domain_randomization.get("brightness", 1.0)),
     }
     if model_spec.state_estimation_enabled:
         position_error = np.asarray([
             row["estimate"][:3] - row["truth"][:3] for row in rows])
         velocity_error = np.asarray([
             row["estimate"][3:] - row["truth"][3:] for row in rows])
+        estimation_losses = np.asarray([
+            row["estimation_loss"] for row in rows], dtype=float)
+        active_values = np.asarray([
+            float(row["reward_parts"].get("active_perception", 0.0))
+            for row in rows], dtype=float)
+        active_limit = ShinRewardConfig().active_alpha
         lost_errors = [row["estimation_loss"]
                        for row in rows if not row["in_fov"]]
         metric.update({
             "position_rmse": float(np.sqrt(np.mean(position_error ** 2))),
             "velocity_rmse": float(np.sqrt(np.mean(velocity_error ** 2))),
+            "normalized_estimation_loss_mean": float(np.mean(estimation_losses)),
+            "active_reward_saturation_fraction": float(np.mean(
+                active_values <= (-active_limit + 1e-8))),
+            "active_reward_standard_deviation": float(np.std(active_values)),
             "visual_loss_estimation_error": (
                 float(np.mean(lost_errors)) if lost_errors else 0.0),
         })
@@ -522,6 +555,7 @@ def training_health_issue(history, ppo, *, warmup_episodes=0) -> str | None:
     window = max(1, int(ppo.get("health_window_episodes", 20)))
     policy_rows = [row for row in history
                    if int(float(row.get("episode", 0))) > int(warmup_episodes)]
+    grace = max(window, int(ppo.get("health_grace_episodes", 40)))
     if len(policy_rows) < window:
         return None
     recent = policy_rows[-window:]
@@ -529,10 +563,47 @@ def training_health_issue(history, ppo, *, warmup_episodes=0) -> str | None:
     fov_loss = float(np.mean([
         float(row.get("fov_loss_fraction", 1.0)) for row in recent]))
     limit = float(ppo.get("health_max_fov_loss_fraction", 0.80))
-    if successes == 0.0 and fov_loss > limit:
-        return (f"no landing in the last {window} policy episodes and mean "
-                f"FOV loss is {fov_loss:.1%} (limit {limit:.1%})")
-    return None
+    issues = []
+    battery_fraction = float(np.mean([
+        float(row.get("battery_depleted", 0.0)) for row in recent]))
+    battery_limit = float(ppo.get(
+        "health_max_battery_depletion_fraction", 0.60))
+    if battery_fraction > battery_limit:
+        issues.append(
+            f"battery depletion is {battery_fraction:.1%} (limit {battery_limit:.1%})")
+    if len(policy_rows) < grace:
+        return "; ".join(issues) or None
+    if successes == 0.0:
+        issues.append(f"no landing in the last {window} policy episodes")
+    if fov_loss > limit:
+        issues.append(f"mean FOV loss is {fov_loss:.1%} (limit {limit:.1%})")
+
+    def stalled_high(field, limit_key, default):
+        values = [float(row[field]) for row in policy_rows
+                  if row.get(field) not in (None, "")]
+        if len(values) < 2 * window:
+            return None
+        previous, current = values[-2 * window:-window], values[-window:]
+        before, after = float(np.mean(previous)), float(np.mean(current))
+        limit_value = float(ppo.get(limit_key, default))
+        improvement = float(ppo.get("health_min_relative_improvement", .05))
+        if after > limit_value and after >= before * (1.0 - improvement):
+            return before, after, limit_value
+        return None
+
+    rmse = stalled_high("position_rmse", "health_max_position_rmse_m", 3.0)
+    if rmse is not None:
+        issues.append(
+            f"position RMSE stalled at {rmse[1]:.2f} m "
+            f"(previous {rmse[0]:.2f}, limit {rmse[2]:.2f})")
+    saturation = stalled_high(
+        "active_reward_saturation_fraction",
+        "health_max_active_reward_saturation_fraction", .80)
+    if saturation is not None:
+        issues.append(
+            f"active reward saturation stalled at {saturation[1]:.1%} "
+            f"(previous {saturation[0]:.1%}, limit {saturation[2]:.1%})")
+    return "; ".join(issues) or None
 
 
 def save_recurrent_checkpoint(path, model, optimizer, *, method, episode,
@@ -541,7 +612,7 @@ def save_recurrent_checkpoint(path, model, optimizer, *, method, episode,
     path.parent.mkdir(parents=True, exist_ok=True)
     model_spec = getattr(model, "pipeline_spec", None)
     payload = {
-        "format": "three-pipeline-recurrent-v2", "method": method,
+        "format": "three-pipeline-recurrent-v3-scaled-estimator", "method": method,
         "pipeline_spec": (model_spec.to_manifest() if model_spec is not None else None),
         "episode": int(episode), "config_hash": config_hash,
         "model": model.state_dict(), "optimizer": optimizer.state_dict(),
@@ -600,12 +671,12 @@ def train_live(env_factory: Callable, model, method, seeds, output_dir,
             and (legacy_test_model or (
                 model_spec.state_estimation_enabled
                 and method not in primary_pipeline_ids())))
-        if (saved_format != "three-pipeline-recurrent-v2"
+        if (saved_format != "three-pipeline-recurrent-v3-scaled-estimator"
                 and not legacy_shin_checkpoint):
             incompatibility = "unsupported checkpoint format"
         elif saved.get("method") != method or saved.get("config_hash") != config_hash:
             incompatibility = "checkpoint method/config mismatch"
-        elif (saved_format == "three-pipeline-recurrent-v2"
+        elif (saved_format == "three-pipeline-recurrent-v3-scaled-estimator"
               and not legacy_test_model
               and saved.get("pipeline_spec") != model_spec.to_manifest()):
             incompatibility = "checkpoint pipeline information-boundary mismatch"
@@ -736,6 +807,9 @@ def train_live(env_factory: Callable, model, method, seeds, output_dir,
                            "ppo_episode": ppo_episode,
                            "ppo_environment_steps": (prior_steps
                                + (0 if perception_warmup else int(metric["steps"])))})
+            advanced = (False if perception_warmup else curriculum.observe(metric))
+            metric["curriculum_advanced"] = float(advanced)
+            metric["next_curriculum_level"] = curriculum.level
             history.append(metric)
             if monitor is not None:
                 monitor.training_update(method, metric)

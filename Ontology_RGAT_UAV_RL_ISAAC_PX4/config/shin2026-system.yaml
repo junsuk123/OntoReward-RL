@@ -77,6 +77,24 @@ benchmark:
     relative_lateral_y_m: [-3.0, 3.0]
     platform_yaw_misalignment_deg: [-60.0, 60.0]
 
+# Shin et al. Table II, sampled deterministically from each paired episode
+# seed. The geometric-controller gain spread is applied as a relative spread
+# around equivalent PX4 gains; force, torque, handover state and camera
+# appearance are applied directly in Isaac.
+domain_randomization:
+  enabled: true
+  px4_nominal_gains:
+    MPC_XY_VEL_P_ACC: 1.8
+    MPC_Z_VEL_P_ACC: 4.0
+    MC_ROLL_P: 6.5
+    MC_PITCH_P: 6.5
+    MC_YAW_P: 2.8
+
+# Do not stack the inherited fixed urban wind on top of Table-II force
+# randomization. The urban profile retains that wind in config/system.yaml.
+wind:
+  enabled: false
+
 pad:
   # The paper uses a 1.5 x 1.5 m platform. Mount that platform on the supplied
   # RANGER MINI visual instead of shrinking the inherited box lorry into two

@@ -455,7 +455,8 @@ class BenchmarkMonitor:
                 "critic": "training only: proprioception[7] + truth[6]",
                 "reward_side": ("A/B: training truth -> Table III; C: keypoints + "
                                 "UAV proprioception + battery reserve -> direct R-GAT"),
-                "state_estimation": "shin_se only: y[0:6] auxiliary supervision",
+                "state_estimation": ("shin_se only: unbounded y[0:6] decoded to "
+                                     "physical units; scale-normalized loss"),
                 "forbidden": ("deployed actor: platform/GNSS/truth; onto graph: "
                               "relative estimate, simulator truth and critic truth"),
             })

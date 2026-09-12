@@ -21,7 +21,8 @@ from ontology_rgat.benchmarks.experiment import (episodes_per_method,
 from ontology_rgat.benchmarks.live_env import LiveShinEnvironment
 from ontology_rgat.benchmarks.px4_adapter import (actor_observation_from_state,
                                                   critic_observation_from_state)
-from ontology_rgat.benchmarks.randomization import (sample_domain_randomization,
+from ontology_rgat.benchmarks.randomization import (px4_gain_parameters,
+                                                     sample_domain_randomization,
                                                      sample_initial_condition)
 from ontology_rgat.benchmarks.shin2026 import (ActorObservation,
                                                assert_actor_payload_safe,
@@ -35,6 +36,7 @@ from ontology_rgat.initialization import (camera_centered_hover_offset,
                                           yaw_aligned_hover_offset)
 from ontology_rgat.estimation import LSTMRelativeStateEstimator
 from ontology_rgat.perception import (PRETRAIN_FORMAT, ShinKeypointEncoder,
+                                      empirical_keypoint_dataset,
                                       prepare_keypoint_encoder,
                                       synthetic_keypoint_dataset)
 from ontology_rgat.ppo.recurrent import ShinRecurrentActorCritic
@@ -322,6 +324,17 @@ def test_beginner_curriculum_keeps_the_ugv_moving_at_a_safe_fraction():
         curriculum_motion_scale(0.0, 1.1)
 
 
+def test_empirical_keypoint_labelling_recovers_deployed_board_homography():
+    system = load_config(ROOT / "config/shin2026-system.yaml")
+    rendered = synthetic_keypoint_dataset(system, samples=16, seed=91)
+    labelled = empirical_keypoint_dataset(rendered["images"], system)
+    assert labelled["images"].shape[1:] == (320, 512)
+    assert len(labelled["images"]) >= 12
+    assert labelled["coordinates"].shape[1:] == (6, 2)
+    assert labelled["heatmaps"].shape[1:] == (6, 20, 32)
+    assert float(labelled["visible"].mean()) > 0.5
+
+
 def test_deadline_budget_is_exact_and_preserves_all_curriculum_levels():
     assert episodes_per_method(800, 2) == 400
     assert episodes_per_method(800, 5) == 160
@@ -333,6 +346,24 @@ def test_deadline_budget_is_exact_and_preserves_all_curriculum_levels():
     curriculum = PlatformMotionCurriculum(levels=80, episodes_per_update=5)
     assert curriculum.update(0) == pytest.approx(0.0)
     assert curriculum.update(399) == pytest.approx(1.0)
+
+
+def test_performance_curriculum_holds_failures_and_advances_only_after_competence():
+    curriculum = PlatformMotionCurriculum(
+        levels=80, performance_gated=True, assessment_window=4,
+        minimum_episodes_at_level=4, success_rate_threshold=.5,
+        max_position_rmse_m=2.0, max_fov_loss_fraction=.5)
+    failing = {"paper_success": 0, "position_rmse": 4.0,
+               "fov_loss_fraction": .9}
+    for _ in range(40):
+        assert not curriculum.observe(failing)
+    assert curriculum.level == 1 and curriculum.c == 0.0
+    passing = {"paper_success": 1, "position_rmse": 1.0,
+               "fov_loss_fraction": .1}
+    for _ in range(2):
+        assert not curriculum.observe(passing)
+    assert curriculum.observe(passing)
+    assert curriculum.level == 2
 
 
 def test_airborne_terminal_is_staged_in_hover_instead_of_auto_land():
@@ -584,6 +615,18 @@ def test_table_ii_domain_randomization_ranges():
     assert np.max(np.abs(value.external_force_n)) <= 0.75
     assert np.max(np.abs(value.external_torque_nm)) <= 4e-3
     assert 1 <= value.ground_texture_id <= 50
+    assert json.loads(json.dumps(value.to_dict()))["ground_texture_id"] \
+        == value.ground_texture_id
+    gains = px4_gain_parameters(value)
+    assert 1.62 <= gains["MPC_XY_VEL_P_ACC"] <= 1.98
+    assert 3.46 <= gains["MPC_Z_VEL_P_ACC"] <= 4.54
+    assert gains["MC_ROLL_P"] == pytest.approx(gains["MC_PITCH_P"])
+
+
+def test_shin_profile_uses_table_ii_instead_of_uncontrolled_urban_wind():
+    config = load_config(ROOT / "config/shin2026-system.yaml")
+    assert config["domain_randomization"]["enabled"] is True
+    assert config["wind"]["enabled"] is False
 
 
 def test_table_i_platform_random_walk_is_seeded_and_bounded():

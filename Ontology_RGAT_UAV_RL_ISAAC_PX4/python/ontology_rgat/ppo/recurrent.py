@@ -43,6 +43,7 @@ class PipelineActorCritic(nn.Module):
                  actor_hidden=256, critic_hidden=256, action_dim=4,
                  init_log_std=-1.5, actor_output_gain=0.01,
                  freeze_keypoint=False,
+                 relative_state_scale=(3.0, 3.0, 8.0, 3.0, 3.0, 2.0),
                  pipeline: PipelineSpec | str = "shin_se"):
         super().__init__()
         self.pipeline_spec = (get_pipeline(pipeline) if isinstance(pipeline, str)
@@ -59,7 +60,7 @@ class PipelineActorCritic(nn.Module):
             image_embedding=image_embedding, proprioception=7,
             hidden_size=lstm_hidden, latent_size=latent_dim)
         self.relative_state_head = (
-            RelativeStateAuxiliaryHead()
+            RelativeStateAuxiliaryHead(relative_state_scale)
             if self.pipeline_spec.state_estimation_enabled else None)
         self.actor = nn.Sequential(
             nn.Linear(latent_dim - self.pipeline_spec.reserved_latent_dimensions + 7,

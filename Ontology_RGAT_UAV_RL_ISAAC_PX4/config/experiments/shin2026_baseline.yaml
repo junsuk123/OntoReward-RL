@@ -10,6 +10,9 @@ estimator:
   lstm_hidden: 512
   latent_dimension: 256
   output_dimension: 6
+  # [dx, dy, dz, dvx, dvy, dvz] normalization. Network output and RMSE remain
+  # in physical units; only estimator optimization/reward loss is normalized.
+  relative_state_scale: [3.0, 3.0, 8.0, 3.0, 3.0, 2.0]
   # PACMAN weights are not public. Pretrain the executable six-keypoint and
   # local-descriptor path on projections of this run's actual marker board,
   # then freeze it before recurrent PPO as in the paper's architecture.
@@ -22,6 +25,18 @@ estimator:
     batch_size: 16
     learning_rate: 0.001
     seed: 41026
+    # Before PPO, label unannotated Isaac frames with the known board-plane
+    # homography, reserve a held-out split, and retain fine-tuning only when it
+    # improves real-render coordinate RMSE.
+    empirical_samples_quick: 12
+    empirical_samples_full: 48
+    minimum_empirical_samples: 8
+    empirical_validation_fraction: 0.25
+    # Calibrated on a held-out live-Isaac split: the previous 2 x 1e-4 pass
+    # made no measurable change; 20 x 1e-3 reduced 23.2 px to <=16.8 px in
+    # the stage-5 audit while the best validation checkpoint was retained.
+    empirical_epochs: 20
+    empirical_learning_rate: 0.001
 control:
   dt_seconds: 0.1
   horizon_steps: 300
@@ -70,8 +85,28 @@ ppo:
   perception_warmup_safe_exploration: true
   # Abort an unattended run when perception remains blind after warm-up.
   health_window_episodes: 20
+  health_grace_episodes: 40
   health_max_fov_loss_fraction: 0.80
-curriculum: {enabled: true, levels: 80, update_every_episodes: 512}
+  health_max_position_rmse_m: 3.0
+  health_max_active_reward_saturation_fraction: 0.80
+  # The seeded low-reserve battery is an intended state variable; above 60%
+  # termination indicates it is overwhelming task learning rather than merely
+  # exposing the ontology to energy risk.
+  health_max_battery_depletion_fraction: 0.60
+  health_min_relative_improvement: 0.05
+curriculum:
+  enabled: true
+  levels: 80
+  update_every_episodes: 512
+  # Short live runs must not be forced from c=0 to c=1 regardless of learning.
+  # Hold each level until recent physical landing, FOV and common truth-side
+  # relative-position RMSE metrics pass. The criterion is identical for all arms.
+  performance_gated: true
+  assessment_window: 20
+  minimum_episodes_at_level: 20
+  success_rate_threshold: 0.20
+  max_position_rmse_m: 2.0
+  max_fov_loss_fraction: 0.50
 reward:
   terminal: {success: 10.0, failure: -10.0}
   active_perception: {enabled: true, alpha: 0.1, beta: 1.0, tau: 0.01}

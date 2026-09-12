@@ -171,8 +171,11 @@ const CARDS=[
   series:BENCHMARK_TRAIN,x:'episode',y:'position_rmse',smooth:12},
  {id:'benchmark_velocity_rmse',view:'benchmark',title:'Estimator velocity RMSE',
   series:BENCHMARK_TRAIN,x:'episode',y:'velocity_rmse',smooth:12},
- {id:'benchmark_aux',view:'benchmark',title:'Auxiliary 6-state estimation loss',
+ {id:'benchmark_aux',view:'benchmark',title:'Normalized auxiliary 6-state loss',
   series:BENCHMARK_TRAIN,x:'episode',y:'auxiliary_estimation_loss',smooth:12},
+ {id:'benchmark_active_saturation',view:'benchmark',title:'Active-reward saturation rate',
+  series:BENCHMARK_TRAIN,x:'episode',y:'active_reward_saturation_fraction',
+  smooth:12,ymin:0,ymax:1},
  {id:'benchmark_policy_loss',view:'benchmark',title:'Recurrent PPO policy loss',
   series:BENCHMARK_TRAIN,x:'episode',y:'ppo_loss',smooth:12},
  {id:'benchmark_value_loss',view:'benchmark',title:'Asymmetric critic value loss',
@@ -202,7 +205,7 @@ const CARDS=[
  {id:'benchmark_live_error',view:'benchmark',title:'Current episode · estimator and visibility',
   series:['benchmark_step'],x:'step',
   y:['position_error','velocity_error','estimation_loss','in_fov'],
-  labels:['position error','velocity error','6-state MSE','target in FOV']},
+  labels:['position error','velocity error','normalized 6-state MSE','target in FOV']},
  {id:'benchmark_live_semantic',view:'benchmark',title:'Current episode · estimator-free visual semantics',
   series:['benchmark_step'],x:'step',
   y:['semantic_keypoint_confidence','semantic_image_alignment',
@@ -834,6 +837,7 @@ function applyProfile(state){
     const pipeline=state.scalars.current_pipeline||state.scalars.current_method||'';
     const estimator=pipeline==='shin_se'||pipeline==='shin2026';
     for(const id of ['benchmark_position_rmse','benchmark_velocity_rmse','benchmark_aux',
+                     'benchmark_active_saturation',
                      'benchmark_live_state','benchmark_live_error',
                      'benchmark_eval_position','benchmark_eval_velocity',
                      'benchmark_eval_visual_loss']){

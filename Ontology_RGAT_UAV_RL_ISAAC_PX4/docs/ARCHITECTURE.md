@@ -598,7 +598,8 @@ grayscale frame plus UAV body velocity and attitude only.
 `/landing_pad/state/odom`, deck GNSS, wheel odometry, V2V velocity, marker pose,
 and simulator pad truth do not enter the actor.
 
-All three primary pipelines use the same frozen six-keypoint encoder, 512-unit
+All three primary pipelines use the same frozen, live-Isaac-validated
+six-keypoint encoder, 512-unit
 LSTM, 256-D latent, `y[6:256] + proprioception` actor features, four
 velocity/yaw-rate actions, and an asymmetric training critic. Only `shin_se`
 constructs a six-state head on `y[0:6]` and uses its auxiliary MSE and

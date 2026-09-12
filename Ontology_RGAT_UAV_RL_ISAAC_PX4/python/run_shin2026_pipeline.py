@@ -27,9 +27,9 @@ from ontology_rgat.benchmarks.experiment import (METHODS, configuration_hash,
 from ontology_rgat.benchmarks.live_env import LiveShinEnvironment
 from ontology_rgat.cli import ensure_fastdds
 from ontology_rgat.config import default_config
-from ontology_rgat.curriculum import fitted_update_interval
 from ontology_rgat.evaluation.shin2026 import write_benchmark_outputs
 from ontology_rgat.perception import (RosGrayscaleSource,
+                                      calibrate_keypoint_encoder,
                                       prepare_keypoint_encoder)
 from ontology_rgat.ppo.recurrent import PipelineActorCritic
 from ontology_rgat.ppo.recurrent_train import collect_episode, train_live
@@ -109,6 +109,8 @@ def _build_model(config, device, keypoint_pretraining=None, pipeline="shin_se"):
         init_log_std=float(ppo.get("init_log_std", -1.5)),
         actor_output_gain=float(ppo.get("actor_output_gain", 0.01)),
         freeze_keypoint=pretraining_enabled,
+        relative_state_scale=estimator.get(
+            "relative_state_scale", (3.0, 3.0, 8.0, 3.0, 3.0, 2.0)),
         pipeline=pipeline,
     )
     if keypoint_pretraining is not None:
@@ -357,7 +359,9 @@ def main():
         "reward_design_id": getattr(potential, "design_id", None),
         "reward_design_sha256": getattr(potential, "sha256", None),
         "trajectory_note": "named evaluation trajectories are documented approximations",
-        "table_ii_runtime_application": "incomplete; see docs/SHIN2026_BASELINE.md",
+        "table_ii_runtime_application": (
+            "seeded PX4 gain spread, Isaac force/torque and initial-state "
+            "perturbation, live-camera appearance randomization"),
         "keypoint_pretraining": (
             None if keypoint_pretraining is None else {
                 "format": keypoint_pretraining["format"],
@@ -420,23 +424,46 @@ def main():
             owned.start()
             stack_module.current(owned)
         with RosGrayscaleSource() as camera:
+            monitor.stage("keypoint validation", "live Isaac camera · held-out labels")
+            keypoint_pretraining = calibrate_keypoint_encoder(
+                args.results_dir / "models/shin2026_keypoint_encoder.pt",
+                keypoint_pretraining, camera, system=resolved_system_config,
+                experiment=config, mode=args.mode, device=args.device)
+            manifest["keypoint_pretraining"] = (
+                None if keypoint_pretraining is None else {
+                    "format": keypoint_pretraining["format"],
+                    "implementation": keypoint_pretraining["implementation"],
+                    "frozen_for_ppo": keypoint_pretraining["frozen_for_ppo"],
+                    "training_source": keypoint_pretraining["training_source"],
+                    "metrics": keypoint_pretraining["metrics"],
+                    "empirical_calibration": keypoint_pretraining.get(
+                        "empirical_calibration"),
+                    "empirical_dataset": keypoint_pretraining.get(
+                        "empirical_dataset"),
+                })
+            manifest_path.write_text(
+                json.dumps(manifest, indent=2), encoding="utf-8")
             models = {}
             training_by_method = {}
             curriculum_raw = dict(config.get("curriculum") or {})
             curriculum_levels = int(curriculum_raw.get("levels", 80))
             curriculum_interval = int(curriculum_raw.get(
                 "update_every_episodes", 512))
-            if args.total_train_episodes is not None:
-                curriculum_interval = fitted_update_interval(
-                    train_count, curriculum_levels)
-                ppo_config["allow_curriculum_interval_migration"] = True
-                print(
-                    f"Deadline budget: {train_count * len(args.methods)} total "
-                    f"training episodes = {train_count} per method; curriculum "
-                    f"updates every {curriculum_interval} episodes.")
             curriculum_config = {
                 "levels": curriculum_levels,
                 "episodes_per_update": curriculum_interval,
+                "performance_gated": bool(curriculum_raw.get(
+                    "performance_gated", False)),
+                "assessment_window": int(curriculum_raw.get(
+                    "assessment_window", 20)),
+                "minimum_episodes_at_level": int(curriculum_raw.get(
+                    "minimum_episodes_at_level", 20)),
+                "success_rate_threshold": float(curriculum_raw.get(
+                    "success_rate_threshold", 0.20)),
+                "max_position_rmse_m": float(curriculum_raw.get(
+                    "max_position_rmse_m", 2.0)),
+                "max_fov_loss_fraction": float(curriculum_raw.get(
+                    "max_fov_loss_fraction", 0.50)),
             }
 
             def train_requested(method):

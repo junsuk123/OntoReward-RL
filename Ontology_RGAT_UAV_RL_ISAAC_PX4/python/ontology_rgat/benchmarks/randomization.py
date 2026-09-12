@@ -25,6 +25,51 @@ class DomainRandomizationSample:
     rgb_scale: np.ndarray
     light_direction_deg: float
 
+    def to_dict(self) -> dict:
+        return {
+            "velocity_gain_xy": self.velocity_gain_xy,
+            "velocity_gain_z": self.velocity_gain_z,
+            "attitude_gain_roll_pitch": self.attitude_gain_roll_pitch,
+            "attitude_gain_yaw": self.attitude_gain_yaw,
+            "external_force_n": self.external_force_n.tolist(),
+            "external_torque_nm": self.external_torque_nm.tolist(),
+            "initial_velocity_m_s": self.initial_velocity_m_s.tolist(),
+            "initial_angular_rate_rad_s": self.initial_angular_rate_rad_s.tolist(),
+            "ground_texture_id": self.ground_texture_id,
+            "ground_texture_scale": self.ground_texture_scale,
+            "brightness": self.brightness,
+            "rgb_scale": self.rgb_scale.tolist(),
+            "light_direction_deg": self.light_direction_deg,
+        }
+
+
+def px4_gain_parameters(sample: DomainRandomizationSample,
+                        nominal: dict | None = None) -> dict[str, float]:
+    """Map the paper controller's relative gain spread onto PX4 equivalents.
+
+    Shin et al. use a geometric low-level controller while this executable
+    hardware path uses PX4. Applying the paper's absolute gain numbers to
+    different controller equations is dimensionally wrong. Their ratios about
+    each Table-II midpoint are therefore applied to the corresponding PX4
+    nominal gains.
+    """
+    base = {
+        "MPC_XY_VEL_P_ACC": 1.8, "MPC_Z_VEL_P_ACC": 4.0,
+        "MC_ROLL_P": 6.5, "MC_PITCH_P": 6.5, "MC_YAW_P": 2.8,
+    }
+    base.update(nominal or {})
+    rp = sample.attitude_gain_roll_pitch / ((1.6 + 1.85) / 2.0)
+    return {
+        "MPC_XY_VEL_P_ACC": base["MPC_XY_VEL_P_ACC"]
+                            * sample.velocity_gain_xy / 3.0,
+        "MPC_Z_VEL_P_ACC": base["MPC_Z_VEL_P_ACC"]
+                           * sample.velocity_gain_z / 1.5,
+        "MC_ROLL_P": base["MC_ROLL_P"] * rp,
+        "MC_PITCH_P": base["MC_PITCH_P"] * rp,
+        "MC_YAW_P": base["MC_YAW_P"]
+                    * sample.attitude_gain_yaw / ((0.25 + 0.4) / 2.0),
+    }
+
 
 def sample_domain_randomization(seed: int) -> DomainRandomizationSample:
     rng = np.random.default_rng(int(seed))

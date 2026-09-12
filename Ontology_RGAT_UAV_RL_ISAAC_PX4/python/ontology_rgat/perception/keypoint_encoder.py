@@ -21,7 +21,7 @@ class KeypointEncoderOutput:
 
 
 class ShinKeypointEncoder(nn.Module):
-    implementation = "synthetic-pretrained-six-keypoint-descriptor-v1"
+    implementation = "hybrid-isaac-validated-six-keypoint-descriptor-v2"
 
     def __init__(self, embedding_dim: int = 512, keypoints: int = 6):
         super().__init__()

@@ -26,7 +26,9 @@ from ontology_rgat.ppo.recurrent import (PipelineActorCritic,
                                          recurrent_ppo_loss)
 from ontology_rgat.ppo import recurrent_train
 from ontology_rgat.ppo.recurrent_train import collect_episode_resilient
+from ontology_rgat.ppo.recurrent_train import training_health_issue
 from ontology_rgat.reward_modes import OntologyRewardContext, OntoRewardPBRS, TerminalFlags
+from ontology_rgat.reward_modes import ShinRewardConfig, active_perception_reward
 from ontology_rgat.rgat import (FrozenSemanticRGATPotential,
                                 merge_semantic_datasets,
                                 prepare_semantic_rgat_artifact,
@@ -101,6 +103,37 @@ def test_primary_specs_encode_the_intended_information_boundaries():
         assert not spec.active_perception_enabled
 
 
+def test_estimator_outputs_physical_units_beyond_tanh_and_normalizes_loss():
+    model = _model("shin_se")
+    linear = model.temporal_backbone.latent_head[0]
+    with torch.no_grad():
+        linear.weight.zero_()
+        linear.bias.zero_()
+        linear.bias[:6] = torch.tensor([2.0, -2.0, 1.5, 1.0, -1.0, 2.0])
+        output = model(torch.zeros(1, 1, 1, 32, 32),
+                       torch.zeros(1, 1, 7))
+    # Physical estimator channels are no longer trapped in [-1, 1].
+    assert output.relative_state[0, 0, 0].item() == pytest.approx(6.0)
+    assert output.relative_state[0, 0, 2].item() == pytest.approx(12.0)
+    # Policy-only latent features remain bounded.
+    assert torch.max(torch.abs(output.latent[..., 6:])).item() <= 1.0
+    target = torch.tensor([[[3.0, 3.0, 8.0, 3.0, 3.0, 2.0]]])
+    zero = torch.zeros_like(target)
+    assert model.relative_state_head.loss(zero, target).item() == pytest.approx(1.0)
+
+
+def test_normalized_estimator_loss_restores_active_reward_gradient():
+    model = _model("shin_se")
+    physical_error = torch.tensor([[[1.5, 1.5, 4.0, 0.5, 0.5, 0.5]]])
+    normalized = model.relative_state_head.loss(
+        torch.zeros_like(physical_error), physical_error).item()
+    raw = physical_error.square().mean().item()
+    cfg = ShinRewardConfig()
+    assert active_perception_reward(raw, cfg) == pytest.approx(-0.1)
+    assert normalized == pytest.approx(0.14467593)
+    assert -0.02 < active_perception_reward(normalized, cfg) < -0.01
+
+
 def test_three_pipeline_keeps_all_physical_evaluation_scenarios():
     config = load_experiment(
         ROOT / "config/experiments/three_pipeline_comparison.yaml")
@@ -108,6 +141,33 @@ def test_three_pipeline_keeps_all_physical_evaluation_scenarios():
         "training_random_walk", "straight_8mps", "linear_acceleration_wave",
         "circle", "zigzag", "u_turn", "vertical_heave_boat",
     }
+
+
+def test_training_health_gate_reports_independent_learning_failures():
+    history = [{
+        "episode": episode, "paper_success": 0,
+        "fov_loss_fraction": .2, "battery_depleted": 0,
+        "position_rmse": 4.0,
+        "active_reward_saturation_fraction": 1.0,
+    } for episode in range(1, 41)]
+    issue = training_health_issue(history, {
+        "health_window_episodes": 20, "health_grace_episodes": 40,
+    })
+    assert "no landing" in issue
+    assert "position RMSE stalled" in issue
+    assert "active reward saturation stalled" in issue
+
+
+def test_training_health_gate_catches_battery_failure_before_learning_grace():
+    history = [{
+        "episode": episode, "paper_success": 0,
+        "fov_loss_fraction": .1, "battery_depleted": 1,
+    } for episode in range(1, 21)]
+    issue = training_health_issue(history, {
+        "health_window_episodes": 20, "health_grace_episodes": 40,
+        "health_max_battery_depletion_fraction": .6,
+    })
+    assert issue == "battery depletion is 100.0% (limit 60.0%)"
 
 
 def test_transport_failure_restarts_and_retries_the_same_seed(monkeypatch):

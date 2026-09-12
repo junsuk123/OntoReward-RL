@@ -118,14 +118,15 @@ causal claims.
 | Stage | Work | Persistent checkpoint |
 |---:|---|---|
 | 1 | validate config, information boundaries, budgets, and paired seed plan | `manifest.json`, `evaluation/paired_plan.csv` |
-| 2 | prepare/freeze six-keypoint encoder | `models/shared/keypoint_encoder.pt` |
+| 2 | synthetic initialization of six-keypoint encoder | `models/shared/keypoint_encoder.pt` |
 | 3 | start/adopt DDS, Isaac/Pegasus/PX4, gateway, dashboard, and RViz | logs in `/tmp/ontology_rgat_stack/` |
-| 4 | train/resume `shin_se` and `no_se` | `models/<id>/<id>.pt` and history CSV |
-| 5 | collect estimator-free semantic flights | `rgat/semantic_rollouts.npz` plus manifest/CSV |
-| 6 | train and freeze direct R-GAT | `rgat/rgat_model.pt` |
-| 7 | train/resume `onto_no_se` | recurrent PPO checkpoint/history |
-| 8 | paired physical evaluation across seven scenarios | `evaluation/per_episode.csv` |
-| 9 | generate confidence intervals, learning curves, tables, and decision output | report and figure files |
+| 4 | fine-tune/validate encoder on labelled live Isaac frames, then freeze | `models/shared/keypoint_isaac_calibration.npz` |
+| 5 | train/resume `shin_se` and `no_se` | `models/<id>/<id>.pt` and history CSV |
+| 6 | collect estimator-free semantic flights | `rgat/semantic_rollouts.npz` plus manifest/CSV |
+| 7 | train and freeze direct R-GAT | `rgat/rgat_model.pt` |
+| 8 | train/resume `onto_no_se` | recurrent PPO checkpoint/history |
+| 9 | paired physical evaluation across seven scenarios | `evaluation/per_episode.csv` |
+| 10 | generate confidence intervals, learning curves, tables, and decision output | report and figure files |
 
 Each complete episode/optimizer update is written atomically. On restart,
 compatible checkpoints and completed evaluation pairs are resumed. An

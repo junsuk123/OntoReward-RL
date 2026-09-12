@@ -249,7 +249,7 @@ terminal failures remain hard failures so retry cannot bias the experiment.
 ## External limitations that cannot be removed in code
 
 - PACMAN weights and the exact geometric controller from Shin et al. are not
-  public; the repository uses the documented synthetic-pretrained keypoint
-  approximation and PX4 velocity interface.
+  public; the repository uses a synthetic-initialized, live-Isaac-validated
+  keypoint approximation and PX4 velocity interface.
 - Statistical output is meaningful only after the real Isaac/PX4 run finishes.
   Unit/smoke fixtures are never written to publication tables.

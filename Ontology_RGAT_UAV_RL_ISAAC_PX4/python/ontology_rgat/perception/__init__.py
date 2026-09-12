@@ -2,7 +2,9 @@
 
 from .image_encoder import grayscale_image_tensor
 from .keypoint_encoder import KeypointEncoderOutput, ShinKeypointEncoder
-from .keypoint_pretrain import (PRETRAIN_FORMAT, prepare_keypoint_encoder,
+from .keypoint_pretrain import (PRETRAIN_FORMAT, calibrate_keypoint_encoder,
+                                empirical_keypoint_dataset,
+                                prepare_keypoint_encoder,
                                 synthetic_keypoint_dataset)
 from .ros_camera import LatestGrayscaleFrame, RosGrayscaleSource
 from .semantic_observation import (
@@ -14,6 +16,7 @@ from .semantic_observation import (
 
 __all__ = ["grayscale_image_tensor", "KeypointEncoderOutput", "ShinKeypointEncoder",
            "PRETRAIN_FORMAT", "prepare_keypoint_encoder",
+           "calibrate_keypoint_encoder", "empirical_keypoint_dataset",
            "synthetic_keypoint_dataset", "LatestGrayscaleFrame",
            "RosGrayscaleSource", "FORBIDDEN_SEMANTIC_FIELDS",
            "SEMANTIC_FEATURE_NAMES", "SEMANTIC_GRAPH_INPUT_DIM",

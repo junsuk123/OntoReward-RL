@@ -23,9 +23,10 @@ from ontology_rgat.benchmarks.experiment import (
     load_experiment, paired_seed_plan)
 from ontology_rgat.benchmarks.live_env import LiveShinEnvironment
 from ontology_rgat.cli import ensure_fastdds
-from ontology_rgat.curriculum import fitted_update_interval
 from ontology_rgat.evaluation import write_three_pipeline_outputs
-from ontology_rgat.perception import RosGrayscaleSource, prepare_keypoint_encoder
+from ontology_rgat.perception import (RosGrayscaleSource,
+                                      calibrate_keypoint_encoder,
+                                      prepare_keypoint_encoder)
 from ontology_rgat.pipelines import (get_pipeline, primary_pipeline_ids,
                                      validate_pipeline_configuration)
 from ontology_rgat.ppo.recurrent_train import (collect_episode_resilient,
@@ -373,6 +374,7 @@ def main():
         "pipeline_specs": {name: get_pipeline(name).to_manifest()
                            for name in args.pipelines},
         "controlled_fields": controlled_fields,
+        "domain_randomization": dict(system.get("domain_randomization") or {}),
         "ppo_episodes_per_pipeline": train_count,
         "N_PPO": train_count * len(args.pipelines),
         "N_estimator_warmup": selected_warmup,
@@ -429,10 +431,20 @@ def main():
     curriculum_raw = dict(config.get("curriculum") or {})
     levels = int(curriculum_raw.get("levels", 80))
     interval = int(curriculum_raw.get("update_every_episodes", 512))
-    if args.total_train_episodes is not None or args.train_episodes is not None:
-        interval = fitted_update_interval(train_count, levels)
-        ppo["allow_curriculum_interval_migration"] = True
-    curriculum = {"levels": levels, "episodes_per_update": interval}
+    curriculum = {
+        "levels": levels,
+        "episodes_per_update": interval,
+        "performance_gated": bool(curriculum_raw.get("performance_gated", False)),
+        "assessment_window": int(curriculum_raw.get("assessment_window", 20)),
+        "minimum_episodes_at_level": int(curriculum_raw.get(
+            "minimum_episodes_at_level", 20)),
+        "success_rate_threshold": float(curriculum_raw.get(
+            "success_rate_threshold", 0.20)),
+        "max_position_rmse_m": float(curriculum_raw.get(
+            "max_position_rmse_m", 2.0)),
+        "max_fov_loss_fraction": float(curriculum_raw.get(
+            "max_fov_loss_fraction", 0.50)),
+    }
 
     rviz = RvizPublisher.create(cfg) if not args.no_rviz else None
     monitor = BenchmarkMonitor(STORE, rviz=rviz)
@@ -464,6 +476,24 @@ def main():
             owned.start()
             stack_module.current(owned)
         with RosGrayscaleSource() as camera:
+            monitor.stage("keypoint validation", "live Isaac camera · held-out labels")
+            keypoint_pretraining = calibrate_keypoint_encoder(
+                args.results_dir / "models/shared/keypoint_encoder.pt",
+                keypoint_pretraining, camera, system=system, experiment=config,
+                mode=args.mode, device=args.device)
+            manifest["keypoint_pretraining"] = (
+                None if keypoint_pretraining is None else {
+                    "format": keypoint_pretraining["format"],
+                    "implementation": keypoint_pretraining["implementation"],
+                    "frozen_for_ppo": keypoint_pretraining["frozen_for_ppo"],
+                    "training_source": keypoint_pretraining["training_source"],
+                    "metrics": keypoint_pretraining["metrics"],
+                    "empirical_calibration": keypoint_pretraining.get(
+                        "empirical_calibration"),
+                    "empirical_dataset": keypoint_pretraining.get(
+                        "empirical_dataset"),
+                })
+            _write_json(manifest_path, manifest)
             models = {}
             histories = {}
 

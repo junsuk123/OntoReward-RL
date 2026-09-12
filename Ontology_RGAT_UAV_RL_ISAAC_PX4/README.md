@@ -72,6 +72,36 @@ backbone, actor/critic capacity, action mapping, controller limits, PPO
 hyperparameters, curriculum, initial-condition distribution, simulator, and
 paired PPO/evaluation seeds.
 
+### Reward-function comparison
+
+The table below is the executable reward contract, not a qualitative summary.
+Let `C(x)=clip(x,-1,1)`, `d_t=||(Delta x_t,Delta y_t)||_2`, and let
+`Delta z_t>0` denote vertical undershoot. `v_z,t` is UAV body-frame vertical
+velocity, `omega_z,t` is the commanded yaw rate, and `L_est,t+1` is the
+normalized six-state estimator loss. `Phi(G_t)` is the frozen R-GAT potential
+of the estimator-free semantic graph.
+
+| Reward term | `shin_se` paper baseline | `no_se` removal control | `onto_no_se` proposed pipeline |
+|---|---|---|---|
+| Successful physical contact | `+10` and replace all shaping terms | `+10` and replace all shaping terms | sparse task term `+10`; absorbing `Phi(G_t+1)=0` |
+| Crash, excessive drift, or battery depletion | `-10` and replace all shaping terms | `-10` and replace all shaping terms | sparse task term `-10`; absorbing `Phi(G_t+1)=0` |
+| Lateral progress | `C(d_t-d_{t+1})` | same as `shin_se` | none explicitly |
+| Vertical progress | `C(|Delta z_t|-|Delta z_{t+1}|) / max(d_{t+1},1)` | same as `shin_se` | none explicitly |
+| Vertical-speed penalty | `-0.5 max(v_z,t+0.5,0)` | same as `shin_se` | none explicitly |
+| Undershoot penalty | `-Delta z_{t+1}` when `Delta z_{t+1}>0`, otherwise `0` | same as `shin_se` | none explicitly |
+| Yaw-rate penalty | `-2 |omega_z,t|` | same as `shin_se` | none explicitly |
+| Active-perception term | `-0.1 clip(L_est,t+1-0.01,0,1)` | removed | removed; no estimator loss is computed |
+| Ontology/R-GAT shaping | none | none | `lambda [gamma Phi(G_t+1)-Phi(G_t)]` |
+| Non-terminal total | sum of the five Table-III motion terms and active-perception term | sum of the five Table-III motion terms | `r_sparse + lambda [gamma Phi(G_t+1)-Phi(G_t)]` |
+| Fixed constants | active `alpha=0.1`, `beta=1`, `tau=0.01` | no active constants | `lambda=1`, `gamma=0.99`, equal to PPO `gamma` |
+| Reward-side information | physical relative state, command, UAV vertical velocity, privileged estimator target/loss | physical relative state, command, UAV vertical velocity | 18-node semantic graph plus terminal event only; no relative-state estimate, GNSS, deck state, or simulator truth enters `Phi` |
+
+`no_se` is an ablation control rather than the proposed reward: it removes the
+estimator and active-perception loss while retaining the baseline's remaining
+Table-III shaping. For `onto_no_se`, the sparse task term is zero during an
+ordinary non-terminal transition. R-GAT is trained and frozen before PPO;
+therefore PPO updates the policy but cannot rewrite its reward potential.
+
 ### Actor and critic boundary
 
 ```mermaid

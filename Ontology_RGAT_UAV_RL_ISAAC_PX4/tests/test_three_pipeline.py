@@ -40,6 +40,7 @@ from ontology_rgat.rgat import (FrozenSemanticRGATPotential,
                                 validate_semantic_dataset)
 from ontology_rgat.rgat.semantic_dataset import semantic_rgat_config
 from ontology_rgat.rgat.train import train_potential
+from run_three_pipeline import _reward_design_collection_contract
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -527,3 +528,16 @@ def test_pipeline_yaml_contract_and_legacy_shin_constructor_smoke():
         actor_hidden=8, critic_hidden=8)
     assert get_pipeline("shin2026").name == "shin_se"
     assert legacy.pipeline_spec.name == "shin_se"
+
+
+def test_reward_design_manifest_contract_uses_loaded_configuration():
+    contract = _reward_design_collection_contract(
+        {"minimum_successful_recovery_episodes_full": 2},
+        "full", 40, 120)
+    assert contract["minimum_episodes"] == 40
+    assert contract["maximum_episodes"] == 120
+    assert contract["minimum_successful_recovery_episodes"] == 2
+    with pytest.raises(ValueError, match="positive recovery minimum"):
+        _reward_design_collection_contract(
+            {"minimum_successful_recovery_episodes_full": 0},
+            "full", 40, 120)

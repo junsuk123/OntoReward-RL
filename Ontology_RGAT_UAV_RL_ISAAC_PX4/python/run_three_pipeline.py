@@ -95,6 +95,23 @@ def _read_csv(path: Path):
         return list(csv.DictReader(stream))
 
 
+def _reward_design_collection_contract(design, mode, minimum, maximum):
+    """Build the manifest contract before any external process is started."""
+    recoveries = int(design.get(
+        f"minimum_successful_recovery_episodes_{mode}", 1))
+    if recoveries < 1:
+        raise ValueError("semantic R-GAT data requires a positive recovery minimum")
+    return {
+        "minimum_episodes": int(minimum),
+        "maximum_episodes": int(maximum),
+        "minimum_successful_recovery_episodes": recoveries,
+        "stop_condition": (
+            "minimum reached, both terminal classes observed, and successful "
+            "loss-to-reacquisition-to-landing trajectories observed"),
+        "synthetic_outcomes_allowed": False,
+    }
+
+
 def _collect_semantic_data(*, cfg, camera, model, config, config_hash,
                            checkpoint_path, results_dir, mode, monitor,
                            episodes_override=None,
@@ -429,16 +446,8 @@ def main():
         "N_estimator_warmup": selected_warmup,
         "N_training_environment_episodes": (
             train_count * len(args.pipelines) + selected_warmup),
-        "reward_design_collection_contract": {
-            "minimum_episodes": design_minimum,
-            "maximum_episodes": design_maximum,
-            "minimum_successful_recovery_episodes": int(design.get(
-                f"minimum_successful_recovery_episodes_{args.mode}", 1)),
-            "stop_condition": (
-                "minimum reached, both terminal classes observed, and successful "
-                "loss-to-reacquisition-to-landing trajectories observed"),
-            "synthetic_outcomes_allowed": False,
-        },
+        "reward_design_collection_contract": _reward_design_collection_contract(
+            design_cfg, args.mode, design_minimum, design_maximum),
         "training_seed_contract": {
             "ppo_seed_start": training_seed0,
             "ppo_seed_stop_exclusive": training_seed0 + train_count,

@@ -762,12 +762,37 @@ def update_episode(model, optimizer, rows, *, gamma=.99, gae_lambda=.95,
     return summary
 
 
-def training_health_issue(history, ppo, *, warmup_episodes=0) -> str | None:
+def no_landing_abort_episode(ppo, planned_policy_episodes=None) -> int:
+    """Return the policy episode at which persistent zero success is fatal.
+
+    Sparse touchdown success can legitimately lag dense perception/control
+    improvements in a short live run. Keep the original grace as the earliest
+    possible stop, but give a bounded fraction of the requested PPO budget to
+    obtain a first landing. The cap still prevents a large publication run
+    from wasting thousands of live episodes with a broken policy.
+    """
+    window = max(1, int(ppo.get("health_window_episodes", 20)))
+    grace = max(window, int(ppo.get("health_grace_episodes", 40)))
+    if planned_policy_episodes is None:
+        return grace
+    planned = max(0, int(planned_policy_episodes))
+    fraction = float(ppo.get("health_no_landing_budget_fraction", 0.75))
+    fraction = float(np.clip(fraction, 0.0, 1.0))
+    maximum = max(grace, int(ppo.get(
+        "health_no_landing_max_grace_episodes", 120)))
+    budget_grace = int(math.ceil(planned * fraction))
+    return max(grace, min(maximum, budget_grace))
+
+
+def training_health_issue(history, ppo, *, warmup_episodes=0,
+                          planned_policy_episodes=None) -> str | None:
     """Return why an unattended run is not learning, after a fair window."""
     window = max(1, int(ppo.get("health_window_episodes", 20)))
     policy_rows = [row for row in history
                    if int(float(row.get("episode", 0))) > int(warmup_episodes)]
     grace = max(window, int(ppo.get("health_grace_episodes", 40)))
+    no_landing_grace = no_landing_abort_episode(
+        ppo, planned_policy_episodes=planned_policy_episodes)
     if len(policy_rows) < window:
         return None
     recent = policy_rows[-window:]
@@ -785,7 +810,7 @@ def training_health_issue(history, ppo, *, warmup_episodes=0) -> str | None:
             f"battery depletion is {battery_fraction:.1%} (limit {battery_limit:.1%})")
     if len(policy_rows) < grace:
         return "; ".join(issues) or None
-    if successes == 0.0:
+    if successes == 0.0 and len(policy_rows) >= no_landing_grace:
         issues.append(f"no landing in the last {window} policy episodes")
     if fov_loss > limit:
         issues.append(f"mean FOV loss is {fov_loss:.1%} (limit {limit:.1%})")
@@ -990,6 +1015,9 @@ def train_live(env_factory: Callable, model, method, seeds, output_dir,
                     history = list(csv.DictReader(stream))
             print(f"Resuming {method} at episode {completed + 1} from {checkpoint_path}")
     seed_list = list(seeds)
+    planned_policy_episodes = max(0, len(seed_list) - warmup_episodes)
+    no_landing_grace = no_landing_abort_episode(
+        ppo, planned_policy_episodes=planned_policy_episodes)
     if completed > len(seed_list):
         raise ValueError("checkpoint has more episodes than this run requests")
     if monitor is not None:
@@ -1103,9 +1131,28 @@ def train_live(env_factory: Callable, model, method, seeds, output_dir,
                 potential=potential)
             persist_history()
             issue = training_health_issue(
-                history, ppo, warmup_episodes=warmup_episodes)
+                history, ppo, warmup_episodes=warmup_episodes,
+                planned_policy_episodes=planned_policy_episodes)
             if issue is not None:
                 raise RuntimeError(f"training health gate stopped {method}: {issue}")
+            health_grace = max(
+                int(ppo.get("health_window_episodes", 20)),
+                int(ppo.get("health_grace_episodes", 40)))
+            recent_policy = [row for row in history
+                             if int(float(row.get("episode", 0))) > warmup_episodes]
+            recent_window = recent_policy[-max(
+                1, int(ppo.get("health_window_episodes", 20))):]
+            if (ppo_episode >= health_grace
+                    and ppo_episode < no_landing_grace
+                    and not any(float(row.get("paper_success", 0.0))
+                                for row in recent_window)
+                    and (ppo_episode == health_grace
+                         or episode == completed + 1)):
+                print(
+                    f"WARNING: {method} has no landing in the last "
+                    f"{len(recent_window)} policy episodes; dense health metrics "
+                    f"remain inside their limits, so training continues until "
+                    f"policy episode {no_landing_grace} before zero success is fatal.")
             print(f"{method} episode {episode}/{len(seed_list)} "
                   f"return={metric['episode_return']:+.3f} "
                   f"success={int(metric['paper_success'])} c={c:.3f}")

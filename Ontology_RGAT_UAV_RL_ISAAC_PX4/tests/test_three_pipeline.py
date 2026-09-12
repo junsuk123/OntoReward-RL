@@ -182,6 +182,43 @@ def test_training_health_gate_catches_battery_failure_before_learning_grace():
     assert issue == "battery depletion is 100.0% (limit 60.0%)"
 
 
+def test_short_live_budget_extends_only_the_no_landing_grace():
+    history = [{
+        "episode": episode, "paper_success": 0,
+        "fov_loss_fraction": .2, "battery_depleted": 0,
+        "position_rmse": 1.0,
+        "active_reward_saturation_fraction": .1,
+        "visual_loss_events": 0,
+    } for episode in range(1, 41)]
+    ppo = {"health_window_episodes": 20, "health_grace_episodes": 40}
+    assert training_health_issue(
+        history, ppo, planned_policy_episodes=160) is None
+
+    history.extend({
+        "episode": episode, "paper_success": 0,
+        "fov_loss_fraction": .2, "battery_depleted": 0,
+        "position_rmse": 1.0,
+        "active_reward_saturation_fraction": .1,
+        "visual_loss_events": 0,
+    } for episode in range(41, 121))
+    issue = training_health_issue(
+        history, ppo, planned_policy_episodes=160)
+    assert issue == "no landing in the last 20 policy episodes"
+
+
+def test_no_landing_grace_is_capped_for_large_publication_run():
+    history = [{
+        "episode": episode, "paper_success": 0,
+        "fov_loss_fraction": .2, "battery_depleted": 0,
+        "position_rmse": 1.0,
+        "active_reward_saturation_fraction": .1,
+        "visual_loss_events": 0,
+    } for episode in range(1, 121)]
+    issue = training_health_issue(
+        history, {}, planned_policy_episodes=40960)
+    assert issue == "no landing in the last 20 policy episodes"
+
+
 def test_transport_failure_restarts_and_retries_the_same_seed(monkeypatch):
     attempts = []
     recoveries = []

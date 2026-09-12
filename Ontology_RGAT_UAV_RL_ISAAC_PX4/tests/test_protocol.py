@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
+import ontology_rgat.bridge as bridge_module
 from ontology_rgat.bridge import BridgeError, PX4Bridge, pacing_anchor_us
 from ontology_rgat_px4.protocol import (
     ProtocolError,
@@ -165,6 +166,35 @@ def test_reset_rejects_invalid_initial_condition_scale_before_transmit():
         "invalid reset must not be transmitted")
     with pytest.raises(BridgeError, match="initial-condition curriculum"):
         bridge.reset(12, initial_condition_scale=2.0)
+
+
+def test_entry_gate_tolerates_brief_marker_dropout(monkeypatch):
+    class Clock:
+        value = -0.2
+
+        def monotonic(self):
+            self.value += 0.2
+            return self.value
+
+    clock = Clock()
+    monkeypatch.setattr(bridge_module.time, "monotonic", clock.monotonic)
+    monkeypatch.setattr(bridge_module.time, "sleep", lambda _seconds: None)
+    states = iter([
+        {"armed": True, "marker_quality": 0.5},
+        {"armed": True, "marker_quality": 0.0},
+        {"armed": True, "marker_quality": 0.0},
+    ])
+    bridge = object.__new__(PX4Bridge)
+    bridge.cfg = SimpleNamespace(
+        entry_timeout=10.0, arm_retry=2.0, entry_tolerance=0.5,
+        entry_speed_tolerance=0.2, require_pad_in_view=True,
+        entry_marker_memory=2.0, entry_settle=1.0)
+    bridge.get_state = lambda: next(states)
+    bridge.entry_state = lambda _state: (np.zeros(3), 0.0)
+
+    state = bridge.wait_at_entry(np.zeros(3))
+
+    assert state["marker_quality"] == 0.0
 
 
 def test_physical_pad_contact_confirms_stop_when_lockstep_has_no_new_sample():

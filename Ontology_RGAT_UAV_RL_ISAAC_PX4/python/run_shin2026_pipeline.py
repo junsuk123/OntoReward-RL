@@ -82,6 +82,9 @@ def _live_config(mode, results_dir, system_config):
                       cfg.external.entry_speed_tolerance))
     cfg.external.entry_settle = float(
         benchmark.get("entry_settle_s", cfg.external.entry_settle))
+    cfg.external.entry_marker_memory = float(
+        benchmark.get("entry_marker_memory_s",
+                      cfg.external.entry_marker_memory))
     cfg.viz.rviz.deck_size_m = list(pad.get("deck_size_m", (1.5, 1.5)))
     cfg.viz.rviz.deck_height_m = float(pad.get("deck_height_m", 0.0))
     cfg.viz.rviz.route_waypoints_enu_m = list(

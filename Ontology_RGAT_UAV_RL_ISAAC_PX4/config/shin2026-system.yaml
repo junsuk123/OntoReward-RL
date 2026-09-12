@@ -66,6 +66,10 @@ benchmark:
   # the PX4 position loop is merely passing through the entry tolerance.
   entry_speed_tolerance_m_s: 0.15
   entry_settle_s: 1.0
+  # The rendered ArUco solve is intermittent during PX4 settling. A recent
+  # real detection proves visibility without requiring every 20 Hz frame to
+  # detect continuously for the whole one-second hold.
+  entry_marker_memory_s: 2.0
   initial_conditions:
     relative_altitude_m: [2.0, 8.0]
     relative_lateral_x_m: [-3.0, 3.0]

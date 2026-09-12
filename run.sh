@@ -6,6 +6,23 @@ repository_root=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 project_root="$repository_root/Ontology_RGAT_UAV_RL_ISAAC_PX4"
 launcher="$project_root/scripts/run_three_pipeline.sh"
 
+# Isaac/PX4 and the learner gateway are one physical control resource. Two
+# learners cannot safely adopt them at once: UDP replies can go to the wrong
+# client and one learner's reset/disarm interrupts the other. Keep the lock FD
+# open across both launcher execs so a second run fails before touching results,
+# RViz, the dashboard, or the flight stack. A crashed process releases flock
+# automatically.
+flight_lock=/tmp/ontology_rgat_flight_pipeline.lock
+exec 9>>"$flight_lock"
+if ! flock -n 9; then
+  active_run=$(tr '\n' ' ' <"$flight_lock" 2>/dev/null || true)
+  echo "ERROR: another Ontology-RGAT flight pipeline is already active${active_run:+ ($active_run)}." >&2
+  echo "Wait for it to finish or stop that process before starting another run.sh." >&2
+  exit 73
+fi
+: >"$flight_lock"
+printf 'pid=%s command=%q\n' "$$" "$0 $*" >&9
+
 # Preserve the former reward-mode CLI explicitly. Legacy invocations continue
 # to use the old runner; a bare run and the new --pipelines interface use the
 # scientifically separated three-pipeline runner.

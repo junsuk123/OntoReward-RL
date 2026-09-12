@@ -425,6 +425,11 @@ def default_config(mode: str = "quick", target: str = "sitl") -> Config:
         # within entry_tolerance, which is the size of the frame -- so the
         # detector is asked rather than the geometry trusted.
         "require_pad_in_view": True,
+        # ArUco solves can drop for an isolated rendered frame during an
+        # otherwise valid hover. Remember a recent positive detection so that
+        # this setup-only gate does not demand an unrealistic uninterrupted
+        # camera solve for the full settle interval.
+        "entry_marker_memory": 2.0,       # s since the most recent detection
         "entry_settle": 0.5,              # s held inside tolerance
         "entry_timeout": 90.0,            # s; must outlast PX4's post-boot arm refusal
         "arm_retry": 2.0,                 # s between arm attempts during the climb

@@ -200,7 +200,15 @@ class ExternalStack:
         while self.managed:
             entry = self.managed.pop()
             print(f"Stopping {entry['name']} (pid {entry['pid']}).")
-            self._kill_group(entry["pid"])
+            try:
+                self._kill_group(entry["pid"])
+            finally:
+                # Long experiments can cycle SITL many times. Keeping every
+                # old stdout handle open eventually exhausts the learner's file
+                # descriptors even though its child process has exited.
+                handle = entry.get("handle")
+                if handle is not None and not handle.closed:
+                    handle.close()
 
     def is_ready(self) -> bool:
         return (_udp_port_bound(AGENT_PORT) and _udp_port_bound(GATEWAY_PORT)

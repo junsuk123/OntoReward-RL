@@ -10,6 +10,7 @@ from typing import Callable
 import numpy as np
 import torch
 
+from ..bridge import BridgeError, GatewayTimeout
 from ..curriculum import PlatformMotionCurriculum
 from ..mathx import quat_to_euler_zyx
 from ..perception import (grayscale_image_tensor, semantic_graph,
@@ -328,6 +329,40 @@ def collect_episode(env, model: PipelineActorCritic, method: str, seed: int,
                 float(np.mean(lost_errors)) if lost_errors else 0.0),
         })
     return rows, metric
+
+
+def collect_episode_resilient(env, model: PipelineActorCritic, method: str,
+                              seed: int, **kwargs):
+    """Retry one seed after a recoverable SITL transport/clock interruption.
+
+    The failed partial trajectory is discarded, so infrastructure downtime is
+    neither labelled as a task failure nor used in a gradient update. Reset
+    geometry/estimator failures retain their existing bounded reset recovery
+    path and are not multiplied here.
+    """
+    external = getattr(env.cfg, "external", {})
+    if hasattr(external, "get"):
+        recoveries = int(external.get(
+            "episode_recoveries", external.get("reset_recoveries", 0)))
+    else:
+        recoveries = int(getattr(
+            external, "episode_recoveries",
+            getattr(external, "reset_recoveries", 0)))
+    for attempt in range(recoveries + 1):
+        try:
+            return collect_episode(env, model, method, seed, **kwargs)
+        except BridgeError as exc:
+            recoverable = (isinstance(exc, GatewayTimeout)
+                           or "simulator has stalled" in str(exc).lower())
+            recover = getattr(env, "recover_infrastructure", None)
+            if not recoverable or attempt >= recoveries or not callable(recover):
+                raise
+            print(
+                f"WARNING: episode infrastructure failed ({exc}). Discarding "
+                f"the partial trajectory, restarting the owned stack, and "
+                f"retrying seed {int(seed)} ({attempt + 1} of {recoveries}).")
+            recover()
+    raise AssertionError("unreachable infrastructure-recovery state")
 
 
 def _gae(rows, gamma, gae_lambda):
@@ -655,7 +690,7 @@ def train_live(env_factory: Callable, model, method, seeds, output_dir,
             ppo_episode = max(0, episode - warmup_episodes)
             c = (curriculum.update(0) if perception_warmup
                  else curriculum.update(ppo_episode - 1))
-            rows, metric = collect_episode(
+            rows, metric = collect_episode_resilient(
                 env, model, method, seed, curriculum=c, potential=potential,
                 gamma=float(ppo.get("gamma", .99)),
                 shaping_lambda=float(ppo.get("shaping_lambda", 1.0)),

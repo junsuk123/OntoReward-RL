@@ -68,6 +68,11 @@ runner collects additional real estimator-free trajectories up to the explicit
 120-flight cap. Completed publication replicates are combined by the report
 generator with hierarchical replicate/episode bootstrap intervals.
 
+Only one `run.sh` may control the shared Isaac/PX4 stack at a time; a second
+invocation exits before changing results or flight state and identifies the
+active PID. A transient gateway timeout or simulated-clock stall discards the
+incomplete trajectory, restarts the owned stack, and retries the same seed.
+
 Legacy `--methods`/`--reward` commands are routed to the former reward-arm
 runner. Use
 `Ontology_RGAT_UAV_RL_ISAAC_PX4/scripts/run_metasejong_pipeline.sh` directly for

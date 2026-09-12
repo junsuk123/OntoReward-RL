@@ -291,6 +291,7 @@ class PX4Bridge:
         """Hand over only once PX4 holds the entry pose."""
         started = time.monotonic()
         settled_since: float | None = None
+        marker_seen_at: float | None = None
         state: dict[str, Any] | None = None
         last_arm = float("-inf")
         while time.monotonic() - started < float(self.cfg.entry_timeout):
@@ -309,10 +310,18 @@ class PX4Bridge:
                 time.sleep(0.05)
                 continue
             here, speed = self.entry_state(state)
+            now = time.monotonic()
+            if float(state.get("marker_quality", 0.0)) > 0.0:
+                marker_seen_at = now
+            marker_ready = (
+                not bool(self.cfg.require_pad_in_view)
+                or (marker_seen_at is not None
+                    and now - marker_seen_at <= float(getattr(
+                        self.cfg, "entry_marker_memory", 0.0))))
             at_target = (
                 float(np.linalg.norm(here - target)) <= float(self.cfg.entry_tolerance)
                 and speed <= float(self.cfg.entry_speed_tolerance)
-                and self.pad_in_view(state))
+                and marker_ready)
             if not at_target:
                 settled_since = None
             elif settled_since is None:

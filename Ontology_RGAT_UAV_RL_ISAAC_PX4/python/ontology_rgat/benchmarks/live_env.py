@@ -133,6 +133,25 @@ class LiveShinEnvironment:
             timeout=self.steps >= self.horizon_steps)
         return self.last_step
 
+    def recover_infrastructure(self) -> None:
+        """Cycle an owned SITL stack after a mid-episode transport failure.
+
+        A partially observed episode must never enter PPO. The caller discards
+        it and retries the same seed after this method establishes a fresh
+        bridge. Hardware or manually adopted stacks are intentionally not
+        restarted because the learner does not own them.
+        """
+        from .. import stack as stack_module
+
+        owned = stack_module.current()
+        if owned is None:
+            raise BridgeError(
+                "cannot recover the flight infrastructure because this run "
+                "does not own the simulator stack")
+        self.bridge.close()
+        owned.restart()
+        self._connect()
+
     def finish_episode(self):
         if self.bridge.last_state:
             try:

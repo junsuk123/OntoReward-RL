@@ -66,3 +66,14 @@ training:
   episodes_quick: 8
   episodes_full: 40960
   independent_seeds_full: [42, 1042, 2042]
+
+# Reward-independent physical evaluation. run.sh's seminar profile overrides
+# each value to five while preserving every trajectory family below.
+evaluation:
+  training_random_walk: 10000
+  straight_8mps: 1000
+  linear_acceleration_wave: 1000
+  circle: 1000
+  zigzag: 1000
+  u_turn: 1000
+  vertical_heave_boat: 1000

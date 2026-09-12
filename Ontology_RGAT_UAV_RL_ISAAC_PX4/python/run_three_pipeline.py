@@ -28,7 +28,8 @@ from ontology_rgat.evaluation import write_three_pipeline_outputs
 from ontology_rgat.perception import RosGrayscaleSource, prepare_keypoint_encoder
 from ontology_rgat.pipelines import (get_pipeline, primary_pipeline_ids,
                                      validate_pipeline_configuration)
-from ontology_rgat.ppo.recurrent_train import collect_episode, train_live
+from ontology_rgat.ppo.recurrent_train import (collect_episode_resilient,
+                                               train_live)
 from ontology_rgat.rgat import (
     FrozenSemanticRGATPotential, load_semantic_dataset,
     merge_semantic_datasets, prepare_semantic_rgat_artifact,
@@ -158,7 +159,7 @@ def _collect_semantic_data(*, cfg, camera, model, config, config_hash,
             for episode, seed in pending:
                 if requirements_met(manifest):
                     break
-                rows, metric = collect_episode(
+                rows, metric = collect_episode_resilient(
                     environment, model, "no_se", seed, curriculum=1.0,
                     deterministic=False, gamma=gamma,
                     scenario="training_random_walk", monitor=monitor,
@@ -578,7 +579,7 @@ def main():
                         key = (name, item["scenario"], int(item["seed"]))
                         if key in completed:
                             continue
-                        _, metric = collect_episode(
+                        _, metric = collect_episode_resilient(
                             environment, model, name, int(item["seed"]),
                             curriculum=1.0,
                             potential=(potential if name == "onto_no_se" else None),
@@ -630,7 +631,10 @@ def main():
             rviz_process.terminate()
         if rviz_log is not None and not rviz_log.closed:
             rviz_log.close()
-        dashboard.stop()
+        if rviz is not None:
+            rviz.close()
+        if dashboard is not None:
+            dashboard.stop()
     print(f"Three-pipeline experiment complete: {args.results_dir}")
     return 0
 

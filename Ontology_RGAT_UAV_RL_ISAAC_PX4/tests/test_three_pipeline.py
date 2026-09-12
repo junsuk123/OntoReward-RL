@@ -7,6 +7,7 @@ import numpy as np
 import pytest
 import torch
 
+from ontology_rgat.bridge import GatewayTimeout
 from ontology_rgat.benchmarks.experiment import (configuration_hash,
                                                  controlled_training_seeds,
                                                  episodes_per_method,
@@ -23,6 +24,8 @@ from ontology_rgat.pipelines import (PIPELINES, PipelineSpec, get_pipeline,
 from ontology_rgat.ppo.recurrent import (PipelineActorCritic,
                                          ShinRecurrentActorCritic,
                                          recurrent_ppo_loss)
+from ontology_rgat.ppo import recurrent_train
+from ontology_rgat.ppo.recurrent_train import collect_episode_resilient
 from ontology_rgat.reward_modes import OntologyRewardContext, OntoRewardPBRS, TerminalFlags
 from ontology_rgat.rgat import (FrozenSemanticRGATPotential,
                                 merge_semantic_datasets,
@@ -96,6 +99,38 @@ def test_primary_specs_encode_the_intended_information_boundaries():
         assert not spec.state_estimation_enabled
         assert not spec.auxiliary_estimation_loss_enabled
         assert not spec.active_perception_enabled
+
+
+def test_three_pipeline_keeps_all_physical_evaluation_scenarios():
+    config = load_experiment(
+        ROOT / "config/experiments/three_pipeline_comparison.yaml")
+    assert set(config["evaluation"]) == {
+        "training_random_walk", "straight_8mps", "linear_acceleration_wave",
+        "circle", "zigzag", "u_turn", "vertical_heave_boat",
+    }
+
+
+def test_transport_failure_restarts_and_retries_the_same_seed(monkeypatch):
+    attempts = []
+    recoveries = []
+
+    def collect(_env, _model, _method, seed, **_kwargs):
+        attempts.append(seed)
+        if len(attempts) == 1:
+            raise GatewayTimeout("gateway lost one state reply")
+        return ["complete"], {"seed": seed}
+
+    monkeypatch.setattr(recurrent_train, "collect_episode", collect)
+    env = type("Env", (), {
+        "cfg": type("Cfg", (), {"external": {"reset_recoveries": 2}})(),
+        "recover_infrastructure": lambda self: recoveries.append("restart"),
+    })()
+
+    rows, metric = collect_episode_resilient(env, object(), "shin_se", 123)
+
+    assert rows == ["complete"] and metric["seed"] == 123
+    assert attempts == [123, 123]
+    assert recoveries == ["restart"]
 
 
 def test_illegal_pipeline_combinations_are_rejected():

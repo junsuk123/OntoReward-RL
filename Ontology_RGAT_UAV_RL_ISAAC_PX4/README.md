@@ -50,7 +50,9 @@ continues up to the configured hard cap. The dashboard at
 pipeline, hides estimator panels for estimator-free methods, and displays
 semantic values plus direct `Phi(G)`/PBRS for `onto_no_se`. The UAV envelope
 starts at 50%; the UGV starts at 35% of sampled road speed. Shared acceleration
-slew limits remain active.
+slew limits remain active. A process lock prevents two learners from sharing
+one PX4 control channel. Recoverable gateway/clock interruptions discard the
+partial trajectory and retry the same seed after an owned-stack restart.
 
 The older cooperative urban ontology and five reward-arm Shin runner remain as
 legacy/secondary experiments. Their estimate-based distilled potential is not

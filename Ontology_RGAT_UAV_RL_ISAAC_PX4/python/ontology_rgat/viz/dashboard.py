@@ -158,10 +158,11 @@ const CARDS=[
  {id:'tiles',title:null},
  {id:'benchmark_contract',view:'benchmark',kind:'contract',
   title:'Shin 2026 controlled benchmark · information boundary'},
- {id:'benchmark_return',view:'benchmark',title:'Training episode return (debug only)',
-  series:BENCHMARK_TRAIN,x:'episode',y:'episode_return',smooth:20},
  {id:'benchmark_success',view:'benchmark',title:'Training moving success rate',
   series:BENCHMARK_TRAIN,x:'episode',y:'paper_success',smooth:40,ymin:0,ymax:1},
+ {id:'benchmark_return',view:'benchmark',
+  title:'Training reward return (diagnostic, not the success metric)',
+  series:BENCHMARK_TRAIN,x:'episode',y:'episode_return',smooth:20},
  {id:'benchmark_curriculum',view:'benchmark',title:'Platform-motion curriculum c',
   series:BENCHMARK_TRAIN,x:'episode',y:'curriculum',ymin:0,ymax:1},
  {id:'benchmark_action_scale',view:'benchmark',title:'UAV action-envelope curriculum',
@@ -409,11 +410,14 @@ function tiles(state){
     if(s.current_pipeline||s.current_method)add('pipeline',s.current_pipeline||s.current_method);
     if(s.state_estimation_status)add('state estimation',s.state_estimation_status);
     add('run mode',s.benchmark_mode||'--');
-    add('training progress',`${trained} / ${s.training_total||0}`);
+    add('completed episodes',`${trained} / ${s.training_total||0}`);
+    if(s.current_training_episode!==undefined)
+      add('active episode',`${s.current_training_episode}`);
     add('paired evaluation',`${s.evaluation_completed||0} / ${s.evaluation_total||0}`);
     if(s.current_scenario)add('scenario',s.current_scenario.replaceAll('_',' '));
     const step=state.series.benchmark_step||[],latest=step.length?step[step.length-1]:null;
-    if(latest){add('target visible',latest.in_fov?'yes':'no');
+    if(latest){add('live episode step',latest.step);
+      add('target visible',latest.in_fov?'yes':'no');
       if(latest.state_estimation_enabled&&Number.isFinite(Number(latest.position_error)))
         add('estimator error',Number(latest.position_error).toFixed(3)+' m');
       add('UAV speed',Number(latest.uav_speed_m_s||0).toFixed(3)+' m/s');

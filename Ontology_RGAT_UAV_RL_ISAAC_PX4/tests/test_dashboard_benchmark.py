@@ -56,6 +56,7 @@ def test_benchmark_monitor_publishes_refactored_contract_and_progress():
     assert state["series"]["benchmark_train_ontoreward"][-1]["episode"] == 1
     assert state["scalars"]["current_action_envelope_scale"] == 0.5125
     assert state["scalars"]["current_pad_motion_scale"] == 0.5125
+    assert state["scalars"]["current_training_episode"] == 1
 
 
 def test_benchmark_monitor_restores_csv_rows_and_pairs_evaluation_series():
@@ -89,6 +90,10 @@ def test_dashboard_has_self_contained_matlab_style_benchmark_view():
     assert "Current episode · real 3S battery" in PAGE
     assert "Current episode · vehicle motion (m/s)" in PAGE
     assert "Battery-depletion terminal rate" in PAGE
+    assert "completed episodes" in PAGE
+    assert "active episode" in PAGE
+    assert "live episode step" in PAGE
+    assert "debug only" not in PAGE
     assert "prefers-color-scheme:dark" not in PAGE
     for color in MATLAB_COLORS:
         assert color in PAGE

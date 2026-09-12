@@ -1,29 +1,100 @@
-# Shin-2026 dependency and data-flow audit
+# Dependency and data-flow audit
 
-Audit date: 2026-09-11. Source baseline: commit `42f0a2e` on `main`.
+[Documentation map](README.md) · [Controlled comparison](THREE_PIPELINE_COMPARISON.md) ·
+[Architecture](ARCHITECTURE.md)
 
-The retained urban OntoReward experiment builds a 23-value policy observation
-in `semantic.make_observation`. It includes measured pad-relative pose and
-velocity, a separately broadcast deck velocity, pad motion, battery state, and
-GNSS integrity. The ROS gateway subscribes to `/landing_pad/state/odom` and
-uses the deck broadcast to form this state. That is appropriate only for the
-extended cooperative urban experiment; it is privileged relative to Shin et
-al.'s non-cooperative actor contract.
+Audit refreshed: 2026-09-12. Scope: current `main` working tree and the primary
+`shin_se / no_se / onto_no_se` runner. This is a code-boundary audit, not a
+claim about unfinished flight performance.
 
-| Data | Existing urban use | Shin-compatible classification | Benchmark action |
-| --- | --- | --- | --- |
-| `/landing_pad/state/odom` and deck velocity | observation/control fallback | forbidden actor input | excluded from typed actor schema |
-| Deck GNSS quality/covariance | semantic observation and reward | forbidden actor input | benchmark GNSS disabled |
-| Simulator pad/UAV odometry truth | reset and terminal scoring | reset/evaluation/critic/auxiliary target only | isolated in `CriticObservation` |
-| Marker pose and marker quality | policy-relative pose and observation | actor may receive pixels, not solved pose | `pose_source_for_policy: false` |
-| Raw onboard camera | operator/detector path did not expose raw mono | actor input | new unannotated `mono8` topic |
-| UAV world velocity and attitude | PX4 telemetry | actor input | world velocity is rotated into body frame |
-| Wind, energy, GNSS integrity | extended ontology observation/reward | excluded from primary comparison | retained only in original profile |
+## Primary actor contract
 
-The old direct `[collective, roll, pitch, yaw-rate]` command remains available
-for old checkpoints. A separate versioned `velocity_action` message drives a
-PX4 velocity/yaw-rate setpoint for all new benchmark methods.
+`ActorObservation` exposes exactly a 512×320 grayscale image and seven onboard
+UAV values: three body-frame velocity components and four attitude-quaternion
+components. The frozen six-keypoint encoder, temporal LSTM, and actor are the
+same in all three pipelines.
 
-Automated guards live in `tests/test_shin2026_integrity.py`. They reject
-privileged field names recursively before flattening, verify critic separation,
-pair seeds, reset recurrent state, and enforce PBRS invariants.
+| Data | Actor | `shin_se` auxiliary/critic | Primary ontology | Terminal/evaluation |
+|---|---:|---:|---:|---:|
+| raw mono image | yes | yes | through keypoints/heatmaps | diagnostics |
+| UAV body velocity/quaternion | yes | yes | bounded motion/attitude semantics | yes |
+| six-keypoint output/heatmaps | through encoder | yes | yes | diagnostics |
+| onboard battery reserve | no | no | yes | yes |
+| relative-state truth | no | auxiliary target + critic | no | yes |
+| predicted relative state | no | `shin_se` only | no | diagnostics only |
+| marker pose solve | no | no | no | setup/visualization only |
+| UGV pose/velocity or wheel odometry | no | no | no | setup/scoring only |
+| platform GNSS/V2V | no | no | no | legacy profile only |
+| simulator contact/truth | no | critic where declared | no | yes |
+
+The actor always consumes `y[6:256]`; even `shin_se` does not append the six
+predicted state values. The critic is separately called with 13 values only
+during training and has no deployment wrapper input.
+
+## Primary ontology boundary
+
+`semantic_observation_from_payload` accepts only:
+
+```text
+keypoints, heatmaps, proprioception, battery_reserve
+```
+
+It recursively rejects aliases containing estimate, relative state, platform,
+pad/deck motion, simulator/ground truth, critic, GNSS platform, or privileged
+provenance. Unknown top-level fields also fail. The output is eight normalized
+semantic observations and the fixed 13-node/25-edge graph.
+
+This prevents the proposed method from secretly reconstructing the explicit
+metric estimator it is intended to replace. Simulator truth may label an
+episode `+1/-1`, but it cannot become an R-GAT feature.
+
+## Reward-design dataset
+
+The semantic dataset format is `ontology_rgat.semantic_rollouts/1`. Its
+manifest records graph schema, config hash, source-policy checkpoint digest,
+behavior mixture, seeds, flight/sample/contact counts, environment steps,
+class counts, and forbidden-input declaration.
+
+The trained `no_se` policy is the behavior source. Image-plane servo
+corrections, bounded Gaussian noise, and bounded random exploration improve
+coverage without metric pose. Synthetic success/failure insertion is forbidden.
+Collection continues past its minimum only until both classes are observed or
+the hard cap is reached. Validation splits by episode to prevent adjacent
+frames from the same flight leaking across train/validation.
+
+## Configuration and checkpoint guards
+
+- Immutable `PipelineSpec` objects define estimator, auxiliary loss, active
+  reward, ontology input mode, and direct-potential use.
+- Startup verifies the YAML declarations exactly match those specs.
+- R-GAT/PBRS/PPO gamma equality is checked.
+- Recurrent checkpoints store format, pipeline spec, config hash, reward hash,
+  optimizer state, and curriculum state.
+- Incompatible artifacts are archived and retrained rather than shape-loaded.
+- Direct R-GAT artifacts verify model digest, graph schema, and frozen state.
+- JSON serialization rejects NaN; trainers stop on non-finite losses/gradients.
+
+Relevant automated guards are in `tests/test_shin2026_integrity.py`,
+`tests/test_three_pipeline.py`, and the protocol/config test modules.
+
+## Runtime failure boundary
+
+Infrastructure recovery is deliberately narrow. Gateway timeouts, genuine
+simulated-clock stalls, and gateway-classified pure Offboard-heartbeat losses
+may discard a partial trajectory and retry the same seed after restarting an
+owned stack. Entry geometry, marker visibility, estimator validity, policy
+health, other PX4 failsafes, and terminal outcomes are not relabeled or hidden
+by that mechanism.
+
+The root `run.sh` also serializes access to the single flight-control resource
+with an OS lock. This prevents two learners from racing resets or receiving
+each other's UDP replies.
+
+## Retained legacy boundary
+
+The 23-value cooperative observation in `semantic.make_observation`,
+`/landing_pad/state/odom`, urban GNSS/V2V data, the 14-node graph, and distilled
+eight-weight reward belong to `scripts/run_metasejong_pipeline.sh`. They are
+valid for that extended experiment but privileged relative to the primary
+non-cooperative actor contract. Primary and legacy artifacts are intentionally
+incompatible.

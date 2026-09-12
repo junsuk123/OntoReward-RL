@@ -1,85 +1,115 @@
-# Ontology–R-GAT–RL Autonomous Landing
+# Ontology–R-GAT–RL autonomous landing
 
-Dynamic-wind, moving-UGV landing research stack for NVIDIA Isaac Sim,
-Pegasus, PX4 SITL, ROS 2, ontology-based R-GAT reward design, and PPO.
+Vision-only recurrent PPO for landing a PX4 multicopter on a road-following
+UGV in NVIDIA Isaac Sim, with an estimator-free ontology/R-GAT reward variant.
 
-![Ontology–R-GAT–RL autonomous landing system](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/images/system_architecture-metasejong-v3.png)
+![Live Isaac Sim flight over the Meta-Sejong S5 road](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/images/isaac_sim_s5_live.png)
 
-The repository contains one active implementation under
-[`Ontology_RGAT_UAV_RL_ISAAC_PX4/`](Ontology_RGAT_UAV_RL_ISAAC_PX4/). The
-subproject README is the complete installation, configuration, experiment, and
-troubleshooting guide:
+![Live MATLAB-style three-pipeline dashboard](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/images/live_dashboard_status.png)
 
-**[Open the full project README](Ontology_RGAT_UAV_RL_ISAAC_PX4/README.md)** ·
-[System overview](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/SYSTEM_OVERVIEW.md) ·
-[Operations](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/OPERATIONS.md) ·
-[Architecture](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/ARCHITECTURE.md) ·
-[Three-pipeline protocol](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/THREE_PIPELINE_COMPARISON.md)
+> Both screenshots are real runtime captures from the full pipeline on
+> 2026-09-12. They demonstrate the simulator and monitoring path, not a
+> completed benchmark result.
 
-## Research contract
+## Run the complete pipeline
 
-The system models the two dynamic conditions central to the experiment: a
-seeded turbulent wind field measured by an onboard anemometer, and a road-going
-AGILEX RANGER MINI 3.0 carrying a moving landing pad. The UAV sensor suite is
-profiled as ZED-F9P RTK GNSS, VectorNav VN-100 IMU, and one ZED 2i mono eye.
-Policy observations contain only measurable
-sensor/estimator values; simulator truth is isolated to reset, terminal reward,
-and evaluation scoring.
-
-The default `./run.sh` compares `shin_se`, `no_se`, and `onto_no_se` under one
-camera, temporal backbone, actor/critic, controller, PPO budget and paired seed
-plan. The proposed pipeline has no relative-state estimator. Its ontology uses
-direct visual semantics and UAV onboard signals, and the frozen R-GAT output is
-used directly as the PBRS potential. Simulator truth is permitted only for the
-asymmetric critic, terminal labels, reset logic and physical evaluation.
-
-An experiment passes only when both independent criteria pass:
-
-- **Reward effectiveness:** nominal landing success is at least 60%.
-- **R-GAT consistency:** cross-condition success standard deviation is at most
-  15 percentage points, worst-case success is at least 35%, and R-GAT validation
-  MSE is at most 0.35.
-
-## One-command run
-
-From the repository root:
+From this repository root, the final entry point is:
 
 ```bash
 ./run.sh
 ```
 
-The root entry point starts DDS, Isaac Sim, Pegasus, PX4, the ROS gateway and
-MATLAB-style dashboard; trains the three controlled pipelines; collects an
-estimator-free semantic R-GAT dataset; freezes the direct R-GAT potential; runs
-paired evaluation; and exports physical-metric tables, confidence intervals and
-figures. The bare command uses 264 PPO episodes per pipeline plus eight
-Shin-only estimator warm-up flights (800 training flights total). It is
-independent of the current working directory and forwards all
-comparison options:
+The bare command runs `--mode full` with the deadline/seminar budget:
+
+- 8 estimator warm-up flights for `shin_se`;
+- 264 PPO flights for each of `shin_se`, `no_se`, and `onto_no_se`;
+- 40 real estimator-free reward-design flights initially, automatically
+  extended to at most 120 if both terminal classes are not yet present;
+- 5 paired evaluation seeds for each of 7 scenarios and each pipeline
+  (105 evaluation flights).
+
+This is exactly 800 training flights before the separate reward-design and
+evaluation flights. It is a preview-scale experiment, not publication-scale
+evidence. Useful alternatives are:
 
 ```bash
 ./run.sh --mode quick --headless
-./run.sh --pipelines shin_se no_se onto_no_se --mode full
+./run.sh --mode full --pipelines shin_se no_se onto_no_se
+./run.sh --mode full --training-replicate 1 \
+  --train-episodes 40960 --rgat-data-episodes 400
 ./run.sh --help
 ```
 
-If the initial 40 reward-design flights contain only one terminal class, the
-runner collects additional real estimator-free trajectories up to the explicit
-120-flight cap. Completed publication replicates are combined by the report
-generator with hierarchical replicate/episode bootstrap intervals.
+Only one launcher may own the flight stack. A second `run.sh` exits before it
+can reset the vehicle or modify results. Compatible checkpoints and completed
+CSV rows resume automatically.
 
-Only one `run.sh` may control the shared Isaac/PX4 stack at a time; a second
-invocation exits before changing results or flight state and identifies the
-active PID. A transient gateway timeout or simulated-clock stall discards the
-incomplete trajectory, restarts the owned stack, and retries the same seed.
+## What is compared
 
-Legacy `--methods`/`--reward` commands are routed to the former reward-arm
-runner. Use
-`Ontology_RGAT_UAV_RL_ISAAC_PX4/scripts/run_metasejong_pipeline.sh` directly for
-the separate legacy 23-channel cooperative urban experiment.
+| Pipeline | State-estimation supervision | Active-perception reward | Ontology reward |
+|---|---:|---:|---:|
+| `shin_se` | yes, six-state auxiliary MSE | yes | no |
+| `no_se` | no | no | no |
+| `onto_no_se` | no | no | frozen direct R-GAT PBRS |
 
-## System figures
+All three share the same 512×320 mono camera, frozen six-keypoint encoder,
+512-unit LSTM, 256-D latent, `y[6:256]` actor slice, 7-D UAV proprioception,
+4-D velocity/yaw-rate action, PX4 controller, PPO settings, curriculum, and
+paired seeds. Simulator truth is isolated to the asymmetric critic, reset,
+terminal labels, and physical evaluation.
 
-| System | R-GAT and fixed weights | Reward contract | PPO observation/state |
-|---|---|---|---|
-| [Architecture](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/images/system_architecture-metasejong-v3.png) | [R-GAT](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/images/rgat_network-v4.png) | [Reward](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/images/reward_function-v3.png) | [Observation](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/images/rl_observation_state-v3.png) |
+The primary ontology is **13 nodes, 25 directed edges, 4 relation types, and
+19 features per node**. It consumes keypoint/heatmap semantics, UAV motion and
+attitude, and onboard battery reserve. It does not accept relative-state
+estimates, UGV state, GNSS, or simulator truth. The trained R-GAT output is
+frozen and used directly as `Phi(G)`:
+
+```text
+r_t = r_sparse + lambda * (gamma * Phi(G_t+1) - Phi(G_t))
+```
+
+The older 14-node/38-edge, 23-channel cooperative urban experiment and its
+distilled fixed reward weights remain available only as a labeled legacy path.
+
+## Runtime and monitoring
+
+`run.sh` starts or adopts DDS (UDP 8888), Isaac Sim/Pegasus/PX4, the ROS 2
+gateway (UDP 14650), RViz 2, and the dashboard at
+<http://127.0.0.1:8770/>. The dashboard reports committed episodes separately
+from the active episode and per-step telemetry, so a long rendered flight does
+not look frozen.
+
+Recoverable SITL transport, simulated-clock, and pure Offboard-heartbeat
+interruptions discard only the partial trajectory, restart the stack owned by
+the launcher, and retry the same seed. Geometry, perception, estimator, and
+policy failures remain hard failures and are not hidden by retry.
+
+## Meta-Sejong S5 environment
+
+The default benchmark uses the Gwanggaeto/S5 campus asset and a closed 37-point
+road route. The route is 99.70 m long; the offline mesh audit measured 1.00 m
+of conservative clearance after the 1.5×1.5 m deck footprint and a maximum
+waypoint elevation error of 0.001 m.
+
+![Audited Meta-Sejong S5 UGV route](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/images/metasejong_gwanggaeto_ugv_route.png)
+
+## Documentation
+
+The implementation lives under
+[`Ontology_RGAT_UAV_RL_ISAAC_PX4/`](Ontology_RGAT_UAV_RL_ISAAC_PX4/).
+
+- [Complete project guide](Ontology_RGAT_UAV_RL_ISAAC_PX4/README.md)
+- [Documentation index](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/README.md)
+- [System overview](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/SYSTEM_OVERVIEW.md)
+- [Controlled comparison](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/THREE_PIPELINE_COMPARISON.md)
+- [Operations and fault diagnosis](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/OPERATIONS.md)
+- [Architecture and interfaces](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/ARCHITECTURE.md)
+- [Paper-to-code baseline](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/SHIN2026_BASELINE.md)
+- [Hardware safety gate](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/HARDWARE_SAFETY.md)
+
+Run repository checks from the active project directory:
+
+```bash
+cd Ontology_RGAT_UAV_RL_ISAAC_PX4
+./scripts/check_workspace.sh
+```

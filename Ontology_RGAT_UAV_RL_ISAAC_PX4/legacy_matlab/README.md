@@ -1,5 +1,7 @@
 # legacy_matlab — reference only, not part of the pipeline
 
+[Active project README](../README.md) · [Documentation map](../docs/README.md)
+
 This is the MATLAB implementation the Python learner under [`../python/`](../python/)
 replaced. It is kept so the ported numbers can be checked against the code they
 came from, and for nothing else:
@@ -9,9 +11,10 @@ came from, and for nothing else:
   original workspace on the path via `setup_external_path.m`. None of that is
   maintained, and `scripts/check_workspace.sh` fails the build if anything that
   does run starts referencing this directory.
-- **The Python port is the experiment.** `python/run_pipeline.py` runs the same
-  seven stages: connectivity, dataset, R-GAT, both PPO arms, paired evaluation
-  and figures.
+- **The Python implementation is the experiment.** The repository-root
+  `../../run.sh` now selects `python/run_three_pipeline.py` for the primary
+  `shin_se / no_se / onto_no_se` comparison. `python/run_pipeline.py` retains
+  the older cooperative two-arm experiment. Neither imports this directory.
 
 ## Where each file went
 
@@ -28,7 +31,7 @@ came from, and for nothing else:
 | `src/+evaluation/*.m` | `ontology_rgat/evaluation/` |
 | `src/+viz/*.m` | `ontology_rgat/viz/` + RViz 2 + Isaac overlay |
 | `src/+stack/ExternalStack.m` | `ontology_rgat/stack.py` |
-| `src/+pipeline/runAll.m` | `ontology_rgat/pipeline.py` |
+| `src/+pipeline/runAll.m` | legacy cooperative `ontology_rgat/pipeline.py`; primary orchestration is `python/run_three_pipeline.py` |
 | `tests/test_rgat_equivalence.m` | `../tests/test_rgat_equivalence.py` |
 | `tools/benchmark_rgat.m` | `../python/run_benchmark.py` |
 
@@ -45,3 +48,8 @@ came from, and for nothing else:
 - **`src/+rgat/{device,toGPU,toCPU}.m`.** The device decision is
   `ontology_rgat/rgat/train.py:select_device`, and the crossover it uses is
   re-measured by `python/run_benchmark.py`.
+
+The primary direct semantic R-GAT is not a transcription of the MATLAB
+14-node/fixed-weight design. It is a separate 13-node/25-edge estimator-free
+experiment documented in
+[`docs/THREE_PIPELINE_COMPARISON.md`](../docs/THREE_PIPELINE_COMPARISON.md).

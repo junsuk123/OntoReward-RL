@@ -471,7 +471,9 @@ function benchmarkPanel(state){
   document.getElementById('benchmark-methods').innerHTML=methods.map((method,index)=>{
     const rows=state.series['benchmark_train_'+method]||[],n=Math.min(50,rows.length);
     const success=n?rows.slice(-n).reduce((sum,row)=>sum+Number(row.paper_success||0),0)/n:null;
-    const progress=rows.length+'/'+Math.max(1,Number(s.training_total||0)/Math.max(1,methods.length));
+    // The run-level budget can include a Shin-only estimator warm-up, so it
+    // cannot be divided evenly into an honest per-pipeline denominator.
+    const progress=rows.length+' completed';
     const rate=success===null?'waiting':(100*success).toFixed(1)+'% success';
     return `<div class="method-chip" style="border-left-color:${PALETTE[index%PALETTE.length]}">`+
       `<b>${escapeHTML(LABELS['benchmark_train_'+method]||method)}</b>`+

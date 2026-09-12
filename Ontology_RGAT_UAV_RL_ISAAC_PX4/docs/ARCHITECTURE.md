@@ -1,7 +1,22 @@
 # Architecture and migration boundary
 
-[System overview](SYSTEM_OVERVIEW.md) · [Operations](OPERATIONS.md) ·
+[Documentation map](README.md) · [System overview](SYSTEM_OVERVIEW.md) · [Operations](OPERATIONS.md) ·
 [Hardware safety](HARDWARE_SAFETY.md) · [References](REFERENCES.md)
+
+## Scope of this document
+
+The repository contains two intentionally separate experiment families:
+
+| Family | Launcher | Actor/ontology/reward |
+|---|---|---|
+| **Primary controlled comparison** | repository-root `./run.sh` | image + 7-D UAV proprioception actor; 13-node/25-edge estimator-free graph; frozen direct R-GAT `Phi(G)` |
+| **Legacy cooperative urban profile** | `scripts/run_metasejong_pipeline.sh` | 23-channel cooperative actor; 14-node/38-edge graph; eight distilled fixed reward weights |
+
+The simulator/PX4/ROS migration and interfaces below are shared unless a
+section says **legacy cooperative**. The city/GNSS/reward-distillation sections
+describe that retained legacy profile; the current primary learning path is
+specified at the end and in
+[THREE_PIPELINE_COMPARISON.md](THREE_PIPELINE_COMPARISON.md).
 
 ## What was replaced
 
@@ -18,7 +33,7 @@ numerical integration it drove, are gone. The episode contract survives in
 |---|---|
 | `resetState` creates an in-process state | reset transaction to Isaac, then a PX4-flown climb to the entry pose |
 | `getCurrent` synthesizes sensors | latest PX4 estimator sample |
-| `step` runs RK4 and a rotor model | sends a PX4 offboard attitude/thrust setpoint and waits one control period of *simulated* time |
+| `step` runs RK4 and a rotor model | sends a PX4 Offboard setpoint and waits one control period of *simulated* time; the primary comparison uses velocity/yaw-rate commands |
 | panel wind/aero diagnostics | Isaac physics-callback drag force and ROS 2 environment telemetry |
 | analytic marker-visibility proxy | ArUco tags on the pad seen by a downward camera |
 | ground clamp/terminal check | PX4 `vehicle_land_detected` plus shared landing criteria |
@@ -62,7 +77,7 @@ map. Four things are worth stating as design decisions rather than transcription
   to share space with. A schema that gains a node changes the second
   automatically and the first by hand.
 
-### The city
+### Legacy cooperative city
 
 `isaac_sim/urban_scene.py` owns one `UrbanLayout`: a block encircled by four
 streets, the block itself plus the facades on the far side of each street, cut
@@ -81,7 +96,7 @@ against the whole city is ~30 µs, so it runs at the publication rate.
 lighting, and nothing else. No shipped environment comes with a machine-readable
 skyline, and one that did would still not be the one the GNSS model masks with.
 
-### Moving deck
+### Legacy cooperative moving deck
 
 `LandingDeck` is a kinematic rigid body with a box collider — the roof of a
 6.2 × 2.45 m box lorry, 3.2 m above the road. `PadTrajectory` provides analytic
@@ -124,7 +139,7 @@ deliberately a trajectory source, not a lorry drivetrain model.
 The marker quads are children of `/World/landing_rover`, so pose, heading, and
 collision geometry move together.
 
-### GNSS
+### Legacy cooperative GNSS
 
 `isaac_sim/gnss.py`. A `Constellation` of twelve satellites is drawn per episode
 uniformly in `sin(el)` above a 7° mask — the distribution that is uniform over
@@ -195,7 +210,7 @@ corrects toward differential GNSS with a time constant proportional to the
 combined receiver variance. Thus a good fix recentres quickly, while an urban
 20 m fix cannot create a position step or overpower short-term DR.
 
-### Energy and learning contract
+### Legacy cooperative energy and learning contract
 
 SITL uses `BatteryModel`: momentum-theory induced power plus avionics draw,
 integrated on PX4 simulated time from `/fmu/out/vehicle_thrust_setpoint`. The
@@ -285,8 +300,9 @@ what is left after the facades have finished with it.
 The preferred gateway uses PX4 uXRCE-DDS and matching `px4_msgs`. It publishes:
 
 - `/fmu/in/offboard_control_mode`
-- `/fmu/in/vehicle_attitude_setpoint` (policy actions)
-- `/fmu/in/trajectory_setpoint` (pre-episode climb to the entry pose)
+- `/fmu/in/vehicle_attitude_setpoint` (legacy collective/attitude actions)
+- `/fmu/in/trajectory_setpoint` (pre-episode entry hover and primary
+  velocity/yaw-rate actions)
 - `/fmu/in/vehicle_command`
 
 and consumes:
@@ -305,9 +321,10 @@ stock PX4 v1.14 keeps them off the uXRCE-DDS bridge. `vehicle_odometry`,
 `dds_topics.yaml`.
 
 Exactly one control source drives `_control_tick` at a time. A `goto` streams
-position setpoints until the first `action` arrives, which switches the gateway
-to attitude control for the rest of the episode. `state.extra.control_source`
-reports which of `goto`, `action` or `idle` is live.
+position setpoints until the first policy command arrives. Legacy `action`
+switches to attitude control; primary `velocity_action` switches to
+position-backed velocity/yaw control. `state.extra.control_source` reports
+which of `goto`, `action`, `velocity_action` or `idle` is live.
 
 Requesting `OFFBOARD` is retried, not latched: PX4 accepts the mode switch only
 after it has seen a steady setpoint stream and rejects it outright in some
@@ -341,15 +358,19 @@ pad-frame `goto`. The gateway recomputes the world target from the live deck on
 every control tick. A reset whose ack carries no offset is an error, not a
 default: it means Isaac is running an older `landing_world.py`.
 
-### Environment and perception telemetry
+### Profile-specific environment and perception telemetry
 
-The SITL sensor suite is hardware-profiled rather than ideal: ZED-F9P-05B
+The legacy cooperative SITL sensor suite is hardware-profiled rather than ideal: ZED-F9P-05B
 multi-constellation RTK at 5 Hz, a VN-100 IMU whose 800 Hz device capability is
 sampled at the 250 Hz physics limit, and one ZED 2i eye at 1280 x 720/60 Hz.
 The Meta-Sejong carrier references the official AGILEX Ranger Mini V3 mesh;
 trajectory ownership remains with the kinematic pad so all seeds are exactly
 repeatable. Full values and source links are in `config/system.yaml` and
 `docs/REFERENCES.md`.
+
+The primary profile overrides this with the Shin-compatible 512×320 mono
+camera at 30 Hz and disables GNSS as an actor/ontology input. It retains the
+same PX4/Isaac transport and physical contact/scoring topics.
 
 Isaac publishes, under `/landing_uav0` (`isaac.namespace` + `vehicle_id`):
 
@@ -384,7 +405,7 @@ scoring path subscribes to it.
 Ground truth on `/state/*` is used for experiment telemetry and readiness checks
 only. It never reaches the policy.
 
-### Marker vision
+### Profile-specific marker vision
 
 `isaac_sim/marker_vision.py` holds the pad geometry and the pose solve, and
 imports no Isaac, so the frame conventions are testable without a simulator
@@ -410,6 +431,12 @@ error, scale from the largest tag's pixel side, and a small penalty for a
 single-tag pose — so the ontology consumes perception health rather than a
 function of ground truth. A miss publishes `0.0` and no pose, which is what
 makes the gateway fall back to the PX4 estimate.
+
+In the primary comparison the solved metric marker pose is used for setup and
+operator visualization, not as an actor or semantic-graph input. The actor sees
+the raw mono image; `onto_no_se` uses only keypoints/heatmaps derived from that
+image. The camera-centred entry gate may require a recent nonzero marker quality
+before the measured episode begins.
 
 The same detector invocation produces the annotated operator image on
 `/landing_uav0/perception/landing_camera/annotated`; visualization does not run
@@ -563,11 +590,46 @@ all of them. These are recorded for provenance and changing them has no effect:
   datagram's source address.
 - `vision.max_range_m`, `vision.tilt_scale_deg`, `vision.xy_scale_m`: only the
   `pose_proxy` stand-in uses these.
-# Controlled Shin-2026 benchmark path
+## Controlled Shin-2026 benchmark path
 
-The non-cooperative benchmark path is documented in
-[`SHIN2026_BASELINE.md`](SHIN2026_BASELINE.md). It consumes raw grayscale
-camera frames plus UAV body velocity and attitude only. `/landing_pad/state/odom`,
-deck GNSS, wheel odometry, V2V velocity, and simulator pad truth do not enter
-that actor. The cooperative V2V/GNSS flow described below belongs only to the
-retained extended urban OntoReward experiment.
+The primary non-cooperative benchmark is documented in
+[`SHIN2026_BASELINE.md`](SHIN2026_BASELINE.md). It consumes a raw 512×320
+grayscale frame plus UAV body velocity and attitude only.
+`/landing_pad/state/odom`, deck GNSS, wheel odometry, V2V velocity, marker pose,
+and simulator pad truth do not enter the actor.
+
+All three primary pipelines use the same frozen six-keypoint encoder, 512-unit
+LSTM, 256-D latent, `y[6:256] + proprioception` actor features, four
+velocity/yaw-rate actions, and an asymmetric training critic. Only `shin_se`
+constructs a six-state head on `y[0:6]` and uses its auxiliary MSE and
+active-perception reward.
+
+`onto_no_se` builds eight bounded, non-metric observations from keypoints,
+heatmaps, UAV proprioception, and battery reserve. These become 13 nodes,
+12 semantic edges, 13 self-loops, four relation types, and 19 features per
+node. Two 24-wide R-GAT layers read `SafeLanding`; their direct output is
+frozen for PBRS. No distilled linear coefficient vector is used in the primary
+method.
+
+The default world is the Meta-Sejong S5/Gwanggaeto asset rather than the
+synthetic city described above. A RANGER MINI follows the audited 37-point,
+99.70 m closed road loop at 0.25–0.60 m/s. The 1.5×1.5 m deck carries 45 ArUco
+tags across three physical scales. The offline mesh audit is shown below.
+
+![Primary S5 road and UGV route](images/metasejong_gwanggaeto_ugv_route.png)
+
+### Primary reset and recovery path
+
+The UAV is staged airborne and PX4 flies to a camera-centred pad-relative
+entry hover. Handover requires bounded position error, speed no greater than
+0.40 m/s, and a marker seen within the preceding 2.0 s for a 1.0 s continuous
+settle. The UGV stays parked during estimator initialization/climb and moves
+only after policy handover.
+
+During a measured episode the gateway owns the Offboard stream. A missed
+learner action deadline is converted to a position hold in SITL so optimization
+does not turn an unfinished episode into an unrelated Offboard-loss landing.
+The gateway still reports PX4 failsafe reasons. A pure Offboard-heartbeat loss,
+gateway timeout, or genuine simulated-clock stall is recoverable: the partial
+trajectory is discarded, a runner-owned stack is restarted, and the same seed
+is retried. Mixed or vehicle-safety failsafes remain hard failures.

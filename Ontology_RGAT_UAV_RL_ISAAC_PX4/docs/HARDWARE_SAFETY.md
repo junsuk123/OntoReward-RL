@@ -1,10 +1,19 @@
 # Hardware safety gate
 
-[System overview](SYSTEM_OVERVIEW.md) · [Architecture](ARCHITECTURE.md) ·
+[Documentation map](README.md) · [System overview](SYSTEM_OVERVIEW.md) · [Architecture](ARCHITECTURE.md) ·
 [Operations](OPERATIONS.md) · [References](REFERENCES.md)
 
 This code can command thrust. Hardware use requires an independent pilot and a
 tested manual takeover path.
+
+> **Current scope:** the primary recurrent `shin_se / no_se / onto_no_se`
+> runner is validated for SITL only. `python/run_hardware_policy.py` currently
+> loads the separate legacy cooperative policy
+> `results/models/ppo_rgats_pbrs_external.pt`; it does not load a primary
+> three-pipeline recurrent checkpoint. Do not rename or transfer a primary
+> checkpoint to bypass this boundary. A hardware deployment adapter for the
+> image/LSTM actor, its camera preprocessing, and a real flight validation plan
+> must be implemented and reviewed separately.
 
 - Remove propellers for all first communication, frame, estimator, and mode tests.
 - Set PX4 geofence, altitude limit, RC loss, data-link loss, and offboard-loss
@@ -103,9 +112,10 @@ and flies unattended.
 python3 python/run_hardware_policy.py
 ```
 
-It loads `results/models/ppo_rgats_pbrs_external.pt` and refuses a checkpoint
-whose observation width is not this configuration's 20: the old fixed-pad policy
-must never be transferred to a real vehicle.
+It loads the legacy cooperative
+`results/models/ppo_rgats_pbrs_external.pt`; the configured observation width
+is currently 23. `load_agent` checks that schema before applying weights, so an
+old fixed-pad model or primary recurrent model cannot be silently transferred.
 
 The hardware script never sends an arm command. It reads state first, waits for
 `battery.source=px4`, and errors out unless the vehicle is *already* armed
@@ -123,3 +133,8 @@ must be configured to react safely to offboard loss; the gateway cannot
 substitute for autopilot failsafes. The simulator's roof-contact topic is not a
 hardware safety input: unless a real, independently validated pad switch is
 integrated, hardware touchdown continues to depend on PX4's land detector.
+
+SITL's automatic episode recovery is also not a hardware feature. Hardware
+gateway timeouts, Offboard loss, estimator faults, and battery warnings must
+yield to the configured PX4/pilot safety path; no software loop should
+auto-restart or retry a real flight.

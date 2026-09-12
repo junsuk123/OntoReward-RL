@@ -1,512 +1,288 @@
 # Operations
 
-[System overview](SYSTEM_OVERVIEW.md) · [Architecture](ARCHITECTURE.md) ·
-[Hardware safety](HARDWARE_SAFETY.md) · [References](REFERENCES.md)
+[Documentation map](README.md) · [System overview](SYSTEM_OVERVIEW.md) ·
+[Architecture](ARCHITECTURE.md) · [Hardware safety](HARDWARE_SAFETY.md)
 
-## Upgrading a running stack to the urban environment
+This runbook covers the primary controlled three-pipeline experiment. Legacy
+cooperative-urban commands and output paths are listed separately at the end.
 
-Nothing in a live stack picks these changes up on its own. A session started
-before them keeps running the old code and fails in ways that look like bugs
-elsewhere, so bring all four pieces forward together. This applies to the move
-into the city as much as it did to the moving pad: the buildings, the road route
-and both GNSS receivers are all created at Isaac startup.
+## Canonical launch
+
+From the Git repository root:
 
 ```bash
-./scripts/bootstrap_px4_ros2.sh     # re-mirrors the gateway, rebuilds PX4
-# then stop and restart the agent, Isaac and the gateway
+./run.sh
 ```
 
-When only the gateway has changed, `./scripts/sync_gateway.sh` re-mirrors and
-rebuilds that one package in a second, which is the whole of the bootstrap that
-a Python-only edit needs.
-
-| Piece | Why it has to be redone |
-|---|---|
-| `ros2_ws/src/ontology_rgat_px4` | The gateway runs from the ASCII mirror, which is a *copy*. Until the bootstrap re-mirrors it, the old gateway still reports world-frame position and no `pad`/`battery`, and `bridge.PX4Bridge` refuses it by design. |
-| PX4 SITL | `battery_status` is new in `patches/px4-v1.14-publish-land-detected.patch`, and the client's topic table is generated from `dds_topics.yaml` at build time. The bootstrap now also forces a rebuild whenever that yaml is newer than the binary, so a hand-applied patch cannot leave a stale build behind. |
-| Isaac / `landing_world.py` | The city prims, the deck prim, its collider, `/landing_pad/state/odom`, `/landing_pad/state/odom_truth` and `/landing_uav0/gnss/status` are all created at startup. A running instance has no city and no receivers, so the policy would be told it has open sky over an empty plane. |
-| Trained checkpoints | `results/models/*.pt` from before the city have 20-element observations and a 13-node ontology. `load_agent`/`load_potential` refuse them on their dimensions; retrain, never transfer. |
-
-Two failures are the signature of a half-upgraded stack:
-
-- `Gateway state is missing field pad` from the learner: the mirror was not
-  rebuilt.
-- `no /landing_pad/state/odom has arrived` in the gateway log while
-  `pad.motion` is not `static`: Isaac was not restarted. The gateway then
-  reports `estimator_valid` false rather than pretending the deck is at the
-  origin, so episodes refuse to start instead of quietly training against the
-  wrong target.
-- `no /landing_uav0/gnss/status has arrived` while `gnss.enabled` is true: the
-  same cause. Here the gateway cannot refuse to run — a missing fix is not a
-  link fault — so it logs the error once and reports open sky. An urban run
-  whose GNSS integrity sits at 1.00 for the whole episode is this, not a lucky
-  street.
-
-Trained artefacts do not carry over either. The observation is 23 elements and
-the ontology has 14 nodes, so a policy or potential from the fixed-pad or
-open-field runs is not loadable; the entry points assert the dimensions instead
-of letting a mismatched model run.
-
-## A black Isaac window with only the overlay line in it
-
-The city is collidable and the streets are 19 m wide, so the GUI chase camera
-can end up *inside* a facade. Nothing renders from in there, but
-`isaac_sim/live_overlay.py` draws through the debug-draw extension, which
-ignores depth and lighting — so the drone-to-pad vector stays visible and the
-window looks like a simulator that has failed to load the world. It has not.
-
-`isaac.viewport_follow.frame: street` expresses the offset as
-`[along the road, across, up]` in the lorry's own heading frame, so the camera
-sits back down the carriageway, which is the one direction a canyon leaves
-open. `UrbanLayout.clear_viewpoint` then pulls the eye in along its own ray
-until it is clear, which covers the outside of a corner, where the
-instantaneous tangent points into the corner building.
-
-If you configure `frame: world`, check the offset against the street: a
-horizontal reach longer than `urban.road_half_width_m + urban.sidewalk_m`
-(9.5 m as shipped) will bury the camera on a straight.
-
-## The ROS 2 workspace is built somewhere else
-
-`scripts/bootstrap_px4_ros2.sh` does **not** build `ros2_ws/` in place. Humble's
-`rosidl` dependency parser corrupts non-ASCII source and build paths, and this
-workspace lives under a path with Korean characters, so the bootstrap mirrors
-`ros2_ws/src/px4_msgs` and `ros2_ws/src/ontology_rgat_px4` into an ASCII-only
-runtime workspace and builds there:
+The root wrapper is the authoritative launcher. With no arguments it adds:
 
 ```text
-$ASCII_ROS2_WS  (default /home/$USER/.local/share/ontology_rgat_uav_rl/ros2_ws)
+--mode full
+--total-train-episodes 800
+--eval-episodes 5
+--rgat-data-episodes 40
 ```
 
-`scripts/run_gateway.sh`, `scripts/check_ros2_loopback.sh` and
-`scripts/stack_status.sh` source `$ASCII_ROS2_WS/install/local_setup.bash`. Two
-consequences:
-
-- Editing `ros2_ws/src/ontology_rgat_px4/**` changes nothing until the mirror is
-  refreshed, because it is a copy. `colcon build --symlink-install` inside the
-  mirror only symlinks within the mirror.
-- `ROS workspace is not built` from `run_gateway.sh` usually means the mirror is
-  missing or was built under a different `$USER`/`$ASCII_ROS2_WS`, not that
-  `ros2_ws/` is empty.
-
-`scripts/sync_gateway.sh` owns both halves of that:
+After the 8-flight `shin_se` estimator warm-up, the remaining 792 PPO flights
+divide evenly into 264 per pipeline. The semantic-data collector may extend
+from 40 to 120 real flights if its minimum set contains only one terminal
+class. Evaluation is 105 flights: three pipelines, seven scenarios, and five
+paired seeds.
 
 ```bash
-./scripts/sync_gateway.sh            # re-mirror and rebuild the gateway package
-./scripts/sync_gateway.sh --check    # report drift, change nothing
+./run.sh --mode quick --headless
+./run.sh --mode full --pipelines shin_se no_se onto_no_se
+./run.sh --mode full --training-replicate 2 \
+  --train-episodes 40960 --rgat-data-episodes 400
 ```
 
-`run_gateway.sh` and `check_ros2_loopback.sh` run `--check` before they start a
-gateway and refuse if the mirror has fallen behind, printing what differs and
-the command that fixes it. That guard exists because the failure it prevents is
-so far from its cause: a stale gateway boots cleanly, and the mismatch only
-surfaces as a `BridgeError` several minutes into a run, after Isaac has come up
-and the stack has retried the reset twice. The check compares the repository
-against the package Python actually imports, so it also catches a mirror that
-was refreshed but never rebuilt, and it stays quiet on an ASCII path where the
-workspace is built in place and there is no copy to fall behind.
+Do not start a second launcher. The root script holds
+`/tmp/ontology_rgat_flight_pipeline.lock`; a competing process exits with code
+73 before touching the runtime or results. The PID and command in the error are
+the existing owner, not a stale guess. A crashed owner releases the lock
+automatically.
 
-Every consumer of `/fmu/*` must use Fast DDS, because that is what the agent
-speaks. The run scripts export `RMW_IMPLEMENTATION=rmw_fastrtps_cpp` and unset
-`CYCLONEDDS_URI`; an interactive shell with a different default sees the topics
-but reads nothing from them.
+## Read-only health check
 
-## Startup order
+Use these while training is running; none resets the vehicle:
 
-1. Start QGroundControl or ensure PX4's RC/GCS arming checks are intentionally
-   configured for the test.
-2. Start the Micro XRCE-DDS Agent on UDP 8888.
-3. Start Isaac/Pegasus. Pegasus auto-launches PX4 SITL and owns TCP 4560.
-   `scripts/run_isaac.sh` opens a window unless `HEADLESS=1`. The world renders
-   once per `isaac.rendering_dt` rather than once per physics step; rendering
-   every step drives the frame rate to the physics rate and, because PX4 is
-   lockstepped to the simulator, slows the flight stack itself. With
-   `vision.mode: aruco` the world still renders in a headless run, because the
-   pad camera only produces an image on a rendered frame.
-   `metasejong-pipeline.yaml` gives GUI runs a 960x540, 20 Hz operator view and
-   camera stream while leaving physics/HIL at 250 Hz; headless runs retain the
-   60 Hz ZED stream. Before the gateway attaches, GUI rendering is temporarily
-   reduced to 2 Hz so PX4 can finish EKF/preflight initialization promptly.
-4. Confirm `/fmu/out/vehicle_odometry`, `/landing_uav0/state/pose`, and
-   `/landing_pad/state/odom` are live.
-5. Start the gateway.
-6. Run `python3 python/run_episode.py --policy expert`, then one deterministic
-   evaluation episode.
+```bash
+cd Ontology_RGAT_UAV_RL_ISAAC_PX4
+./scripts/stack_status.sh
+curl -fsS http://127.0.0.1:8770/api/state
+ps -eo pid,etime,state,%cpu,%mem,cmd | \
+  grep -E '[r]un_three_pipeline|[l]anding_world|[r]os2_gateway|[M]icroXRCEAgent'
+```
 
-`ontology_rgat.stack.ExternalStack` automates exactly this order and waits on one readiness
-signal per stage. Knowing which signal it waits for is what makes a startup
-timeout diagnosable:
+Healthy primary-runtime signals are:
 
-| Stage | Readiness signal | Default budget |
+- DDS bound on UDP 8888;
+- gateway bound on UDP 14650;
+- dashboard bound on TCP 8770 unless explicitly disabled;
+- `landing_world.py`, PX4, gateway, and learner processes alive;
+- `/fmu/out/vehicle_odometry` rate changing;
+- dashboard `active episode` or `live episode step` changing during flight;
+- the pipeline checkpoint/history timestamp advancing after each committed
+  episode.
+
+The committed episode count changes only after a complete episode, optimizer
+update, checkpoint write, and history write. A 30 s simulated episode may take
+longer than 30 s of wall time in the rendered S5 scene. During that interval,
+use `active episode` and `live episode step`; an unchanged committed count alone
+is not evidence of a stall.
+
+![MATLAB-style live status](images/live_dashboard_status.png)
+
+The image is actual in-progress telemetry captured on 2026-09-12, not a final
+success-rate result.
+
+## Startup ownership
+
+The runner starts in this order:
+
+| Component | Readiness | Default endpoint |
 |---|---|---|
-| DDS agent | UDP 8888 bound (`ss -lnu`) | 30 s |
-| Isaac + PX4 SITL | `Ready for takeoff` in `isaac.log` | 1200 s GUI / 600 s headless |
-| Gateway | UDP 14650 bound | 60 s |
+| Micro XRCE-DDS Agent | UDP socket bound | 8888/UDP |
+| Isaac Sim + Pegasus + PX4 | PX4 log contains `Ready for takeoff` | Pegasus owns PX4 link |
+| ROS 2 gateway | UDP socket bound plus DDS discovery grace | 14650/UDP |
+| dashboard | local HTTP bind | 8770/TCP |
+| RViz 2 | process launch in graphical mode | `/landing_rl` topics |
 
-Each stage is skipped and adopted if it is already up — a UDP port already bound,
-or a running `landing_world.py` — and an adopted process is never stopped on
-teardown: a session started by hand belongs to whoever started it. Logs, pid
-files and the generated launchers are written to `/tmp/ontology_rgat_stack/`.
+An already compatible process is adopted and is not stopped on teardown. A
+process started by the current runner is owned and is stopped when the run
+finishes unless `--keep-stack` is supplied. Recovery can restart only an owned
+stack; the code will not kill a hand-started simulator.
 
-One launch detail matters if a process is started any other way: each child is
-launched in its own session (`start_new_session`), so teardown can signal the
-whole process group and Pegasus' PX4 child goes down with Isaac instead of
-holding TCP 4560 against the next run.
+Runtime logs are:
 
-The MATLAB version of this class additionally had to scrub `LD_LIBRARY_PATH`,
-`LD_PRELOAD`, `QT_PLUGIN_PATH`, `QT_QPA_PLATFORM_PLUGIN_PATH` and `GTK_PATH` out
-of every child's environment, because MATLAB prepends its own runtime to the
-loader path and that breaks ROS 2 and Isaac. A plain Python process does not, so
-children now inherit the environment they would get from a terminal.
-
-For hardware, replace step 2 with
-`scripts/run_dds_agent.sh serial --dev /dev/ttyUSB0 -b 921600`, configure the
-flight controller's `uxrce_dds_client` for the same serial link, omit Isaac, and
-start the gateway with `--target hardware`.
-
-## Reset semantics
-
-`reset` is accepted only for `target=sitl`. The gateway publishes a seeded reset
-request on `/landing_sim/reset` and waits for Isaac's matching acknowledgement on
-`/landing_sim/reset_ack`. What it does with the vehicle first depends on where the
-vehicle is:
-
-- landed: disarm.
-- airborne: command `NAV_LAND`, and log that it did. Cutting power to an airborne
-  vehicle used to be harmless because Isaac teleported it anyway; it no longer
-  does, so a mid-flight reset has to be a commanded landing. The climb that
-  follows simply takes control back.
-
-The learner does not treat a raw height threshold as a successful landing. It
-requires an airborne transition, a valid sensor-derived pad stream and an
-authoritative touchdown signal. In SITL that signal is the physical roof
-contact sensor; it is necessary on a moving lorry because PX4 observes world
-velocity rather than velocity relative to the deck. The sensor is armed only
-after PX4 reports airborne and the simulator confirms at least 0.5 m of roof
-clearance, which rejects contact bounce during takeoff, and then latches the
-next pad contact through bounce and disarm. A static-pad PX4 land-detector result is
-also accepted, and hardware continues to use that path when no physical pad
-switch is installed.
-
-Ground contact without pad confirmation is logged as `ground_mislanding`;
-excessive tilt/closing speed is `unsafe_touchdown`, and energy exhaustion is
-`battery_depleted`. A confirmed contact immediately disables offboard control
-and, in SITL, requests force-disarm because PX4 can reject an ordinary disarm
-while the moving roof still has world velocity. The vehicle therefore changes
-to a landed state and stops rather than continuing the policy. The learner waits up to
-`cfg.external.outcome_settle_timeout` seconds for landed plus disarmed before
-issuing the next reset. An unconfirmed stop is marked `unconfirmed_*` rather
-than being silently reset. The roof's configured static/dynamic friction is
-2.0/1.6 with maximum friction combination and zero restitution, suppressing
-bounce and inertial sliding on the truck.
-
-The learner's `sensor` state is the only input to control, semantics, rewards,
-R-GAT and PPO. `ground_truth` state is kept for validation and comparison
-outputs only; it must not be added to observations or training datasets.
-
-Isaac reseeds the wind, deck, battery and both GNSS receivers together.
-`wind_scale` multiplies the wind field; `pad_scale` multiplies the speed selected
-for the seeded deck trajectory (zero parks the lorry, the static control);
-`gnss_scale` multiplies the canyon's error mechanisms and moves no building, so
-zero is open sky in the same city.
-
-`pad.route_start` decides where on the lap an episode begins. `continue` (the
-default) leaves the lorry where it is and reseeds only how it drives from
-there, so the deck pose is continuous across the reset to within a millimetre
-and the vehicle parked on it stays parked. `seeded` draws a fresh point on the
-route instead: that makes the deck's absolute position a function of the seed
-too, at the cost of teleporting it a mean of ~55 m away from the vehicle, which
-then has to chase it across the city before the episode can start. Under
-`continue` the lorry's position along the lap is the one part of the initial
-condition the seed does not fix -- it is inherited from the previous episode --
-so the canyon geometry an episode meets varies with history rather than with
-the seed. Everything that defines the task (speed, traffic, lane, entry offset,
-wind, energy, constellation) stays seeded either way. The entry is a **pad-relative** offset:
-lateral offsets from 1.8 m and 1.4 m Gaussians, altitude uniform in [4.0, 5.8] m
-above the lorry's roof, and roll/pitch/yaw from 4°/4°/12° Gaussians. The
-acknowledgement also carries the seeded 9–55 hover-second starting reserve and
-the episode's opening fixes. Isaac does **not** teleport the UAV.
-
-The entry pose is then flown by PX4: the client sends a pad-frame `goto` with the
-seeded offset and yaw, and the gateway recomputes the world-frame
-`TrajectorySetpoint` from the live deck every control tick. It arms — retrying
-every `cfg.external.armRetry` seconds, because PX4
-rejects arming in transient pre-flight states — and the client hands over to the
-policy only once PX4 holds that point inside
-`entryTolerance`/`entrySpeedTolerance` for `entrySettle` seconds. The first
-`action` message switches the gateway back to attitude offboard control, ends
-the climb, and starts the seeded energy budget. `cfg.external.entryTimeout` is
-90 s because it has to outlast PX4's
-roughly 40 s post-boot arm refusal as well as the climb.
-
-Teleporting is not an option. Pegasus' `PX4MavlinkBackend.reset()` is a
-documented no-op, so PX4's EKF integrates straight through any pose jump: a
-4.6 m teleport was measured to leave the estimator reporting −1.5 m and still
-6 m short of truth several seconds later, while the disarmed vehicle free-fell
-back to the pad. Because the controller is contractually fed PX4 estimator data,
-that made every episode meaningless. An **airborne** vehicle is therefore left
-exactly where the previous episode ended, always.
-
-A **grounded** one is re-seated on the lorry's roof, and the acknowledgement
-reports it as `reseated_on_deck`. Two things make that necessary and one makes
-it cheap. The deck is redrawn with a new cruise speed at every reset, and a
-kinematic body whose speed steps in a single physics tick shears whatever is
-resting on it, so a vehicle that landed successfully can be left sliding off
-the back. It may also have ended the last episode beside the lorry rather than
-on it, or tipped past `landing.crash_tilt_deg`, which no climb recovers from.
-What makes it cheap is `pad.route_start: continue`: the deck no longer
-teleports between episodes, so the correction is sub-metre and the estimator
-step is far smaller than the GNSS error this environment models in any case.
-
-Three consequences to keep in mind when comparing runs:
-
-- Each reset costs a real-time climb of several seconds, so external `full`
-  sweeps are much slower than the in-process simulator.
-- Entry *position* and *yaw* are reproduced from the seed. Entry roll, pitch and
-  velocity are whatever PX4 settles at, not the seeded small perturbations of
-  the original reset: `entry_rpy_deg` is reported in the acknowledgement but only
-  its yaw component is flown.
-- The episode clock starts at handover, not at the reset, and runs on PX4's
-  simulated clock. SITL battery integration uses the same clock and deliberately
-  does not charge the pre-episode climb to either policy.
-
-Never compare two policies unless both received successful reset
-acknowledgements and reached the entry pose.
-
-## Long sweeps
-
-PX4 SITL degrades over hours of lockstep: `battery_status` goes stale and
-arming is refused with `Preflight Fail: Battery unhealthy`. That surfaces as a
-reset that never reaches the entry pose. When `run_pipeline` owns the simulator
-it registers it via `stack.current`, and `sim.resetState` then cycles the
-simulator and retries up to `cfg.external.resetRecoveries` (2) times rather than
-throwing away the run. A stack started by hand is never restarted from under the
-user — the retry is skipped and the error propagates.
-
-`pipeline.runAll` writes each stage's artefact before the next stage begins, so a
-failure late in a long sweep does not discard the hours before it.
-
-## R-GAT CPU/GPU selection
-
-The local relation layer evaluates all nodes, edges, and batch entries in one
-dense batched pass over the whole minibatch of graphs. The 13-node graph is too
-small to fill a GPU on its own, so the win comes from batching graphs and from
-not stalling the launch queue between batches: the trainer uploads the dataset
-once, keeps the shuffle and the loss accumulation on the device, and enables
-TF32. An RTX 4060 laptop measured about 0.9x/1.5x/6.6x/13.4x/20.4x GPU speed at
-batches 32/64/128/1024/4096, so automatic placement uses a threshold of 64.
-Override with `cfg.device.rgat` (`'auto' | 'cuda' | 'cpu'`, or `--rgat-device`),
-and benchmark the current hardware with:
-
-```bash
-python3 python/run_benchmark.py --batches 32 64 128 1024 4096
+```text
+/tmp/ontology_rgat_stack/agent.log
+/tmp/ontology_rgat_stack/isaac.log
+/tmp/ontology_rgat_stack/gateway.log
 ```
 
-Changing `cfg.rgat.batch_size` changes the number of optimizer updates. Record it
-as a hyperparameter and retrain both compared conditions consistently -- which is
-why `'auto'` declines below the threshold rather than rebatching to reach it.
-The PPO actor/critic update was measured at about 2 s per 2048 collected steps;
-collecting those steps takes about 41 s of lockstepped flight. Its 64-sample
-networks therefore remain on CPU because GPU placement would not materially
-change the end-to-end runtime.
+## Dashboard and RViz
 
-## The city the episode is flown in
+Open <http://127.0.0.1:8770/>. The primary view shows:
 
-`urban.source` decides where the skyline comes from.
+- stage and phase;
+- current pipeline and state-estimation status;
+- committed training total, active episode, and live step;
+- paired-evaluation progress and scenario;
+- target visibility, UAV/UGV speed, and battery energy/reserve;
+- optimizer phase, effective learning rate, curriculum, UGV motion scale, and
+  UAV action envelope;
+- reward-design flight/sample/class counts and R-GAT diagnostics when those
+  stages begin;
+- moving landing success as the primary learning curve;
+- episode return explicitly labeled diagnostic.
 
-- `synthetic` generates the block from `config/system.yaml`. Its geometry is
-  exactly known, which is why the occlusion tests use it, and it stays the
-  control condition.
-- `osm` builds it from a cached OpenStreetMap extract under `assets/city/`.
-  Fetch one with
+Per-pipeline chips report committed counts without inventing equal targets:
+the run-wide denominator contains a `shin_se`-only warm-up and therefore cannot
+be divided honestly by three.
 
-  ```bash
-  scripts/fetch_city.py --name seoul-myeongdong \
-      --latitude 37.5636 --longitude 126.9850 --radius 300
-  ```
+RViz starts automatically unless `--headless` or `--no-rviz` is used. It shows
+the vehicle, UGV/deck, road route, trails, terminal marker, and annotated
+landing camera. An empty camera display means no image topic; `PAD NOT
+DETECTED` means the image is present but the board solve failed.
 
-  then point `urban.extract` at the name and `urban.origin` at the same
-  latitude/longitude. The origin is not decoration: PX4's home, every lat/lon
-  on the wire and the constellation's elevations all come from it.
+If 8770 is already occupied, the runner continues with metric collection but
+prints that the live dashboard is disabled. Either stop the old owner or use:
 
-The simulator only ever reads the cached file, so a run reproduces from the
-extract rather than from whatever Overpass returned that morning. Extracts are
-small enough to commit next to the results they produced. OpenStreetMap data is
-© OpenStreetMap contributors, ODbL 1.0, and the extract carries that
-attribution.
+```bash
+./run.sh --dashboard-port 8771
+```
 
-Two things a real extract needs watching for:
+## Reset and entry hover
 
-- **Heights.** Most OSM buildings outside the dense cores carry no height tag
-  at all -- 284 of 349 in the first Seoul extract. Those are drawn from
-  `urban.height_range_m`, seeded, because one default flattens the skyline into
-  a wall of equal blocks and the canyon stops varying along the lap. Mapped
-  heights are always used when present.
-- **The carriageway.** The lap is a rectangle imposed on the map, not a road
-  traced from it, so buildings within `urban.route_clearance_m` of the route
-  centreline are dropped. Check `sky_view_fraction` around the lap after
-  changing site or `map_heading_deg`: if it never varies there is no canyon to
-  measure, and if it reads 0.0 the route is inside a building.
+Every measured episode starts only after a physical PX4-controlled handover:
 
-## Failure diagnosis
+1. Isaac reseeds platform motion, camera/environment state, and battery.
+2. A grounded UAV is re-seated on the deck; an airborne UAV is not teleported.
+3. The UGV remains parked during estimator startup and initial climb.
+4. The gateway continuously transforms the pad-relative entry target to a
+   world-frame PX4 position setpoint.
+5. PX4 arms and flies to the camera-centred hover.
+6. The client requires entry-position tolerance, speed at most 0.40 m/s, and a
+   marker detection seen within the last 2.0 s for a continuous 1.0 s hold.
+7. The first policy action changes the control source from `goto` to action
+   setpoints, releases UGV motion, and starts the measured battery budget.
 
-- UAV motionless while the run prints `R-GAT epoch`: this is the offline
-  R-GAT training stage. Isaac/PX4 stays online and the disarmed vehicle
-  waits on the pad until PPO flight starts. Run `scripts/stack_status.sh`; a
-  changing odometry stream confirms the simulation loop is healthy.
-- `no /fmu/out/vehicle_land_detected received`: PX4 was built without
-  `patches/px4-v1.14-publish-land-detected.patch`. The gateway reports
-  `extra.land_detector: "missing"`. SITL can still confirm a moving-deck
-  touchdown from `/landing_uav0/perception/pad_contact`, but static-pad and
-  hardware fallback plus complete flight-state telemetry require the patch.
-  Re-run `scripts/bootstrap_px4_ros2.sh` and rebuild PX4.
-- `success` remains zero despite reaching the deck: inspect
-  `/landing_uav0/perception/pad_contact` and
-  `/landing_uav0/perception/pad_contact_force`, then check the state reply's
-  `extra.pad_contact` and `extra.touchdown_source`. A contact that occurs before
-  the armed UAV clears the roof is intentionally ignored as the initial parked
-  state; a later roof contact must latch with source `pad_contact`.
-- A baseline run that repeatedly misses a fast lorry: the default seeded range
-  is 1–3 m/s so localization/reward learning dominates ordinary runs;
-  `external.pad_scale` sweeps multiply it for the high-speed stress cases.
-- `extra.land_detector: "stale"`: the topic exists but has gone quiet within
-  `system.state_timeout_s`. Usually the simulator is starved, not the detector.
-- `pad.motion is ... but no /landing_pad/state/odom has arrived`: do not run a
-  moving-target policy. Restart Isaac with the current `landing_world.py`; on
-  hardware, start the cooperative UGV localization publisher. The gateway marks
-  the state invalid instead of subtracting a stale target.
-- State lacks `position_frame`, `pad`, `battery` or `gnss`: the gateway or fake
-  predates the contract this learner speaks. For the ASCII mirror the fix is
-  `./scripts/sync_gateway.sh` with the stack stopped; editing the source tree
-  alone does not update the build. The launchers now refuse to start a gateway
-  that has drifted, so this should only be reachable from a fake gateway or a
-  hand-started `ros2 run`.
-- No `/fmu/out/*`: check the DDS agent and that PX4 `uxrce_dds_client` targets
-  UDP port 8888. If the topics exist but read as empty, the client is almost
-  certainly on a different RMW: the agent speaks Fast DDS, so every consumer
-  needs `RMW_IMPLEMENTATION=rmw_fastrtps_cpp` and no `CYCLONEDDS_URI`. The run
-  scripts set this; an interactive shell may not.
-- `Compass needs calibration - Land now!` / `Failsafe activated` mid-climb,
-  usually behind `Preflight Fail: horizontal velocity unstable` and
-  `velocity estimate error`: PX4 levelled its estimator while the lorry carried
-  it off. The lap is therefore held until the drone is more than a metre above
-  the roof (`LandingDeck.hold`/`release_when_clear`), and a reset that re-seats
-  the vehicle parks it again. If this returns, check that `_advance_deck` is
-  still releasing on vehicle altitude rather than on the clock: a deck that
-  drives while PX4 boots poisons the EKF, and the failsafe that follows takes
-  the vehicle out of offboard in mid-climb -- it flies up and then falls away
-  from the pad, which reads like a wind problem and is not one.
-- `goto hold expired without handover; commanding a landing`: the entry climb
-  ran out its `external.entry_timeout` before the learner sent an action. The
-  gateway now puts the vehicle down rather than going quiet under it, so the
-  reset retry starts from a vehicle on the deck. The cause is upstream --
-  arming refused, offboard never accepted, or an entry pose PX4 cannot reach.
-- `PX4 did not hold the entry pose`: the climb never converged. Check that the
-  gateway logged no `goto hold expired`, that PX4 reached `OFFBOARD`
-  (`nav_state` 14, or `extra.offboard_active`), and that `estimator_valid` is
-  true — the gateway reports false whenever PX4's own `vehicle_local_position`
-  validity flags are down, which is the honest answer during an EKF transient.
-- Offboard rejected: the gateway already re-requests the mode every
-  `control_hz/2` ticks while streaming setpoints, so a persistent refusal is
-  PX4's, not a missed request. Check QGC/RC and `extra.last_command`, which
-  carries the command id and PX4 result code from `vehicle_command_ack`; the
-  rejection is also logged with its reason.
-- `PX4 simulated time advanced only … ms`: a small non-negative value means the
-  simulator genuinely stopped advancing; look at Isaac's log and frame rate.
-  Older builds could report an epoch-sized negative value after PX4 logged
-  `Time jump detected`; that was an XRCE-DDS timesync-domain reset, not a
-  physics stall. The gateway now normalizes that rebase and the bridge retains
-  a defensive re-anchor for an adopted older gateway.
-- Vehicle dives: verify NED/ENU conversion and negative Z body thrust; do not
-  compensate by flipping gains. If the expert controller touches down hard,
-  suspect `px4.hover_thrust` first and re-run `tools/calibrate_hover_thrust.py`.
-- Immediate `battery_depleted`: distinguish the experiment's seeded SITL energy
-  model from PX4's preflight battery health. Inspect state `battery.source`,
-  `hover_seconds_remaining`, and `extra.px4_battery`; the modeled episode budget
-  starts only on the first action.
-- Isaac waits for heartbeat: TCP 4560 is occupied or PX4 model/instance does not
-  match Pegasus.
-- `Landing camera is not looking down` / `produced no frame`: the camera stage
-  setup failed. Dump frames with
-  `ONTOLOGY_RGAT_VISION_DEBUG_DIR=/tmp/frames` — it is the only way to tell "no
-  image" from "no marker in it".
-- `RViz 2 publishing disabled: ROS 2 is not importable`: the learner was started
-  without `/opt/ros/humble/setup.bash` sourced. Training continues without the
-  live view; source it and restart to get one. The same applies to
-  `cannot bind 127.0.0.1:8770` for the dashboard, where the usual cause is a
-  previous run that has not exited.
-- Gateway timeouts: keep gateway and learner hosts/ports consistent and allow UDP
-  only on the loopback interface for a single-machine run. The gateway binds
-  14650 without `SO_REUSEADDR` on purpose, so a second gateway fails to start
-  instead of silently stealing the control link.
+Teleporting the airborne UAV is intentionally forbidden: PX4's EKF integrates
+through the discontinuity and would make subsequent observations physically
+meaningless. A failed entry gate is setup failure, not a training sample.
 
-## Where the output goes
+Between PPO episodes, the gateway holds an unfinished airborne vehicle at a
+bounded position while optimization runs. This prevents an action deadman from
+dropping PX4 into a landing mode before the next reset.
 
-Everything lands under `results/` (`cfg.paths.*`), which is git-ignored:
+## Checkpoint and retry behavior
 
-| Path | Written by |
+Each complete recurrent episode atomically commits:
+
+- model weights;
+- Adam state;
+- curriculum state;
+- completed episode number;
+- configuration hash and pipeline contract;
+- reward-design hash where applicable;
+- training history CSV.
+
+Compatible state resumes. An incompatible checkpoint is renamed
+`*.incompatible-<old-hash>.pt` with its history and training starts under the
+new configuration. It is never silently transferred across an information
+boundary.
+
+`collect_episode_resilient` retries only recoverable infrastructure failures:
+
+- learner/gateway timeout;
+- simulator clock that genuinely stops advancing;
+- gateway-classified pure PX4 Offboard heartbeat loss.
+
+The partial trajectory is discarded, an owned stack is restarted, and the same
+seed is retried within the configured recovery count. This avoids a paired-seed
+bias. Other PX4 failsafes and estimator, marker, geometry, policy-health, or
+terminal failures are not treated as infrastructure recovery.
+
+## Fault diagnosis
+
+| Symptom | Meaning and action |
 |---|---|
-| `results/data/rgat_dataset_external.npz` (+ `.graph.pkl`) | stage 2, dataset generation |
-| `results/models/rgat_model_external.pt` | stage 3, R-GAT safe-landing outcome model (CPU float32, with the schema it was trained against) |
-| `results/models/rgat_fixed_reward_external.json` | stage 4, frozen R-GAT-distilled reward coefficients, ranges and provenance |
-| `results/rgat_fixed_reward_weights.csv` | stage 4, tabular fixed coefficients and R-GAT sensitivities |
-| `results/models/ppo_manual_external.pt` | stage 5, baseline PPO |
-| `results/models/ppo_rgats_pbrs_external.pt` | stage 6, proposed fixed-reward PPO |
-| `results/comparison_results_external.pkl`, `summary_metrics_external.csv`, `episode_metrics_external.csv` | stage 7, paired evaluation |
-| `results/wind_generalization_sweep.csv` | stage 7, Isaac wind sweep |
-| `results/pad_speed_sweep.csv` | stage 7, paired moving-deck speed sweep |
-| `results/battery_reserve_bins.csv` | stage 7, paired outcomes binned by starting reserve |
-| `results/paired_difference_ci.csv` | proposed-minus-manual paired 95% intervals, including relative speed, depletion and energy |
-| `results/optimization_acceptance.json` | stage 7, reward-success and R-GAT-consistency gates; both must pass |
-| `results/figures/*.png` | stage 8, publication figures |
-| `results/run_summary.json` | stage 8, elapsed time, fixed weights and dual-gate result |
-| `results/live/*.png`, `results/live/*.csv` | live snapshots during dataset generation, R-GAT training and both PPO runs |
+| `another ... pipeline is already active` | The lock is protecting a live owner. Inspect the reported PID; do not launch a competitor. |
+| Completed count appears frozen | Check `active episode`, `live episode step`, process state, and odometry. A rendered flight commits only at episode end. |
+| Dashboard says `debug`/return only | Refresh the browser after current code is running. The primary chart is training success; return is diagnostic. An adopted older process cannot load edited HTML until restarted. |
+| `cannot bind 127.0.0.1:8770` | Another dashboard owns the port. Find its PID with `ss -ltnp` or use `--dashboard-port`. |
+| `PX4 did not hold the entry pose` | Inspect reported offset, speed, and marker quality; then gateway/PX4 logs. The S5 profile admits the measured hover limit cycle up to 0.40 m/s and remembers a recent detection for 2 s. |
+| `PX4 estimator state is not valid yet` | PX4 local position/velocity validity or freshness is false. Do not bypass it; inspect startup/odometry rate and PX4 preflight messages. |
+| `PX4 simulated time advanced only ...` | A small non-negative advance is a real simulator stall. The current bridge also re-anchors an XRCE time-domain jump that older code misreported as a huge negative stall. |
+| `OFFBOARD_HEARTBEAT_LOSS` | The gateway classifies a pure setpoint-link interruption as recoverable in SITL. Other simultaneous failsafe reasons remain hard failures. |
+| UGV or UAV does not move during `R-GAT training` | R-GAT optimization is offline; no flight is expected. Flight resumes for `onto_no_se` PPO/evaluation. |
+| Target repeatedly not visible | Check the annotated camera topic, board textures, camera mount, and entry pose. The board contains far/mid/micro tags specifically for the full descent. |
+| `no /fmu/out/*` | Confirm DDS UDP 8888, PX4 uXRCE client, matching `px4_msgs`, Fast DDS RMW, and no `CYCLONEDDS_URI`. |
+| Gateway state lacks current fields | The ASCII ROS workspace contains stale copied source. Stop the stack, run `./scripts/sync_gateway.sh`, then restart. |
+| `Preflight Fail: Battery unhealthy` | Distinguish PX4 SITL's internal battery from the experiment pack. Current SITL clamps only PX4's unrelated internal pack; the 3S 3500 mAh experiment model still discharges and feeds R-GAT. |
+| No success although the deck was reached | Inspect pad-contact topic/source and touchdown physical limits. Height alone is never counted as success. |
+| Training health gate stops | The last configured window had no success and excessive FOV loss. This is deliberate protection against spending the remaining budget on blind rollouts. |
 
-`results/live/` is the one to watch during an unattended run with nothing else
-attached: the monitors export a PNG and a history CSV every `cfg.viz.live_every`
-episodes or epochs. While the run is up, the dashboard at
-`http://127.0.0.1:8770/` and RViz 2 (`./scripts/run_rviz.sh`) show the same data
-live.
+Useful direct probes:
 
-At the terminal sample RViz keeps a large outcome marker in the pad frame until
-the next episode starts. Green means a confirmed landing success, red means a
-failed landing/timeout, and amber means the geometric result was reached but
-the final PX4 landed/disarmed confirmation was not obtained. A coloured sphere
-marks the scored touchdown and a line to the pad origin shows the horizontal
-miss distance.
+```bash
+RMW_IMPLEMENTATION=rmw_fastrtps_cpp ros2 topic hz /fmu/out/vehicle_odometry
+RMW_IMPLEMENTATION=rmw_fastrtps_cpp ros2 topic hz \
+  /landing_uav0/perception/landing_camera/annotated
+python3 tools/protocol_probe.py state
+tail -n 100 /tmp/ontology_rgat_stack/gateway.log
+tail -n 100 /tmp/ontology_rgat_stack/isaac.log
+```
 
-The default RViz layout also opens **Landing camera (annotated detection)** on
-`/landing_uav0/perception/landing_camera/annotated`. Green outlines identify
-known pad tags; each outline carries its ArUco ID, and the header reports
-recognition state, confidence, reprojection error, largest tag size and the
-camera-derived UAV position in pad ENU. `PAD NOT DETECTED` in red means the
-camera is streaming but the board solve failed; an empty RViz display means the
-image topic itself is not arriving. This display is available only with
-`vision.mode: aruco`.
+## Primary output paths
 
-The dashboard's 3D ontology panel is published on the same throttle,
-`cfg.viz.graph3d.every` control steps during an episode and epochs during R-GAT
-training (`cfg.viz.graph3d.enabled: false` turns it off). Its snapshot travels
-in the `/api/state` payload alongside the series, so it needs no extra port and
-survives the SSH forward the rest of the dashboard uses. Before stage 3 finishes
-there is no trained model to ask, and the panel says so: it draws the schema
-with uniform edges and labels itself *schema only*.
+For the default run, use `results/three_pipeline/full/`:
 
-The adjacent **R-GAT-shaped RL reward** panel first waits for stage 4, then lists
-the eight frozen coefficients with their physical normalization ranges and the
-reward-design ID. Its surface visualizes
-`lambda * (gamma * Phi_w(s') - Phi_w(s))`. During manual and proposed PPO it is
-updated from the live control loop with base reward, shaping, final reward,
-`Phi_w(s)` and `Phi_w(s')`; the yellow point is the current proposed-policy
-transition. After stage 7, three gates show nominal reward success,
-cross-condition R-GAT consistency and the combined decision.
+| Path | When it appears |
+|---|---|
+| `manifest.json` | before the stack starts; updated through completion |
+| `evaluation/paired_plan.csv` | before training |
+| `models/shared/keypoint_encoder.pt` | after encoder preparation |
+| `models/<pipeline>/<pipeline>.pt` | after every committed training episode |
+| `models/<pipeline>/<pipeline>_training.csv` | after every committed training episode |
+| `training/<pipeline>.csv` | after that pipeline's requested training completes |
+| `rgat/semantic_rollouts.npz` | after each completed reward-design flight |
+| `rgat/semantic_rollout_episodes.csv` | reward-design per-flight outcomes |
+| `rgat/rgat_model.pt` | after direct R-GAT fitting/freezing |
+| `evaluation/per_episode.csv` | after each completed evaluation pair |
+| generated CSV/Markdown/figures | after report generation |
 
-## Reproducibility
+Replicates 1 and 2 write under `full/replicate_1/` and
+`full/replicate_2/`. The report generator discovers these directories and
+writes the hierarchical aggregate under `full/combined/`:
 
-Archive `config/system.yaml`, PX4 ULog, gateway JSONL log, Isaac version, Pegasus
-commit, PX4 commit, `px4_msgs` commit, Micro-XRCE-DDS-Agent version, the applied
-patches under `patches/`, `px4.hover_thrust` and the calibration that produced
-it, `pad.motion`/speed range, pack parameters and reserve range,
-`cfg.rgat.batch_size`, `cfg.device.rgat`, the R-GAT attention mode and head
-count, the checkpoint hashes under `results/models/`, `results/run_summary.json`,
-and the episode seed.
+```bash
+python3 python/generate_three_pipeline_report.py \
+  --results-dir results/three_pipeline/full
+```
+
+Archive the manifest, config files, Git commit, checkpoint hashes, software
+versions, GPU, wall-clock time, and raw per-episode records with any reported
+result.
+
+## Manual startup and maintenance
+
+The one-command runner is preferred. For component diagnosis only:
+
+```bash
+./scripts/run_dds_agent.sh
+ISAACSIM_PATH=/absolute/path/to/isaacsim \
+  ./scripts/run_isaac.sh config/shin2026-system.yaml
+./scripts/run_gateway.sh --config config/shin2026-system.yaml \
+  --target sitl --allow-arm
+./scripts/run_rviz.sh
+```
+
+If ROS gateway source changed, the Korean repository path means the live ROS 2
+package may still be the copied ASCII workspace. Synchronize only while the
+stack is stopped:
+
+```bash
+./scripts/sync_gateway.sh --check
+./scripts/sync_gateway.sh
+```
+
+Run the offline code contracts with:
+
+```bash
+./scripts/check_workspace.sh
+./scripts/check_learner_protocol.sh
+./scripts/check_ros2_loopback.sh   # after ROS/PX4 bootstrap
+```
+
+## Legacy cooperative experiment
+
+`scripts/run_metasejong_pipeline.sh` is a separate retained experiment. Its
+23-channel policy, 14-node/38-edge ontology, eight distilled fixed reward
+weights, output layout under legacy `results/` paths, and old figures do not
+describe `onto_no_se`. Root invocations containing `--methods` or `--reward`
+are routed to the legacy reward-arm runner for compatibility.
+
+Do not copy checkpoints, result tables, or success claims between primary and
+legacy experiments.

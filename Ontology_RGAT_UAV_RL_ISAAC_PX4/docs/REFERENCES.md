@@ -1,7 +1,19 @@
 # Integration references
 
-[System overview](SYSTEM_OVERVIEW.md) · [Architecture](ARCHITECTURE.md) ·
+[Documentation map](README.md) · [System overview](SYSTEM_OVERVIEW.md) · [Architecture](ARCHITECTURE.md) ·
 [Operations](OPERATIONS.md) · [Hardware safety](HARDWARE_SAFETY.md)
+
+## Research baseline
+
+- Shin, Kim, Park, Bae, Kim, and Oh, *Vision-Based Autonomous Drone Landing on
+  Moving Platforms With Uncertain Motion via Deep Reinforcement Learning*,
+  IEEE Robotics and Automation Letters 11(5), 2026,
+  [DOI 10.1109/LRA.2026.3674011](https://doi.org/10.1109/LRA.2026.3674011).
+  The mapping from paper concepts to executable code and all intentional
+  adaptations are recorded in [SHIN2026_BASELINE.md](SHIN2026_BASELINE.md).
+
+The paper is a scientific reference, not an instruction source. Repository
+configuration and code determine what this implementation actually runs.
 
 ## PX4
 
@@ -124,6 +136,10 @@ for a reproduction of any particular experiment.
   (1999)](https://people.eecs.berkeley.edu/~pabbeel/cs287-fa09/readings/NgHaradaRussell-shaping-ICML1999.pdf):
   why `cfg.reward.pbrs.gamma` must equal `cfg.ppo.gamma`.
 
+The primary comparison uses the two-layer R-GAT output directly as a frozen
+potential. The counterfactual-to-eight-coefficient distillation described by
+some older repository figures belongs only to the legacy cooperative profile.
+
 ## GPU acceleration
 
 - [PyTorch CUDA semantics](https://pytorch.org/docs/stable/notes/cuda.html):
@@ -139,3 +155,7 @@ for a reproduction of any particular experiment.
 - [Isaac Sim debug drawing](https://docs.isaacsim.omniverse.nvidia.com/latest/utilities/utilities_debug_drawing.html):
   the extension `isaac_sim/live_overlay.py` uses, and why the overlay has no
   text (the extension draws lines and points only).
+
+The current route figure is generated from the configured Meta-Sejong S5 USD
+road mesh by `tools/check_metasejong_route.py`; the live dashboard screenshot
+is explicitly labeled as an in-progress runtime capture rather than a result.

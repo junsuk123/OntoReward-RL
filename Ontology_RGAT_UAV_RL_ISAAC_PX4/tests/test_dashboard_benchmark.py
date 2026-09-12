@@ -91,6 +91,8 @@ def test_dashboard_has_self_contained_matlab_style_benchmark_view():
     assert "Current episode · vehicle motion (m/s)" in PAGE
     assert "Battery-depletion terminal rate" in PAGE
     assert "completed episodes" in PAGE
+    assert "rows.length+' completed'" in PAGE
+    assert "training_total||0)/" not in PAGE
     assert "active episode" in PAGE
     assert "live episode step" in PAGE
     assert "debug only" not in PAGE

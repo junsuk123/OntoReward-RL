@@ -1,10 +1,18 @@
 # Controlled three-pipeline comparison
 
+[Documentation map](README.md) · [System overview](SYSTEM_OVERVIEW.md) ·
+[Operations](OPERATIONS.md) · [Paper baseline](SHIN2026_BASELINE.md)
+
 This experiment tests whether an ontology-structured direct R-GAT potential
 can replace explicit metric relative-state supervision. It is a controlled
 methodological implementation of Shin et al. (2026), not a bit-exact
 reproduction. Isaac Sim, Pegasus and PX4 remain the flight stack adaptations
 documented in [SHIN2026_BASELINE.md](SHIN2026_BASELINE.md).
+
+![Actual full-run dashboard telemetry](images/live_dashboard_status.png)
+
+The screenshot was captured from an in-progress run on 2026-09-12. It shows
+the monitoring contract; it is not a final performance result.
 
 ## Information flow
 
@@ -106,6 +114,13 @@ Relations are:
 - `constrains`: `BatteryRisk` to `SafeLanding`;
 - `self`: one self-loop per node for R-GAT updates.
 
+The executable topology is therefore 13 nodes, 12 semantic directed edges,
+13 self-loops, 25 total directed edges, four relations, and 19 features per
+node. Two 24-wide relational-attention layers with a residual around the second
+layer feed a bounded `SafeLanding` readout. These values describe the primary
+comparison; the retained cooperative legacy graph is 14 nodes/38 edges and is
+not interchangeable.
+
 Attention and counterfactual effects are interpretation signals only. They are
 not supervised relation-importance labels.
 
@@ -139,6 +154,19 @@ r_t = r_sparse + lambda * (gamma * Phi(G_t+1) - Phi(G_t))
 
 `gamma_design == gamma_PBRS == gamma_PPO`. For terminal/absorbing next states,
 `Phi(G_t+1)=0`. PPO cannot update the frozen R-GAT.
+
+## Environment held common
+
+The default full/quick flight profile is the Meta-Sejong Gwanggaeto/S5 scene.
+The RANGER MINI carries a 1.5×1.5 m deck along a 37-point, 99.70 m closed road
+loop at a seeded 0.25–0.60 m/s. The same route, platform motion, camera,
+multi-scale ArUco board, PX4 limits, and battery draw are used by A, B, and C.
+
+![Audited S5 UGV route](images/metasejong_gwanggaeto_ugv_route.png)
+
+The paper reports a 0–8 m/s platform envelope. The lower curved-campus speed is
+an explicit shared adaptation, not a claim that this experiment reproduces the
+paper's maximum-speed case.
 
 ## Fairness and metrics
 
@@ -194,8 +222,19 @@ python Ontology_RGAT_UAV_RL_ISAAC_PX4/python/generate_three_pipeline_report.py \
 The bare `run.sh` uses the deadline preview budget: 264 PPO episodes per
 pipeline plus eight Shin-only warm-up flights (800 training flights total), a
 minimum of 40 estimator-free reward-design trajectories, and five paired
-evaluation seeds per scenario. This is seminar evidence, not publication-scale
-evidence.
+evaluation seeds per scenario (105 evaluation flights). Reward-design and
+evaluation flights are outside the stated 800 training-flight budget and are
+reported separately. This is seminar evidence, not publication-scale evidence.
+
+## Runtime continuity
+
+Only one root `run.sh` can own the shared control stack. Compatible recurrent,
+optimizer, curriculum, semantic-data, and evaluation artifacts resume. A
+gateway timeout, genuine simulated-clock stall, or gateway-classified pure
+Offboard-heartbeat interruption discards the incomplete trajectory, restarts
+only a stack owned by the runner, and retries the same seed. This preserves the
+paired-seed contract. Perception/geometry, estimator, policy-health, and
+terminal failures remain hard failures so retry cannot bias the experiment.
 
 ## Safeguards added for the former limitations
 

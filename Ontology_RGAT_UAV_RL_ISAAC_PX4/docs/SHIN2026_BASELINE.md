@@ -1,268 +1,179 @@
-# Shin et al. (2026) benchmark profile
+# Shin et al. (2026) paper-to-code baseline
 
-> This document preserves the former reward-arm baseline and its secondary
-> estimate-based distilled ontology ablation. The default primary experiment
-> is now the estimator-controlled three-pipeline comparison in
-> [THREE_PIPELINE_COMPARISON.md](THREE_PIPELINE_COMPARISON.md). The primary
-> `onto_no_se` method does not use the estimate-based path described below.
+[Documentation map](README.md) · [Controlled comparison](THREE_PIPELINE_COMPARISON.md) ·
+[Data-flow audit](DEPENDENCY_DATAFLOW_AUDIT.md)
 
-This profile evaluates reward design while holding the perception, estimation,
-PPO, critic, action, controller, curriculum, initialization, and evaluation
-interfaces fixed. It is a methodological-interface reproduction, not a
-bit-exact reproduction of Shin et al. (2026), DOI
+Reference paper: W. Shin et al., *Vision-Based Autonomous Drone Landing on
+Moving Platforms With Uncertain Motion via Deep Reinforcement Learning*, IEEE
+Robotics and Automation Letters, vol. 11, no. 5, 2026, DOI
 `10.1109/LRA.2026.3674011`.
 
-## Information flow
+This repository implements the paper's methodological interface inside
+Isaac Sim/Pegasus/PX4. It is not a bit-exact reproduction. The default research
+question is narrower: under one controlled implementation, compare the
+paper-motivated explicit-estimation pipeline with estimator-free temporal PPO
+and estimator-free ontology/R-GAT reward shaping.
+
+## Paper interface reproduced
+
+The primary benchmark retains these reported elements:
+
+- a 512×320 grayscale image and UAV body velocity/quaternion observation;
+- a camera pitched 60° downward from the forward axis with 90° horizontal
+  FOV;
+- a six-keypoint visual interface and 512-D image embedding;
+- a 512-unit LSTM, 256-D latent, and six relative-state estimate values;
+- auxiliary MSE supervision on relative position/velocity for `shin_se`;
+- an asymmetric critic that receives UAV proprioception plus relative truth;
+- heading-frame velocity and yaw-rate commands at 0.1 s control intervals;
+- 300 control steps per episode;
+- initial relative altitude 2–8 m, lateral offsets -3–3 m, and platform yaw
+  misalignment -60–60° at full curriculum;
+- Table-III progress/velocity/undershoot/yaw-rate shaping;
+- the estimation-error active-perception term for `shin_se`;
+- `+10/-10` terminal task outcomes and an 80-level curriculum.
+
+The actor observation is represented by the typed `ActorObservation` boundary.
+UGV pose/velocity, wheel odometry, V2V, GNSS, solved marker pose, relative-state
+truth, and simulator truth cannot be appended to it.
+
+## Primary code mapping
 
 ```mermaid
 flowchart LR
-  CAM[Raw 512x320 mono image] --> KE[Six-keypoint encoder]
-  UAV[UAV body velocity + quaternion] --> EST[LSTM / latent y]
-  KE --> EST
-  EST -->|y 6:256| ACT[PPO actor]
-  UAV --> ACT
-  ACT --> CMD[vx vy vz yaw-rate]
-  CMD --> PX4[PX4 velocity controller]
-
-  GT[Simulator relative-state truth] -->|training only| AUX[Six-state MSE]
-  GT -->|training only| CRIT[Asymmetric critic]
-  UAV --> CRIT
-  GT -->|training only| ACTIVE[Active-perception reward]
-  GT -->|terminal/evaluation only| SCORE[Contact and safety metrics]
-
-  EST -->|estimated/reward-side state| ONTO[Controlled ontology / frozen R-GAT potential]
-  BAT[Onboard 3S battery energy model] -->|reward side only| ONTO
-  ONTO --> PBRS[PBRS reward]
+  IMG[512x320 mono] --> KEY[Six-keypoint encoder]
+  KEY --> LSTM[512-unit LSTM]
+  UAV[body velocity + quaternion] --> LSTM
+  LSTM --> Y[latent y 256]
+  Y --> HEAD[y 0:6 auxiliary estimate]
+  TRUTH[relative truth] --> MSE[auxiliary MSE]
+  HEAD --> MSE
+  Y --> SLICE[y 6:256]
+  UAV --> ACTOR[actor]
+  SLICE --> ACTOR
+  ACTOR --> PX4[vx vy vz yaw-rate]
+  TRUTH --> CRITIC[training-only critic]
+  UAV --> CRITIC
 ```
 
-`ActorObservation` has exactly three named inputs: image, UAV body-frame
-velocity, and UAV attitude quaternion. It cannot contain pad pose/velocity,
-GNSS, wheel odometry, V2V telemetry, trajectory parameters, or simulator
-truth. Semantic state remains reward-side in the primary experiment. Battery
-reserve is likewise reward-side: it never enters the deployed actor, so all
-five reward arms retain the paper-compatible observation boundary.
+| Pipeline | Relation to the paper baseline |
+|---|---|
+| `shin_se` | Uses the auxiliary head/loss and active-perception reward. |
+| `no_se` | Removes the head, loss, warm-up, and active term while preserving temporal model capacity. |
+| `onto_no_se` | Keeps the estimator-free actor and adds a separate direct semantic R-GAT PBRS reward path. |
 
-## Directly reproduced from the paper
+All actors use `y[6:256] + 7-D proprioception`. The six supervised values are
+not appended to the actor, matching the intended latent-supervision design.
 
-- Initial altitude 2–8 m, lateral offsets −3–3 m, yaw misalignment −60–60°,
-  initial yaw rate 0°/s, and the per-step speed/yaw-rate perturbation interfaces
-  from Table I. The road-safe speed override is documented below.
-- 512×320 grayscale camera, 90° horizontal FOV, 60° downward pitch; actor
-  proprioception is three body-velocity and four quaternion values.
-- Six-keypoint interface, 512-dimensional image embedding, 512-dimensional
-  LSTM hidden state, 256-dimensional latent, and the first six latent values as
-  body-frame relative position and velocity estimates.
-- Auxiliary loss `mean((s_rel - s_rel_hat)^2)` over the six state values.
-- Asymmetric critic observation `[u_t, s_rel_truth]`; the critic is absent at
-  deployment.
-- Four actions: body-heading-frame velocity and yaw rate; 0.1 s control period
-  and 300-step horizon.
-- Table-III shaping equations and weights: clipped lateral progress (1.0),
-  clipped vertical progress divided by `max(d_xy, 1)` (1.0), vertical-speed
-  hinge (0.5), undershoot indicator (1.0), and absolute yaw-rate penalty (2.0).
-- Section III-C active reward
-  `-alpha * clip(beta * (L_est[t+1] - tau), 0, 1)`, with alpha 0.1, beta 1,
-  and tau 0.01; +10 contact success and −10 crash/excessive-drift terminals.
-- Table-II randomization ranges, including controller gains, force/torque,
-  initial velocity/rates, textures, scale, brightness, RGB scale, and lighting.
-- Curriculum scalar `c` in `[0,1]`, 80 levels, updated every 512 episodes.
+## Shin reward implementation
 
-## Intentional adaptations and unpublished choices
+The Table-III implementation contains:
 
-- The paper uses AerialGym; this repository retains Isaac Sim, Pegasus, and
-  PX4 SITL. PX4's velocity controller replaces the paper's geometric
-  velocity-to-body-rate controller. The command limits/rate limits are common
-  to all methods. The configured full envelope is 2.0/2.0/1.0 m/s body-heading
-  velocity, 1.5/1.5/1.0 m/s² acceleration, 60°/s yaw rate, and 90°/s² yaw
-  acceleration.
-- No official PACMAN-compatible code and weights are bundled. Before the live
-  stack starts, the independent encoder is now supervised on synthetic
-  projections of six fixed hexagonal pad landmarks over the configured
-  multi-scale board. Its six heatmaps pool six local descriptors into the
-  512-dimensional image embedding, and the resulting artifact is frozen for
-  PPO. It is still never labeled PACMAN. The current simulated board is also
-  an ArUco approximation, not Park et al.'s exact hexagonal target. The S5 road profile uses
-  `DICT_4X4_100`: four 0.32 m approach tags, four 0.12 m transition tags and
-  37 0.04 m touchdown tags covering the 0.35 m success disk.
-- The paper's Table-I platform range is 0–8 m/s. The default Sejong S5
-  visualization/empirical profile is deliberately limited to a 0.25–0.60 m/s
-  draw and a 1.0 m/s carrier ceiling so the RANGER MINI follows the curved
-  campus road at a realistic low speed. This override is shared by every
-  reward arm and must be reported with results; it is not an 8 m/s claim.
-- Autonomous SITL deliberately disables RC-stick input, exempts OFFBOARD from
-  RC-link loss, allows a 5 s OFFBOARD heartbeat grace period and selects Hold
-  as the true link-loss action. These PX4 parameters are applied by a temporary
-  wrapper around PX4's stock rcS on every simulator boot; they do not change the policy,
-  observation, reward or paired evaluation conditions.
-- PX4 position control uses the measured Pegasus-Iris hover thrust (0.58), the
-  common 2 m/s horizontal and 1 m/s vertical command limits, and the same
-  acceleration limits as the outer velocity-command slew limiter. These are
-  common setup/controller choices because the paper does not specify PX4 gains.
-- Camera frame rate is 30 Hz because the paper does not report it.
-- PPO discount, learning rates, minibatch sizes, decision-head widths,
-  training length, and checkpoint rule are not specified in the paper and must
-  be reported from the experiment configuration. The recurrent policy starts
-  at `log_std=-1.2` (standard deviation 0.301 per normalized action). This is
-  large enough to avoid a nearly stationary early policy while remaining far
-  below the original 0.607 standard deviation; the command slew limiter still
-  bounds acceleration.
-- Table-III lateral/vertical shaping is calculated from the un-tilded
-  simulator relative state during training. Only the active-perception term
-  uses the next recurrent-estimator MSE, matching the paper's separation of
-  physical progress and estimation reliability. No truth enters the actor.
-- The paper gives `c` and the update interval but not its promotion rule. The
-  supplied schedule advances linearly and serializes its state. UAV commands
-  and UGV motion use separate lower bounds: the UAV envelope is scaled by
-  `0.50 + 0.50c`, while the road-speed draw uses `0.35 + 0.65c` and
-  initial-condition geometry uses `c` directly. Thus the target moves at
-  0.0875--0.21 m/s even at `c=0`,
-  instead of remaining parked for 512 episodes. At `c=0`, the reset entry is
-  a stationary camera-centred hover approximately `[-2.51, 0, 4.5]` m behind
-  the pad. This puts the pad on the 60-degree camera's optical axis instead of
-  at the short-axis image boundary. The entry continuously blends to the exact
-  Table-I draw at `c=1`. Paired evaluation always uses
-  `c=1`, and all five reward arms receive exactly the same envelope.
-- During the eight full-mode estimator-only warm-up episodes, actions are
-  sampled from the initial policy distribution rather than fixed at its mean.
-  The position-backed PX4 setpoint, 50% envelope, and acceleration slew limit
-  keep this excitation bounded while avoiding a static image/state dataset.
-  The warm-up is short because the keypoint encoder is already synthetically
-  pretrained and frozen. If the learner misses its SITL
-  action deadline, the gateway atomically replaces stale velocity with a
-  current-position hover and continues the OFFBOARD heartbeat; hardware keeps
-  the ordinary PX4 link-loss behavior.
-- Policy handover requires the pad-relative speed to stay below 0.15 m/s for
-  1.0 s. PX4's delayed landed flag is ignored while simulator truth places an
-  armed vehicle clearly above the deck, preventing a stable hover from being
-  mislabeled as an off-pad ground contact.
-- FLU/ENU-to-paper body-frame sign conversions are explicit in
-  `benchmarks/px4_adapter.py`.
+- clipped lateral progress, weight 1.0;
+- clipped vertical progress divided by `max(d_xy, 1)`, weight 1.0;
+- vertical-speed hinge, weight 0.5;
+- undershoot indicator, weight 1.0;
+- absolute yaw-rate penalty, weight 2.0.
 
-## Reward modes and fairness
+`shin_se` additionally applies the paper's active-perception form:
 
-`shin2026`, `sparse`, `manual_no_active`, `ontoreward`, and
-`ontoreward_plus_active` share a single actor schema and paired seed plan.
-OntoReward uses
-
-`r = r_task + lambda * (gamma * Phi(s_next) - Phi(s))`,
-
-sets terminal potential to zero, requires shaping gamma to equal PPO gamma,
-and refuses a non-frozen reward design. The primary controlled ontology may
-use estimated relative motion and onboard quantities on the reward side. Its
-five cost nodes are lateral error, altitude error, relative horizontal speed,
-relative vertical speed, and battery risk; all feed `SafeLanding`. The
-legacy wind/energy/GNSS ontology remains a separate extended experiment.
-`FrozenControlledPotential` also rejects the legacy urban artifact and accepts
-only an immutable `controlled_landing` artifact with explicit
-`rgat_distillation` provenance.
-
-## One-command execution and implementation status
-
-The live pipeline starts or adopts DDS, Isaac Sim, Pegasus/PX4, and the ROS
-gateway, then executes these dependent stages:
-
-1. train or resume the recurrent `shin2026` PPO policy;
-2. fly that trained policy on a disjoint seed range in Isaac/Pegasus/PX4;
-3. train R-GAT on the resulting estimator features and contact outcomes, then
-   distill and freeze the controlled potential;
-4. train the requested OntoReward/ablation policies;
-5. run the paired evaluation plan and produce checkpoints, per-episode data,
-   confidence intervals, tables, and figures.
-
-It also serves `http://127.0.0.1:8770/` while running. That dashboard uses a
-MATLAB-figure visual language and exposes the actor information boundary,
-method progress, actual R-GAT flight/sample/contact counts, estimator/PPO
-diagnostics, live reward components, curriculum, visibility, and paired
-scenario outcomes. The curriculum view includes both platform difficulty and
-the current UAV action-envelope scale:
-
-```bash
-../run.sh --methods shin2026 ontoreward --mode full  # legacy reward-arm run
-../run.sh --methods shin2026 ontoreward --mode quick --headless
+```text
+r_active = -alpha * clip(beta * (L_est,next - tau), 0, 1)
+alpha = 0.1, beta = 1.0, tau = 0.01
 ```
 
-When invoked with legacy `--methods`/`--reward`, the outer `run.sh` keeps
-full-fidelity flight dynamics but applies the former seminar budget: 800
-training episodes total across selected methods, 40 empirical
-R-GAT-data flights, and five paired evaluation seeds per scenario and method.
-For the default two methods that is 400 training episodes each and 70 evaluation
-flights. This preview budget is not publication-scale statistical evidence.
-Pass explicit `--train-episodes`, `--eval-episodes`, and
-`--rgat-data-episodes` values to replace the deadline defaults. The 80-level
-curriculum is fitted to the shortened per-method count (an interval of five for
-400 episodes), and a compatible checkpoint is migrated to the corresponding
-level instead of being restarted. This remains a long-running real-time
-flight-stack experiment. `--use-running-stack` adopts a compatible active stack,
-and `--keep-stack` leaves a newly started stack alive.
-The dashboard port can be changed with `--dashboard-port`; `--no-dashboard`
-turns off only the HTTP view, not metric collection or result files.
+`no_se` uses the same physical Table-III reward without this estimator-dependent
+term. `onto_no_se` does not reuse either estimator signal; it uses sparse task
+reward plus the frozen direct semantic potential described in the comparison
+document.
 
-The R-GAT dataset is an explicit OntoReward design choice because Shin et al.
-do not define an ontology or its training set. Quick/full mode collects 8/400
-held-out flights by default; `--rgat-data-episodes N` overrides that count. For
-each sampled control step, its graph contains four bounded costs computed from
-the recurrent visual estimator's six-state prediction and one battery-risk cost
-computed from onboard energy reserve. Its target is the
-actual terminal pad-contact outcome (`+1` or `-1`) discounted back to that step.
-Simulator truth is therefore used for the allowed terminal label, never as an
-R-GAT input. Battery depletion is a common terminal failure for all reward
-arms. Training refuses data without both successful and failed episodes
-instead of fabricating a missing class.
+## Intentional adaptations
 
-The SITL experiment pack uses the configured 3S 3500 mAh (139.9 kJ nominal)
-specification, a 1.5 kg vehicle, four 0.13 m rotors, 0.45 combined hover
-efficiency, and a 12 W avionics load. The gateway integrates PX4's normalized
-thrust setpoint through a momentum-theory electrical-power model, exposing
-remaining joules, used joules, state of charge, hover seconds, and normalized
-landing reserve at every control step. A full pack changes too little during
-one 30 s episode to teach a useful dependency, so the reproducible initial
-state is seeded to 9--55 hover seconds remaining. This is a near-depleted state
-of the real-capacity pack, not a reduced-capacity fictional cell. PX4 SITL's
-separate built-in 60 s battery is clamped full only to prevent commander
-failsafes; it is never used as the experimental energy signal.
+| Topic | Repository choice | Reason/reporting requirement |
+|---|---|---|
+| simulator | Isaac Sim 5.1 + Pegasus + PX4 SITL | The paper uses AerialGym; results are not backend-identical. |
+| low-level controller | PX4 velocity controller | The exact paper geometric controller is not public. Limits are common across pipelines. |
+| keypoint network | synthetic-pretrained six-keypoint encoder, frozen before PPO | PACMAN-compatible weights/code are not public; never label this artifact PACMAN. |
+| landing target | multi-scale ArUco board | Approximation of the paper's known landing geometry, designed for far-to-near visibility. |
+| scene | Meta-Sejong S5/Gwanggaeto road loop | Campus adaptation shared by every pipeline. |
+| platform speed | 0.25–0.60 m/s draw, 1.0 m/s carrier ceiling | The paper's 0–8 m/s envelope is not claimed for this curved-road profile. |
+| episode start | PX4-flown camera-centred hover | Airborne teleport would corrupt the EKF. |
+| initial exploration | `log_std=-1.2`, actor output gain 0.03 | Avoid a nearly halted initial policy while acceleration slew limits bound commands. |
+| early curriculum | UAV envelope starts at 50%; UGV motion at 35% | Avoid a passive/parked early dataset while retaining bounded control. |
+| battery | physical-capacity 3S 3500 mAh model with 9–55 hover-second seeded reserve | Makes energy state measurable within a 30 s episode; does not invent a smaller pack. |
 
-The frozen synthetic keypoint artifact, dataset, sidecar manifest, episode
-metrics, and reward artifact are written
-under `results/shin2026/<mode>/data` and `models`. They record the experiment
-configuration hash, source-policy checkpoint hash, sample/episode/contact
-counts, and dataset digest. Only `ontology_rgat.controlled_rollouts/2` data and
-`ontology_rgat.controlled_reward/3` reward artifacts are loadable; old schemas
-without battery are rejected. R-GAT uses a segment-maximum-subtracted softmax and a lower learning
-rate, stops immediately on non-finite losses or gradients, and JSON output
-disallows NaN. Validation holds out complete flight episodes, so adjacent
-frames from one trajectory cannot leak across the train/validation boundary.
+The 45-tag board has four 0.32 m far tags, four 0.12 m transition tags, and
+37 0.04 m touchdown tags within the success region. The dictionary is
+`DICT_4X4_100`.
 
-The paper names its six test maneuvers but does not publish their equations, so
-those generators are recorded as approximations. Table-II samples are
-deterministic, but controller-gain, force/torque, and visual-appearance
-application to PX4/Isaac remains incomplete. Resolve that limitation before
-claiming a complete Table-II or bit-exact reproduction.
+## Setup and handover adaptation
 
-## Reproducibility and outputs
+At low curriculum, the UAV entry blends from a stationary camera-centred hover
+to the full Table-I initial-condition draw. The target already moves at
+0.0875–0.21 m/s at `c=0` rather than remaining parked for hundreds of episodes.
+Paired evaluation uses `c=1`.
 
-Every run writes a resolved configuration hash, method list, scenario counts,
-paired seed plan, R-GAT data provenance, and source-policy lineage. Record the
-Git commit, Isaac Sim/Pegasus/PX4/PyTorch versions, GPU, wall-clock training
-duration, and frozen reward-design ID with published results.
-`run_shin2026_benchmark.py --input-results` produces all specified CSVs, paired
-bootstrap confidence intervals, plots, and a Markdown publication table. It
-never fabricates missing flight results.
+During the eight full-mode `shin_se` warm-up flights, actions are sampled from
+the bounded initial policy distribution. This excites both images and vehicle
+state without returning to the earlier violent exploration variance. The
+warm-up has a disjoint seed range and is counted separately from PPO.
 
-CPU interface smoke test:
+Handover requires a one-second stable hold at the commanded pad-relative entry,
+speed at most 0.40 m/s, and a marker detected within the preceding two seconds.
+The 0.40 m/s setup threshold reflects the measured Pegasus/PX4 hover limit
+cycle in the rendered S5 scene; it is not the landing-success threshold.
 
-```bash
-./scripts/run_metasejong_pipeline.sh --experiment shin2026 --reward shin2026 --mode quick --smoke-test
-./scripts/run_metasejong_pipeline.sh --experiment shin2026 --reward ontoreward --mode quick --smoke-test
-```
+## Evaluation scenarios
 
-Paired plan and evaluation of collected per-episode data:
+The executable paired plan contains:
 
-```bash
-python python/run_shin2026_benchmark.py --methods shin2026 ontoreward --mode full --paired-seeds --plan-only
-python python/run_shin2026_benchmark.py --methods shin2026 ontoreward --mode full --paired-seeds --input-results results/shin2026/per_episode.csv
-```
+1. training random walk;
+2. straight platform motion;
+3. linear acceleration wave;
+4. circle;
+5. zigzag;
+6. U-turn;
+7. vertical heave/boat motion.
 
-The utility runner's smoke mode is not a simulator flight and its values must
-not be reported as benchmark results. Use `run_shin2026_benchmark.sh` for live
-training and benchmarking; use `run_shin2026_benchmark.py` only for CPU smoke,
-planning, or re-analysis.
+The paper names its maneuvers but does not publish every trajectory equation;
+the implementations here are recorded approximations. All pipelines receive
+identical scenario seeds. Report physical success and touchdown/FOV metrics,
+not cross-method reward return.
+
+## Budgets
+
+The experiment YAML preserves a publication-reference choice of 40,960 PPO
+episodes per pipeline, 400 initial R-GAT-design flights, and independent model
+seeds 42/1042/2042. These are repository choices because the paper does not
+fully specify all PPO budgets and optimization hyperparameters.
+
+The repository-root bare `./run.sh` deliberately overrides this with the
+deadline preview: 264 PPO flights per pipeline plus eight `shin_se` warm-up
+flights, totaling 800 training flights. Reward-design and evaluation flights
+are additional and reported separately.
+
+## Reproducibility contract
+
+Every primary run records:
+
+- experiment and system config paths plus a combined hash;
+- immutable pipeline specs;
+- model initialization and training/evaluation seed ranges;
+- PPO, estimator-warm-up, and reward-design interaction counts;
+- keypoint/source-policy/R-GAT checkpoint digests;
+- semantic dataset schema, classes, episodes, samples, and environment steps;
+- physical per-episode results and paired plan;
+- execution status and generated report locations.
+
+Only complete real Isaac/Pegasus/PX4 flights may be used as benchmark evidence.
+CPU smoke tests, synthetic keypoint pretraining, dashboard screenshots, and
+incomplete run histories are implementation evidence only.
+
+## Legacy reward-arm note
+
+Root commands containing `--methods` or `--reward` still route to the former
+five-arm runner (`shin2026`, `sparse`, `manual_no_active`, `ontoreward`, and
+`ontoreward_plus_active`). That path uses an estimate-based controlled ontology
+and/or the cooperative 14-node distilled-reward system depending on its
+profile. It is maintained for backward compatibility and must not be presented
+as the primary `onto_no_se` direct-R-GAT method.

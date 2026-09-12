@@ -154,10 +154,17 @@ def audit(config_path: Path, resolution: float, plot_path: Path | None) -> int:
                     cmap="Greys", alpha=0.65)
         axis.plot(route[:, 0], route[:, 1], color="#e63946", linewidth=2.2,
                   label="UGV waypoint route")
-        axis.scatter(*route[0, :2], color="#2a9d8f", s=65, zorder=3, label="start")
-        axis.scatter(*route[-1, :2], color="#457b9d", s=65, zorder=3,
-                     label="reverse point")
-        axis.set(title="Meta-Sejong S1 road and audited UGV route",
+        axis.scatter(*route[0, :2], color="#2a9d8f", s=65, zorder=3,
+                     label="start / finish" if pad.waypoint_loop else "start")
+        if not pad.waypoint_loop:
+            axis.scatter(*route[-1, :2], color="#457b9d", s=65, zorder=3,
+                         label="reverse point")
+        scenario = str(config.get("metasejong", {}).get("scenario", "campus"))
+        scenario_label = {"demo": "S1", "dongcheon": "S3",
+                          "jiphyeon": "S4", "gwanggaeto": "S5"}.get(
+                              scenario, scenario)
+        axis.set(title=(f"Meta-Sejong {scenario_label} ({scenario}) road and "
+                        "audited UGV route"),
                  xlabel="world X (m)", ylabel="world Y (m)", aspect="equal")
         axis.legend(loc="best")
         figure.savefig(plot_path, dpi=180)

@@ -1,106 +1,100 @@
-# Learning remediation audit (items 1, 2, 4, 5, 8, 9)
+# 학습 개선 감사 기록(항목 1, 2, 4, 5, 8, 9)
 
-This audit records the sequential changes requested after the September 2026
-live run. It distinguishes executable evidence from the Shin et al. paper:
-the paper defines the algorithm; the figures below are from this repository's
-Isaac/Pegasus/PX4 implementation and are not paper results.
+이 문서는 2026년 9월 실제 실행 이후 순차적으로 요청된 변경을 기록한다.
+실행 가능한 근거와 Shin et al. 논문을 구분한다. 논문은 알고리즘을 정의하며,
+아래 수치는 이 저장소의 Isaac/Pegasus/PX4 구현에서 얻은 값이지 논문 결과가 아니다.
 
-## Baseline observation
+## 개선 전 관측
 
-The stopped checkpoint was preserved. Comparing policy episodes 9–28 with
-49–68 showed position RMSE increasing from 2.89 m to 3.37 m, FOV loss from
-58.1% to 68.6%, final lateral error from 6.31 m to 9.23 m, and zero landings.
-Every sampled active-perception term was clipped at `-0.1`. These measurements
-justify repair rather than continuing the same checkpoint.
+중단된 checkpoint는 보존했다. Policy episode 9–28과 49–68을 비교하면 position
+RMSE는 2.89 m에서 3.37 m, FOV loss는 58.1%에서 68.6%, 최종 lateral error는
+6.31 m에서 9.23 m로 증가했고 착륙은 0회였다. 표본의 모든 active-perception
+항은 `-0.1`로 clipping됐다. 따라서 같은 checkpoint를 계속 쓰기보다 구조를
+고치는 것이 타당했다.
 
-## Sequential evidence
+## 순차 개선 근거
 
-| Item | Defect and change | Verification/effect |
+| 항목 | 결함과 변경 | 검증/효과 |
 |---:|---|---|
-| 1 | A global `tanh` capped physical relative state at ±1. The first six latent channels are now unbounded normalized coordinates, decoded to metres and m/s; loss uses `[3,3,8,3,3,2]` scales. | A deterministic test produces 6 m and 12 m estimates that the old model could not represent. One-scale error on every axis yields balanced loss 1.0. Checkpoint format v3 rejects old semantics. |
-| 2 | Raw six-state MSE saturated the active reward and removed its causal gradient. Live reward now consumes the same normalized loss as the auxiliary estimator. | A representative error changes from clipped `-0.1000` to responsive `-0.0135`. Mean normalized loss, saturation fraction, and signal standard deviation are persisted per episode. |
-| 4 | A deadline override forced 80 curriculum levels into 264 episodes (roughly one increase every three episodes), independent of performance. | Forty consecutive failing fixtures now remain at level 1; a level advances only after rolling success, FOV, and the same truth-side relative-position RMSE gate for every arm pass. |
-| 5 | The frozen encoder used only synthetic board projections. The launcher now collects real unannotated Isaac frames, labels six pad landmarks through detected board-plane homography, reserves a held-out split, fine-tunes, and retains only the best validation state. | Initial live audit: 23.2 px RMSE and 29.2% PCK@20. Calibrated settings reached 16.8 px and 79.2% PCK@20 on the same held-out split (27.6% RMSE reduction). Full mode recollects 48 frames under the current config. |
-| 8 | Table-II samples existed only in a unit test. Each episode now applies the seed to PX4-relative controller gain spread, Isaac force/torque, one handover velocity/rate perturbation, and the actual actor camera's texture/scale/brightness/RGB/light transform. | Range, deterministic serialization, and PX4 mapping tests pass. The inherited fixed urban wind is disabled in this benchmark so it is not double-counted. Applied values are returned in reset acknowledgement and recorded in episode CSV. |
-| 9 | The old health gate detected only the conjunction of no success and high FOV loss. | Independent gates now detect battery-terminal rate after 20 episodes and, after a 40-episode grace, no success, high FOV, stalled position RMSE, and stalled active-reward saturation. Fixtures identify all intended causes. |
+| 1 | 전역 `tanh`가 물리 상대 상태를 ±1로 제한했다. 첫 latent channel 6개를 제한 없는 정규화 좌표로 바꾸고 m 및 m/s로 decode하며, loss scale은 `[3,3,8,3,3,2]`를 사용한다. | 결정론적 test에서 이전 model이 표현하지 못한 6 m와 12 m를 출력한다. 모든 축에서 scale 하나만큼의 오차는 균형 loss 1.0이다. Checkpoint format v3가 이전 의미 체계를 거부한다. |
+| 2 | 원본 6-state MSE가 active reward를 포화시켜 인과적 gradient를 없앴다. 실제 reward는 auxiliary estimator와 같은 정규화 loss를 사용한다. | 대표 오차의 보상이 clipping된 `-0.1000`에서 반응 가능한 `-0.0135`로 바뀐다. Episode마다 평균 normalized loss, saturation 비율과 signal 표준편차를 저장한다. |
+| 4 | 마감용 override가 성능과 무관하게 264 episode 동안 80 curriculum level을 약 3 episode마다 올렸다. | 40회 연속 실패 fixture는 level 1에 머문다. Rolling success, FOV, 그리고 모든 arm에 동일한 truth-side relative-position RMSE gate가 통과해야 상승한다. |
+| 5 | 동결 encoder가 합성 board projection만 사용했다. Launcher가 annotation 없는 실제 Isaac frame을 수집하고, 검출 board-plane homography로 6개 pad landmark label을 만든 뒤 held-out split을 남겨 fine-tuning하고 최상 validation state만 보존한다. | 최초 실제 감사에서 23.2 px RMSE와 PCK@20 29.2%였고 calibration 후 같은 held-out split에서 16.8 px와 79.2%를 얻었다(RMSE 27.6% 감소). Full mode는 현 설정으로 48 frame을 다시 수집한다. |
+| 8 | Table-II sample이 unit test에만 있었다. 이제 episode seed가 PX4-relative controller gain 분산, Isaac force/torque, handover 시 1회 velocity/rate perturbation, 실제 actor camera의 texture/scale/brightness/RGB/light 변환에 적용된다. | 범위, 결정론적 직렬화와 PX4 mapping test를 통과한다. 중복 적용을 막기 위해 상속된 고정 urban wind는 이 benchmark에서 끈다. 적용값은 reset acknowledgement와 episode CSV에 기록된다. |
+| 9 | 이전 health gate는 success가 없고 FOV loss도 높은 두 조건의 conjunction만 감지했다. | 독립 gate가 20 episode 이후 battery terminal 비율을, 40 episode grace 이후 no success, 높은 FOV, 정체된 position RMSE와 active-reward saturation을 감지한다. Fixture가 각 원인을 구별한다. |
 
-## Live integration check
+## 실제 통합 확인
 
-A fresh one-episode quick run was executed in
-`results/remediation/stage8_9` and stopped after the first atomic checkpoint.
-It is calibration evidence, not benchmark evidence:
+`results/remediation/stage8_9`에서 새로운 1-episode quick run을 실행하고 첫 atomic
+checkpoint 뒤 중단했다. Benchmark 근거가 아니라 calibration 근거다.
 
-- held-out Isaac keypoint RMSE: 24.46 px before, 18.41 px after;
-- PCK@20: 20.8% before, 75.0% after;
-- normalized six-state loss mean: 0.593;
-- active-reward saturation: 0%, with standard deviation 0.0216 (the stopped
-  baseline was 100% saturated with no active-reward variation);
-- unsuccessful warm-up retained curriculum level 1 (`advanced=0`);
-- reset acknowledgement reported domain randomization enabled, 0.945 N force,
-  0.00460 N·m torque, texture 6, and brightness 0.759.
+- held-out Isaac keypoint RMSE: 24.46 px → 18.41 px
+- PCK@20: 20.8% → 75.0%
+- normalized 6-state loss 평균: 0.593
+- active-reward saturation: 0%, 표준편차 0.0216(중단된 baseline은 변동 없이 100% 포화)
+- 실패한 warm-up은 curriculum level 1 유지(`advanced=0`)
+- reset acknowledgement: domain randomization 활성, force 0.945 N,
+  torque 0.00460 N·m, texture 6, brightness 0.759
 
-One warm-up episode cannot establish landing-rate or RMSE convergence. Those
-claims require the complete run and remain guarded by the new health checks.
+Warm-up 1회만으로 landing rate나 RMSE convergence를 입증할 수 없다. 해당 주장은
+완료된 실행이 필요하며 새 health check가 계속 보호한다.
 
-## Full-run launch check
+## 전체 실행 기동 확인
 
-Commit `3e1f4ff` was pushed to `main`, then `./run.sh --mode full` was started.
-The launcher archived the incompatible v2 checkpoint, opened the dashboard and
-RViz, and began a fresh v3 run. Its 48-frame empirical calibration improved
-held-out keypoint RMSE from 76.66 px to 9.83 px and PCK@20 from 0.0% to 98.6%.
-The first atomic full-run episode recorded normalized loss 0.308, active-reward
-saturation 0%, nonzero active signal variation 0.00947, Table-II randomization,
-and no curriculum advancement after the unsuccessful outcome.
+Commit `3e1f4ff`를 `main`에 push한 뒤 `./run.sh --mode full`을 시작했다. Launcher는
+호환되지 않는 v2 checkpoint를 보관하고 dashboard와 RViz를 열어 새 v3 run을
+시작했다. 48-frame empirical calibration에서 held-out keypoint RMSE가 76.66 px에서
+9.83 px, PCK@20이 0.0%에서 98.6%로 개선됐다. 첫 atomic full-run episode는
+normalized loss 0.308, active-reward saturation 0%, 0이 아닌 active signal 변동
+0.00947과 Table-II randomization을 기록했고, 실패했으므로 curriculum은 오르지 않았다.
 
-## Interpretation
+## 해석
 
-These checks prove that the former structural blockers are removed; they do
-not pre-claim a landing success rate. The next valid evidence is a fresh v3
-checkpoint trained by `./run.sh --mode full`. The dashboard shows normalized
-estimation loss and active-reward saturation; a health-gate stop is a useful
-failed experiment, not a reason to reuse an incompatible checkpoint.
+이 검사는 이전 구조적 blocker가 제거되었음을 보이지만 landing success rate를 미리
+주장하지 않는다. 유효한 다음 근거는 `./run.sh --mode full`로 새 v3 checkpoint를
+학습한 결과다. Dashboard는 normalized estimation loss와 active-reward saturation을
+표시한다. Health-gate 중단은 호환되지 않는 checkpoint를 재사용할 이유가 아니라
+유용한 실패 실험 결과다.
 
-## Observability/recovery follow-up
+## 관측성/재획득 후속 개선
 
-The first repaired full run still completed 38 PPO episodes with zero landing,
-59.0% mean FOV loss and 3.69 m mean physical relative-position RMSE over its
-last 20 episodes. The run was stopped before changing its executable contract.
-The follow-up therefore adds independently testable mechanisms instead of
-continuing that checkpoint:
+첫 개선 full run도 PPO 38 episode에서 착륙 0회였고, 마지막 20 episode 평균 FOV
+loss 59.0%, 실제 relative-position RMSE 3.69 m였다. 실행 계약을 바꾸기 전에 run을
+중단하고, 같은 checkpoint를 계속 쓰는 대신 독립적으로 시험 가능한 장치를 추가했다.
 
-- the platform must be detected at handover at every curriculum value,
-  including `c=1` reward-design and evaluation flights;
-- the keypoint network has an explicitly supervised visibility head and is
-  initialized with target-absent negative frames;
-- low-confidence coordinates cannot contribute alignment, scale, or motion;
-- estimator-free visibility memory, reacquisition trend, and loss-duration
-  risk make the semantic graph finite-history-aware;
-- reward-design collection requires successful
-  loss→reacquisition→landing trajectories as well as both terminal classes;
-- adverse perception, recovery, and battery counterfactuals impose and audit
-  the expected potential direction before the R-GAT may be frozen;
-- episode/evaluation records expose reacquisition rate/time, recovery climb,
-  unsafe descent under low confidence, recovery landing, and potential change
-  at loss/reacquisition transitions.
+- `c=1` reward-design/evaluation 비행을 포함한 모든 curriculum에서 handover 시
+  platform이 검출되어야 한다.
+- Keypoint network에 명시적으로 supervised visibility head를 추가하고
+  target-absent negative frame으로 초기화한다.
+- Low-confidence 좌표는 alignment, scale 또는 motion에 기여할 수 없다.
+- Estimator-free visibility memory, reacquisition trend와 loss-duration risk로
+  semantic graph가 유한 history를 반영한다.
+- Reward-design 수집은 두 terminal class뿐 아니라 성공한
+  loss→reacquisition→landing trajectory를 요구한다.
+- Perception, recovery, battery를 불리하게 만든 counterfactual이 예상 방향의
+  potential을 만드는지 학습·감사한 뒤에만 R-GAT을 동결한다.
+- Episode/evaluation record에 reacquisition rate/time, recovery climb,
+  low-confidence unsafe descent, recovery landing과 loss/reacquisition 전환 시
+  potential 변화를 기록한다.
 
-The graph format is now `ontology_rgat.semantic_graph/2-history-aware`, so old
-semantic datasets and potentials are intentionally incompatible. Equal gamma,
-terminal-zero potential and a frozen R-GAT retain the MDP PBRS contract. The
-finite history is not presented as a complete Bayesian belief state, so exact
-POMDP policy-invariance is not claimed; recovery is evaluated empirically.
+Graph format은 `ontology_rgat.semantic_graph/2-history-aware`이므로 이전 semantic
+dataset과 potential은 의도적으로 호환되지 않는다. 동일 gamma, terminal-zero
+potential과 동결 R-GAT은 MDP PBRS 계약을 지킨다. 유한 history를 완전한 Bayesian
+belief state라고 제시하지 않으므로 정확한 POMDP policy invariance를 주장하지 않으며,
+recovery는 경험적으로 평가한다.
 
-An independent 128-frame synthetic smoke set for the new shared-descriptor
-visibility head measured 94.5% visibility accuracy, 97.1% true positives on
-visible landmarks, and 0% false positives on 21 target-absent frames. This
-checks the absent-target decision boundary only; the mandatory held-out Isaac
-calibration remains the renderer-domain acceptance test during `run.sh`.
+새 shared-descriptor visibility head의 독립 합성 128-frame smoke set에서는 visibility
+accuracy 94.5%, visible landmark true positive 97.1%, target-absent 21 frame의 false
+positive 0%를 측정했다. 이는 absent-target decision boundary만 검사한다. 실제 renderer
+domain acceptance test는 `run.sh`에서 수행하는 필수 held-out Isaac calibration이다.
 
-The first history-aware full launch collected its mandatory 48 Isaac frames.
-On the 12-frame held-out split, fine-tuning changed coordinate RMSE from
-76.46 px to 13.58 px and PCK@20 from 0% to 97.2%; visibility accuracy was 100%
-and the synthetic target-absent false-positive rate was 0%. Episode 1 passed
-the all-curriculum initial-FOV gate, completed atomically, and recorded 40
-reacquisitions from 41 visual-loss events (97.6%), 15.9% unsafe descent under
-low confidence, and 3.3% active-reward saturation. It did not land and the
-curriculum correctly remained at level 1. This is a launcher/instrumentation
-check, not a success-rate claim; the full 800-episode experiment is running.
+첫 history-aware full launch는 필수 Isaac frame 48개를 수집했다. 12-frame held-out
+split에서 fine-tuning 후 coordinate RMSE는 76.46 px에서 13.58 px, PCK@20은 0%에서
+97.2%로 바뀌었고 visibility accuracy 100%, 합성 target-absent false-positive 0%였다.
+Episode 1은 모든 curriculum에 적용되는 initial-FOV gate를 통과하고 atomic 완료됐으며,
+visual-loss event 41회 중 40회 재획득(97.6%), low-confidence unsafe descent 15.9%,
+active-reward saturation 3.3%를 기록했다.
+
+이 run은 최종적으로 episode 47까지 checkpoint를 저장했지만 최근 policy episode
+20회에서 착륙 성공이 0회여서 training health gate가 중단했다. 따라서 800-episode
+benchmark 완료 결과가 아니라 재현 가능한 실패 근거이며, 성공률 주장에 사용하지 않는다.

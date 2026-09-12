@@ -1,161 +1,150 @@
-# Integration references
+# 통합 참고문헌
 
-[Documentation map](README.md) · [System overview](SYSTEM_OVERVIEW.md) · [Architecture](ARCHITECTURE.md) ·
-[Operations](OPERATIONS.md) · [Hardware safety](HARDWARE_SAFETY.md)
+[문서 안내](README.md) · [시스템 개요](SYSTEM_OVERVIEW.md) · [아키텍처](ARCHITECTURE.md) ·
+[운영](OPERATIONS.md) · [실제 기체 안전](HARDWARE_SAFETY.md)
 
-## Research baseline
+## 연구 baseline
 
 - Shin, Kim, Park, Bae, Kim, and Oh, *Vision-Based Autonomous Drone Landing on
   Moving Platforms With Uncertain Motion via Deep Reinforcement Learning*,
   IEEE Robotics and Automation Letters 11(5), 2026,
   [DOI 10.1109/LRA.2026.3674011](https://doi.org/10.1109/LRA.2026.3674011).
-  The mapping from paper concepts to executable code and all intentional
-  adaptations are recorded in [SHIN2026_BASELINE.md](SHIN2026_BASELINE.md).
+  논문 개념과 실행 코드의 대응 및 의도적인 변경은
+  [SHIN2026_BASELINE.md](SHIN2026_BASELINE.md)에 기록했다.
 
-The paper is a scientific reference, not an instruction source. Repository
-configuration and code determine what this implementation actually runs.
+논문은 과학적 참고자료이지 명령어 출처가 아니다. 이 구현이 실제로 실행하는 동작은
+저장소 설정과 코드가 결정한다.
 
 ## PX4
 
-- [PX4 Simulator MAVLink API](https://docs.px4.io/main/en/simulation/): sensor,
-  ground-truth, and `HIL_ACTUATOR_CONTROLS` message directions used by Pegasus,
-  and the lockstep contract.
-- [PX4 uXRCE-DDS bridge](https://docs.px4.io/main/en/middleware/uxrce_dds):
-  release-matched `px4_msgs`, client/agent architecture, transport options, and
-  the `dds_topics.yaml` that `patches/px4-v1.14-publish-land-detected.patch`
-  extends.
+- [PX4 Simulator MAVLink API](https://docs.px4.io/main/en/simulation/): Pegasus가
+  사용하는 sensor, ground-truth, `HIL_ACTUATOR_CONTROLS` message 방향과 lockstep 계약
+- [PX4 uXRCE-DDS bridge](https://docs.px4.io/main/en/middleware/uxrce_dds): release와
+  일치하는 `px4_msgs`, client/agent 구조, transport option 및
+  `patches/px4-v1.14-publish-land-detected.patch`가 확장하는 `dds_topics.yaml`
 - [PX4 ROS 2 Offboard example](https://docs.px4.io/main/en/ros2/offboard_control):
-  pre-stream, mode/arm commands, setpoint topics, and NED convention.
+  pre-stream, mode/arm command, setpoint topic과 NED 규약
 - [PX4 `BatteryStatus` uORB message](https://docs.px4.io/main/en/msg_docs/BatteryStatus):
-  remaining state of charge and voltage used as the hardware energy source.
-- [px4_msgs](https://github.com/PX4/px4_msgs): the generated message
-  definitions; the branch must match the firmware release exactly.
-- [Micro XRCE-DDS Agent](https://github.com/eProsima/Micro-XRCE-DDS-Agent):
-  the agent binary, its UDP/serial transports, and its Fast DDS dependency.
+  hardware energy source로 쓰는 state of charge와 voltage
+- [px4_msgs](https://github.com/PX4/px4_msgs): 생성 message 정의. Branch가 firmware
+  release와 정확히 일치해야 한다.
+- [Micro XRCE-DDS Agent](https://github.com/eProsima/Micro-XRCE-DDS-Agent): agent
+  binary, UDP/serial transport와 Fast DDS 의존성
 
-## Isaac Sim and Pegasus
+## Isaac Sim 및 Pegasus
 
 - [Isaac Sim 5.1 ROS 2 standalone workflow](https://docs.isaacsim.omniverse.nvidia.com/5.1.0/ros2_tutorials/tutorial_ros2_python.html):
-  standalone stepping and ROS 2 bridge operation.
+  standalone stepping과 ROS 2 bridge 동작
 - [Isaac Sim ROS 2 reference architecture](https://docs.isaacsim.omniverse.nvidia.com/5.1.0/ros2_tutorials/ros2_reference_architecture.html):
-  custom Python nodes and simulator/ROS process boundaries.
+  custom Python node와 simulator/ROS process 경계
 - [Isaac Sim camera sensor](https://docs.isaacsim.omniverse.nvidia.com/5.1.0/sensors/isaacsim_sensors_camera.html):
-  focal length/aperture instead of field of view, `camera_axes` conventions, and
-  `get_intrinsics_matrix`.
+  FOV 대신 focal length/aperture를 쓰는 방법, `camera_axes` 규약과
+  `get_intrinsics_matrix`
 - [Pegasus PX4 integration](https://pegasussimulator.github.io/PegasusSimulator/source/features/px4_integration.html):
-  `PX4MavlinkBackend` configuration and PX4 auto-launch.
+  `PX4MavlinkBackend` 설정과 PX4 자동 시작
 - [USD rigid bodies](https://openusd.org/dev/api/class_usd_physics_rigid_body_a_p_i.html):
-  kinematic rigid-body schema used for the reproducible moving deck.
+  재현 가능한 moving deck에 쓰는 kinematic rigid-body schema
 
-## Hardware profiles
+## 실제 기체 구성
 
 - [u-blox ZED-F9P-05B data sheet](https://content.u-blox.com/sites/default/files/documents/ZED-F9P-05B_DataSheet_UBXDOC-963802114-12824.pdf):
-  5 Hz multi-constellation navigation rate, under-10-second RTK convergence,
-  and 0.01 m + 1 ppm RTK horizontal/vertical accuracy.
+  5 Hz multi-constellation navigation rate, 10초 미만 RTK convergence,
+  `0.01 m + 1 ppm` RTK horizontal/vertical accuracy
 - [VectorNav VN-100 specifications](https://www.vectornav.com/products/detail/vn-100):
-  800 Hz IMU and 400 Hz attitude output, ±2000 deg/s gyro, ±16 g
-  accelerometer, bias stability and noise-density parameters.
+  800 Hz IMU, 400 Hz attitude output, ±2000 deg/s gyro, ±16 g accelerometer,
+  bias stability와 noise density
 - [Stereolabs ZED 2i data sheet](https://support.stereolabs.com/hc/en-us/article_attachments/27901419901463):
-  per-eye 1280 x 720 at 60 Hz and the 2.1 mm lens' 110 x 70 degree FOV.
+  Eye당 1280×720/60 Hz, 2.1 mm lens의 110×70° FOV
 - [AGILEX RANGER MINI 3.0](https://global.agilex.ai/products/ranger-mini):
-  2 m/s maximum speed, 120 kg payload and open SDK.
+  최대 속도 2 m/s, payload 120 kg, open SDK
 - [AGILEX `ugv_gazebo_sim`](https://github.com/agilexrobotics/ugv_gazebo_sim):
-  pinned BSD `ranger_mini_v3` URDF and visual meshes imported by
-  `scripts/import_ranger_mini_v3.sh`.
+  `scripts/import_ranger_mini_v3.sh`가 import하는 고정 BSD `ranger_mini_v3`
+  URDF와 visual mesh
 
-## Marker vision
+## Marker 영상 인식
 
 - [OpenCV ArUco detection](https://docs.opencv.org/4.x/d5/dae/tutorial_aruco_detection.html):
-  dictionaries, the required black border and white quiet zone, and corner
-  refinement.
-- [OpenCV `solvePnPGeneric` and planar ambiguity](https://docs.opencv.org/4.x/d9/d0c/group__calib3d.html):
-  `SOLVEPNP_IPPE_SQUARE`, the two-fold coplanar-pose ambiguity, and why
-  candidates must be scored rather than trusted.
+  dictionary, 필수 black border/white quiet zone과 corner refinement
+- [OpenCV `solvePnPGeneric` 및 planar ambiguity](https://docs.opencv.org/4.x/d9/d0c/group__calib3d.html):
+  `SOLVEPNP_IPPE_SQUARE`, 두 가지 coplanar-pose ambiguity와 candidate를 그대로
+  믿지 않고 score해야 하는 이유
 
-## GNSS in urban canyons
+## 도심 협곡의 GNSS
 
-The sources behind `isaac_sim/gnss.py`. The model is a deliberately compact one
--- pseudorange-domain errors, a weighted least-squares solution, and a C/N0
-test -- so these are cited for the mechanisms and the orders of magnitude, not
-for a reproduction of any particular experiment.
+다음은 `isaac_sim/gnss.py`의 근거다. Model은 pseudorange-domain error, weighted
+least-squares solution과 C/N0 test로 의도적으로 간결하게 만들었다. 특정 실험을
+재현한다는 의미가 아니라 mechanism과 magnitude order의 출처로 인용한다.
 
 - Groves, *Principles of GNSS, Inertial, and Multisensor Integrated Navigation
-  Systems*, 2nd ed., Artech House, 2013: the pseudorange error budget, the
-  elevation-dependent weighting, and DOP as the cofactor matrix of the
-  least-squares solution.
+  Systems*, 2nd ed., Artech House, 2013: pseudorange error budget,
+  elevation-dependent weighting, least-squares solution cofactor matrix인 DOP
 - Kaplan and Hegarty, *Understanding GPS/GNSS: Principles and Applications*,
-  3rd ed., Artech House, 2017: carrier-to-noise density, its elevation
-  dependence, and receiver-reported accuracy.
+  3rd ed., Artech House, 2017: carrier-to-noise density, elevation dependence와
+  receiver-reported accuracy
 - [Groves, "Shadow Matching: A New GNSS Positioning Technique for Urban
   Canyons", *Journal of Navigation* 64(3), 2011](https://doi.org/10.1017/S0373463311000087):
-  predicting satellite visibility from a 3D building model, which is what
-  `UrbanLayout.blocked_batch` does.
+  `UrbanLayout.blocked_batch`가 수행하는 3D building model 기반 satellite visibility 예측
 - [Groves and Jiang, "Height Aiding, C/N0 Weighting and Consistency Checking for
   GNSS NLOS and Multipath Mitigation in Urban Areas", *Journal of Navigation*
-  66(5), 2013](https://doi.org/10.1017/S0373463313000350): why signal strength
-  and consistency checking are the receiver's handles on NLOS, and why height
-  aiding matters -- the reason `gnss.vertical_blend` is small.
+  66(5), 2013](https://doi.org/10.1017/S0373463313000350): signal strength,
+  consistency check, height aiding의 필요성과 `gnss.vertical_blend`가 작은 이유
 - [Hsu, "Analysis and modeling GPS NLOS effect in highly urbanized area", *GPS
-  Solutions* 22:7, 2018](https://doi.org/10.1007/s10291-017-0667-9): measured
-  NLOS excess delays and positioning errors in a dense urban canyon, the source
-  for the magnitudes the shipped configuration produces.
+  Solutions* 22:7, 2018](https://doi.org/10.1007/s10291-017-0667-9): 조밀한 urban
+  canyon에서 측정한 NLOS excess delay와 position error, 기본 설정 magnitude의 근거
 - [Parkinson and Axelrad, "Autonomous GPS Integrity Monitoring Using the
   Pseudorange Residual", *NAVIGATION* 35(2), 1988](https://doi.org/10.1002/j.2161-4296.1988.tb00955.x):
-  post-fit residuals as the integrity observable, which is what inflates the
-  reported covariance here.
+  보고 covariance를 확장하는 integrity observable로서 post-fit residual
 
-## Urban wind
+## 도심 바람
 
 - [Oke, "Street design and urban canopy layer climate", *Energy and Buildings*
-  11(1-3), 1988](https://doi.org/10.1016/0378-7788(88)90026-6): street-canyon
-  flow regimes as a function of height-to-width ratio, and the sky view factor
-  -- the same geometric quantity the GNSS model computes. The basis for
-  `wind.canyon` channeling the mean flow along the street.
+  11(1-3), 1988](https://doi.org/10.1016/0378-7788(88)90026-6): height-to-width
+  ratio에 따른 street-canyon flow regime와 GNSS model도 계산하는 sky-view factor.
+  `wind.canyon`이 평균 flow를 도로 방향으로 channeling하는 근거
 
 ## ROS 2
 
-- [ROS 2 Humble RMW implementations](https://docs.ros.org/en/humble/Installation/DDS-Implementations.html):
-  why every `/fmu/*` consumer needs `RMW_IMPLEMENTATION=rmw_fastrtps_cpp` to
-  match the agent.
+- [ROS 2 Humble RMW 구현](https://docs.ros.org/en/humble/Installation/DDS-Implementations.html):
+  모든 `/fmu/*` consumer가 agent와 맞도록
+  `RMW_IMPLEMENTATION=rmw_fastrtps_cpp`를 사용해야 하는 이유
 
-## Relational graph attention
+## 관계형 graph attention
 
 - [Busbridge, Sherburn, Cavallo and Hammerla, *Relational Graph Attention
-  Networks* (2019)](https://openreview.net/forum?id=Bklzkh0qFm): the model
-  `python/ontology_rgat/rgat/layers.py` implements -- ARGAT and WIRGAT attention
-  normalisation, additive and multiplicative attention styles, multi-head
-  aggregation, and basis decomposition of the relational kernels.
-- [babylonhealth/rgat](https://github.com/babylonhealth/rgat) (Apache-2.0): the
-  authors' reference release. It is TensorFlow 1.x and cannot be installed on
-  this Python 3.10 / ROS 2 Humble / Isaac Sim 5.1 baseline, so the layer here is
-  a PyTorch reimplementation rather than a dependency. See `NOTICE`.
+  Networks* (2019)](https://openreview.net/forum?id=Bklzkh0qFm):
+  `python/ontology_rgat/rgat/layers.py`가 구현한 model. ARGAT/WIRGAT attention
+  normalization, additive/multiplicative style, multi-head aggregation과
+  relational kernel basis decomposition
+- [babylonhealth/rgat](https://github.com/babylonhealth/rgat) (Apache-2.0): 저자의
+  reference release. TensorFlow 1.x라 Python 3.10/ROS 2 Humble/Isaac Sim 5.1
+  baseline에 설치할 수 없어 dependency 대신 PyTorch로 재구현했다. `NOTICE` 참조
 - [Velickovic et al., *Graph Attention Networks*
-  (2018)](https://arxiv.org/abs/1710.10903): the additive attention score and
-  multi-head aggregation the above generalises to relations.
+  (2018)](https://arxiv.org/abs/1710.10903): relation으로 일반화한 additive
+  attention score와 multi-head aggregation
 - [Ng, Harada and Russell, *Policy Invariance Under Reward Transformations*
   (1999)](https://people.eecs.berkeley.edu/~pabbeel/cs287-fa09/readings/NgHaradaRussell-shaping-ICML1999.pdf):
-  why `cfg.reward.pbrs.gamma` must equal `cfg.ppo.gamma`.
+  `cfg.reward.pbrs.gamma`와 `cfg.ppo.gamma`가 같아야 하는 이유
 
-The primary comparison uses the two-layer R-GAT output directly as a frozen
-potential. The counterfactual-to-eight-coefficient distillation described by
-some older repository figures belongs only to the legacy cooperative profile.
+기본 비교는 2-layer R-GAT output을 동결 potential로 직접 쓴다. 이전 저장소 그림
+일부의 counterfactual-to-eight-coefficient distillation은 legacy cooperative profile에만
+속한다.
 
-## GPU acceleration
+## GPU 가속
 
-- [PyTorch CUDA semantics](https://pytorch.org/docs/stable/notes/cuda.html):
-  the asynchronous launch model the R-GAT trainer avoids synchronising against.
-- [PyTorch TF32 on Ampere and later](https://pytorch.org/docs/stable/notes/cuda.html#tensorfloat-32-tf32-on-ampere-and-later-devices):
-  `cfg.device.allow_tf32`.
+- [PyTorch CUDA semantics](https://pytorch.org/docs/stable/notes/cuda.html): R-GAT
+  trainer가 불필요하게 synchronize하지 않는 asynchronous launch model
+- [Ampere 이후 PyTorch TF32](https://pytorch.org/docs/stable/notes/cuda.html#tensorfloat-32-tf32-on-ampere-and-later-devices):
+  `cfg.device.allow_tf32`
 
-## Visualization
+## 시각화
 
-- [RViz 2 display types](https://docs.ros.org/en/humble/Tutorials/Intermediate/RViz/RViz-User-Guide/RViz-User-Guide.html)
-  and [`visualization_msgs/Marker`](https://docs.ros.org/en/humble/Tutorials/Intermediate/RViz/RViz-Custom-Display/RViz-Custom-Display.html):
-  what `python/ontology_rgat/viz/rviz.py` publishes.
+- [RViz 2 display type](https://docs.ros.org/en/humble/Tutorials/Intermediate/RViz/RViz-User-Guide/RViz-User-Guide.html)과
+  [`visualization_msgs/Marker`](https://docs.ros.org/en/humble/Tutorials/Intermediate/RViz/RViz-Custom-Display/RViz-Custom-Display.html):
+  `python/ontology_rgat/viz/rviz.py`가 발행하는 내용
 - [Isaac Sim debug drawing](https://docs.isaacsim.omniverse.nvidia.com/latest/utilities/utilities_debug_drawing.html):
-  the extension `isaac_sim/live_overlay.py` uses, and why the overlay has no
-  text (the extension draws lines and points only).
+  `isaac_sim/live_overlay.py`가 사용하는 extension. 이 extension은 line/point만
+  그리므로 overlay에 text가 없는 이유
 
-The current route figure is generated from the configured Meta-Sejong S5 USD
-road mesh by `tools/check_metasejong_route.py`; the live dashboard screenshot
-is explicitly labeled as an in-progress runtime capture rather than a result.
+현재 route figure는 `tools/check_metasejong_route.py`가 설정된 Meta-Sejong S5 USD
+road mesh에서 생성한다. Live dashboard screenshot은 결과가 아니라 진행 중 runtime
+capture임을 명시한다.

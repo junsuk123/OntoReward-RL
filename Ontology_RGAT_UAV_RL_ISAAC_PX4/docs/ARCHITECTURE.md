@@ -1,519 +1,329 @@
-# Architecture and migration boundary
+# 아키텍처 및 migration 경계
 
-[Documentation map](README.md) · [System overview](SYSTEM_OVERVIEW.md) · [Operations](OPERATIONS.md) ·
-[Hardware safety](HARDWARE_SAFETY.md) · [References](REFERENCES.md)
+[문서 안내](README.md) · [시스템 개요](SYSTEM_OVERVIEW.md) · [운영](OPERATIONS.md) ·
+[실제 기체 안전](HARDWARE_SAFETY.md) · [참고문헌](REFERENCES.md)
 
-## Scope of this document
+## 문서 범위
 
-The repository contains two intentionally separate experiment families:
+저장소에는 의도적으로 분리한 실험 family 두 개가 있다.
 
 | Family | Launcher | Actor/ontology/reward |
 |---|---|---|
-| **Primary controlled comparison** | repository-root `./run.sh` | image + 7-D UAV proprioception actor; 18-node/35-edge history-aware estimator-free graph; frozen direct R-GAT `Phi(G)` |
-| **Legacy cooperative urban profile** | `scripts/run_metasejong_pipeline.sh` | 23-channel cooperative actor; 14-node/38-edge graph; eight distilled fixed reward weights |
+| **기본 통제 비교** | 저장소 루트 `./run.sh` | 영상 + 7-D UAV proprioception actor, 18-node/35-edge history-aware estimator-free graph, 동결 direct R-GAT `Phi(G)` |
+| **Legacy cooperative urban profile** | `scripts/run_metasejong_pipeline.sh` | 23-channel cooperative actor, 14-node/38-edge graph, 증류한 고정 reward weight 8개 |
 
-The simulator/PX4/ROS migration and interfaces below are shared unless a
-section says **legacy cooperative**. The city/GNSS/reward-distillation sections
-describe that retained legacy profile; the current primary learning path is
-specified at the end and in
-[THREE_PIPELINE_COMPARISON.md](THREE_PIPELINE_COMPARISON.md).
+Simulator/PX4/ROS migration과 interface는 **legacy cooperative**라고 표시하지 않은 한
+공통이다. City/GNSS/reward-distillation 절은 보존된 legacy profile을 설명한다. 현재
+기본 learning path는 마지막 절과
+[THREE_PIPELINE_COMPARISON.md](THREE_PIPELINE_COMPARISON.md)에 정의한다.
 
-## What was replaced
+## 대체한 구성요소
 
-Two migrations happened, and they are separate. The first moved the *simulator*
-out of process; the second moved the *learner* out of MATLAB.
+Migration은 두 단계로 분리된다. 첫 단계는 simulator를 process 밖으로 옮겼고,
+두 번째 단계는 learner를 MATLAB에서 Python으로 옮겼다.
 
-### The simulator: MATLAB rigid body -> Isaac Sim + PX4
+### 시뮬레이터: MATLAB rigid body → Isaac Sim + PX4
 
-The original `+dynamics`, `+aero`, `+prop`, `+wind` and `+sensor` path, and the
-numerical integration it drove, are gone. The episode contract survives in
-`python/ontology_rgat/env.py`:
+이전 `+dynamics`, `+aero`, `+prop`, `+wind`, `+sensor` path와 numerical integration은
+제거했다. Episode 계약은 `python/ontology_rgat/env.py`에 남아 있다.
 
-| Old behavior | External replacement |
+| 이전 동작 | 외부 system의 대체 동작 |
 |---|---|
-| `resetState` creates an in-process state | reset transaction to Isaac, then a PX4-flown climb to the entry pose |
-| `getCurrent` synthesizes sensors | latest PX4 estimator sample |
-| `step` runs RK4 and a rotor model | sends a PX4 Offboard setpoint and waits one control period of *simulated* time; the primary comparison uses velocity/yaw-rate commands |
-| panel wind/aero diagnostics | Isaac physics-callback drag force and ROS 2 environment telemetry |
-| analytic marker-visibility proxy | ArUco tags on the pad seen by a downward camera |
-| ground clamp/terminal check | PX4 `vehicle_land_detected` plus shared landing criteria |
-| synthetic sensor noise (`cfg.sensor.*`) | dropped; PX4's EKF already fuses noisy simulated sensors |
+| `resetState`가 process 내부 state 생성 | Isaac reset transaction 후 PX4가 entry pose까지 상승 |
+| `getCurrent`가 sensor 합성 | 최신 PX4 estimator sample |
+| `step`이 RK4와 rotor model 실행 | PX4 Offboard setpoint를 보내고 *simulated time* control period를 기다림. 기본 비교는 velocity/yaw-rate command 사용 |
+| Panel wind/aero 진단 | Isaac physics-callback drag force와 ROS 2 environment telemetry |
+| 분석식 marker-visibility proxy | Downward camera가 보는 pad의 ArUco tag |
+| Ground clamp/terminal check | PX4 `vehicle_land_detected`와 공통 landing criteria |
+| 합성 sensor noise(`cfg.sensor.*`) | 제거. PX4 EKF가 noisy simulated sensor를 이미 fusion함 |
 
-`terminal_status` takes a `has_been_airborne` flag. With a real flight stack the
-vehicle is genuinely on the pad when control is handed over, and the old ground
-test would have called that a touchdown on step one.
+`terminal_status`는 `has_been_airborne` flag를 받는다. 실제 flight stack에서는 control
+handover 시 vehicle이 pad 위에 실제로 있으므로 이전 ground test를 그대로 쓰면 첫
+step을 touchdown으로 오인한다.
 
-The behaviour-policy expert dropped the analytical ground-effect feed-forward
-term: PX4 closes the attitude loop and Isaac supplies the actual thrust and
-contact response, so a hand-rolled correction on top would fight both.
+Behavior-policy expert의 분석식 ground-effect feed-forward도 제거했다. PX4가 attitude
+loop를 닫고 Isaac이 실제 thrust/contact response를 제공하므로 추가 보정은 둘과 충돌한다.
 
-### The learner: MATLAB -> Python
+### 학습기: MATLAB → Python
 
-The MATLAB workspace and its read-only parent are no longer on any execution
-path. `python/ontology_rgat/` is the whole experiment, and
-[`legacy_matlab/README.md`](../legacy_matlab/README.md) carries the file-by-file
-map. Four things are worth stating as design decisions rather than transcription:
+MATLAB workspace와 read-only parent는 실행 경로에서 제외했다.
+`python/ontology_rgat/`이 전체 실험이며 파일 mapping은
+[`legacy_matlab/README.md`](../legacy_matlab/README.md)에 있다. 주요 설계 선택은 다음과 같다.
 
-- **R-GAT is PyTorch, batched over graphs.** The layer follows Busbridge et al.
-  2019 as implemented by `babylonhealth/rgat`, which is TensorFlow 1.x and
-  cannot be installed on this baseline; see `NOTICE`. The port is a strict
-  generalisation of the MATLAB layer -- ARGAT and WIRGAT, additive and
-  multiplicative attention, multi-head aggregation, basis-decomposed kernels --
-  with the MATLAB configuration as its default, so numbers stay comparable.
-- **The graph template is captured from the first real rollout.** The original
-  dataset helper reset a second environment just to obtain one; here that would
-  create a second armed environment and collide on the UDP endpoint.
-- **Nothing reconstructs panel aerodynamics.** The evaluation plots Isaac's
-  logged resultant force. The retired monitors used to spread that force over
-  legacy panel slots to keep a drawing contract alive; the contract is gone with
-  the drawing.
-- **The views are ROS 2 and Python.** RViz 2 for the live 3D view, an Isaac
-  in-window overlay, a self-contained web dashboard for unattended progress, and
-  matplotlib for the publication figures. See `python/ontology_rgat/viz/`.
-- **The ontology is drawn twice, on purpose.** RViz's overlay hangs the graph
-  beside the vehicle from a hand-written flat layout that stays readable from
-  one viewpoint; `viz/graph3d.py` computes a depth-and-ring layout from the edge
-  list for the dashboard's rotatable view, which nothing else in the frame has
-  to share space with. A schema that gains a node changes the second
-  automatically and the first by hand.
+- **R-GAT은 graph batch를 처리하는 PyTorch 구현이다.** Busbridge et al. (2019)의
+  `babylonhealth/rgat`을 따른다. Reference는 TensorFlow 1.x라 현재 baseline에 설치할
+  수 없다(`NOTICE` 참조). ARGAT/WIRGAT, additive/multiplicative attention,
+  multi-head aggregation, basis-decomposed kernel을 지원한다.
+- **Graph template은 첫 실제 rollout에서 얻는다.** Template만 얻으려고 두 번째
+  environment를 reset하면 armed environment가 둘이 되어 UDP endpoint와 충돌한다.
+- **Panel aerodynamics를 복원하지 않는다.** Evaluation은 Isaac이 기록한 resultant
+  force를 plot하며, 사용 종료 monitor용 panel slot 계약은 제거했다.
+- **시각화는 ROS 2와 Python이다.** RViz 2 live 3D view, Isaac in-window overlay,
+  독립 web dashboard, publication figure용 matplotlib를 쓴다.
+- **Ontology를 두 번 그리는 것은 의도적이다.** RViz는 수동 flat layout,
+  `viz/graph3d.py`는 edge list 기반 dashboard depth/ring layout을 쓴다.
 
-### Legacy cooperative city
+## 이전 cooperative 구성
 
-`isaac_sim/urban_scene.py` owns one `UrbanLayout`: a block encircled by four
-streets, the block itself plus the facades on the far side of each street, cut
-by cross streets at the corners and mid-block. `UrbanScene.spawn` builds those
-boxes into the stage (collidable, so a policy that flies into a facade hits it)
-and `blocked_batch` tests lines of sight against the same boxes for the GNSS
-model. One layout, two consumers, by construction: an outage always has a
-building in the viewport to blame it on.
+### 도심 환경
 
-The boxes are axis-aligned, which is what makes the occlusion test exact rather
-than sampled — within the horizontal span where a climbing ray crosses a box,
-its lowest point is at the entry, so one test settles it. A whole constellation
-against the whole city is ~30 µs, so it runs at the publication rate.
+`isaac_sim/urban_scene.py`의 단일 `UrbanLayout`은 네 도로가 둘러싼 block, block과
+도로 반대편 facade, corner/mid-block cross street를 정의한다. `UrbanScene.spawn`은
+collision box를 stage에 만들고 `blocked_batch`는 같은 box로 GNSS line of sight를
+검사한다. 따라서 outage 원인이 되는 building이 실제 viewport에도 보인다.
 
-`Flat Plane` is the Pegasus environment: it supplies the ground plane and the
-lighting, and nothing else. No shipped environment comes with a machine-readable
-skyline, and one that did would still not be the one the GNSS model masks with.
+Box가 axis-aligned라 climbing ray가 box를 지나는 horizontal span의 entry point만으로
+exact occlusion을 판정할 수 있다. 전체 constellation-city 검사는 약 30 µs다.
+Pegasus `Flat Plane`은 ground와 light만 제공하며 machine-readable skyline은 없다.
 
-### Legacy cooperative moving deck
+### 이동 deck
 
-`LandingDeck` is a kinematic rigid body with a box collider — the roof of a
-6.2 × 2.45 m box lorry, 3.2 m above the road. `PadTrajectory` provides analytic
-position/velocity for `static`, bounded straight-line, `circular`, `lissajous`
-and `road` motion. `road` is what the urban experiment runs:
+`LandingDeck`은 box collider를 가진 kinematic rigid body로, 6.2×2.45 m box lorry의
+도로 위 3.2 m roof다. `PadTrajectory`는 `static`, bounded straight-line, `circular`,
+`lissajous`, `road`의 analytic position/velocity를 제공한다. Urban 실험의 `road`는:
 
-- the route is a rounded rectangle **parameterised by arc length**, so point,
-  unit tangent and curvature are closed form at every `s`, including through the
-  corners. A curve offset by a constant lane offset `e` advances at `(1 - κe)`
-  times the centreline rate, which is the whole of the velocity expression;
-- traffic is a Gaussian dip in the speed at each light, of a drawn depth, where
-  1.0 is a full stop. Its integral is an error function, so the distance covered
-  is closed form too and the deck is never numerically integrated;
-- the driver keeps lane with a slow wander and at most one `tanh` lane change,
-  both differentiable, so the lateral velocity they add is a bump and not an
-  impulse.
+- Arc length로 parameterize한 rounded rectangle이라 corner를 포함한 모든 `s`에서
+  point, unit tangent, curvature가 closed form이다. Lane offset `e`는 centreline
+  rate의 `(1-κe)`배로 진행한다.
+- Traffic light마다 추출 depth의 Gaussian speed dip을 쓴다. 1.0이면 완전 정지다.
+  Integral이 error function이라 이동 거리도 closed form이다.
+- 느린 lane wander와 최대 한 번의 `tanh` lane change가 미분 가능하므로 lateral
+  velocity가 impulse가 아니라 bump다.
 
-The 2–8 m/s speed is drawn from the episode seed, then multiplied by
-`pad_scale`; scale zero parks the lorry — including its lane wander — and is the
-static control condition with the same seed. The route rectangle defaults to the
-`urban.block_size_m` the city was built around, so the lorry cannot drive
-through a building, and the lanes it may use are counted out from the
-carriageway width — a lane change moves between them and never into oncoming
-traffic.
+Episode seed에서 2–8 m/s를 뽑아 `pad_scale`을 곱한다. Scale 0은 lane wander까지
+멈춘 같은 seed의 static control이다. Route rectangle은 `urban.block_size_m`를
+기본으로 하며 building과 oncoming lane을 침범하지 않는다.
 
-Two placement rules follow from the city being solid, and each was a defect
-first. The deck's position at construction comes from `PadTrajectory.pose(0)`
-and not from `pad.start_position_enu_m`: for the road profile those are
-different points, because the route is centred on the block and its origin is
-therefore the middle of a building — which is where the deck, and the vehicle
-that spawns on its roof, used to be put. And `pad.route_start: continue` leaves
-the lorry where it is across a reset, reseeding only how it drives from there,
-so the deck pose is continuous to within a millimetre; `seeded` draws a fresh
-point on the lap instead and teleports the deck a mean of 55 m out from under
-whatever is parked on it. See `docs/OPERATIONS.md` for what `continue` costs in
-reproducibility. The deck pose is written at the 250 Hz physics rate so PhysX
-sees a moving collider rather than a teleported static surface. It is
-deliberately a trajectory source, not a lorry drivetrain model.
+Deck 초기 위치는 `pad.start_position_enu_m`가 아니라 `PadTrajectory.pose(0)`에서
+얻는다. Road profile 원점은 building이 있는 block 중심이기 때문이다.
+`pad.route_start: continue`는 reset 사이 lorry 위치를 1 mm 이내로 이어가고 운전
+양상만 reseed한다. `seeded`는 lap의 새 위치를 뽑아 평균 55 m teleport하므로 위의
+UAV와 분리될 수 있다. Deck pose는 physics 250 Hz로 써 PhysX가 moving collider로
+본다. Drivetrain model이 아니라 trajectory source다. Marker quad는
+`/World/landing_rover` child라 pose, heading, collision geometry와 함께 움직인다.
 
-The marker quads are children of `/World/landing_rover`, so pose, heading, and
-collision geometry move together.
+### GNSS
 
-### Legacy cooperative GNSS
+`isaac_sim/gnss.py`는 episode마다 7° mask 위 satellite 12개를 `sin(el)`에서
+균일하게 뽑아 hemisphere에서 균일한 constellation을 만든다. 15초 동안 MEO
+satellite 변화가 1°보다 작으므로 episode 안에서는 고정한다.
 
-`isaac_sim/gnss.py`. A `Constellation` of twelve satellites is drawn per episode
-uniformly in `sin(el)` above a 7° mask — the distribution that is uniform over
-the hemisphere; drawing elevation uniformly would over-populate the zenith and
-make every canyon look better than it is. It is frozen for the episode, because
-a MEO satellite moves well under a degree in fifteen seconds.
+Receiver update 과정:
 
-Per receiver, per update:
+1. `UrbanLayout.blocked_batch`가 facade를 지나는 line of sight를 판정한다.
+2. Blocked satellite는 `nlos_tracking_probability` 확률로 reflection을 통해 계속
+   tracking한다. 생존 draw는 constellation에 있어 두 receiver가 공유한다.
+3. Reflection에는 upper bound가 있는 양의 excess delay `2 d cos(el)`을, direct
+   signal에는 elevation-weighted diffuse multipath와 thermal noise를 더한다.
+4. `[-u,1]` row weighted least squares가 position/clock error를 계산한다. DOP는
+   unweighted normal matrix, post-fit residual은 covariance를 늘리는 variance factor다.
+5. Satellite별 C/N0는 horizon 쪽에서 낮아지고 reflection에는 지수 분포 dB loss가
+   추가된다. 예상보다 `cn0_detection_margin_db` 이상 낮으면 suspect다.
 
-1. `UrbanLayout.blocked_batch` decides which lines of sight cross a facade.
-2. A blocked satellite is still tracked with probability
-   `nlos_tracking_probability`, through a reflection. Which ones survive is a
-   property of the facades, so the draw lives on the constellation and is
-   **shared** between the two receivers.
-3. A tracked reflection carries a strictly positive excess delay `2 d cos(el)`,
-   capped; a direct signal carries elevation-weighted diffuse multipath (a
-   first-order Gauss–Markov process, so it wanders rather than flickers) and
-   thermal noise.
-4. Weighted least squares over `[-u, 1]` rows gives the position and clock
-   error, the classical DOP comes from the unweighted normal matrix, and the
-   post-fit residuals give an a-posteriori variance factor that inflates the
-   receiver's own reported covariance.
-5. Carrier-to-noise ratio is computed per satellite: it falls toward the horizon
-   and a reflection costs an exponentially-drawn number of dB on top. A signal
-   more than `cn0_detection_margin_db` below its elevation's expectation is
-   flagged suspect. This is the receiver's only handle on NLOS when every
-   satellite is reflected off facades the same distance away — their biases then
-   agree with each other and no consistency check sees anything wrong.
+Integrity는 satellite count, DOP, inflated covariance, suspect fraction만으로 만든다.
+Satellite 4개 미만이면 outage로 보고 estimate가 coast/drift하며 `valid=false`,
+integrity=0이 된다. Reset의 `gnss_scale`은 error mechanism만 곱하고 building은
+움직이지 않는다. Scale 0도 **같은 city**의 open-sky 조건이라 geometry와 fix를 분리한다.
 
-The reported integrity is built from satellite count, DOP, the inflated
-covariance and the suspect fraction, all observables. Fewer than four satellites
-is an outage: the estimate coasts and drifts, `valid` goes false and integrity
-goes to zero.
+`UrbanGnssSensor`가 urban receiver solution을 MAVLink `HIL_GPS`로 변환한다. C/N0나
+3-D building shadow mask가 찾은 reflection은 pseudorange variance를 키워 LOS range가
+우선되게 한다. PX4 EKF2가 navigation estimate를 소유한다. 큰 EPH/EPV는 fix를 약한
+drift-bounding observation으로 만들고, fix loss에서는 IMU dead reckoning, 안정 회복에서는
+EKF fusion을 쓴다. Status의 simulator-only `truth`와 `injected_into_px4`가 gateway의
+중복 error 적용을 막는다.
 
-`gnss_scale` on the reset request multiplies the error mechanisms and moves no
-building, so scale 0 is open sky **in the same city** — the facades still hide
-the markers and still channel the wind. That is what isolates the fix from the
-geometry in `evaluation.sweeps.gnss_sweep`.
+Lorry receiver는 `/landing_pad/state/odom`에 자체 error/covariance를 포함한 fix를,
+scoring 전용 `/landing_pad/state/odom_truth`에 실제값을 발행한다. 두 receiver는
+constellation을 공유하지만 map/C/N0 mitigation은 독립이다. Stale deck broadcast는
+`estimator_valid=false`지만 낮은 품질은 추론 대상 state이므로 link fault가 아니다.
+Marker가 보이면 pad-relative position을 직접 anchor하고, 사라지면 PX4 및 wheel
+odometry velocity로 예측한 뒤 combined receiver variance에 비례한 time constant로
+differential GNSS 쪽을 보정한다.
 
-**Where the error is applied.** The generic clean Pegasus GPS is replaced by
-`UrbanGnssSensor`, which converts the urban receiver solution and reported
-accuracy to MAVLink `HIL_GPS`. Before that conversion, reflections detected by
-C/N0 or the OSM/3-D building shadow mask have their pseudorange variance
-inflated so LOS ranges dominate. PX4 EKF2 therefore owns the navigation
-estimate: large EPH/EPV makes a valid fix a weak, drift-bounding observation, a
-true loss of fix makes the filter propagate on IMU dead reckoning, and a stable
-recovery is fused back through the EKF instead of being added as a position step
-in the ROS gateway. The status
-topic still carries the receiver observables for the ontology, plus a simulator-
-only `truth` subobject; `injected_into_px4` prevents the gateway applying that
-error twice. `/fmu/out/estimator_status_flags`, `estimator_gps_status` and the
-raw GPS topic expose the actual fusion decision.
+### 에너지 및 학습 계약
 
-**Two receivers.** The lorry has one too. What it broadcasts on
-`/landing_pad/state/odom` is its own fix — errors and all — with its reported
-accuracy in the pose covariance; the simulator's truth goes to
-`/landing_pad/state/odom_truth`, which only the scoring path reads. The receivers
-share a constellation but independently apply map/C/N0 NLOS mitigation, keeping
-the nominal differential fix metre-scale while preserving severe low-integrity
-regions for the DR path. A 2.45 m roof still requires the optical final anchor.
+SITL `BatteryModel`은 momentum-theory induced power와 avionics draw를
+`/fmu/out/vehicle_thrust_setpoint`에서 받아 PX4 simulated time으로 적분한다. Policy
+handover 때 episode seed의 9–55 hover-second reserve로 시작해 initial climb 비용은
+policy에 부과하지 않는다. Hardware는 PX4 `battery_status`를 사용할 수 있다. Empty
+modeled pack은 `battery_depleted` terminal이다.
 
-A moving deck with a stale broadcast makes `estimator_valid=false`; a degraded
-one does not, because a bad fix is a state to reason about and not a link fault.
-For the pad-relative navigation state, a live marker directly anchors position.
-When it disappears, the gateway predicts from PX4 velocity and the cooperative
-vehicle's wheel-odometry velocity, then
-corrects toward differential GNSS with a time constant proportional to the
-combined receiver variance. Thus a good fix recentres quickly, while an urban
-20 m fix cannot create a position step or overpower short-term DR.
+Legacy learning 계약은 observation 23개, ontology node 14개다. `WindRisk`는 physics
+실제값이 아니라 UAV anemometer 측정에서 나온다. `PadMotion`은 alignment, visual
+stability, touchdown safety, `SafeLanding`을 낮추고 `BatteryReserve`는 touchdown
+safety를 지지한다. `GnssIntegrity`와 `MarkerQuality`는 서로 대체 가능한 alignment
+source다. Marker가 보이면 fix 영향이 작고 사라지면 중요하므로 `TouchdownSafety`는
+두 신호의 noisy-OR 위에 만든다.
 
-### Legacy cooperative energy and learning contract
+관측 가능한 값은 pad velocity, relative closing speed, normalized reserve,
+descent-energy margin, GNSS integrity, suspect fraction, reported horizontal 1-sigma다.
+실제 error/NLOS count/sky view는 입력이 아니며 `tests/test_urban_gnss.py`가 검사한다.
 
-SITL uses `BatteryModel`: momentum-theory induced power plus avionics draw,
-integrated on PX4 simulated time from `/fmu/out/vehicle_thrust_setpoint`. The
-model starts at policy handover with the 9–55 hover-second reserve Isaac drew
-from the episode seed, so the climb is not charged to the policy. Hardware can
-adopt PX4 `battery_status`. Every state carries finite energy fields, and an
-empty modeled pack ends the episode as `battery_depleted`.
+**고정 reward design:** R-GAT이 discounted safe-landing outcome을 fitting한 뒤 각
+physical term을 neutral value로 바꾼 counterfactual dataset에서 output 절대 변화를
+측정한다. Sensitivity 8개를 bounded unit simplex로 projection해 position, vertical
+speed, tilt, body rate, wind, pad tracking, energy, navigation coefficient로 동결한다.
+PBRS의 `Phi_w=-sum(w_i c_i)`를 정의하며 PPO가 변화하는 attention을 reward로 쓰지
+않는다. JSON artifact는 coefficient, range, sensitivity, validation loss, dataset size,
+deterministic design ID를 기록한다.
 
-The learning contract is now 23 observations and 14 ontology nodes. `WindRisk`
-is derived from the UAV anemometer's measured speed and temporal changes, not
-the exact field applied by physics. `PadMotion`
-degrades alignment, visual stability, touchdown safety and `SafeLanding`;
-`BatteryReserve` supports touchdown safety and contributes to `SafeLanding`;
-`GnssIntegrity` supports exactly what `MarkerQuality` supports — the alignment
-solved from the pad-relative pose and the touchdown flown on it — and
-contributes to `SafeLanding`. It is the *substitutability* of those two that the
-relation weights have to learn: with the markers in frame the fix hardly
-matters, and the moment they leave it the fix is all there is. `TouchdownSafety`
-is therefore built on the noisy-OR of the two rather than on visual stability
-alone.
+**Optimization 계약:** Nominal paired success가 `eval.acceptance.min_success_rate`
+이상이고 wind/pad-motion/GNSS/energy strata success dispersion이 `max_success_std`
+이하이며 worst-case success와 R-GAT fit도 limit을 만족해야 proposed policy를 accept한다.
 
-Pad velocity, relative closing speed, normalized reserve, descent-energy margin,
-GNSS integrity, the suspect-signal fraction and the reported horizontal
-1-sigma are observable. The true error, the true NLOS count and the true sky
-view are not, and `tests/test_urban_gnss.py` enforces it.
+**Scoring:** 긴 outage에서 fused pose가 drift할 수 있어 terminal test와 touchdown
+metric만 simulator 전용 UAV/deck stream으로 만든 `env.truth_state`를 쓴다. Degraded
+`HIL_GPS`를 fusion한 PX4 odometry는 truth로 재사용하지 않는다. R-GAT은 batched 및
+vectorized하며 `cfg.gpu.*`가 device를 정한다. RTX 4060의 보수적 crossover는 batch
+1024이고 저장/real-time inference 전에 CPU double로 가져온다.
 
-**Fixed reward design.** R-GAT remains context dependent while fitting the
-discounted safe-landing outcome. After training, the learner creates one
-counterfactual dataset per physical term by replacing that term with its neutral
-value, measures the absolute change in R-GAT output, and projects the eight
-sensitivities onto a bounded unit simplex. The resulting position, vertical
-speed, tilt, body-rate, wind, pad-tracking, energy and navigation coefficients
-are frozen for PPO. They define `Phi_w=-sum(w_i c_i)` inside PBRS; PPO never
-reads the changing R-GAT attention as a changing reward. The JSON artifact
-records coefficients, physical ranges, sensitivity, validation loss, dataset
-size and a deterministic design ID.
+## 인터페이스
 
-**Optimization contract.** The proposed policy is accepted only if two gates
-pass: nominal paired-evaluation success exceeds `eval.acceptance.min_success_rate`,
-and its success-rate dispersion across wind, pad-motion, GNSS and energy strata
-stays below `max_success_std` while worst-case success and R-GAT validation fit
-also meet their limits. This prevents a uniformly failing policy from appearing
-"consistent" and keeps reward effectiveness separate from R-GAT robustness.
+### 시뮬레이터 연결
 
-**Scoring.** The fused pad-relative pose can still drift away from truth during
-a long outage, so the terminal test and the touchdown metrics run on
-`env.truth_state` — the gateway's `truth` block built from the simulator-only
-`/landing_uav0/state/odom_truth` and deck truth streams — and nothing else does.
-PX4 odometry cannot be reused as truth now that it fuses the degraded HIL_GPS.
-A link with no `truth` block
-falls back to the sensor, as the fixed-pad experiment always did. R-GAT forward/gradient computation is batched and
-vectorized; GPU selection is explicit through `cfg.gpu.*`, with a conservative
-RTX 4060 crossover of batch 1024. Models are gathered back to CPU double before
-saving or real-time inference.
+Pegasus는 PX4 Simulator MAVLink API를 쓴다. Simulated IMU/GPS/ground truth는 PX4로,
+`HIL_ACTUATOR_CONTROLS`는 Isaac rotor dynamics로 흐른다. Companion/offboard socket과
+다르다. `isaac.lockstep`이 켜져 PX4와 Isaac이 함께 진행한다.
 
-## Interfaces
+### 바람 및 항력
 
-### Simulator link
+Pegasus still-air `LinearDrag`를 0으로 바꾸고 Isaac physics callback에서 wind-relative
+quadratic drag를 적용한다(`landing_world.py`의 `WindField.force`). Field는 seeded mean,
+six-mode turbulence sum, Gaussian gust에 episode별 `wind_scale`을 곱한다. Force는
+body frame에 적용하고 validation 전용으로 ENU에 발행한다. 별도 UAV anemometer의
+bias/noise/first-order response 측정값만 `WindRisk`, ontology, PPO, reward에 도달한다.
 
-Pegasus uses PX4's Simulator MAVLink API: simulated IMU/GPS/ground truth flow to
-PX4 and `HIL_ACTUATOR_CONTROLS` flows back to Isaac rotor dynamics. It is not the
-same socket as the companion/offboard link. `isaac.lockstep` is on, so PX4 and
-Isaac advance together and simulation speed is flight-stack speed.
+`wind.canyon`은 facade가 평균 flow를 도로 방향으로 모으고 cross-street component를
+막는 현상을 구현한다. Street axis는 deck heading이고 gradient wind blend는 sky view다.
+Lorry가 corner를 돌면 channel 방향도 돌고 intersection에서 완화된다.
 
-### Wind and drag
+### Companion 연결
 
-Pegasus' own still-air `LinearDrag` is replaced with zeros and a wind-relative
-quadratic drag is applied in an Isaac physics callback instead
-(`WindField.force` in `isaac_sim/landing_world.py`). The field is a seeded mean
-plus a six-mode turbulence sum plus configured Gaussian gusts, all scaled by the
-per-episode `wind_scale` the reset request carries. The force is applied in the
-body frame and republished in ENU for validation plots only. A separate UAV
-anemometer adds seeded bias, white noise and a first-order response. Only that
-measurement reaches `WindRisk`, the ontology, PPO and rewards, preventing
-simulator truth from leaking into the policy.
+기본 gateway는 PX4 uXRCE-DDS와 release가 일치하는 `px4_msgs`를 쓴다.
 
-`wind.canyon` adds the one thing a street does to wind that open ground does
-not: the facades channel the mean flow along the carriageway and block most of
-the cross-street component. The street axis is the deck's own heading and the
-blend back to the gradient wind is the deck's sky view, so the channeling turns
-when the lorry turns a corner and relaxes at the intersections — which is
-exactly where the GNSS recovers. Only the mean is channeled; the turbulence is
-what is left after the facades have finished with it.
-
-### Companion link
-
-The preferred gateway uses PX4 uXRCE-DDS and matching `px4_msgs`. It publishes:
+발행:
 
 - `/fmu/in/offboard_control_mode`
-- `/fmu/in/vehicle_attitude_setpoint` (legacy collective/attitude actions)
-- `/fmu/in/trajectory_setpoint` (pre-episode entry hover and primary
-  velocity/yaw-rate actions)
+- `/fmu/in/vehicle_attitude_setpoint` — legacy attitude action
+- `/fmu/in/trajectory_setpoint` — entry hover와 기본 velocity/yaw-rate action
 - `/fmu/in/vehicle_command`
 
-and consumes:
+구독:
 
 - `/fmu/out/vehicle_odometry`
-- `/fmu/out/vehicle_local_position` (EKF validity flags)
+- `/fmu/out/vehicle_local_position` — EKF validity flag
 - `/fmu/out/vehicle_status`
-- `/fmu/out/battery_status` (hardware state of charge)
+- `/fmu/out/battery_status`
 - `/fmu/out/vehicle_land_detected`
-- `/fmu/out/vehicle_command_ack` (rejected commands are logged, not swallowed)
-- `/fmu/out/vehicle_thrust_setpoint` (hover-thrust calibration)
+- `/fmu/out/vehicle_command_ack`
+- `/fmu/out/vehicle_thrust_setpoint`
 
-The last four are the ones `patches/px4-v1.14-publish-land-detected.patch` adds;
-stock PX4 v1.14 keeps them off the uXRCE-DDS bridge. `vehicle_odometry`,
-`vehicle_local_position` and `vehicle_status` are already in stock
-`dds_topics.yaml`.
+마지막 네 topic은 `patches/px4-v1.14-publish-land-detected.patch`가 추가한다. 한 번에
+control source 하나만 `_control_tick`을 구동한다. 첫 policy command 전에는 `goto`,
+legacy `action`은 attitude control, 기본 `velocity_action`은 position-backed velocity/yaw
+control이다. `state.extra.control_source`가 실제 source를 보고한다.
 
-Exactly one control source drives `_control_tick` at a time. A `goto` streams
-position setpoints until the first policy command arrives. Legacy `action`
-switches to attitude control; primary `velocity_action` switches to
-position-backed velocity/yaw control. `state.extra.control_source` reports
-which of `goto`, `action`, `velocity_action` or `idle` is live.
+PX4는 충분한 setpoint stream 뒤에만 mode switch를 받아들이므로 `OFFBOARD` 요청은
+latch하지 않고 실제 nav state가 `OFFBOARD`(14)가 될 때까지 재전송한다.
 
-Requesting `OFFBOARD` is retried, not latched: PX4 accepts the mode switch only
-after it has seen a steady setpoint stream and rejects it outright in some
-pre-arm states, so `VEHICLE_CMD_DO_SET_MODE` is re-sent every `control_hz/2`
-ticks until `vehicle_status.nav_state` actually reads `OFFBOARD` (14).
+`estimator_valid`는 finite number로 추정하지 않고 PX4의 최신 `xy_valid`, `z_valid`,
+`v_xy_valid`, `v_z_valid`를 모두 요구한다. 정지 disarm에서 보통 false인
+`heading_good_for_control`은 제외해 `extra`에만 보고한다. Hardware에서는 최신 visual
+pad pose, non-static target에서는 최신 `/landing_pad/state/odom`도 요구한다.
 
-`estimator_valid` is PX4's answer, not an inference from finite numbers: it
-requires `vehicle_local_position`'s `xy_valid`, `z_valid`, `v_xy_valid` and
-  `v_z_valid` to all be set and fresh within `system.state_timeout_s`.
-`heading_good_for_control` is deliberately excluded — it is normally false on a
-stationary disarmed vehicle, which is the state every episode starts from — and
-is reported in `extra` instead. On `target=hardware`, `estimator_valid` also
-requires a fresh visual pad pose; every non-static target additionally requires
-fresh `/landing_pad/state/odom` so its relative velocity is defined.
+### Episode 초기화 연결
 
-### Episode reset link
+Reset은 `std_msgs/String` JSON을 쓰는 gateway–Isaac two-topic transaction이다.
 
-Reset is a two-topic transaction between the gateway and Isaac, carried as JSON
-in `std_msgs/String`:
-
-- gateway → Isaac on `/landing_sim/reset`:
+- Gateway → Isaac `/landing_sim/reset`:
   `{v, seq, seed, wind_scale, pad_scale, gnss_scale}`
-- Isaac → gateway on `/landing_sim/reset_ack`: the request echoed plus
-  `entry_offset_pad_m`, the instantaneous `entry_position_enu_m`,
-  `entry_rpy_deg`, `entry_yaw_enu_rad`, `battery_hover_seconds`, deck state, the
-  episode's opening GNSS fixes, and `reseated_on_deck`
+- Isaac → gateway `/landing_sim/reset_ack`: request echo,
+  `entry_offset_pad_m`, `entry_position_enu_m`, `entry_rpy_deg`,
+  `entry_yaw_enu_rad`, `battery_hover_seconds`, deck state, initial GNSS fix,
+  `reseated_on_deck`
 
-The gateway forwards the acknowledgement to the learner as the `detail` of a
-`reset_complete` ack, and `bridge.PX4Bridge` sends `entry_offset_pad_m` with a
-pad-frame `goto`. The gateway recomputes the world target from the live deck on
-every control tick. A reset whose ack carries no offset is an error, not a
-default: it means Isaac is running an older `landing_world.py`.
+Gateway는 이를 `reset_complete` ack의 `detail`로 learner에 전달한다.
+`PX4Bridge`가 pad-frame `goto`를 보내고 gateway는 live deck에서 world target을 매 tick
+다시 계산한다. Ack에 offset이 없으면 이전 `landing_world.py`로 보고 실패한다.
 
-### Profile-specific environment and perception telemetry
+### 환경 및 인식 telemetry
 
-The legacy cooperative SITL sensor suite is hardware-profiled rather than ideal: ZED-F9P-05B
-multi-constellation RTK at 5 Hz, a VN-100 IMU whose 800 Hz device capability is
-sampled at the 250 Hz physics limit, and one ZED 2i eye at 1280 x 720/60 Hz.
-The Meta-Sejong carrier references the official AGILEX Ranger Mini V3 mesh;
-trajectory ownership remains with the kinematic pad so all seeds are exactly
-repeatable. Full values and source links are in `config/system.yaml` and
-`docs/REFERENCES.md`.
+Legacy cooperative profile은 ZED-F9P-05B RTK 5 Hz, physics limit 250 Hz의 VN-100
+IMU, ZED 2i eye 1280×720/60 Hz를 profile한다. 기본 profile은 Shin 호환 512×320
+mono camera 30 Hz로 override하고 GNSS를 actor/ontology에서 제거한다.
 
-The primary profile overrides this with the Shin-compatible 512×320 mono
-camera at 30 Hz and disables GNSS as an actor/ontology input. It retains the
-same PX4/Isaac transport and physical contact/scoring topics.
+Isaac의 `/landing_uav0` 주요 topic:
 
-Isaac publishes, under `/landing_uav0` (`isaac.namespace` + `vehicle_id`):
+- `/sensors/wind`: UAV anemometer 측정, ontology에 전달되는 유일한 wind
+- `/environment/wind`, `/environment/aero_force`: physics/validation 전용 truth
+- `/perception/marker_quality`: detector confidence `[0,1]`
+- `/perception/uav_pose_in_pad`: pad-frame ENU pose
+- `/perception/pad_contact`, `/perception/pad_contact_force`: filtered contact/진단 force
+- `/perception/landing_camera/annotated`: board outline/ID, confidence, reprojection error,
+  pixel scale와 pad-relative UAV overlay. Miss도 발행한다.
+- `/gnss/status`: 관측 가능한 receiver fix와 simulator-only `truth` JSON
+- `/state/*`와 TF: Pegasus `ROS2Backend`
 
-- `/sensors/wind` (`geometry_msgs/Vector3Stamped`, ENU): the UAV anemometer
-  measurement with seeded bias, noise and first-order response; this is the
-  only wind value forwarded to ontology/R-GAT/PPO
-- `/environment/wind`, `/environment/aero_force` (`geometry_msgs/Vector3Stamped`, ENU):
-  simulator truth for physics and validation only
-- `/perception/marker_quality` (`std_msgs/Float32`, `[0,1]`)
-- `/perception/uav_pose_in_pad` (`geometry_msgs/PoseStamped`, pad-frame ENU)
-- `/perception/pad_contact` (`std_msgs/Bool`): physical UAV contact with the
-  deck, filtered by the quadrotor body and the yaw-corrected roof footprint
-- `/perception/pad_contact_force` (`std_msgs/Float32`, N): net contact force for
-  operator diagnostics
-- `/perception/landing_camera/annotated` (`sensor_msgs/Image`, `rgb8`): the
-  downward camera with detected board outlines/IDs and the solve's confidence,
-  reprojection error, pixel scale and pad-relative UAV position overlaid. A miss
-  is also published and labelled, so loss of recognition is visually distinct
-  from loss of the camera stream.
-- `/gnss/status` (`std_msgs/String`, JSON): both receivers' fixes. Observables at
-  the top level, the simulator's truth under `truth` — the gateway forwards the
-  first and keeps the second. A custom message would be tidier and would need a
-  message package; the reset link already works this way.
-- `/state/*` and TF, from Pegasus' `ROS2Backend` (`pub_state`, `pub_tf`)
+Lorry는 `/landing_pad/state/odom`에 broadcast fix를, scoring 전용
+`/landing_pad/state/odom_truth`에 실제값을 발행한다. `/state/*` truth는 telemetry와
+readiness에만 쓰고 policy에 넣지 않는다.
 
-The lorry publishes independently of the UAV namespace:
-`/landing_pad/state/odom` is what it broadcasts about itself, with its own GNSS
-error in the pose and its reported accuracy in the covariance;
-`/landing_pad/state/odom_truth` is the simulator's, and only the gateway's
-scoring path subscribes to it.
+### Marker 영상 인식
 
-Ground truth on `/state/*` is used for experiment telemetry and readiness checks
-only. It never reaches the policy.
+`isaac_sim/marker_vision.py`는 Isaac을 import하지 않아 simulator 없이 frame convention을
+시험할 수 있다. 다음 사항이 중요하다.
 
-### Profile-specific marker vision
+- Coplanar pose ambiguity candidate를 score하고 camera를 지하에 두는 branch를 거부한다.
+- Optical frame은 stage에서 측정하고 aperture 설정 뒤 intrinsic을 다시 읽는다.
+- Marker black border/quiet zone을 자르는 `OmniPBR` world-space UV projection은 피한다.
 
-`isaac_sim/marker_vision.py` holds the pad geometry and the pose solve, and
-imports no Isaac, so the frame conventions are testable without a simulator
-(`tests/test_marker_vision.py` renders a synthetic pad view and round-trips the
-pose across the whole approach). Three details are load-bearing and each was a
-real defect first:
+`marker_quality`는 reprojection sharpness, 최대 tag pixel scale, single-tag penalty로
+만든 detector 자체 confidence다. Miss는 0.0과 no pose를 보낸다. 기본 비교에서 metric
+marker pose는 setup/operator visualization 전용이다. Actor는 raw mono image,
+`onto_no_se`는 그 image의 keypoint/heatmap만 쓴다. Annotated image도 같은 detector
+호출에서 만들며 simulator truth를 overlay하지 않는다.
 
-- Coplanar points are two-fold ambiguous and a level downward camera over a flat
-  pad sits on that degeneracy, so candidate poses are scored here and the branch
-  that puts the camera underground is rejected.
-- The camera's optical frame is measured from the stage rather than assumed;
-  Isaac's `camera_axes` conventions differ between `set_local_pose` and
-  `get_world_pose`, and the mismatch aims the camera sideways while every
-  readback still looks correct. The intrinsics are likewise read back with
-  `get_intrinsics_matrix()` after the aperture is set, so a lens setting that
-  did not take cannot silently bias every pose the policy flies on.
-- `OmniPBR` enables world-space UV projection in its constructor, which ignores
-  the quad's own UVs and crops away the marker's black border and quiet zone.
-  A tag without them is not detectable.
+Camera pose는 IMU-DR prediction을 대체하지 않고 제한된 correction으로 fusion한다.
+`vision.pose_max_step_m`, `vision.pose_reacquire_error_m`,
+`vision.fusion_max_correction_m`이 planar-PnP branch jump를 제한한다.
 
-`marker_quality` is the detector's own confidence — sharpness from reprojection
-error, scale from the largest tag's pixel side, and a small penalty for a
-single-tag pose — so the ontology consumes perception health rather than a
-function of ground truth. A miss publishes `0.0` and no pose, which is what
-makes the gateway fall back to the PX4 estimate.
+### 학습기 연결
 
-In the primary comparison the solved metric marker pose is used for setup and
-operator visualization, not as an actor or semantic-graph input. The actor sees
-the raw mono image; `onto_no_se` uses only keypoints/heatmaps derived from that
-image. The camera-centred entry gate may require a recent nonzero marker quality
-before the measured episode begins.
+Learner와 gateway는 UDP datagram마다 `v`, `type`, `seq`, `time_ns`가 있는 JSON 하나를
+주고받는다. Sequence 이하 중복 command는 `duplicate`로 답하고 무시한다. Version,
+finite range, timestamp, action bound를 검사해 오류는 `error` reply로 거부한다.
 
-The same detector invocation produces the annotated operator image on
-`/landing_uav0/perception/landing_camera/annotated`; visualization does not run
-the detector a second time and the overlay contains no simulator truth.
+Command: `hello`, `state`, `action`, `goto`, `arm`, `disarm`, `reset`,
+`enable_offboard`, `disable_offboard`. Reply: `state`, `ack`, `error`.
 
-Accepted camera poses are fused around the IMU-DR prediction instead of
-replacing it. Inter-frame pose changes, post-outage reacquisition error and the
-maximum correction applied in one update are bounded by `vision.pose_max_step_m`,
-`vision.pose_reacquire_error_m` and `vision.fusion_max_correction_m`. This keeps
-a planar-PnP branch change from moving the controller by metres while preserving
-the camera as the authoritative local correction.
+`state`에는 pad-relative position/velocity, world telemetry, pad pose/twist/accuracy,
+battery, GNSS, scoring-only truth, quaternion, motion, perception, vehicle status와
+다음 `extra`가 있다.
 
-The optional MAVLink gateway consumes `LOCAL_POSITION_NED`,
-`ATTITUDE_QUATERNION`, `HIGHRES_IMU`, `HEARTBEAT` and `EXTENDED_SYS_STATE`, and
-sends `SET_ATTITUDE_TARGET`. It has no reset and no perception input.
-
-### Learner link
-
-The learner and the gateway exchange one JSON object per UDP datagram. Each object has
-`v`, `type`, `seq`, and `time_ns`. Commands are idempotent by sequence number: a
-`seq` that is not newer than the last one is answered `duplicate` and otherwise
-ignored. Packets with the wrong version, non-finite values, stale timestamps, or
-out-of-range actions are rejected with an `error` reply.
-
-Commands are `hello`, `state`, `action`, `goto`, `arm`, `disarm`, `reset`,
-`enable_offboard`, `disable_offboard`. `hello` opens a session and restarts the
-command sequence at one. Replies are `state`, `ack` or `error`. The gateway
-replies to the address the datagram came from, so `network.matlab_host` and
-`network.matlab_port` are recorded for documentation and are not what the reply
-is addressed to. Those two keys keep their names because the wire schema does;
-the client is `python/ontology_rgat/bridge.py`.
-
-A `state` reply carries `sample_time_ns`, `px4_time_us`, `frame` (always
-`ENU_FLU`), `position_frame` (always `pad`), pad-relative `position`/`velocity`,
-world telemetry under `world`, deck pose/twist and reported accuracy under
-`pad`, the full finite energy record under `battery`, the receiver's own report
-under `gnss`, the simulator's pad-relative geometry under `truth` (scoring
-only), `quaternion_wxyz`, `angular_velocity`,
-`acceleration`, `wind`, `aero_force`, `marker_quality`, `armed`, `nav_state`,
-`landed`, `estimator_valid`, `source`, the acknowledged command sequence, and an
-`extra` object:
-
-| `extra` key | Meaning |
+| `extra` key | 의미 |
 |---|---|
-| `position_source` | `uav_pose_in_pad` or `px4_local_minus_deck_gnss` — which pose the policy is flying |
-| `control_source` | `action`, `goto` or `idle` |
-| `offboard_active` | PX4 is actually in `OFFBOARD`, not merely asked |
+| `position_source` | `uav_pose_in_pad` 또는 `px4_local_minus_deck_gnss` |
+| `control_source` | `action`, `goto`, `velocity_action`, `idle` |
+| `offboard_active` | 실제 PX4 `OFFBOARD` 여부 |
 | `control_mapping` | `hover_thrust`, `collective_span`, `max_roll_pitch_rad`, `max_yaw_rate_rad_s` |
-| `land_detector` | `live`, `stale` or `missing` (PX4 built without the patch) |
-| `pad_contact_raw` | current, non-latched roof contact sample |
-| `pad_contact` | touchdown contact latched after the armed UAV first clears the roof |
-| `px4_landed` | unmodified PX4 land-detector result |
-| `touchdown_source` | `pad_contact`, `px4_land_detector` or `none` |
-| `px4_thrust` | PX4's own normalised body thrust, for hover calibration |
-| `px4_battery` | latest `[remaining_fraction, voltage]` received from PX4 |
-| `last_command` | `[command, result]` from the most recent `vehicle_command_ack` |
-| `heading_good_for_control` | PX4's flag, reported but not part of `estimator_valid` |
+| `land_detector` | `live`, `stale`, `missing` |
+| `pad_contact_raw` | 현재 non-latched contact |
+| `pad_contact` | Takeoff 뒤 latch한 touchdown contact |
+| `px4_landed` | 원본 PX4 land-detector 결과 |
+| `touchdown_source` | `pad_contact`, `px4_land_detector`, `none` |
+| `px4_thrust` | Hover calibration용 normalized body thrust |
+| `px4_battery` | 최신 `[remaining_fraction, voltage]` |
+| `last_command` | 최신 ack의 `[command, result]` |
+| `heading_good_for_control` | `estimator_valid`와 별도로 보고하는 PX4 flag |
 
-`bridge.PX4Bridge` compares `control_mapping` against `cfg.rl.collectiveSpan`,
-`cfg.rl.maxRollPitch` and `cfg.rl.maxYawRate` during `hello` and refuses to run
-against a gateway that scales actions differently. A silently rescaled action is
-an invalid experiment, not a degraded one.
+`PX4Bridge`는 `hello`에서 `control_mapping`과 learner limit을 비교해 다른 action scale을
+거부한다. `goto`는 world radius 140 m 또는 pad offset 10 m, ceiling 25 m, positive
+altitude, hold 120 s로 제한한다. Pad-frame request는 최신 deck stream도 요구하며
+offset을 pad arena에서 먼저 clamp한 뒤 city radius를 검사한다.
 
-`goto` is guard-railed in `protocol.py` independently of the client: a 140 m
-world-frame or 10 m pad-offset radius, 25 m ceiling, positive altitude, and a
-hold of at most 120 s. The world-frame radius has to reach the far side of the
-block the lorry laps. A pad-frame request also requires a fresh deck stream, and
-the gateway clamps in the frame the request was made in: the *offset* against
-the pad-relative arena, and only then the sum against the city radius it derives
-from `urban.block_size_m`. Clamping the sum against the world origin instead —
-which is what the fixed-pad gateway did — would drag the vehicle back to the
-middle of the block every time the lorry drove away from it.
+## 좌표계
 
-## Coordinates
-
-Workspace state uses ENU position/velocity and FLU body rates. PX4 uses NED and
-FRD. The exact mappings are:
+Workspace는 ENU position/velocity와 FLU body rate, PX4는 NED/FRD를 쓴다.
 
 ```text
 p_enu = [p_ned.y, p_ned.x, -p_ned.z]
@@ -521,127 +331,72 @@ v_enu = [v_ned.y, v_ned.x, -v_ned.z]
 w_flu = [w_frd.x, -w_frd.y, -w_frd.z]
 ```
 
-Quaternion conversion is implemented using rotation matrices and covered by
-round-trip tests; no Euler-angle sign shortcuts are used. Body-frame odometry
-velocity is rotated to NED before conversion, because PX4 may publish either
-frame and says which in `velocity_frame`.
-
-The learning frame is **translated pad-ENU**, not a yaw-rotating body frame:
+Quaternion은 rotation matrix로 변환하고 round-trip test한다. Learning frame은 yaw와
+함께 도는 body frame이 아니라 **평행 이동한 pad-ENU**다.
 
 ```text
 p_policy = p_uav_world - p_deck_world
 v_policy = v_uav_world - v_deck_world
 ```
 
-Its axes stay aligned with world ENU even while the lorry yaws. This makes the
-camera solution and PX4 fallback identical without introducing rotating-frame
-Coriolis terms. The deck yaw/yaw rate are retained as telemetry.
+Lorry가 yaw해도 축은 world ENU와 나란하며 rotating-frame Coriolis term이 없다.
 
-## Timing
+## 시간 동기화
 
-The gateway owns the 50 Hz offboard stream and monotonic timestamps. Isaac runs
-physics at 250 Hz (`isaac.physics_dt` 0.004) and renders once per
-`isaac.rendering_dt` (0.02); rendering every physics step would drop the frame
-rate to the physics rate and, because PX4 is lockstepped, slow the flight stack
-itself. Environment telemetry is published on render boundaries.
+Gateway가 50 Hz offboard stream과 monotonic timestamp를 소유한다. Isaac physics는
+250 Hz(`physics_dt=0.004`), render는 0.02 s마다 한다. Episode clock은 wall time이
+아니라 PX4 simulated clock이다. `PX4Bridge.paceToControlPeriod`가 `cfg.sim.dt`만큼
+진행할 때까지 poll하고 이전 deadline 기준으로 다음 period를 계산해 jitter 누적을
+막는다. XRCE-DDS timesync domain switch는 연속 logical clock으로 재고정한다.
+`cfg.external.timeout` 안에 simulated time이 진행하지 않으면 stall을 보고한다.
 
-The episode clock is PX4's simulated clock, never wall time. The gateway answers
-a `state` or `action` request as soon as PX4 publishes odometry, which is several
-times faster than the control rate, so `bridge.PX4Bridge.paceToControlPeriod`
-re-polls until `px4_time_us` has advanced one `cfg.sim.dt`, and measures the next
-period from the previous deadline so sampling jitter cannot accumulate. `sim.step`
-then advances `env.t` by the simulated time that actually elapsed rather than by
-the nominal period. Without this the policy ran far faster than `cfg.sim.dt`
-while the clock still charged `cfg.sim.dt` per step, and episodes ran out of
-steps before they could land. XRCE-DDS may temporarily remove and reacquire its
-Unix-epoch offset when its timesync filter resets. The gateway converts those
-raw timestamp domain switches into a continuous logical PX4 clock while
-preserving ordinary simulated-time deltas; the bridge also defensively
-re-anchors if it is connected to an older gateway. If simulated time fails to
-advance within `cfg.external.timeout` of wall time, the bridge reports a
-stalled simulator instead of hanging.
+Action deadman 만료 시 gateway가 setpoint 발행을 멈춘다. Hardware는 wall time
+`system.action_timeout_s` 250 ms, SITL은 `system.sitl_action_timeout_s` 1 s와
+wall/PX4 simulated age 중 작은 값을 쓴다. Pending `goto`는 자체 `hold_s`에 만료된다.
 
-The learner may pause briefly without malformed setpoints being repeated forever:
-the gateway stops publishing setpoints when the action deadman expires, so PX4's
-configured offboard-loss failsafe takes control. Hardware uses
-`system.action_timeout_s` (250 ms) of wall time. SITL uses
-`system.sitl_action_timeout_s` (1 s) and the smaller of wall and PX4 simulated
-action age. Slow lockstep rendering inflates wall age, while DDS backlog can
-jump a newly delivered PX4 timestamp; neither alone is a missing controller,
-whereas a real pause advances both clocks past the limit. A pending `goto` is
-not cancelled by that deadman — the climb precedes the first action — but does
-expire at its own `hold_s`.
+## 의도적으로 직접 효과가 없는 설정
 
-## Configuration that is deliberately inert
+`config/system.yaml`을 process 셋이 공유하므로 모든 key를 모두가 읽지는 않는다.
 
-`config/system.yaml` is shared by three processes and not every key is read by
-all of them. These are recorded for provenance and changing them has no effect:
+- `landing.success_*`, `landing.ground_z_m`: learner의 `cfg.sim.*`/`cfg.criteria.*`가
+  episode 기준을 강제한다. 중복 criteria 일치는 test한다.
+- `px4.estimator_warmup_s`: 실제 적용값은 `cfg.external.estimator_warmup`이다.
+- `network.matlab_host`, `network.matlab_port`: reply는 datagram source로 보낸다.
+- `vision.max_range_m`, `vision.tilt_scale_deg`, `vision.xy_scale_m`: `pose_proxy`만 쓴다.
 
-- `landing.success_*` and `landing.ground_z_m`: episode criteria are enforced
-  from the learner's `cfg.sim.*`/`cfg.criteria.*`. `max_time_s` sets the modeled
-  battery reserve normalization, arena/altitude limits guard pad-frame `goto`,
-  and `crash_tilt_deg` controls tip-over recovery. `landing.success_xy_m` is
-  additionally read by the Isaac overlay, to draw the tolerance ring.
-  `tests/test_learner_contract.py` asserts that the duplicated criteria still
-  agree with `cfg.criteria`, so "inert" does not drift into "contradictory".
-- `px4.estimator_warmup_s`: the warmup that is actually applied is
-  `cfg.external.estimator_warmup` in `python/ontology_rgat/config.py`.
-- `network.matlab_host`, `network.matlab_port`: the gateway replies to the
-  datagram's source address.
-- `vision.max_range_m`, `vision.tilt_scale_deg`, `vision.xy_scale_m`: only the
-  `pose_proxy` stand-in uses these.
-## Controlled Shin-2026 benchmark path
+## 기본 Shin-2026 benchmark path
 
-The primary non-cooperative benchmark is documented in
-[`SHIN2026_BASELINE.md`](SHIN2026_BASELINE.md). It consumes a raw 512×320
-grayscale frame plus UAV body velocity and attitude only.
-`/landing_pad/state/odom`, deck GNSS, wheel odometry, V2V velocity, marker pose,
-and simulator pad truth do not enter the actor.
+기본 non-cooperative benchmark는 raw 512×320 grayscale frame과 UAV body
+velocity/attitude만 actor에 넣는다. Deck odometry/GNSS, wheel odometry, V2V, marker
+pose, simulator pad truth는 actor 입력이 아니다.
 
-All three primary pipelines use the same frozen, live-Isaac-validated
-six-keypoint encoder, 512-unit
-LSTM, 256-D latent, `y[6:256] + proprioception` actor features, four
-velocity/yaw-rate actions, and an asymmetric training critic. Only `shin_se`
-constructs a six-state head on `y[0:6]` and uses its auxiliary MSE and
-active-perception reward.
+세 pipeline은 동결·live-Isaac 검증 6-keypoint encoder, 512-unit LSTM, 256-D latent,
+`y[6:256]+proprioception`, velocity/yaw-rate action 4개와 asymmetric critic을 공유한다.
+`shin_se`만 `y[0:6]` six-state head, auxiliary MSE와 active reward를 쓴다.
 
-`onto_no_se` builds twelve bounded, non-metric observations from keypoints,
-heatmaps, short visual history, UAV proprioception, and battery reserve. These
-become 18 nodes, 17 semantic edges, 18 self-loops, four relation types, and 24
-features per node. Low-confidence heatmaps invalidate rather than hallucinate
-image geometry. Two 24-wide R-GAT layers read `SafeLanding`; their direct
-output is frozen for PBRS. No distilled linear coefficient vector is used in
-the primary method.
+`onto_no_se`는 non-metric bounded observation 12개로 18-node/35-edge graph를 만든다.
+Low-confidence heatmap은 geometry를 hallucinate하지 않고 invalid 처리한다. 폭 24 R-GAT
+layer 2개의 direct output을 PBRS용으로 동결하며 linear coefficient로 증류하지 않는다.
 
-The default world is the Meta-Sejong S5/Gwanggaeto asset rather than the
-synthetic city described above. A RANGER MINI follows the audited 37-point,
-99.70 m closed road loop at 0.25–0.60 m/s. The 1.5×1.5 m deck carries 45 ArUco
-tags across three physical scales. The offline mesh audit is shown below.
+기본 world는 Meta-Sejong S5/Gwanggaeto다. RANGER MINI가 37-point, 99.70 m route를
+0.25–0.60 m/s로 달리고 1.5×1.5 m deck에 크기 3종 ArUco tag 45개가 있다.
 
-![Primary S5 road and UGV route](images/metasejong_gwanggaeto_ugv_route.png)
+![기본 S5 도로와 UGV route](images/metasejong_gwanggaeto_ugv_route.png)
 
-### Primary reset and recovery path
+### 초기화 및 복구
 
-The UAV is staged airborne and PX4 flies to a camera-visible pad-relative entry
-hover. Every curriculum level, reward-design rollout, and evaluation episode
-is conditioned on the pad initially being in view. The seeded Table-I draw is
-shortened only relative to the pitched-camera footprint; altitude and yaw are
-retained. Handover requires bounded position error, speed no greater than 0.40
-m/s, and a marker seen within the preceding 2.0 s for a 1.0 s continuous
-settle. The UGV stays parked during estimator initialization/climb and moves
-only after policy handover.
+UAV는 공중 staging 뒤 PX4가 camera-visible pad-relative entry hover로 비행한다.
+모든 curriculum, reward-design rollout, evaluation episode는 pad가 처음 보이는 조건이다.
+Pitched-camera footprint 밖 horizontal offset만 줄이고 altitude/yaw는 유지한다. Handover는
+position tolerance, 최대 0.40 m/s, 최근 2.0 s marker detection을 1.0 s 연속 요구한다.
+UGV는 estimator/climb 동안 정지하고 policy handover 뒤 움직인다.
 
-During a measured episode the gateway owns the Offboard stream. A missed
-learner action deadline is converted to a position hold in SITL so optimization
-does not turn an unfinished episode into an unrelated Offboard-loss landing.
-The gateway still reports PX4 failsafe reasons. A pure Offboard-heartbeat loss,
-gateway timeout, or genuine simulated-clock stall is recoverable: the partial
-trajectory is discarded, a runner-owned stack is restarted, and the same seed
-is retried. Mixed or vehicle-safety failsafes remain hard failures.
+측정 중 gateway가 Offboard stream을 소유한다. SITL에서 learner action deadline을 놓치면
+optimization 때문에 unrelated Offboard-loss landing이 생기지 않도록 position hold로
+바꾼다. 순수 Offboard heartbeat loss, gateway timeout, 실제 simulated-clock stall은
+불완전 trajectory를 버리고 owned stack을 재시작해 같은 seed를 재시도한다. Mixed/vehicle
+safety failsafe는 hard failure다.
 
-FOV loss itself is not terminal. Each episode records loss and reacquisition
-event counts, conditional reacquisition rate/time, climb-command fraction while
-blind, descent-command fraction under low keypoint confidence, and whether a
-loss→reacquisition sequence ultimately landed. `onto_no_se` additionally logs
-the potential delta at loss and reacquisition transitions. These metrics test
-observability-preserving behavior directly instead of inferring it from return.
+FOV loss 자체는 terminal이 아니다. Episode마다 loss/reacquisition event, conditional
+rate/time, blind 상태 climb command, low-confidence descent command, 그리고
+loss→reacquisition 뒤 landing 여부를 기록한다.

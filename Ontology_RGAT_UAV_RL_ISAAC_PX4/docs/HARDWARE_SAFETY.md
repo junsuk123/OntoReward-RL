@@ -1,140 +1,129 @@
-# Hardware safety gate
+# 실제 기체 안전 Gate
 
-[Documentation map](README.md) · [System overview](SYSTEM_OVERVIEW.md) · [Architecture](ARCHITECTURE.md) ·
-[Operations](OPERATIONS.md) · [References](REFERENCES.md)
+[문서 안내](README.md) · [시스템 개요](SYSTEM_OVERVIEW.md) · [아키텍처](ARCHITECTURE.md) ·
+[운영](OPERATIONS.md) · [참고문헌](REFERENCES.md)
 
-This code can command thrust. Hardware use requires an independent pilot and a
-tested manual takeover path.
+이 코드는 thrust를 명령할 수 있다. 실제 기체를 사용할 때는 독립된 조종자와
+검증된 수동 제어권 회수 경로가 반드시 필요하다.
 
-> **Current scope:** the primary recurrent `shin_se / no_se / onto_no_se`
-> runner is validated for SITL only. `python/run_hardware_policy.py` currently
-> loads the separate legacy cooperative policy
-> `results/models/ppo_rgats_pbrs_external.pt`; it does not load a primary
-> three-pipeline recurrent checkpoint. Do not rename or transfer a primary
-> checkpoint to bypass this boundary. A hardware deployment adapter for the
-> image/LSTM actor, its camera preprocessing, and a real flight validation plan
-> must be implemented and reviewed separately.
+> **현재 범위:** 기본 recurrent `shin_se / no_se / onto_no_se` 실행기는
+> SITL에서만 검증되었다. 현재 `python/run_hardware_policy.py`는 별도의 legacy
+> cooperative policy `results/models/ppo_rgats_pbrs_external.pt`를 불러오며,
+> 기본 3-pipeline recurrent checkpoint를 불러오지 않는다. 이 경계를 우회하려고
+> 기본 checkpoint의 이름을 바꾸거나 옮기지 말 것. Image/LSTM actor용 실제 기체
+> 배포 adapter, camera preprocessing, 실제 비행 검증 계획은 별도로 구현하고
+> 검토해야 한다.
 
-- Remove propellers for all first communication, frame, estimator, and mode tests.
-- Set PX4 geofence, altitude limit, RC loss, data-link loss, and offboard-loss
-  actions before installing propellers.
-- Verify the vehicle's mass and hover thrust; the simulation default
-  (`px4.hover_thrust`, measured against Pegasus' Iris in Isaac) is not a flight
-  calibration, and `tools/calibrate_hover_thrust.py` is a SITL tool — it arms and
-  flies an autonomous climb, so it must never be pointed at a real vehicle.
-- Confirm quaternion/frame signs with a hand-tilt test while disarmed.
-- For a moving target, independently verify the UGV pose/twist alignment and
-  timestamp freshness before any propeller-on test. A correct UAV marker pose
-  with an incorrect deck velocity still produces a dangerous closing command.
-- Use a restrained thrust stand before free flight.
-- Do not expose the UDP command port beyond localhost or a protected companion
-  network.
-- Hardware mode disables reset and auto-arm. Arming requires two independent
-  opt-ins and should still be performed from the pilot's normal control path.
-- Changing into Offboard requires `--allow-offboard` and
-  `ONTOLOGY_RGAT_HARDWARE_OFFBOARD=I_ACCEPT_FLIGHT_CONTROL`. Action packets may
-  pre-stream setpoints but cannot change flight mode without both.
+- 최초 통신, frame, estimator와 mode 시험에서는 모두 propeller를 제거한다.
+- Propeller 장착 전에 PX4 geofence, 고도 제한, RC loss, data-link loss와
+  offboard-loss 동작을 설정한다.
+- 기체 질량과 hover thrust를 검증한다. Simulation 기본값 `px4.hover_thrust`는
+  Isaac의 Pegasus Iris에 맞춘 값이지 실제 비행 calibration이 아니다.
+  `tools/calibrate_hover_thrust.py`도 arm 후 자동 상승하는 SITL 도구이므로 실제
+  기체를 대상으로 실행하면 안 된다.
+- Disarm 상태에서 손으로 기울여 quaternion/frame 부호를 확인한다.
+- 이동 target에서는 propeller를 켜기 전에 UGV pose/twist 축 정렬과 timestamp
+  freshness를 독립적으로 확인한다. UAV marker pose가 맞아도 deck velocity가
+  틀리면 위험한 closing command가 생긴다.
+- 자유 비행 전에 기체를 고정한 thrust stand를 사용한다.
+- UDP command port를 localhost 또는 보호된 companion network 밖에 노출하지 않는다.
+- Hardware mode는 reset과 auto-arm을 비활성화한다. Arm에는 독립된 opt-in 두 개가
+  필요하며, 그래도 조종자의 정상 control path에서 수행해야 한다.
+- Offboard 전환에는 `--allow-offboard`와
+  `ONTOLOGY_RGAT_HARDWARE_OFFBOARD=I_ACCEPT_FLIGHT_CONTROL`이 모두 필요하다.
+  Action packet은 setpoint를 미리 보낼 수 있지만 두 조건 없이는 mode를 바꾸지 못한다.
 
-## What the gateway refuses on hardware
+## 실제 기체에서 gateway가 거부하는 명령
 
-These are enforced in `ontology_rgat_px4/safety.py` and covered by
-`tests/test_config_safety.py`, not left to the operator to remember:
+다음 제한은 조종자가 기억하기를 기대하는 규칙이 아니라
+`ontology_rgat_px4/safety.py`에서 강제하고 `tests/test_config_safety.py`로
+검사하는 규칙이다.
 
-| Command | `target=sitl` | `target=hardware` |
+| 명령 | `target=sitl` | `target=hardware` |
 |---|---|---|
-| `reset` | allowed | **always refused** — there is nothing to reset |
-| `goto` (autonomous climb) | allowed | **always refused**, even with both offboard opt-ins present: the pilot flies the entry pose |
-| `arm` | needs `--allow-arm` | needs `--allow-arm` **and** `ONTOLOGY_RGAT_HARDWARE_ARM=I_ACCEPT_PROPELLER_RISK` |
-| `enable_offboard` | allowed | needs `--allow-offboard` **and** `ONTOLOGY_RGAT_HARDWARE_OFFBOARD=I_ACCEPT_FLIGHT_CONTROL` |
+| `reset` | 허용 | **항상 거부** — 실제 기체에는 reset할 simulator가 없다. |
+| `goto` (자동 상승) | 허용 | 두 offboard opt-in이 있어도 **항상 거부** — 조종자가 entry pose로 비행한다. |
+| `arm` | `--allow-arm` 필요 | `--allow-arm`과 **`ONTOLOGY_RGAT_HARDWARE_ARM=I_ACCEPT_PROPELLER_RISK` 모두 필요** |
+| `enable_offboard` | 허용 | `--allow-offboard`와 **`ONTOLOGY_RGAT_HARDWARE_OFFBOARD=I_ACCEPT_FLIGHT_CONTROL` 모두 필요** |
 
-`disarm` is never gated. In flight it is not sent as a disarm at all — PX4
-refuses to disarm airborne, and rightly — so the gateway commands `NAV_LAND` and
-acknowledges `landing_requested`, rather than leaving the vehicle to the
-offboard-loss failsafe.
+`disarm`은 gate로 막지 않는다. 비행 중에는 PX4가 공중 disarm을 거부하는 것이
+정상이므로 gateway도 disarm 대신 `NAV_LAND`를 명령하고 `landing_requested`로
+응답한다. 기체를 offboard-loss failsafe에 그대로 맡기지 않기 위한 동작이다.
 
-## Required perception input
+## 필수 perception 입력
 
-Hardware state is considered valid only while a localization node publishes
-`geometry_msgs/PoseStamped` on
-`/landing_uav0/perception/uav_pose_in_pad`. Its position must be the UAV origin
-expressed in an ENU landing-pad frame. Marker confidence in `[0,1]` must be
-published on `/landing_uav0/perception/marker_quality`. A missing or stale pad
-pose blocks policy execution instead of treating the PX4 EKF origin as the
-landing pad: on `target=hardware` the gateway folds pad-pose freshness into
-`estimator_valid` itself, and `ontology_rgat.bridge.PX4Bridge` rejects a state
-that is not valid. Freshness is judged against `system.state_timeout_s`.
+Localization node가 `/landing_uav0/perception/uav_pose_in_pad`에
+`geometry_msgs/PoseStamped`를 발행하는 동안만 hardware state를 유효하게 본다.
+Position은 ENU landing-pad frame에서 표현한 UAV 원점이어야 한다. `[0,1]` 범위의
+marker confidence는 `/landing_uav0/perception/marker_quality`에 발행해야 한다.
+Pad pose가 없거나 오래되면 PX4 EKF 원점을 landing pad로 간주하지 않고 policy
+실행을 차단한다. `target=hardware`에서 gateway는 pad-pose freshness를
+`estimator_valid`에 포함하고, `ontology_rgat.bridge.PX4Bridge`는 유효하지 않은
+state를 거부한다. Freshness 기준은 `system.state_timeout_s`다.
 
-Unlike SITL, hardware is not a choice: the pad-relative pose always drives the
-policy when it is fresh, regardless of `vision.pose_source_for_policy`.
+SITL과 달리 hardware에서는 선택 사항이 아니다. `vision.pose_source_for_policy`와
+관계없이 최신 pad-relative pose가 항상 policy를 구동한다.
 
-For `pad.motion` other than `static`, a cooperative vehicle/localization node
-must also publish `nav_msgs/Odometry` on `/landing_pad/state/odom`. Its pose and
-twist must use the same world ENU axes as PX4 local odometry; the frame origin
-must be the marker/deck surface. Populate `pose.covariance[0]`, `[7]` and `[14]`
-with the vehicle's own reported accuracy: on hardware that is the only statement
-of how good its fix is, and the ontology reads it. The gateway subtracts deck
-world velocity from UAV world velocity and refuses a stale deck stream through
-`estimator_valid=false`. Deck yaw is telemetry — the learning frame remains
-translated world ENU and does not rotate with the vehicle.
+`pad.motion`이 `static`이 아니면 cooperative vehicle/localization node가
+`/landing_pad/state/odom`에 `nav_msgs/Odometry`도 발행해야 한다. Pose와 twist는
+PX4 local odometry와 같은 world ENU 축을 사용하고 frame 원점은 marker/deck
+표면이어야 한다. `pose.covariance[0]`, `[7]`, `[14]`에는 차량이 보고한 정확도를
+기록한다. 실제 기체에서는 이것이 fix 품질을 나타내는 유일한 정보이며 ontology가
+읽는다. Gateway는 UAV world velocity에서 deck world velocity를 빼고, deck stream이
+오래되면 `estimator_valid=false`로 거부한다. Deck yaw는 telemetry일 뿐이며,
+학습 frame은 차량과 함께 회전하지 않는 평행 이동된 world ENU다.
 
-If `gnss.enabled` is true, a receiver node must publish the drone's own fix as
-JSON on `/landing_uav0/gnss/status`. Only the observable fields are read
-(`valid`, `fix_type`, `satellites_tracked`, `hdop`, `vdop`, `residual_rms_m`,
-`sigma_xy_m`, `cn0_mean_db`, `nlos_detected_fraction`, `quality`), and the
-`truth` key the simulator uses to inject an error must be absent — on hardware
-there is nothing to inject and PX4's estimate is already the real one. A missing
-or stale topic does **not** block the policy, because a lost fix is a state to
-reason about rather than a link fault; the gateway logs it once and reports open
-sky, so verify the topic is live before trusting an integrity figure of 1.00.
+`gnss.enabled`가 true면 receiver node가 drone 자체 fix를 JSON으로
+`/landing_uav0/gnss/status`에 발행해야 한다. 읽는 필드는 관측 가능한 `valid`,
+`fix_type`, `satellites_tracked`, `hdop`, `vdop`, `residual_rms_m`, `sigma_xy_m`,
+`cn0_mean_db`, `nlos_detected_fraction`, `quality`뿐이다. Simulator가 오차 주입에
+사용하는 `truth` key는 없어야 한다. Topic 누락이나 stale 상태가 policy를 막지는
+않는다. Fix loss는 link fault가 아니라 추론 대상 상태이기 때문이다. Gateway는
+한 번 log를 남기고 open sky로 보고하므로 integrity 1.00을 믿기 전에 topic이
+실제로 동작하는지 확인한다.
 
-There is no `/landing_pad/state/odom_truth` on hardware and there must not be:
-without it the learner grades on the sensor, which is all a real flight has.
+Hardware에는 `/landing_pad/state/odom_truth`가 없으며 존재해서도 안 된다.
+그래야 learner가 실제 비행에서 얻을 수 있는 sensor만으로 평가된다.
 
-The ROS 2 gateway subscribes to PX4 `/fmu/out/battery_status` and prefers it on
-hardware. Verify that `battery.source` is `px4`, voltage and state of charge are
-credible, and the topic is fresh before relying on energy-aware behavior. The
-seeded near-empty battery model is a SITL experiment mechanism, not a substitute
-for a hardware battery monitor or PX4 low-battery failsafes.
+ROS 2 gateway는 PX4 `/fmu/out/battery_status`를 구독하고 hardware에서 우선한다.
+Energy-aware 동작을 신뢰하기 전에 `battery.source`가 `px4`인지, 전압과 state of
+charge가 타당한지, topic이 최신인지 확인한다. Seeded near-empty battery model은
+SITL 실험 장치일 뿐 실제 battery monitor나 PX4 low-battery failsafe를 대체하지 않는다.
 
-The MAVLink-only fallback has no ROS perception, deck, or energy input; it
-refuses `reset` and `goto`, and refuses to start while `pad.motion` is non-static.
-It is therefore suitable for transport/attitude tests or systems that
-deliberately align PX4 local origin with a fixed landing pad; use the ROS 2
-gateway for vision-relative or moving-target landing.
+MAVLink-only fallback에는 ROS perception, deck, energy 입력이 없다. `reset`과
+`goto`를 거부하며 `pad.motion`이 static이 아니면 시작도 거부한다. 따라서
+transport/attitude 시험 또는 PX4 local 원점을 고정 landing pad에 의도적으로 맞춘
+시스템에만 적합하다. Vision-relative 또는 moving-target 착륙에는 ROS 2 gateway를 쓴다.
 
-## Running a policy
+## 정책 실행
 
-`python/run_hardware_policy.py` is the only hardware entry point.
-`python/run_pipeline.py` refuses `--target hardware` outright, because it arms
-and flies unattended.
+실제 기체 entry point는 `python/run_hardware_policy.py`뿐이다.
+`python/run_pipeline.py`는 무인 arm/비행을 수행하므로 `--target hardware`를 거부한다.
 
 ```bash
 python3 python/run_hardware_policy.py
 ```
 
-It loads the legacy cooperative
-`results/models/ppo_rgats_pbrs_external.pt`; the configured observation width
-is currently 23. `load_agent` checks that schema before applying weights, so an
-old fixed-pad model or primary recurrent model cannot be silently transferred.
+이 스크립트는 legacy cooperative
+`results/models/ppo_rgats_pbrs_external.pt`를 불러오며 현재 observation width는
+23이다. `load_agent`가 weight 적용 전에 schema를 확인하므로 이전 fixed-pad model이나
+기본 recurrent model을 조용히 전용할 수 없다.
 
-The hardware script never sends an arm command. It reads state first, waits for
-`battery.source=px4`, and errors out unless the vehicle is *already* armed
-through the pilot's path. It also dimension-checks the policy so an old
-fixed-pad model cannot be transferred. It warns if `marker_quality` is zero,
-enables offboard, and on exit — including on error or Ctrl-C — disables offboard
-so the configured PX4 offboard-loss behavior takes over. It stops the moment
-`armed` goes false, so a pilot disarm ends the run.
+Hardware script는 arm 명령을 보내지 않는다. 먼저 state를 읽고
+`battery.source=px4`를 기다리며, 조종자 경로로 기체가 **이미** arm되지 않았다면
+오류로 종료한다. Policy 차원도 확인한다. `marker_quality`가 0이면 경고한 뒤
+offboard를 활성화하고, 오류나 Ctrl-C를 포함한 모든 종료에서 offboard를 꺼 설정된
+PX4 offboard-loss 동작으로 제어를 넘긴다. `armed`가 false가 되는 즉시 멈추므로
+조종자 disarm으로 실행을 끝낼 수 있다.
 
-The gateway deadman stops offboard setpoints after `system.action_timeout_s`
-(250 ms) of wall time without a fresh action on hardware. (SITL uses the common
-age of PX4 simulated and wall time so slow lockstep rendering or a DDS timestamp
-jump does not create a false timeout.) PX4
-must be configured to react safely to offboard loss; the gateway cannot
-substitute for autopilot failsafes. The simulator's roof-contact topic is not a
-hardware safety input: unless a real, independently validated pad switch is
-integrated, hardware touchdown continues to depend on PX4's land detector.
+Gateway deadman은 hardware에서 새 action이 wall time 기준
+`system.action_timeout_s`(250 ms) 동안 없으면 offboard setpoint를 중단한다.
+SITL은 느린 lockstep rendering이나 DDS timestamp jump를 false timeout으로 보지 않도록
+PX4 simulated time과 wall time의 공통 age를 쓴다. PX4는 offboard loss에 안전하게
+반응하도록 별도 설정해야 하며 gateway가 autopilot failsafe를 대체할 수 없다.
+Simulator roof-contact topic은 hardware safety 입력이 아니다. 독립 검증한 실제 pad
+switch가 없다면 hardware touchdown 판정은 PX4 land detector에 계속 의존한다.
 
-SITL's automatic episode recovery is also not a hardware feature. Hardware
-gateway timeouts, Offboard loss, estimator faults, and battery warnings must
-yield to the configured PX4/pilot safety path; no software loop should
-auto-restart or retry a real flight.
+SITL의 episode 자동 복구도 hardware 기능이 아니다. Hardware gateway timeout,
+Offboard loss, estimator fault와 battery warning은 설정된 PX4/조종자 안전 경로에
+맡겨야 하며, 실제 비행을 software loop가 자동 재시작하거나 재시도해서는 안 된다.

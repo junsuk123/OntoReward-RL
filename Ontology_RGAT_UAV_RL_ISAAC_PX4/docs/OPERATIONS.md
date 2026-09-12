@@ -1,20 +1,20 @@
-# Operations
+# 운영 안내
 
-[Documentation map](README.md) · [System overview](SYSTEM_OVERVIEW.md) ·
-[Architecture](ARCHITECTURE.md) · [Hardware safety](HARDWARE_SAFETY.md)
+[문서 안내](README.md) · [시스템 개요](SYSTEM_OVERVIEW.md) ·
+[아키텍처](ARCHITECTURE.md) · [실제 기체 안전](HARDWARE_SAFETY.md)
 
-This runbook covers the primary controlled three-pipeline experiment. Legacy
-cooperative-urban commands and output paths are listed separately at the end.
+이 runbook은 기본 3개 파이프라인 통제 실험을 다룬다. Legacy cooperative-urban
+명령과 output path는 마지막에 별도로 설명한다.
 
-## Canonical launch
+## 표준 실행
 
-From the Git repository root:
+Git 저장소 루트에서 실행한다.
 
 ```bash
 ./run.sh
 ```
 
-The root wrapper is the authoritative launcher. With no arguments it adds:
+루트 wrapper가 기준 launcher다. 인수가 없으면 다음을 추가한다.
 
 ```text
 --mode full
@@ -23,11 +23,10 @@ The root wrapper is the authoritative launcher. With no arguments it adds:
 --rgat-data-episodes 40
 ```
 
-After the 8-flight `shin_se` estimator warm-up, the remaining 792 PPO flights
-divide evenly into 264 per pipeline. The semantic-data collector may extend
-from 40 to 120 real flights if its minimum set contains only one terminal
-class. Evaluation is 105 flights: three pipelines, seven scenarios, and five
-paired seeds.
+`shin_se` estimator warm-up 8회가 끝나면 나머지 PPO 비행 792회를 pipeline당
+264회씩 나눈다. 최소 semantic dataset에 terminal class 하나만 있거나 성공한
+recovery가 부족하면 실제 수집을 40회에서 최대 120회까지 연장한다. 평가는 pipeline
+3개 × scenario 7종 × paired seed 5개, 총 105회다.
 
 ```bash
 ./run.sh --mode quick --headless
@@ -36,15 +35,14 @@ paired seeds.
   --train-episodes 40960 --rgat-data-episodes 400
 ```
 
-Do not start a second launcher. The root script holds
-`/tmp/ontology_rgat_flight_pipeline.lock`; a competing process exits with code
-73 before touching the runtime or results. The PID and command in the error are
-the existing owner, not a stale guess. A crashed owner releases the lock
-automatically.
+두 번째 launcher를 시작하지 않는다. 루트 script가
+`/tmp/ontology_rgat_flight_pipeline.lock`을 보유하며 경쟁 process는 runtime이나
+result를 건드리기 전에 exit code 73으로 끝난다. 오류에 표시된 PID와 command는
+추측한 stale 값이 아니라 기존 owner다. Crash한 owner의 lock은 자동 해제된다.
 
-## Read-only health check
+## 상태를 바꾸지 않는 health check
 
-Use these while training is running; none resets the vehicle:
+학습 중 다음 명령을 사용할 수 있으며 vehicle을 reset하지 않는다.
 
 ```bash
 cd Ontology_RGAT_UAV_RL_ISAAC_PX4
@@ -54,46 +52,42 @@ ps -eo pid,etime,state,%cpu,%mem,cmd | \
   grep -E '[r]un_three_pipeline|[l]anding_world|[r]os2_gateway|[M]icroXRCEAgent'
 ```
 
-Healthy primary-runtime signals are:
+기본 runtime의 정상 신호는 다음과 같다.
 
-- DDS bound on UDP 8888;
-- gateway bound on UDP 14650;
-- dashboard bound on TCP 8770 unless explicitly disabled;
-- `landing_world.py`, PX4, gateway, and learner processes alive;
-- `/fmu/out/vehicle_odometry` rate changing;
-- dashboard `active episode` or `live episode step` changing during flight;
-- the pipeline checkpoint/history timestamp advancing after each committed
-  episode.
+- DDS가 UDP 8888에 bind됨
+- Gateway가 UDP 14650에 bind됨
+- 명시적으로 끄지 않았다면 dashboard가 TCP 8770에 bind됨
+- `landing_world.py`, PX4, gateway, learner process가 살아 있음
+- `/fmu/out/vehicle_odometry` rate가 변함
+- 비행 중 dashboard의 `active episode` 또는 `live episode step`이 변함
+- 완료 episode마다 pipeline checkpoint/history timestamp가 갱신됨
 
-The committed episode count changes only after a complete episode, optimizer
-update, checkpoint write, and history write. A 30 s simulated episode may take
-longer than 30 s of wall time in the rendered S5 scene. During that interval,
-use `active episode` and `live episode step`; an unchanged committed count alone
-is not evidence of a stall.
+Committed episode 수는 완전한 episode, optimizer update, checkpoint write, history
+write가 모두 끝난 뒤에만 변한다. Rendered S5의 simulated episode 30 s는 wall time
+30 s보다 오래 걸릴 수 있다. 그동안 `active episode`와 `live episode step`을 보고,
+committed count 하나만 멈췄다고 stall로 판단하지 않는다.
 
-![MATLAB-style live status](images/live_dashboard_status.png)
+![MATLAB 스타일 실시간 상태](images/live_dashboard_status.png)
 
-The image is actual in-progress telemetry captured on 2026-09-12, not a final
-success-rate result.
+2026-09-12 진행 중인 실제 telemetry이며 최종 success-rate 결과가 아니다.
 
-## Startup ownership
+## 시작 process의 소유권
 
-The runner starts in this order:
+Runner는 다음 순서로 시작한다.
 
-| Component | Readiness | Default endpoint |
+| Component | 준비 완료 조건 | 기본 endpoint |
 |---|---|---|
-| Micro XRCE-DDS Agent | UDP socket bound | 8888/UDP |
-| Isaac Sim + Pegasus + PX4 | PX4 log contains `Ready for takeoff` | Pegasus owns PX4 link |
-| ROS 2 gateway | UDP socket bound plus DDS discovery grace | 14650/UDP |
-| dashboard | local HTTP bind | 8770/TCP |
-| RViz 2 | process launch in graphical mode | `/landing_rl` topics |
+| Micro XRCE-DDS Agent | UDP socket bind | 8888/UDP |
+| Isaac Sim + Pegasus + PX4 | PX4 log에 `Ready for takeoff` | Pegasus가 PX4 link 소유 |
+| ROS 2 gateway | UDP socket bind + DDS discovery grace | 14650/UDP |
+| Dashboard | local HTTP bind | 8770/TCP |
+| RViz 2 | graphical mode에서 process 시작 | `/landing_rl` topic |
 
-An already compatible process is adopted and is not stopped on teardown. A
-process started by the current runner is owned and is stopped when the run
-finishes unless `--keep-stack` is supplied. Recovery can restart only an owned
-stack; the code will not kill a hand-started simulator.
+이미 호환 process가 있으면 인수하고 teardown에서 중단하지 않는다. 현재 runner가
+시작한 process만 소유하며 `--keep-stack`이 없으면 run 종료 때 중단한다. Recovery도
+소유 stack만 재시작하며 직접 시작한 simulator를 종료하지 않는다.
 
-Runtime logs are:
+Runtime log는 다음과 같다.
 
 ```text
 /tmp/ontology_rgat_stack/agent.log
@@ -101,110 +95,107 @@ Runtime logs are:
 /tmp/ontology_rgat_stack/gateway.log
 ```
 
-## Dashboard and RViz
+## 대시보드와 RViz
 
-Open <http://127.0.0.1:8770/>. The primary view shows:
+<http://127.0.0.1:8770/>을 연다. 기본 화면은 다음을 표시한다.
 
-- stage and phase;
-- current pipeline and state-estimation status;
-- committed training total, active episode, and live step;
-- paired-evaluation progress and scenario;
-- target visibility, UAV/UGV speed, and battery energy/reserve;
-- optimizer phase, effective learning rate, curriculum, UGV motion scale, and
-  UAV action envelope;
-- reward-design flight/sample/class counts and R-GAT diagnostics when those
-  stages begin;
-- moving landing success as the primary learning curve;
-- episode return explicitly labeled diagnostic.
+- Stage와 phase
+- 현재 pipeline과 state-estimation 상태
+- Committed training total, active episode, live step
+- Paired-evaluation 진행도와 scenario
+- Target visibility, UAV/UGV 속도, battery energy/reserve
+- Optimizer phase, effective learning rate, curriculum, UGV motion scale,
+  UAV action envelope
+- 해당 단계가 시작된 뒤 reward-design flight/sample/class 수와 R-GAT 진단
+- 기본 learning curve인 moving landing success
+- 명확히 진단값으로 표시한 episode return
 
-Per-pipeline chips report committed counts without inventing equal targets:
-the run-wide denominator contains a `shin_se`-only warm-up and therefore cannot
-be divided honestly by three.
+Pipeline별 chip은 같다고 가정한 target을 만들지 않고 실제 committed count를
+표시한다. 전체 denominator에는 `shin_se` 전용 warm-up이 있으므로 정직하게 3으로
+나눌 수 없다.
 
-RViz starts automatically unless `--headless` or `--no-rviz` is used. It shows
-the vehicle, UGV/deck, road route, trails, terminal marker, and annotated
-landing camera. An empty camera display means no image topic; `PAD NOT
-DETECTED` means the image is present but the board solve failed.
+`--headless` 또는 `--no-rviz`가 없으면 RViz가 자동으로 열린다. Vehicle, UGV/deck,
+도로 route, trail, terminal marker와 annotated landing camera를 표시한다. Camera
+화면이 비어 있으면 image topic이 없다는 뜻이고, `PAD NOT DETECTED`는 image는 있지만
+board solve가 실패했다는 뜻이다.
 
-If 8770 is already occupied, the runner continues with metric collection but
-prints that the live dashboard is disabled. Either stop the old owner or use:
+8770이 이미 사용 중이면 metric 수집은 계속하지만 live dashboard가 꺼졌다고
+출력한다. 기존 owner를 중단하거나 다른 port를 쓴다.
 
 ```bash
 ./run.sh --dashboard-port 8771
 ```
 
-## Reset and entry hover
+## 초기화와 진입 hover
 
-Every measured episode starts only after a physical PX4-controlled handover:
+측정 episode는 실제 PX4 control handover가 끝난 뒤에만 시작한다.
 
-1. Isaac reseeds platform motion, camera/environment state, and battery.
-2. A grounded UAV is re-seated on the deck; an airborne UAV is not teleported.
-3. The UGV remains parked during estimator startup and initial climb.
-4. The gateway continuously transforms the pad-relative entry target to a
-   world-frame PX4 position setpoint.
-5. PX4 arms and flies to the camera-centred hover.
-6. The client requires entry-position tolerance, speed at most 0.40 m/s, and a
-   marker detection seen within the last 2.0 s for a continuous 1.0 s hold.
-7. The first policy action changes the control source from `goto` to action
-   setpoints, releases UGV motion, and starts the measured battery budget.
+1. Isaac이 platform motion, camera/environment state와 battery seed를 적용한다.
+2. 지상 UAV는 deck에 다시 앉히고 공중 UAV는 teleport하지 않는다.
+3. Estimator 시작과 initial climb 동안 UGV는 정지한다.
+4. Gateway가 pad-relative entry target을 world-frame PX4 position setpoint로 계속 변환한다.
+5. PX4가 arm하고 camera-centred hover까지 비행한다.
+6. Client는 entry-position tolerance, 최대 속도 0.40 m/s, 최근 2.0 s 내 marker
+   detection을 1.0 s 연속 만족하도록 요구한다.
+7. 첫 policy action이 control source를 `goto`에서 action setpoint로 바꾸고 UGV
+   motion과 측정 battery budget을 시작한다.
 
-Teleporting the airborne UAV is intentionally forbidden: PX4's EKF integrates
-through the discontinuity and would make subsequent observations physically
-meaningless. A failed entry gate is setup failure, not a training sample.
+공중 UAV teleport는 의도적으로 금지한다. PX4 EKF가 불연속을 적분하면 이후
+observation이 물리적으로 무의미해진다. Entry gate 실패는 setup failure이지 training
+sample이 아니다.
 
-Between PPO episodes, the gateway holds an unfinished airborne vehicle at a
-bounded position while optimization runs. This prevents an action deadman from
-dropping PX4 into a landing mode before the next reset.
+PPO episode 사이에는 optimization 동안 gateway가 끝나지 않은 공중 vehicle을 제한된
+position에 hold한다. 다음 reset 전에 action deadman 때문에 PX4가 landing mode로
+떨어지는 것을 막는다.
 
-## Checkpoint and retry behavior
+## Checkpoint 및 재시도 동작
 
-Each complete recurrent episode atomically commits:
+완전한 recurrent episode마다 다음을 atomic commit한다.
 
-- model weights;
-- Adam state;
-- curriculum state;
-- completed episode number;
-- configuration hash and pipeline contract;
-- reward-design hash where applicable;
-- training history CSV.
+- Model weight
+- Adam state
+- Curriculum state
+- 완료 episode 번호
+- Configuration hash와 pipeline contract
+- 필요한 경우 reward-design hash
+- Training history CSV
 
-Compatible state resumes. An incompatible checkpoint is renamed
-`*.incompatible-<old-hash>.pt` with its history and training starts under the
-new configuration. It is never silently transferred across an information
-boundary.
+호환 state는 재개한다. 호환되지 않는 checkpoint는 history와 함께
+`*.incompatible-<old-hash>.pt`로 바꾸고 새 설정으로 학습한다. 정보 경계를 넘어
+조용히 transfer하지 않는다.
 
-`collect_episode_resilient` retries only recoverable infrastructure failures:
+`collect_episode_resilient`가 retry하는 infrastructure failure는 다음뿐이다.
 
-- learner/gateway timeout;
-- simulator clock that genuinely stops advancing;
-- gateway-classified pure PX4 Offboard heartbeat loss.
+- Learner/gateway timeout
+- 실제로 진행을 멈춘 simulator clock
+- Gateway가 분류한 순수 PX4 Offboard heartbeat loss
 
-The partial trajectory is discarded, an owned stack is restarted, and the same
-seed is retried within the configured recovery count. This avoids a paired-seed
-bias. Other PX4 failsafes and estimator, marker, geometry, policy-health, or
-terminal failures are not treated as infrastructure recovery.
+Partial trajectory를 버리고 소유 stack을 재시작해 설정된 횟수 안에서 같은 seed를
+다시 쓴다. Paired-seed bias를 막기 위한 동작이다. 다른 PX4 failsafe, estimator,
+marker, geometry, policy-health 또는 terminal failure는 infrastructure recovery로
+취급하지 않는다.
 
-## Fault diagnosis
+## 오류 진단
 
-| Symptom | Meaning and action |
+| 증상 | 의미와 조치 |
 |---|---|
-| `another ... pipeline is already active` | The lock is protecting a live owner. Inspect the reported PID; do not launch a competitor. |
-| Completed count appears frozen | Check `active episode`, `live episode step`, process state, and odometry. A rendered flight commits only at episode end. |
-| Dashboard says `debug`/return only | Refresh the browser after current code is running. The primary chart is training success; return is diagnostic. An adopted older process cannot load edited HTML until restarted. |
-| `cannot bind 127.0.0.1:8770` | Another dashboard owns the port. Find its PID with `ss -ltnp` or use `--dashboard-port`. |
-| `PX4 did not hold the entry pose` | Inspect reported offset, speed, and marker quality; then gateway/PX4 logs. The S5 profile admits the measured hover limit cycle up to 0.40 m/s and remembers a recent detection for 2 s. |
-| `PX4 estimator state is not valid yet` | PX4 local position/velocity validity or freshness is false. Do not bypass it; inspect startup/odometry rate and PX4 preflight messages. |
-| `PX4 simulated time advanced only ...` | A small non-negative advance is a real simulator stall. The current bridge also re-anchors an XRCE time-domain jump that older code misreported as a huge negative stall. |
-| `OFFBOARD_HEARTBEAT_LOSS` | The gateway classifies a pure setpoint-link interruption as recoverable in SITL. Other simultaneous failsafe reasons remain hard failures. |
-| UGV or UAV does not move during `R-GAT training` | R-GAT optimization is offline; no flight is expected. Flight resumes for `onto_no_se` PPO/evaluation. |
-| Target repeatedly not visible | Check the annotated camera topic, board textures, camera mount, and entry pose. The board contains far/mid/micro tags specifically for the full descent. |
-| `no /fmu/out/*` | Confirm DDS UDP 8888, PX4 uXRCE client, matching `px4_msgs`, Fast DDS RMW, and no `CYCLONEDDS_URI`. |
-| Gateway state lacks current fields | The ASCII ROS workspace contains stale copied source. Stop the stack, run `./scripts/sync_gateway.sh`, then restart. |
-| `Preflight Fail: Battery unhealthy` | Distinguish PX4 SITL's internal battery from the experiment pack. Current SITL clamps only PX4's unrelated internal pack; the 3S 3500 mAh experiment model still discharges and feeds R-GAT. |
-| No success although the deck was reached | Inspect pad-contact topic/source and touchdown physical limits. Height alone is never counted as success. |
-| Training health gate stops | The configured window detected no success, excessive FOV/RMSE/battery failure, poor reacquisition, unsafe blind descent, or a saturated active reward. The message names each failing gate; this protects the remaining budget from blind rollouts. |
+| `another ... pipeline is already active` | Lock이 live owner를 보호한다. 표시된 PID를 확인하고 경쟁 launcher를 시작하지 않는다. |
+| 완료 count가 멈춰 보임 | `active episode`, `live episode step`, process state와 odometry를 확인한다. Rendered flight는 episode 종료 때만 commit된다. |
+| Dashboard가 `debug`/return만 표시 | 현재 코드 실행 후 browser를 새로고침한다. 기본 chart는 training success이고 return은 진단값이다. 인수한 이전 process는 재시작 전까지 수정 HTML을 불러올 수 없다. |
+| `cannot bind 127.0.0.1:8770` | 다른 dashboard가 port를 소유한다. `ss -ltnp`로 PID를 찾거나 `--dashboard-port`를 쓴다. |
+| `PX4 did not hold the entry pose` | 표시된 offset, speed, marker quality와 gateway/PX4 log를 본다. S5 profile은 측정된 hover limit cycle을 0.40 m/s까지 허용하고 최근 detection을 2 s 기억한다. |
+| `PX4 estimator state is not valid yet` | PX4 local position/velocity validity 또는 freshness가 false다. 우회하지 말고 startup/odometry rate와 PX4 preflight message를 본다. |
+| `PX4 simulated time advanced only ...` | 작고 음수가 아닌 advance는 실제 simulator stall이다. 현재 bridge는 이전 코드가 큰 음수 stall로 오인한 XRCE time-domain jump도 재고정한다. |
+| `OFFBOARD_HEARTBEAT_LOSS` | Gateway가 순수 setpoint-link 중단을 SITL에서 recoverable로 분류한다. 다른 failsafe 원인이 함께 있으면 hard failure다. |
+| `R-GAT training` 중 UGV/UAV가 움직이지 않음 | R-GAT optimization은 offline이므로 비행하지 않는다. `onto_no_se` PPO/evaluation에서 다시 움직인다. |
+| Target이 반복해서 안 보임 | Annotated camera topic, board texture, camera mount, entry pose를 확인한다. Board에는 전체 하강용 far/mid/micro tag가 있다. |
+| `no /fmu/out/*` | DDS UDP 8888, PX4 uXRCE client, 일치하는 `px4_msgs`, Fast DDS RMW, `CYCLONEDDS_URI`가 없는지 확인한다. |
+| Gateway state에 최신 field가 없음 | ASCII ROS workspace에 오래된 source copy가 있다. Stack을 멈추고 `./scripts/sync_gateway.sh` 후 재시작한다. |
+| `Preflight Fail: Battery unhealthy` | PX4 SITL internal battery와 실험 pack을 구분한다. SITL은 관련 없는 internal pack만 clamp하며 3S 3500 mAh 실험 model은 계속 방전돼 R-GAT에 입력된다. |
+| Deck에 도달했는데 success 없음 | Pad-contact topic/source와 touchdown physical limit을 확인한다. 높이만으로 success가 되지 않는다. |
+| Training health gate 중단 | 설정 window가 no success, 과도한 FOV/RMSE/battery failure, 낮은 reacquisition, unsafe blind descent 또는 active reward 포화를 찾았다. Message가 실패 gate를 열거하며 남은 budget의 무의미한 rollout을 막는다. |
 
-Useful direct probes:
+직접 probe 명령은 다음과 같다.
 
 ```bash
 RMW_IMPLEMENTATION=rmw_fastrtps_cpp ros2 topic hz /fmu/out/vehicle_odometry
@@ -215,40 +206,38 @@ tail -n 100 /tmp/ontology_rgat_stack/gateway.log
 tail -n 100 /tmp/ontology_rgat_stack/isaac.log
 ```
 
-## Primary output paths
+## 기본 output path
 
-For the default run, use `results/three_pipeline/full/`:
+기본 run은 `results/three_pipeline/full/`을 쓴다.
 
-| Path | When it appears |
+| Path | 생성 시점 |
 |---|---|
-| `manifest.json` | before the stack starts; updated through completion |
-| `evaluation/paired_plan.csv` | before training |
-| `models/shared/keypoint_encoder.pt` | after encoder preparation |
-| `models/<pipeline>/<pipeline>.pt` | after every committed training episode |
-| `models/<pipeline>/<pipeline>_training.csv` | after every committed training episode |
-| `training/<pipeline>.csv` | after that pipeline's requested training completes |
-| `rgat/semantic_rollouts.npz` | after each completed reward-design flight |
-| `rgat/semantic_rollout_episodes.csv` | reward-design per-flight outcomes |
-| `rgat/rgat_model.pt` | after direct R-GAT fitting/freezing |
-| `evaluation/per_episode.csv` | after each completed evaluation pair |
-| generated CSV/Markdown/figures | after report generation |
+| `manifest.json` | stack 시작 전, 완료까지 계속 갱신 |
+| `evaluation/paired_plan.csv` | 학습 전 |
+| `models/shared/keypoint_encoder.pt` | encoder 준비 후 |
+| `models/<pipeline>/<pipeline>.pt` | committed training episode마다 |
+| `models/<pipeline>/<pipeline>_training.csv` | committed training episode마다 |
+| `training/<pipeline>.csv` | 해당 pipeline의 요청 학습 완료 후 |
+| `rgat/semantic_rollouts.npz` | reward-design flight 완료마다 |
+| `rgat/semantic_rollout_episodes.csv` | reward-design 비행별 outcome |
+| `rgat/rgat_model.pt` | direct R-GAT fitting/동결 후 |
+| `evaluation/per_episode.csv` | evaluation pair 완료마다 |
+| 생성 CSV/Markdown/figure | report 생성 후 |
 
-Replicates 1 and 2 write under `full/replicate_1/` and
-`full/replicate_2/`. The report generator discovers these directories and
-writes the hierarchical aggregate under `full/combined/`:
+Replicate 1, 2는 `full/replicate_1/`, `full/replicate_2/`에 쓴다. Report generator가
+이 디렉터리를 찾아 `full/combined/`에 hierarchical aggregate를 쓴다.
 
 ```bash
 python3 python/generate_three_pipeline_report.py \
   --results-dir results/three_pipeline/full
 ```
 
-Archive the manifest, config files, Git commit, checkpoint hashes, software
-versions, GPU, wall-clock time, and raw per-episode records with any reported
-result.
+보고 결과에는 manifest, config, Git commit, checkpoint hash, software version, GPU,
+wall-clock time과 raw per-episode record를 함께 보관한다.
 
-## Manual startup and maintenance
+## 수동 시작 및 유지관리
 
-The one-command runner is preferred. For component diagnosis only:
+단일 명령 runner 사용을 권장한다. Component 진단에만 다음을 쓴다.
 
 ```bash
 ./scripts/run_dds_agent.sh
@@ -259,30 +248,27 @@ ISAACSIM_PATH=/absolute/path/to/isaacsim \
 ./scripts/run_rviz.sh
 ```
 
-If ROS gateway source changed, the Korean repository path means the live ROS 2
-package may still be the copied ASCII workspace. Synchronize only while the
-stack is stopped:
+ROS gateway source가 바뀌면 한글 저장소 path 때문에 live ROS 2 package가 여전히
+ASCII workspace의 이전 copy일 수 있다. Stack을 중단한 상태에서만 동기화한다.
 
 ```bash
 ./scripts/sync_gateway.sh --check
 ./scripts/sync_gateway.sh
 ```
 
-Run the offline code contracts with:
+Offline code contract 검사는 다음과 같다.
 
 ```bash
 ./scripts/check_workspace.sh
 ./scripts/check_learner_protocol.sh
-./scripts/check_ros2_loopback.sh   # after ROS/PX4 bootstrap
+./scripts/check_ros2_loopback.sh   # ROS/PX4 bootstrap 이후
 ```
 
-## Legacy cooperative experiment
+## 이전 cooperative 실험
 
-`scripts/run_metasejong_pipeline.sh` is a separate retained experiment. Its
-23-channel policy, 14-node/38-edge ontology, eight distilled fixed reward
-weights, output layout under legacy `results/` paths, and old figures do not
-describe `onto_no_se`. Root invocations containing `--methods` or `--reward`
-are routed to the legacy reward-arm runner for compatibility.
+`scripts/run_metasejong_pipeline.sh`는 별도로 보존한 실험이다. 23-channel policy,
+14-node/38-edge ontology, 증류된 고정 reward weight 8개, legacy `results/` 아래 output
+layout과 이전 figure는 `onto_no_se`를 설명하지 않는다. `--methods` 또는 `--reward`가
+있는 루트 호출은 호환성을 위해 legacy reward-arm runner로 보낸다.
 
-Do not copy checkpoints, result tables, or success claims between primary and
-legacy experiments.
+기본 실험과 legacy 실험 사이에 checkpoint, result table 또는 success 주장을 복사하지 않는다.

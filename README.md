@@ -1,36 +1,34 @@
-# Ontology–R-GAT–RL autonomous landing
+# Ontology–R-GAT–RL 자율 착륙
 
-Vision-only recurrent PPO for landing a PX4 multicopter on a road-following
-UGV in NVIDIA Isaac Sim, with an estimator-free ontology/R-GAT reward variant.
+NVIDIA Isaac Sim에서 도로를 따라 움직이는 UGV 위에 PX4 multicopter를 착륙시키는
+vision-only recurrent PPO 시스템이다. 명시적 estimator를 사용하지 않는
+ontology/R-GAT reward 방식을 포함한다.
 
-![Live Isaac Sim flight over the Meta-Sejong S5 road](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/images/isaac_sim_s5_live.png)
+![Meta-Sejong S5 도로 위 실제 Isaac Sim 비행](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/images/isaac_sim_s5_live.png)
 
-![Live MATLAB-style three-pipeline dashboard](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/images/live_dashboard_status.png)
+![MATLAB 스타일 3개 파이프라인 실시간 dashboard](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/images/live_dashboard_status.png)
 
-> Both screenshots are real runtime captures from the full pipeline on
-> 2026-09-12. They demonstrate the simulator and monitoring path, not a
-> completed benchmark result.
+> 두 screenshot은 2026-09-12 full pipeline의 실제 runtime capture다. Simulator와
+> monitoring 경로를 보여 주며 완료된 benchmark 결과는 아니다.
 
-## Run the complete pipeline
+## 전체 pipeline 실행
 
-From this repository root, the final entry point is:
+저장소 루트에서 사용하는 최종 entry point는 다음 하나다.
 
 ```bash
 ./run.sh
 ```
 
-The bare command runs `--mode full` with the deadline/seminar budget:
+인수 없는 명령은 마감/seminar budget의 `--mode full`을 실행한다.
 
-- 8 estimator warm-up flights for `shin_se`;
-- 264 PPO flights for each of `shin_se`, `no_se`, and `onto_no_se`;
-- 40 real estimator-free reward-design flights initially, automatically
-  extended to at most 120 if both terminal classes are not yet present;
-- 5 paired evaluation seeds for each of 7 scenarios and each pipeline
-  (105 evaluation flights).
+- `shin_se` estimator warm-up 8회
+- `shin_se`, `no_se`, `onto_no_se` 각각 PPO 비행 264회
+- Estimator-free reward-design 실제 비행 최소 40회. 두 terminal class와 성공한
+  loss→reacquisition→landing example이 부족하면 최대 120회까지 자동 연장
+- Scenario 7종과 pipeline별 paired evaluation seed 5개, 총 평가 비행 105회
 
-This is exactly 800 training flights before the separate reward-design and
-evaluation flights. It is a preview-scale experiment, not publication-scale
-evidence. Useful alternatives are:
+별도 reward-design/evaluation 비행 전 학습 비행은 정확히 800회다. Preview-scale
+실험이며 publication-scale 근거가 아니다. 다른 실행 예시는 다음과 같다.
 
 ```bash
 ./run.sh --mode quick --headless
@@ -40,74 +38,81 @@ evidence. Useful alternatives are:
 ./run.sh --help
 ```
 
-Only one launcher may own the flight stack. A second `run.sh` exits before it
-can reset the vehicle or modify results. Compatible checkpoints and completed
-CSV rows resume automatically.
+Flight stack은 launcher 하나만 소유할 수 있다. 두 번째 `run.sh`는 vehicle을 reset하거나
+result를 수정하기 전에 종료된다. 호환 checkpoint와 완료 CSV row는 자동 재개한다.
 
-## What is compared
+## 비교 대상
 
 | Pipeline | State-estimation supervision | Active-perception reward | Ontology reward |
 |---|---:|---:|---:|
-| `shin_se` | yes, six-state auxiliary MSE | yes | no |
-| `no_se` | no | no | no |
-| `onto_no_se` | no | no | frozen direct R-GAT PBRS |
+| `shin_se` | 있음, six-state auxiliary MSE | 있음 | 없음 |
+| `no_se` | 없음 | 없음 | 없음 |
+| `onto_no_se` | 없음 | 없음 | 동결 direct R-GAT PBRS |
 
-All three share the same 512×320 mono camera, frozen six-keypoint encoder,
-512-unit LSTM, 256-D latent, `y[6:256]` actor slice, 7-D UAV proprioception,
-4-D velocity/yaw-rate action, PX4 controller, PPO settings, curriculum, and
-paired seeds. Simulator truth is isolated to the asymmetric critic, reset,
-terminal labels, and physical evaluation.
+세 pipeline은 512×320 mono camera, 동결 6-keypoint encoder, 512-unit LSTM,
+256-D latent, `y[6:256]` actor slice, 7-D UAV proprioception, 4-D velocity/yaw-rate
+action, PX4 controller, PPO 설정, curriculum과 paired seed를 공유한다. Simulator
+truth는 asymmetric critic, reset, terminal label과 physical evaluation에만 허용한다.
 
-The primary ontology is **13 nodes, 25 directed edges, 4 relation types, and
-19 features per node**. It consumes keypoint/heatmap semantics, UAV motion and
-attitude, and onboard battery reserve. It does not accept relative-state
-estimates, UGV state, GNSS, or simulator truth. The trained R-GAT output is
-frozen and used directly as `Phi(G)`:
+### 보상함수
+
+| Reward 항 | `shin_se` baseline | `no_se` 대조군 | `onto_no_se` 제안 방식 |
+|---|---|---|---|
+| Terminal | 성공 `+10`, crash/drift/battery 실패 `-10`; shaping을 대체 | `shin_se`와 동일 | Sparse terminal `+10/-10`, next potential 0 |
+| Physical shaping | Lateral/vertical progress, vertical-speed/undershoot/yaw-rate penalty | Active term을 제외하고 동일 | 명시적 physical shaping 없음 |
+| Active perception | `-0.1 clip(L_est,t+1-0.01,0,1)` | 없음 | 없음 |
+| Ontology shaping | 없음 | 없음 | `lambda [gamma Phi(G_t+1)-Phi(G_t)]` |
+| 상수 | `alpha=0.1`, `beta=1`, `tau=0.01` | 해당 없음 | `lambda=1`, `gamma=0.99` |
+| Reward 정보 경계 | 실제 상대 상태와 privileged estimator loss | 실제 상대 상태 | Estimator-free semantic graph와 terminal event |
+
+자세한 항별 수식은
+[프로젝트 guide의 보상함수 비교표](Ontology_RGAT_UAV_RL_ISAAC_PX4/README.md)를 참고한다.
+
+기본 ontology는 **18 node, directed edge 35개, relation 4종, node당 feature 24개**다.
+Keypoint/heatmap semantic, UAV motion/attitude와 onboard battery reserve를 사용한다.
+Relative-state estimate, UGV state, GNSS, simulator truth를 허용하지 않는다. 학습한
+R-GAT output을 `Phi(G)`로 직접 동결한다.
 
 ```text
 r_t = r_sparse + lambda * (gamma * Phi(G_t+1) - Phi(G_t))
 ```
 
-The older 14-node/38-edge, 23-channel cooperative urban experiment and its
-distilled fixed reward weights remain available only as a labeled legacy path.
+이전 14-node/38-edge, 23-channel cooperative urban 실험과 증류한 고정 reward
+weight는 명시된 legacy path로만 제공한다.
 
-## Runtime and monitoring
+## 실행 및 모니터링
 
-`run.sh` starts or adopts DDS (UDP 8888), Isaac Sim/Pegasus/PX4, the ROS 2
-gateway (UDP 14650), RViz 2, and the dashboard at
-<http://127.0.0.1:8770/>. The dashboard reports committed episodes separately
-from the active episode and per-step telemetry, so a long rendered flight does
-not look frozen.
+`run.sh`는 DDS(UDP 8888), Isaac Sim/Pegasus/PX4, ROS 2 gateway(UDP 14650),
+RViz 2와 <http://127.0.0.1:8770/> dashboard를 시작하거나 인수한다. Dashboard는
+committed episode와 active episode/per-step telemetry를 분리해 rendered flight가
+오래 걸려도 정지처럼 보이지 않게 한다.
 
-Recoverable SITL transport, simulated-clock, and pure Offboard-heartbeat
-interruptions discard only the partial trajectory, restart the stack owned by
-the launcher, and retry the same seed. Geometry, perception, estimator, and
-policy failures remain hard failures and are not hidden by retry.
+Recoverable SITL transport, simulated-clock, 순수 Offboard-heartbeat 중단은 partial
+trajectory만 버리고 launcher 소유 stack을 재시작해 같은 seed를 재시도한다. Geometry,
+perception, estimator, policy failure는 hard failure로 남기고 retry로 숨기지 않는다.
 
-## Meta-Sejong S5 environment
+## Meta-Sejong S5 환경
 
-The default benchmark uses the Gwanggaeto/S5 campus asset and a closed 37-point
-road route. The route is 99.70 m long; the offline mesh audit measured 1.00 m
-of conservative clearance after the 1.5×1.5 m deck footprint and a maximum
-waypoint elevation error of 0.001 m.
+기본 benchmark는 Gwanggaeto/S5 campus asset과 37-point 폐곡선 도로 route를 쓴다.
+길이는 99.70 m다. Offline mesh audit에서 1.5×1.5 m deck footprint를 제외한 보수적
+clearance 1.00 m, waypoint 최대 elevation error 0.001 m를 측정했다.
 
-![Audited Meta-Sejong S5 UGV route](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/images/metasejong_gwanggaeto_ugv_route.png)
+![감사된 Meta-Sejong S5 UGV route](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/images/metasejong_gwanggaeto_ugv_route.png)
 
-## Documentation
+## 문서
 
-The implementation lives under
-[`Ontology_RGAT_UAV_RL_ISAAC_PX4/`](Ontology_RGAT_UAV_RL_ISAAC_PX4/).
+구현은 [`Ontology_RGAT_UAV_RL_ISAAC_PX4/`](Ontology_RGAT_UAV_RL_ISAAC_PX4/)에 있다.
 
-- [Complete project guide](Ontology_RGAT_UAV_RL_ISAAC_PX4/README.md)
-- [Documentation index](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/README.md)
-- [System overview](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/SYSTEM_OVERVIEW.md)
-- [Controlled comparison](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/THREE_PIPELINE_COMPARISON.md)
-- [Operations and fault diagnosis](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/OPERATIONS.md)
-- [Architecture and interfaces](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/ARCHITECTURE.md)
-- [Paper-to-code baseline](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/SHIN2026_BASELINE.md)
-- [Hardware safety gate](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/HARDWARE_SAFETY.md)
+- [전체 프로젝트 guide](Ontology_RGAT_UAV_RL_ISAAC_PX4/README.md)
+- [문서 안내](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/README.md)
+- [시스템 개요](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/SYSTEM_OVERVIEW.md)
+- [3개 파이프라인 통제 비교](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/THREE_PIPELINE_COMPARISON.md)
+- [운영 및 fault 진단](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/OPERATIONS.md)
+- [아키텍처와 interface](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/ARCHITECTURE.md)
+- [논문-코드 baseline](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/SHIN2026_BASELINE.md)
+- [실제 기체 안전 gate](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/HARDWARE_SAFETY.md)
 
-Run repository checks from the active project directory:
+활성 프로젝트 디렉터리에서 저장소 검사를 실행한다.
 
 ```bash
 cd Ontology_RGAT_UAV_RL_ISAAC_PX4

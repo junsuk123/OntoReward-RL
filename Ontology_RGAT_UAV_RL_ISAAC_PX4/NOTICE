@@ -1,29 +1,28 @@
-Ontology-RGAT UAV landing: Isaac Sim + PX4
-==========================================
+Ontology-RGAT UAV 착륙: Isaac Sim + PX4
+=======================================
 
-Third-party work this repository derives from
----------------------------------------------
+이 저장소가 기반으로 삼은 제3자 저작물
+---------------------------------------
 
-python/ontology_rgat/rgat/layers.py is a PyTorch reimplementation of the
-relational graph attention layer described in
+python/ontology_rgat/rgat/layers.py는 다음 논문에서 설명한 relational graph
+attention layer를 PyTorch로 재구현한 파일이다.
 
     D. Busbridge, D. Sherburn, P. Cavallo and N. Y. Hammerla,
     "Relational Graph Attention Networks", 2019.
     https://openreview.net/forum?id=Bklzkh0qFm
 
-and released by the authors as
+저자들이 공개한 reference 구현은 다음과 같다.
 
     https://github.com/babylonhealth/rgat
     Copyright 2019 Babylon Partners
     Licensed under the Apache License, Version 2.0
 
-No source from that repository is vendored here: it targets TensorFlow 1.x,
-which does not run on this workspace's Python 3.10 / ROS 2 Humble / Isaac Sim
-5.1 baseline. What is carried over is the model -- the ARGAT and WIRGAT
-attention normalisations, the additive and multiplicative attention styles,
-multi-head aggregation, and the basis decomposition of the relational kernels.
-The batched dense formulation, the learned per-relation embedding in the
-attention logits, and everything else in this repository are our own.
+해당 저장소의 source는 이 저장소에 포함하지 않았다. TensorFlow 1.x 대상이라 이
+workspace의 Python 3.10 / ROS 2 Humble / Isaac Sim 5.1 baseline에서 실행되지 않기
+때문이다. 이어받은 것은 ARGAT/WIRGAT attention normalization,
+additive/multiplicative attention 방식, multi-head aggregation, relational kernel의
+basis decomposition을 포함한 model 개념이다. Batched dense formulation, attention
+logit의 학습 가능한 relation별 embedding과 이 저장소의 나머지 구현은 자체 작성했다.
 
-A copy of the Apache License, Version 2.0 is available at
+Apache License, Version 2.0 전문은 다음 주소에서 확인할 수 있다.
 https://www.apache.org/licenses/LICENSE-2.0

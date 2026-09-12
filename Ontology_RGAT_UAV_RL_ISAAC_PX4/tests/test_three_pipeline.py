@@ -12,7 +12,8 @@ from ontology_rgat.benchmarks.experiment import (configuration_hash,
                                                  episodes_per_method,
                                                  load_experiment,
                                                  paired_seed_plan)
-from ontology_rgat.evaluation.three_pipeline import PHYSICAL_METRICS, physical_summary
+from ontology_rgat.evaluation.three_pipeline import (
+    PHYSICAL_METRICS, paired_confidence_intervals, physical_summary)
 from ontology_rgat.perception import (SEMANTIC_GRAPH_INPUT_DIM,
                                       SEMANTIC_NODE_NAMES, SemanticObservation,
                                       semantic_graph,
@@ -276,6 +277,27 @@ def test_cross_pipeline_summary_excludes_episode_return():
     summary = physical_summary(records)
     assert summary
     assert not any("return" in key for row in summary for key in row)
+
+
+def test_multiple_training_replicates_use_hierarchical_paired_bootstrap():
+    records = []
+    for replicate in (0, 1):
+        for seed in (10, 11):
+            for pipeline in PIPELINES:
+                row = {
+                    "training_replicate": replicate, "pipeline": pipeline,
+                    "scenario": "circle", "seed": seed,
+                }
+                row.update({metric: float(pipeline == "onto_no_se")
+                            for metric in PHYSICAL_METRICS})
+                records.append(row)
+    summary = physical_summary(records)
+    assert {row["training_replicates"] for row in summary} == {2}
+    intervals = paired_confidence_intervals(records, draws=100, seed=7)
+    assert intervals
+    assert {row["training_replicates"] for row in intervals} == {2}
+    assert {row["bootstrap_unit"] for row in intervals} == {
+        "training_replicate_then_episode"}
 
 
 def test_pipeline_hash_changes_with_information_boundary_configuration():

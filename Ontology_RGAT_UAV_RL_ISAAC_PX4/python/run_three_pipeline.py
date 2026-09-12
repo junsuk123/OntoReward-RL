@@ -87,6 +87,7 @@ def _read_csv(path: Path):
 def _collect_semantic_data(*, cfg, camera, model, config, config_hash,
                            checkpoint_path, results_dir, mode, monitor,
                            episodes_override=None,
+                           max_episodes_override=None,
                            source_training_episodes=0,
                            source_training_environment_steps=0):
     design = dict(config.get("rgat_design") or {})
@@ -94,11 +95,17 @@ def _collect_semantic_data(*, cfg, camera, model, config, config_hash,
                 design.get(f"episodes_{mode}", 8 if mode == "quick" else 40))
     if count < 2:
         raise ValueError("semantic R-GAT collection requires at least two episodes")
+    max_count = int(
+        max_episodes_override if max_episodes_override is not None else
+        max(3 * count, int(design.get(
+            f"max_episodes_{mode}", 3 * count))))
+    if max_count < count:
+        raise ValueError("semantic R-GAT maximum episodes cannot be below its minimum")
     stride = int(design.get("sample_stride", 3))
     gamma = float(design.get("outcome_discount", (config.get("ppo") or {}).get(
         "gamma", .99)))
     seed0 = int((config.get("seeds") or {}).get("rgat_dataset_start", 70000))
-    requested_seeds = list(range(seed0, seed0 + count))
+    requested_seeds = list(range(seed0, seed0 + max_count))
     dataset_path = Path(results_dir) / "rgat/semantic_rollouts.npz"
     episodes_path = Path(results_dir) / "rgat/semantic_rollout_episodes.csv"
     checkpoint_sha = _sha256_file(checkpoint_path)
@@ -129,18 +136,28 @@ def _collect_semantic_data(*, cfg, camera, model, config, config_hash,
             completed = [int(seed) for seed in manifest.get("completed_seeds", [])]
             if not set(completed).issubset(requested_seeds):
                 raise ValueError("semantic rollout cache uses a different seed range")
-            print(f"Resuming semantic R-GAT data: {len(completed)}/{count} episodes.")
+            print(f"Resuming semantic R-GAT data: {len(completed)}/{count} minimum "
+                  f"({max_count} hard cap).")
         except (OSError, ValueError, KeyError, json.JSONDecodeError) as exc:
             print(f"Ignoring incompatible semantic rollout cache: {exc}")
             dataset, manifest, episode_rows, completed = None, None, [], []
 
+    def requirements_met(current_manifest):
+        if current_manifest is None:
+            return False
+        episodes = int(current_manifest.get("episodes", 0))
+        successes = int(current_manifest.get("successful_episodes", 0))
+        return episodes >= count and 0 < successes < episodes
+
     pending = [(index, seed) for index, seed in enumerate(requested_seeds, start=1)
                if seed not in completed]
-    if pending:
+    if pending and not requirements_met(manifest):
         monitor.stage("R-GAT data", "estimator-free semantic behavior mixture")
         with LiveShinEnvironment(
                 cfg, camera, horizon_steps=int(cfg.sim.max_steps)) as environment:
             for episode, seed in pending:
+                if requirements_met(manifest):
+                    break
                 rows, metric = collect_episode(
                     environment, model, "no_se", seed, curriculum=1.0,
                     deterministic=False, gamma=gamma,
@@ -172,16 +189,20 @@ def _collect_semantic_data(*, cfg, camera, model, config, config_hash,
                     environment_steps=sum(
                         int(float(row.get("steps", 0))) for row in episode_rows))
                 _write_csv(episodes_path, episode_rows)
-                print(f"semantic data {len(completed)}/{count}: "
+                print(f"semantic data {len(completed)}/{count} minimum "
+                      f"(cap {max_count}): "
                       f"success={int(metric['paper_success'])} samples={len(current['y'])}")
     if dataset is None or manifest is None:
         raise RuntimeError("semantic reward-design dataset is unavailable")
     successes = int(manifest["successful_episodes"])
     if successes == 0 or successes == int(manifest["episodes"]):
         raise RuntimeError(
-            "semantic reward-design data contains only one terminal class; "
-            "collect additional estimator-free behavior trajectories")
+            f"semantic reward-design data still contains only one terminal class "
+            f"after its {max_count}-episode hard cap; increase "
+            "--rgat-max-data-episodes or improve the estimator-free behavior policy")
     total_steps = sum(int(float(row.get("steps", 0))) for row in episode_rows)
+    if total_steps == 0:
+        total_steps = int(manifest.get("environment_steps") or 0)
     return dataset, manifest, dataset_path, total_steps
 
 
@@ -201,6 +222,9 @@ def main():
     parser.add_argument("--reward-design", type=Path)
     parser.add_argument("--no-prepare-reward-design", action="store_true")
     parser.add_argument("--rgat-data-episodes", type=int)
+    parser.add_argument(
+        "--rgat-max-data-episodes", type=int,
+        help="hard cap for automatic real rollout extension when one class is missing")
     parser.add_argument("--rgat-epochs", type=int)
     parser.add_argument("--train-episodes", type=int)
     parser.add_argument("--total-train-episodes", type=int)
@@ -227,6 +251,8 @@ def main():
             parser.error(f"--{name.replace('_', '-')} must be positive")
     if args.rgat_data_episodes is not None and args.rgat_data_episodes < 2:
         parser.error("--rgat-data-episodes must be at least two")
+    if args.rgat_max_data_episodes is not None and args.rgat_max_data_episodes < 2:
+        parser.error("--rgat-max-data-episodes must be at least two")
     if args.training_replicate < 0:
         parser.error("--training-replicate must be non-negative")
 
@@ -289,6 +315,17 @@ def main():
             parser.error(str(exc))
     else:
         train_count = int(args.train_episodes or configured_count)
+    design_cfg = dict(config.get("rgat_design") or {})
+    design_minimum = int(
+        args.rgat_data_episodes if args.rgat_data_episodes is not None else
+        design_cfg.get(f"episodes_{args.mode}", 8 if args.mode == "quick" else 40))
+    design_maximum = int(
+        args.rgat_max_data_episodes
+        if args.rgat_max_data_episodes is not None else
+        max(3 * design_minimum, int(design_cfg.get(
+            f"max_episodes_{args.mode}", 3 * design_minimum))))
+    if design_maximum < design_minimum:
+        parser.error("R-GAT maximum data episodes cannot be below its minimum")
     evaluation_cfg = dict(config.get("evaluation") or {})
     if args.eval_episodes is not None:
         evaluation_cfg = {name: args.eval_episodes for name in evaluation_cfg}
@@ -340,6 +377,12 @@ def main():
         "N_estimator_warmup": selected_warmup,
         "N_training_environment_episodes": (
             train_count * len(args.pipelines) + selected_warmup),
+        "reward_design_collection_contract": {
+            "minimum_episodes": design_minimum,
+            "maximum_episodes": design_maximum,
+            "stop_condition": "minimum reached and both terminal classes observed",
+            "synthetic_outcomes_allowed": False,
+        },
         "training_seed_contract": {
             "ppo_seed_start": training_seed0,
             "ppo_seed_stop_exclusive": training_seed0 + train_count,
@@ -445,6 +488,8 @@ def main():
                     ppo=ppo, curriculum_config=curriculum, monitor=monitor if primary else None,
                     restart_incompatible=True)
                 if primary:
+                    for row in history:
+                        row["training_replicate"] = args.training_replicate
                     models[name] = model
                     histories[name] = history
                     _write_csv(args.results_dir / f"training/{name}.csv", history)
@@ -472,6 +517,7 @@ def main():
                         config_hash=config_hash, checkpoint_path=source_checkpoint,
                         results_dir=args.results_dir, mode=args.mode,
                         monitor=monitor, episodes_override=args.rgat_data_episodes,
+                        max_episodes_override=args.rgat_max_data_episodes,
                         source_training_episodes=source_training_episodes,
                         source_training_environment_steps=source_training_steps))
                 design_episodes = int(dataset_manifest["episodes"])
@@ -516,6 +562,8 @@ def main():
             training_records = [row for name in args.pipelines
                                 for row in histories.get(name, [])]
             evaluation_rows = _read_csv(existing_eval)
+            for row in evaluation_rows:
+                row.setdefault("training_replicate", args.training_replicate)
             completed = {(row["pipeline"], row["scenario"], int(row["seed"]))
                          for row in evaluation_rows}
             monitor.restore_evaluation(evaluation_rows)
@@ -539,6 +587,7 @@ def main():
                             scenario=item["scenario"], monitor=monitor,
                             phase="evaluation")
                         metric.update({"method": name, "pipeline": name,
+                                       "training_replicate": args.training_replicate,
                                        "scenario": item["scenario"]})
                         evaluation_rows.append(metric)
                         _write_csv(existing_eval, evaluation_rows)

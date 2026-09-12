@@ -48,6 +48,10 @@ rgat_design:
   behavior_policy: semantic_visual_servo_noisy_no_se_mixture_v1
   episodes_quick: 8
   episodes_full: 40
+  # Collect at least the requested episodes. If they contain only one terminal
+  # class, continue real estimator-free rollouts up to this explicit hard cap.
+  max_episodes_quick: 24
+  max_episodes_full: 120
   sample_stride: 3
   outcome_discount: 0.99
   epochs_quick: 10

@@ -17,6 +17,10 @@ PHYSICAL_METRICS = (
 PRIMARY_PIPELINES = ("shin_se", "no_se", "onto_no_se")
 
 
+def _replicate(row) -> str:
+    return str(row.get("training_replicate", "0"))
+
+
 def _write_csv(path: Path, rows, fieldnames=None):
     path.parent.mkdir(parents=True, exist_ok=True)
     rows = list(rows)
@@ -41,6 +45,30 @@ def _bootstrap_mean(values, *, draws=10000, seed=90421):
             float(np.quantile(means, 0.975)))
 
 
+def _hierarchical_bootstrap_mean(grouped_values, *, draws=10000, seed=90421):
+    """Equal-weight replicate bootstrap, then episode bootstrap within each."""
+    groups = [np.asarray(values, dtype=np.float64)
+              for values in grouped_values if len(values)]
+    if not groups:
+        return np.nan, np.nan, np.nan, "none"
+    if len(groups) == 1:
+        mean, low, high = _bootstrap_mean(groups[0], draws=draws, seed=seed)
+        return mean, low, high, "episode"
+    rng = np.random.default_rng(seed)
+    estimates = np.empty(draws, dtype=np.float64)
+    for draw in range(draws):
+        chosen = rng.integers(0, len(groups), size=len(groups))
+        replicate_means = []
+        for group_index in chosen:
+            values = groups[int(group_index)]
+            sample = values[rng.integers(0, values.size, size=values.size)]
+            replicate_means.append(float(sample.mean()))
+        estimates[draw] = float(np.mean(replicate_means))
+    point = float(np.mean([values.mean() for values in groups]))
+    return (point, float(np.quantile(estimates, 0.025)),
+            float(np.quantile(estimates, 0.975)), "training_replicate_then_episode")
+
+
 def physical_summary(records):
     grouped = {}
     for row in records:
@@ -48,64 +76,110 @@ def physical_summary(records):
     result = []
     for (pipeline, scenario), rows in sorted(grouped.items()):
         summary = {"pipeline": pipeline, "scenario": scenario,
-                   "episodes": len(rows)}
+                   "episodes": len(rows),
+                   "training_replicates": len({_replicate(row) for row in rows})}
         for metric in PHYSICAL_METRICS:
-            values = [float(row[metric]) for row in rows if row.get(metric, "") != ""]
-            mean, low, high = _bootstrap_mean(values)
+            by_replicate = {}
+            for row in rows:
+                if row.get(metric, "") != "":
+                    by_replicate.setdefault(_replicate(row), []).append(
+                        float(row[metric]))
+            mean, low, high, unit = _hierarchical_bootstrap_mean(
+                list(by_replicate.values()))
             summary.update({f"{metric}_mean": mean,
                             f"{metric}_ci95_low": low,
-                            f"{metric}_ci95_high": high})
+                            f"{metric}_ci95_high": high,
+                            f"{metric}_bootstrap_unit": unit})
         result.append(summary)
     return result
 
 
-def paired_confidence_intervals(records, *, draws=10000, seed=8128):
-    index = {(row["pipeline"], row["scenario"], int(row["seed"])): row
+def paired_differences(records):
+    """Raw within-replicate, within-scenario, within-seed differences."""
+    index = {(_replicate(row), row["pipeline"], row["scenario"], int(row["seed"])): row
              for row in records}
     comparisons = (("onto_no_se", "shin_se"), ("onto_no_se", "no_se"))
     scenarios = sorted({row["scenario"] for row in records})
     output = []
     for proposed, baseline in comparisons:
         for scenario in scenarios:
-            proposed_seeds = {key[2] for key in index if key[:2] == (proposed, scenario)}
-            baseline_seeds = {key[2] for key in index if key[:2] == (baseline, scenario)}
-            seeds = sorted(proposed_seeds & baseline_seeds)
-            for metric in PHYSICAL_METRICS:
-                difference = [
-                    float(index[(proposed, scenario, item)][metric])
-                    - float(index[(baseline, scenario, item)][metric])
-                    for item in seeds
-                    if metric in index[(proposed, scenario, item)]
-                    and metric in index[(baseline, scenario, item)]
-                ]
-                if not difference:
-                    continue
-                mean, low, high = _bootstrap_mean(
-                    difference, draws=draws, seed=seed + len(output))
-                output.append({
-                    "comparison": f"{proposed} - {baseline}",
-                    "proposed": proposed, "baseline": baseline,
-                    "scenario": scenario, "metric": metric,
-                    "paired_episodes": len(difference),
-                    "mean_difference": mean, "ci95_low": low,
-                    "ci95_high": high,
-                })
+            replicates = sorted({key[0] for key in index})
+            for replicate in replicates:
+                proposed_seeds = {key[3] for key in index
+                                  if key[:3] == (replicate, proposed, scenario)}
+                baseline_seeds = {key[3] for key in index
+                                  if key[:3] == (replicate, baseline, scenario)}
+                for item in sorted(proposed_seeds & baseline_seeds):
+                    proposed_row = index[(replicate, proposed, scenario, item)]
+                    baseline_row = index[(replicate, baseline, scenario, item)]
+                    for metric in PHYSICAL_METRICS:
+                        if metric not in proposed_row or metric not in baseline_row:
+                            continue
+                        output.append({
+                            "comparison": f"{proposed} - {baseline}",
+                            "proposed": proposed, "baseline": baseline,
+                            "training_replicate": replicate,
+                            "scenario": scenario, "seed": item, "metric": metric,
+                            "difference": (float(proposed_row[metric])
+                                           - float(baseline_row[metric])),
+                        })
+    return output
+
+
+def paired_confidence_intervals(records, *, draws=10000, seed=8128):
+    raw = paired_differences(records)
+    grouped = {}
+    for row in raw:
+        key = (row["comparison"], row["proposed"], row["baseline"],
+               row["scenario"], row["metric"])
+        grouped.setdefault(key, {}).setdefault(
+            row["training_replicate"], []).append(float(row["difference"]))
+    output = []
+    for key, by_replicate in sorted(grouped.items()):
+        mean, low, high, unit = _hierarchical_bootstrap_mean(
+            list(by_replicate.values()), draws=draws, seed=seed + len(output))
+        comparison, proposed, baseline, scenario, metric = key
+        output.append({
+            "comparison": comparison, "proposed": proposed,
+            "baseline": baseline, "scenario": scenario, "metric": metric,
+            "training_replicates": len(by_replicate),
+            "paired_episodes": sum(len(values) for values in by_replicate.values()),
+            "mean_difference": mean, "ci95_low": low, "ci95_high": high,
+            "bootstrap_unit": unit,
+        })
     return output
 
 
 def _rolling_success(rows, window=20):
     rows = [row for row in rows
             if row.get("optimization_phase", "ppo") == "ppo"]
-    ordered = sorted(rows, key=lambda row: int(float(
-        row.get("ppo_episode", row["episode"]))))
-    successes = np.asarray([float(row["paper_success"]) for row in ordered])
-    episodes = np.asarray([int(float(row.get("ppo_episode", row["episode"])))
-                           for row in ordered])
-    steps = np.asarray([int(float(row.get("ppo_environment_steps", 0)))
-                        for row in ordered])
+    grouped = {}
+    for row in rows:
+        grouped.setdefault(_replicate(row), []).append(row)
+    curves = []
+    for replicate_rows in grouped.values():
+        ordered = sorted(replicate_rows, key=lambda row: int(float(
+            row.get("ppo_episode", row["episode"]))))
+        successes = np.asarray([float(row["paper_success"]) for row in ordered])
+        episodes = np.asarray([
+            int(float(row.get("ppo_episode", row["episode"]))) for row in ordered])
+        steps = np.asarray([int(float(row.get("ppo_environment_steps", 0)))
+                            for row in ordered])
+        average = np.asarray([
+            successes[max(0, index - window + 1):index + 1].mean()
+            for index in range(successes.size)])
+        curves.append({episode: (step, value)
+                       for episode, step, value in zip(episodes, steps, average)})
+    if not curves:
+        return np.asarray([]), np.asarray([]), np.asarray([])
+    common = sorted(set.intersection(*(set(curve) for curve in curves)))
+    episodes = np.asarray(common, dtype=np.int64)
+    steps = np.asarray([
+        int(round(np.mean([curve[episode][0] for curve in curves])))
+        for episode in common], dtype=np.int64)
     average = np.asarray([
-        successes[max(0, index - window + 1):index + 1].mean()
-        for index in range(successes.size)])
+        float(np.mean([curve[episode][1] for curve in curves]))
+        for episode in common], dtype=np.float64)
     return episodes, steps, average
 
 
@@ -251,15 +325,15 @@ def _write_figures(records, training_records, figures_dir: Path,
         save(filename)
 
     fig, ax = plt.subplots(figsize=(6.4, 4.0))
-    index = {(row["pipeline"], row["scenario"], int(row["seed"])): row
+    index = {(_replicate(row), row["pipeline"], row["scenario"], int(row["seed"])): row
              for row in records}
     labels, values = [], []
     for baseline in ("shin_se", "no_se"):
         diff = []
         for key, row in index.items():
-            if key[0] != "onto_no_se":
+            if key[1] != "onto_no_se":
                 continue
-            other = index.get((baseline, key[1], key[2]))
+            other = index.get((key[0], baseline, key[2], key[3]))
             if other is not None:
                 diff.append(float(row["paper_success"]) - float(other["paper_success"]))
         labels.append(f"Onto-NoSE - {baseline}")
@@ -281,6 +355,7 @@ def write_three_pipeline_outputs(records, training_records, output_dir, *,
     tables_dir = output_dir / "tables"
     _write_csv(evaluation_dir / "per_episode.csv", records)
     summary = physical_summary(records)
+    raw_paired = paired_differences(records)
     paired = paired_confidence_intervals(records)
     efficiency = learning_efficiency(
         training_records, reward_design_episodes=reward_design_episodes,
@@ -290,6 +365,7 @@ def write_three_pipeline_outputs(records, training_records, output_dir, *,
     table = _publication_table(summary, efficiency)
     _write_csv(evaluation_dir / "paired_summary.csv", summary)
     _write_csv(evaluation_dir / "confidence_intervals.csv", paired)
+    _write_csv(evaluation_dir / "paired_differences.csv", raw_paired)
     _write_csv(tables_dir / "primary_comparison.csv", table)
     tables_dir.mkdir(parents=True, exist_ok=True)
     _write_markdown(tables_dir / "primary_comparison.md", table)

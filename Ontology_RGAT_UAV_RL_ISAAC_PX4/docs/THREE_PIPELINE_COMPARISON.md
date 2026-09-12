@@ -113,8 +113,10 @@ not supervised relation-importance labels.
 
 The reward-design behavior source is estimator-free: the trained
 `no_se` policy is mixed deterministically with image-plane servo corrections,
-bounded noise and bounded random exploration. The dataset refuses a single
-terminal class and splits training/validation by whole episode.
+bounded noise and bounded random exploration. After the configured minimum,
+collection automatically continues with real trajectories until both terminal
+classes are present or the explicit hard cap is reached. Synthetic outcomes
+are never inserted. Training/validation splits by whole episode.
 
 For terminal outcome `S_i` (`+1` landing, `-1` failure), trajectory length
 `T_i`, and step `t`, the target is
@@ -183,26 +185,32 @@ cd Ontology_RGAT_UAV_RL_ISAAC_PX4 && pytest -q
 ./run.sh --mode full --training-replicate 2 --train-episodes 40960 --rgat-data-episodes 400
 
 # Regenerate reports from completed real records
+# This automatically discovers full/replicate_1, full/replicate_2, ... and
+# writes the hierarchical combined analysis under full/combined.
 python Ontology_RGAT_UAV_RL_ISAAC_PX4/python/generate_three_pipeline_report.py \
   --results-dir Ontology_RGAT_UAV_RL_ISAAC_PX4/results/three_pipeline/full
 ```
 
 The bare `run.sh` uses the deadline preview budget: 264 PPO episodes per
-pipeline plus eight Shin-only warm-up flights (800 training flights total), 40
-estimator-free reward-design trajectories and five
-paired evaluation seeds per scenario. This is seminar evidence, not
-publication-scale evidence.
+pipeline plus eight Shin-only warm-up flights (800 training flights total), a
+minimum of 40 estimator-free reward-design trajectories, and five paired
+evaluation seeds per scenario. This is seminar evidence, not publication-scale
+evidence.
 
-## Remaining limitations
+## Safeguards added for the former limitations
+
+- The 40-trajectory seminar value is a minimum. One-class data triggers
+  automatic real collection up to 120 trajectories; reaching that hard cap
+  without both outcomes still stops safely instead of fabricating labels.
+- Independent runs remain separate resumable simulator jobs selected with
+  `--training-replicate`. The report generator discovers and combines them,
+  preserves raw within-seed differences, and uses a training-replicate-then-
+  episode hierarchical bootstrap.
+
+## External limitations that cannot be removed in code
 
 - PACMAN weights and the exact geometric controller from Shin et al. are not
   public; the repository uses the documented synthetic-pretrained keypoint
   approximation and PX4 velocity interface.
-- A 40-trajectory seminar reward-design dataset may fail the required
-  two-class gate. The system stops and requests more real trajectories rather
-  than synthesizing outcomes.
-- Multiple independent training seeds are separate resumable full runs selected
-  with `--training-replicate`; cross-replicate hierarchical aggregation is not
-  yet automated by the report generator.
 - Statistical output is meaningful only after the real Isaac/PX4 run finishes.
   Unit/smoke fixtures are never written to publication tables.

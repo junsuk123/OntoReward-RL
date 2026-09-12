@@ -35,15 +35,18 @@ the graph and dataset boundaries. Exact diagrams, equations and ontology are in
 pytest -q                         # contracts; not flight results
 ```
 
-The bare command is a seminar preview with equal 264-episode PPO budgets, 40
-estimator-free reward-design flights and five paired seeds per scenario. It is
+The bare command is a seminar preview with equal 264-episode PPO budgets, a
+minimum of 40 estimator-free reward-design flights, and five paired seeds per
+scenario. One-class reward data extends automatically up to 120 flights. It is
 not publication-scale evidence. Explicit budget options override these values.
 Legacy `--methods` and `--reward` invocations are still routed to the prior
 reward-arm runner.
 
 The live run checkpoints every episode. One-class semantic datasets, privileged
 graph fields, mutable/non-finite R-GAT artifacts and synthetic outcomes are
-rejected. The dashboard at `http://127.0.0.1:8770/` identifies the current
+rejected. When the minimum reward-design batch has one class, real collection
+continues up to the configured hard cap. The dashboard at
+`http://127.0.0.1:8770/` identifies the current
 pipeline, hides estimator panels for estimator-free methods, and displays
 semantic values plus direct `Phi(G)`/PBRS for `onto_no_se`. The UAV envelope
 starts at 50%; the UGV starts at 35% of sampled road speed. Shared acceleration

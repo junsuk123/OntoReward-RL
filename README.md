@@ -63,6 +63,11 @@ comparison options:
 ./run.sh --help
 ```
 
+If the initial 40 reward-design flights contain only one terminal class, the
+runner collects additional real estimator-free trajectories up to the explicit
+120-flight cap. Completed publication replicates are combined by the report
+generator with hierarchical replicate/episode bootstrap intervals.
+
 Legacy `--methods`/`--reward` commands are routed to the former reward-arm
 runner. Use
 `Ontology_RGAT_UAV_RL_ISAAC_PX4/scripts/run_metasejong_pipeline.sh` directly for

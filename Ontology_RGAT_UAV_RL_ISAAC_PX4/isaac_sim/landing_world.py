@@ -1048,6 +1048,17 @@ class LandingWorld:
             isaac_cfg.get("airborne_hold_release_s", 2.0))
         if not math.isfinite(self.hover_hold_release_s) or self.hover_hold_release_s < 0.0:
             raise ValueError("isaac.airborne_hold_release_s must be finite and non-negative")
+        entry_altitudes = ((CONFIG.get("benchmark") or {}).get(
+            "initial_conditions") or {}).get("relative_altitude_m", (2.0, 8.0))
+        # Setup-only catch floor.  The ordinary flight remains entirely under
+        # PX4, but a rare OFFBOARD/actuator handover race used to let the
+        # airborne start fall through its 1.6 m entry target and strike the
+        # deck before a measured episode existed.  Start assisting below a
+        # conservative margin under the lowest legal entry altitude.
+        lowest_entry_m = float(min(entry_altitudes))
+        self.preentry_recovery_floor_m = max(0.60, lowest_entry_m - 0.30)
+        self.preentry_recovery_target_m = max(
+            self.preentry_recovery_floor_m + 0.20, lowest_entry_m)
         self.deck_clearance_pad_m = np.array(
             [float(v) for v in isaac_cfg["spawn_position_enu_m"]], dtype=float)
         # Only the airborne pre-arm hold prices weight with this; it is not the
@@ -1522,14 +1533,24 @@ class LandingWorld:
         if not self.start_airborne:
             return
         gain = 1.0
+        emergency_target = None
         if self.autopilot_flying:
             elapsed = (float(self.world.current_time)
                        - float(self.hover_hold_release_started
                                if self.hover_hold_release_started is not None
                                else self.world.current_time))
-            if self.hover_hold_release_s <= 0.0 or elapsed >= self.hover_hold_release_s:
+            released = (
+                self.hover_hold_release_s <= 0.0
+                or elapsed >= self.hover_hold_release_s)
+            state = self.vehicle.state
+            pad_position = self.deck.pad_from_world(state.position)
+            entry_too_low = bool(
+                not self.policy_handover
+                and float(pad_position[2]) < self.preentry_recovery_floor_m)
+            if released and not entry_too_low:
                 return
-            scheduled_gain = max(0.0, 1.0 - elapsed / self.hover_hold_release_s)
+            scheduled_gain = (0.0 if released else
+                              max(0.0, 1.0 - elapsed / self.hover_hold_release_s))
             # Do not add a full gravity-cancelling force on top of PX4's own
             # hover thrust. For a commanded descent PX4 initially asks for
             # almost zero thrust, so the scheduled taper lets it descend gently
@@ -1539,10 +1560,22 @@ class LandingWorld:
                 0.0,
                 1.0 - self.px4_normalized_thrust / max(self.px4_hover_thrust, 1e-6))
             gain = min(scheduled_gain, thrust_gain)
+            if entry_too_low:
+                # The rescue acts only before policy handover and only below
+                # the legal entry envelope. Hold current XY and recover Z so it
+                # cannot steer the sampled initial condition or any RL action.
+                emergency_target = np.asarray(state.position, dtype=float).copy()
+                emergency_target[2] += (
+                    self.preentry_recovery_target_m - float(pad_position[2]))
+                penetration = (self.preentry_recovery_floor_m
+                               - float(pad_position[2]))
+                gain = max(gain, float(np.clip(
+                    0.35 + penetration / 0.30, 0.35, 1.0)))
         state = self.vehicle.state
         position = np.asarray(state.position, dtype=float)
         velocity = np.asarray(state.linear_velocity, dtype=float)
-        target = self.deck.world_from_pad(self.hover_start_pad_m)
+        target = (emergency_target if emergency_target is not None
+                  else self.deck.world_from_pad(self.hover_start_pad_m))
         target_velocity = np.asarray(self.deck.velocity, dtype=float)
         # Weight, plus a PD that is stiff enough to hold station against the
         # wind this environment blows and soft enough not to ring at 250 Hz.

@@ -16,8 +16,8 @@ import numpy as np
 from .config import Config
 from .mathx import quat_to_euler_zyx
 
-__all__ = ["PX4Bridge", "BridgeError", "GatewayRejected", "GatewayTimeout",
-           "PX4Failsafe", "pacing_anchor_us"]
+__all__ = ["PX4Bridge", "BridgeError", "EntryResetError", "GatewayRejected",
+           "GatewayTimeout", "PX4Failsafe", "pacing_anchor_us"]
 
 
 def pacing_anchor_us(deadline_us: int, observed_us: int) -> int:
@@ -27,6 +27,16 @@ def pacing_anchor_us(deadline_us: int, observed_us: int) -> int:
 
 class BridgeError(RuntimeError):
     """Anything the gateway link can fail with."""
+
+
+class EntryResetError(BridgeError):
+    """The SITL vehicle could not safely establish the episode entry hover.
+
+    This is an infrastructure/reset outcome, never an RL transition.  Keeping
+    it distinct lets the outer collector cycle a freshly owned simulator after
+    the environment's local retries are exhausted without mislabelling the
+    failed climb as policy experience.
+    """
 
 
 class GatewayRejected(BridgeError):
@@ -312,15 +322,39 @@ class PX4Bridge:
         marker_seen_at: float | None = None
         state: dict[str, Any] | None = None
         last_arm = float("-inf")
+        was_armed = False
         while time.monotonic() - started < float(self.cfg.entry_timeout):
             elapsed = time.monotonic() - started
             try:
                 state = self.get_state()
-                if not state["armed"] and elapsed - last_arm >= float(self.cfg.arm_retry):
+                armed = bool(state["armed"])
+                extra = state.get("extra") if isinstance(
+                    state.get("extra"), dict) else {}
+                # A deck strike during the unmeasured entry climb force-disarms
+                # PX4.  The old loop then requested ARM every two seconds for
+                # the rest of the 90 s deadline, turning one failed setup into
+                # a velocity-estimator/failsafe storm.  It cannot become a
+                # valid entry hover without rebuilding SITL, so fail fast and
+                # let the owner restart it.  No transition has been collected.
+                if bool(extra.get("pad_contact", False)):
+                    raise EntryResetError(
+                        "PX4 contacted the pad while establishing the entry "
+                        "hover; restarting SITL before collecting RL data.")
+                if was_armed and not armed:
+                    raise EntryResetError(
+                        "PX4 disarmed while establishing the entry hover; "
+                        "restarting SITL before collecting RL data.")
+                was_armed = bool(was_armed or armed)
+                if not armed and elapsed - last_arm >= float(self.cfg.arm_retry):
                     # PX4 rejects arming in transient pre-flight states, so one
                     # request is not enough to start the climb.
                     last_arm = elapsed
                     self.transact("arm", {}, ("ack",))
+            except (EntryResetError, PX4Failsafe):
+                # A latched contact/disarm or an explicit PX4 failsafe is not a
+                # transient missing sample.  Waiting here only preserves a bad
+                # estimator; the owned-stack recovery path must rebuild it.
+                raise
             except BridgeError:
                 # A brief estimator or link transient during the climb is not a
                 # handover failure; only the deadline decides.
@@ -350,7 +384,7 @@ class PX4Bridge:
         if state is None:
             raise BridgeError("PX4 published no state while climbing to the entry pose.")
         here, speed = self.entry_state(state)
-        raise BridgeError(
+        raise EntryResetError(
             f"PX4 did not hold the entry pose within {float(self.cfg.entry_timeout):.1f} s "
             f"(offset {float(np.linalg.norm(here - target)):.2f} m, "
             f"speed {speed:.2f} m/s, "

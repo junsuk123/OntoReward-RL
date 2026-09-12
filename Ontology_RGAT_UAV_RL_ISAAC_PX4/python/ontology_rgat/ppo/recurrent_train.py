@@ -11,7 +11,7 @@ from typing import Callable
 import numpy as np
 import torch
 
-from ..bridge import BridgeError, GatewayTimeout, PX4Failsafe
+from ..bridge import BridgeError, EntryResetError, GatewayTimeout, PX4Failsafe
 from ..curriculum import PlatformMotionCurriculum
 from ..mathx import quat_to_euler_zyx
 from ..perception import (SEMANTIC_FEATURE_NAMES, grayscale_image_tensor,
@@ -606,12 +606,13 @@ def collect_episode(env, model: PipelineActorCritic, method: str, seed: int,
 
 def collect_episode_resilient(env, model: PipelineActorCritic, method: str,
                               seed: int, **kwargs):
-    """Retry one seed after a recoverable SITL transport/clock interruption.
+    """Retry one seed after a recoverable SITL infrastructure interruption.
 
     The failed partial trajectory is discarded, so infrastructure downtime is
-    neither labelled as a task failure nor used in a gradient update. Reset
-    geometry/estimator failures retain their existing bounded reset recovery
-    path and are not multiplied here.
+    neither labelled as a task failure nor used in a gradient update. The live
+    environment first uses its bounded local reset attempts; an exhausted
+    :class:`EntryResetError` gets the same fresh-stack retry here so a single
+    bad PX4 boot cannot terminate a checkpointed multi-arm experiment.
     """
     external = getattr(env.cfg, "external", {})
     if hasattr(external, "get"):
@@ -625,7 +626,7 @@ def collect_episode_resilient(env, model: PipelineActorCritic, method: str,
         try:
             return collect_episode(env, model, method, seed, **kwargs)
         except BridgeError as exc:
-            recoverable = (isinstance(exc, GatewayTimeout)
+            recoverable = (isinstance(exc, (EntryResetError, GatewayTimeout))
                            or (isinstance(exc, PX4Failsafe) and exc.recoverable)
                            or "simulator has stalled" in str(exc).lower())
             recover = getattr(env, "recover_infrastructure", None)

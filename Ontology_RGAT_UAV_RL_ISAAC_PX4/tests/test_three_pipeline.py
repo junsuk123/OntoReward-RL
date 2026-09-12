@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 import torch
 
-from ontology_rgat.bridge import GatewayTimeout, PX4Failsafe
+from ontology_rgat.bridge import EntryResetError, GatewayTimeout, PX4Failsafe
 from ontology_rgat.benchmarks.experiment import (configuration_hash,
                                                  controlled_training_seeds,
                                                  episodes_per_method,
@@ -329,6 +329,29 @@ def test_offboard_failsafe_restarts_and_retries_the_same_seed(monkeypatch):
 
     assert rows == ["complete"] and metric["seed"] == 321
     assert attempts == [321, 321]
+    assert recoveries == ["restart"]
+
+
+def test_exhausted_entry_reset_restarts_and_retries_same_policy_seed(monkeypatch):
+    attempts = []
+    recoveries = []
+
+    def collect(_env, _model, _method, seed, **_kwargs):
+        attempts.append(seed)
+        if len(attempts) == 1:
+            raise EntryResetError("entry hover failed after local retries")
+        return ["complete"], {"seed": seed}
+
+    monkeypatch.setattr(recurrent_train, "collect_episode", collect)
+    env = type("Env", (), {
+        "cfg": type("Cfg", (), {"external": {"episode_recoveries": 2}})(),
+        "recover_infrastructure": lambda self: recoveries.append("restart"),
+    })()
+
+    rows, metric = collect_episode_resilient(env, object(), "shin_se", 20015)
+
+    assert rows == ["complete"] and metric["seed"] == 20015
+    assert attempts == [20015, 20015]
     assert recoveries == ["restart"]
 
 

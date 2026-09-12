@@ -6,7 +6,8 @@ import numpy as np
 import pytest
 
 import ontology_rgat.bridge as bridge_module
-from ontology_rgat.bridge import BridgeError, PX4Bridge, pacing_anchor_us
+from ontology_rgat.bridge import (BridgeError, EntryResetError, PX4Bridge,
+                                  PX4Failsafe, pacing_anchor_us)
 from ontology_rgat_px4.protocol import (
     ProtocolError,
     VehicleSample,
@@ -241,6 +242,33 @@ def test_entry_gate_tolerates_brief_marker_dropout(monkeypatch):
     state = bridge.wait_at_entry(np.zeros(3))
 
     assert state["marker_quality"] == 0.0
+
+
+def test_entry_gate_aborts_immediately_after_pad_contact(monkeypatch):
+    monkeypatch.setattr(bridge_module.time, "sleep", lambda _seconds: None)
+    bridge = object.__new__(PX4Bridge)
+    bridge.cfg = SimpleNamespace(
+        entry_timeout=90.0, arm_retry=2.0, entry_tolerance=0.5,
+        entry_speed_tolerance=0.2, require_pad_in_view=True,
+        entry_marker_memory=2.0, entry_settle=1.0)
+    bridge.get_state = lambda: {
+        "armed": False, "marker_quality": 0.0,
+        "extra": {"pad_contact": True},
+    }
+
+    with pytest.raises(EntryResetError, match="contacted the pad"):
+        bridge.wait_at_entry(np.zeros(3))
+
+
+def test_entry_gate_propagates_px4_failsafe(monkeypatch):
+    monkeypatch.setattr(bridge_module.time, "sleep", lambda _seconds: None)
+    bridge = object.__new__(PX4Bridge)
+    bridge.cfg = SimpleNamespace(entry_timeout=90.0, arm_retry=2.0)
+    bridge.get_state = lambda: (_ for _ in ()).throw(
+        PX4Failsafe(["offboard_control_signal_lost"], recoverable=True))
+
+    with pytest.raises(PX4Failsafe, match="offboard_control_signal_lost"):
+        bridge.wait_at_entry(np.zeros(3))
 
 
 def test_physical_pad_contact_confirms_stop_when_lockstep_has_no_new_sample():

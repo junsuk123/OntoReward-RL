@@ -22,7 +22,20 @@ from ..initialization import camera_centered_hover_offset
 from .keypoint_encoder import ShinKeypointEncoder
 
 
-PRETRAIN_FORMAT = "shin2026-hybrid-keypoint-pretrain-v2"
+PRETRAIN_FORMAT = "shin2026-hybrid-keypoint-pretrain-v3-visibility"
+
+
+def _balanced_visibility_loss(prediction, target):
+    """Give visible and absent keypoint decisions equal optimizer weight."""
+    element = F.binary_cross_entropy(prediction, target, reduction="none")
+    positive = target >= 0.5
+    negative = ~positive
+    parts = []
+    if torch.any(positive):
+        parts.append(element[positive].mean())
+    if torch.any(negative):
+        parts.append(element[negative].mean())
+    return torch.stack(parts).mean()
 
 
 def _rotation_z(yaw: float) -> np.ndarray:
@@ -203,6 +216,16 @@ def synthetic_keypoint_dataset(system: Mapping[str, Any], *, samples: int,
                             & (keypoint_pixels[:, 0] <= width - 1.0)
                             & (keypoint_pixels[:, 1] >= 0.0)
                             & (keypoint_pixels[:, 1] <= height - 1.0))
+        if rng.random() < 0.20:
+            # Fully negative target-absent frames teach an explicit visibility
+            # head. A heatmap soft-argmax alone always returns six coordinates
+            # and cannot distinguish a blank/textured background from a pad.
+            image = np.clip(
+                rng.uniform(25.0, 225.0)
+                + rng.normal(0.0, rng.uniform(3.0, 18.0), image.shape),
+                0.0, 255.0).astype(np.uint8)
+            keypoint_visible[:] = False
+            heatmaps[index] = 0.0
         coordinates[index, :, 0] = 2.0 * keypoint_pixels[:, 0] / (width - 1.0) - 1.0
         coordinates[index, :, 1] = 2.0 * keypoint_pixels[:, 1] / (height - 1.0) - 1.0
         visible[index] = keypoint_visible.astype(np.float32)
@@ -312,15 +335,24 @@ def _empirical_metrics(encoder, dataset, indices, device) -> dict:
                              dtype=torch.float32, device=device)
     visible = torch.as_tensor(dataset["visible"][indices],
                               dtype=torch.bool, device=device)
-    predicted = encoder(images).keypoints
+    output = encoder(images)
+    predicted = output.keypoints
+    absent = images.mean(dim=(-1, -2), keepdim=True).expand_as(images)
+    absent_visibility = encoder(absent).visibility
+    false_positive_rate = float((absent_visibility >= 0.5).float().mean().cpu())
     scale = torch.tensor([511.0 / 2.0, 319.0 / 2.0], device=device)
     pixel_error = torch.linalg.vector_norm((predicted - target) * scale, dim=-1)
     selected = pixel_error[visible]
     if selected.numel() == 0:
-        return {"coordinate_rmse_px": float("inf"), "pck_20px": 0.0}
+        return {"coordinate_rmse_px": float("inf"), "pck_20px": 0.0,
+                "visibility_accuracy": 0.0,
+                "absent_false_positive_rate": false_positive_rate}
     return {
         "coordinate_rmse_px": float(torch.sqrt(selected.square().mean()).cpu()),
         "pck_20px": float((selected <= 20.0).float().mean().cpu()),
+        "visibility_accuracy": float(
+            ((output.visibility >= 0.5) == visible).float().mean().cpu()),
+        "absent_false_positive_rate": false_positive_rate,
     }
 
 
@@ -358,6 +390,7 @@ def calibrate_keypoint_encoder(
         count = requested
     seed = int(settings.get("seed", 41026)) + 73
     rng = np.random.default_rng(seed)
+    torch.manual_seed(seed)
     order = rng.permutation(count)
     validation_count = max(4, int(round(count * float(
         settings.get("empirical_validation_fraction", .25)))))
@@ -398,14 +431,28 @@ def calibrate_keypoint_encoder(
                             .sum(-1) * mask).sum() / denominator
             coordinate_loss = (((output.keypoints - target_coordinates)
                                 .square().sum(-1) * mask).sum() / denominator)
-            loss = heatmap_loss + 3.0 * coordinate_loss
+            visibility_loss = _balanced_visibility_loss(output.visibility, mask)
+            # Retain the synthetic target-absent decision boundary while the
+            # shared convolutional trunk adapts to the live Isaac renderer.
+            negative = images.mean(dim=(-1, -2), keepdim=True).expand_as(images)
+            negative = torch.clamp(
+                negative + 0.08 * torch.randn_like(negative), 0.0, 1.0)
+            negative_visibility = encoder(negative).visibility
+            absent_loss = _balanced_visibility_loss(
+                negative_visibility, torch.zeros_like(negative_visibility))
+            loss = (heatmap_loss + 3.0 * coordinate_loss
+                    + 3.0 * visibility_loss + absent_loss)
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(encoder.parameters(), 5.0)
             optimizer.step()
         candidate = _empirical_metrics(
             encoder, dataset, validation, torch_device)
-        if candidate["coordinate_rmse_px"] < best_metrics["coordinate_rmse_px"]:
+        candidate_score = (candidate["coordinate_rmse_px"]
+                           + 50.0 * candidate["absent_false_positive_rate"])
+        best_score = (best_metrics["coordinate_rmse_px"]
+                      + 50.0 * best_metrics["absent_false_positive_rate"])
+        if candidate_score < best_score:
             best_metrics = candidate
             best = {name: value.detach().cpu().clone()
                     for name, value in encoder.state_dict().items()}
@@ -418,8 +465,12 @@ def calibrate_keypoint_encoder(
         "samples": count, "training_samples": len(training),
         "validation_samples": len(validation), "before": before,
         "after": best_metrics,
+        "selection_score": "coordinate_rmse_px + 50*absent_false_positive_rate",
         "fine_tune_selected": bool(
-            best_metrics["coordinate_rmse_px"] < before["coordinate_rmse_px"]),
+            best_metrics["coordinate_rmse_px"]
+            + 50.0 * best_metrics["absent_false_positive_rate"]
+            < before["coordinate_rmse_px"]
+            + 50.0 * before["absent_false_positive_rate"]),
     }
     dataset_path = Path(path).with_name("keypoint_isaac_calibration.npz")
     np.savez_compressed(dataset_path, **dataset)
@@ -431,7 +482,10 @@ def calibrate_keypoint_encoder(
         "Isaac keypoint validation complete: "
         f"{before['coordinate_rmse_px']:.1f}px -> "
         f"{best_metrics['coordinate_rmse_px']:.1f}px, "
-        f"PCK@20 {before['pck_20px']:.1%} -> {best_metrics['pck_20px']:.1%}.")
+        f"PCK@20 {before['pck_20px']:.1%} -> {best_metrics['pck_20px']:.1%}, "
+        f"visibility accuracy {best_metrics['visibility_accuracy']:.1%}, "
+        "target-absent false positives "
+        f"{best_metrics['absent_false_positive_rate']:.1%}.")
     del encoder, optimizer
     if torch_device.type == "cuda":
         torch.cuda.empty_cache()
@@ -461,7 +515,7 @@ def _train_encoder(system: Mapping[str, Any], settings: Mapping[str, Any],
     for _ in range(epochs):
         order = rng.permutation(samples)
         totals = {"loss": 0.0, "heatmap": 0.0, "coordinate": 0.0,
-                  "pose": 0.0, "batches": 0}
+                  "visibility": 0.0, "pose": 0.0, "batches": 0}
         for start in range(0, samples, batch_size):
             indices = order[start:start + batch_size]
             images = torch.as_tensor(
@@ -482,15 +536,21 @@ def _train_encoder(system: Mapping[str, Any], settings: Mapping[str, Any],
             heatmap_loss = (heatmap_per_point * mask).sum() / denominator
             coordinate_loss = (((output.keypoints - target_coordinates).square().sum(-1)
                                 * mask).sum() / denominator)
-            pose_loss = F.mse_loss(pose_head(output.embedding), pose)
-            loss = heatmap_loss + 3.0 * coordinate_loss + 2.0 * pose_loss
+            visibility_loss = _balanced_visibility_loss(output.visibility, mask)
+            pose_mask = (mask.sum(-1) > 0.0).float()
+            pose_error = (pose_head(output.embedding) - pose).square().mean(-1)
+            pose_loss = (pose_error * pose_mask).sum() / pose_mask.sum().clamp_min(1.0)
+            loss = (heatmap_loss + 3.0 * coordinate_loss
+                    + 3.0 * visibility_loss + 2.0 * pose_loss)
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(
                 [*encoder.parameters(), *pose_head.parameters()], 5.0)
             optimizer.step()
             for name, value in (("loss", loss), ("heatmap", heatmap_loss),
-                                ("coordinate", coordinate_loss), ("pose", pose_loss)):
+                                ("coordinate", coordinate_loss),
+                                ("visibility", visibility_loss),
+                                ("pose", pose_loss)):
                 totals[name] += float(value.detach())
             totals["batches"] += 1
         last = {name: value / totals["batches"]
@@ -535,7 +595,9 @@ def prepare_keypoint_encoder(
         "implementation": ShinKeypointEncoder.implementation,
         "frozen_for_ppo": True,
         "landmark_layout": "six vertices of a 0.52 m pad-centred hexagon",
-        "training_source": "synthetic projections of configured deployed marker board",
+        "training_source": (
+            "synthetic projections and target-absent negatives of configured "
+            "deployed marker board"),
         "empirical_calibration": None,
         "metrics": metrics,
         "encoder": state,

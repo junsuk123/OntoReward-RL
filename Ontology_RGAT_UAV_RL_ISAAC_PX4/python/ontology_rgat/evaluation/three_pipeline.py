@@ -12,7 +12,11 @@ PHYSICAL_METRICS = (
     "touchdown_lateral_error", "touchdown_vertical_velocity",
     "touchdown_relative_horizontal_velocity", "touchdown_tilt",
     "touchdown_angular_rate", "fov_loss_fraction",
-    "longest_visual_loss_s", "touchdown_time_s",
+    "longest_visual_loss_s", "visual_loss_events",
+    "visual_reacquisition_events", "visual_reacquisition_rate",
+    "mean_visual_reacquisition_time_s", "recovery_climb_fraction",
+    "unsafe_descent_low_visibility_fraction", "recovery_landing_opportunity",
+    "successful_recovery_landing", "touchdown_time_s",
 )
 PRIMARY_PIPELINES = ("shin_se", "no_se", "onto_no_se")
 
@@ -246,6 +250,12 @@ def _publication_table(summary, efficiency):
             "touchdown_vertical_velocity_m_s": average(
                 "touchdown_vertical_velocity_mean"),
             "fov_loss_fraction": average("fov_loss_fraction_mean"),
+            "visual_reacquisition_rate": average(
+                "visual_reacquisition_rate_mean"),
+            "successful_recovery_landing_rate": average(
+                "successful_recovery_landing_mean"),
+            "unsafe_descent_low_visibility_fraction": average(
+                "unsafe_descent_low_visibility_fraction_mean"),
             "landing_time_s": average("touchdown_time_s_mean"),
         }
         row.update({key: value for key, value in costs.get(pipeline, {}).items()
@@ -289,6 +299,12 @@ def _write_figures(records, training_records, figures_dir: Path,
             ("touchdown_lateral_error.png", "touchdown_lateral_error", "Lateral error (m)"),
             ("touchdown_velocity.png", "touchdown_vertical_velocity", "Vertical velocity (m/s)"),
             ("fov_loss.png", "fov_loss_fraction", "FOV loss fraction"),
+            ("visual_reacquisition_rate.png", "visual_reacquisition_rate",
+             "Reacquisition / visual-loss event"),
+            ("successful_recovery_landing.png", "successful_recovery_landing",
+             "Loss-reacquisition-landing success"),
+            ("unsafe_blind_descent.png", "unsafe_descent_low_visibility_fraction",
+             "Unsafe low-visibility descent fraction"),
             ("landing_time.png", "touchdown_time_s", "Landing time (s)")):
         fig, ax = plt.subplots(figsize=(6.4, 4.0))
         data = [[float(row[metric]) for row in records if row["pipeline"] == pipeline]

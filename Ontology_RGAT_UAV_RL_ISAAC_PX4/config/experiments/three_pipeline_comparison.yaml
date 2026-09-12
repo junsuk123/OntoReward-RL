@@ -45,7 +45,7 @@ rgat_design:
   # Estimator-free trained no_se actor plus deterministic visual
   # servo/noise mixture. The dataset is rejected unless both outcomes occur.
   source_pipeline: no_se
-  behavior_policy: semantic_visual_servo_noisy_no_se_mixture_v1
+  behavior_policy: semantic_visual_servo_recovery_noisy_no_se_mixture_v2
   episodes_quick: 8
   episodes_full: 40
   # Collect at least the requested episodes. If they contain only one terminal
@@ -59,6 +59,13 @@ rgat_design:
   batch_size: 64
   learning_rate: 0.0005
   validation_fraction: 0.2
+  # Do not freeze a potential that assigns higher value when perception,
+  # recovery evidence, or energy margin is counterfactually degraded.
+  monotonic_weight: 0.25
+  monotonic_margin: 0.01
+  minimum_monotonic_compliance: 0.90
+  minimum_successful_recovery_episodes_quick: 1
+  minimum_successful_recovery_episodes_full: 2
 
 # Full publication budgets remain explicitly distinct from the outer run.sh
 # seminar budget. Multiple seeds can be supplied by repeated full runs.

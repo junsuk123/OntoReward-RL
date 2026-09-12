@@ -15,7 +15,8 @@ from ontology_rgat.benchmarks.experiment import (configuration_hash,
                                                  paired_seed_plan)
 from ontology_rgat.evaluation.three_pipeline import (
     PHYSICAL_METRICS, paired_confidence_intervals, physical_summary)
-from ontology_rgat.perception import (SEMANTIC_GRAPH_INPUT_DIM,
+from ontology_rgat.perception import (SEMANTIC_FEATURE_NAMES,
+                                      SEMANTIC_GRAPH_INPUT_DIM,
                                       SEMANTIC_NODE_NAMES, SemanticObservation,
                                       semantic_graph,
                                       semantic_observation_from_payload)
@@ -26,7 +27,8 @@ from ontology_rgat.ppo.recurrent import (PipelineActorCritic,
                                          recurrent_ppo_loss)
 from ontology_rgat.ppo import recurrent_train
 from ontology_rgat.ppo.recurrent_train import collect_episode_resilient
-from ontology_rgat.ppo.recurrent_train import training_health_issue
+from ontology_rgat.ppo.recurrent_train import (training_health_issue,
+                                               visual_recovery_metrics)
 from ontology_rgat.reward_modes import OntologyRewardContext, OntoRewardPBRS, TerminalFlags
 from ontology_rgat.reward_modes import ShinRewardConfig, active_perception_reward
 from ontology_rgat.rgat import (FrozenSemanticRGATPotential,
@@ -34,6 +36,7 @@ from ontology_rgat.rgat import (FrozenSemanticRGATPotential,
                                 prepare_semantic_rgat_artifact,
                                 save_semantic_dataset,
                                 semantic_episode_dataset,
+                                semantic_monotonic_counterfactuals,
                                 validate_semantic_dataset)
 from ontology_rgat.rgat.semantic_dataset import semantic_rgat_config
 from ontology_rgat.rgat.train import train_potential
@@ -71,10 +74,13 @@ def _batch(model):
 
 def _observation(value=0.5):
     return SemanticObservation(
-        keypoint_confidence=value, image_alignment=value,
+        keypoint_confidence=value, visible_keypoint_fraction=value,
+        image_alignment=value,
         apparent_target_scale=value, image_plane_motion_safety=value,
-        scale_rate_safety=value, vertical_motion_safety=value,
+        scale_rate_safety=value, visibility_memory=value,
+        reacquisition_trend=value, vertical_motion_safety=value,
         attitude_stability=value, battery_risk=1.0 - value,
+        visual_loss_risk=1.0 - value,
         centroid_xy=(0.0, 0.0), raw_scale=value * .2)
 
 
@@ -149,6 +155,9 @@ def test_training_health_gate_reports_independent_learning_failures():
         "fov_loss_fraction": .2, "battery_depleted": 0,
         "position_rmse": 4.0,
         "active_reward_saturation_fraction": 1.0,
+        "visual_loss_events": 1,
+        "visual_reacquisition_events": 0,
+        "unsafe_descent_low_visibility_fraction": .8,
     } for episode in range(1, 41)]
     issue = training_health_issue(history, {
         "health_window_episodes": 20, "health_grace_episodes": 40,
@@ -156,6 +165,8 @@ def test_training_health_gate_reports_independent_learning_failures():
     assert "no landing" in issue
     assert "position RMSE stalled" in issue
     assert "active reward saturation stalled" in issue
+    assert "visual reacquisition" in issue
+    assert "unsafe low-visibility descent" in issue
 
 
 def test_training_health_gate_catches_battery_failure_before_learning_grace():
@@ -321,6 +332,55 @@ def test_semantic_graph_uses_only_visual_and_onboard_payload():
     assert set(graph.relation_names) == {"indicates", "supports", "constrains", "self"}
 
 
+def test_uninformative_heatmaps_cannot_manufacture_geometry_and_memory_decays():
+    points = np.array([[-.2, -.2], [.2, -.2], [.3, 0.],
+                       [.2, .2], [-.2, .2], [-.3, 0.]])
+    peaked = np.zeros((6, 4, 5))
+    peaked[:, 1, 2] = 20.0
+    payload = {"keypoints": points, "heatmaps": peaked,
+               "proprioception": [0, 0, 0, 1, 0, 0, 0]}
+    seen = semantic_observation_from_payload(payload)
+    assert seen.visible_keypoint_fraction == pytest.approx(1.0)
+    blind = semantic_observation_from_payload(
+        {**payload, "heatmaps": np.zeros((6, 4, 5))}, previous=seen, dt=.1)
+    assert blind.visible_keypoint_fraction == 0.0
+    assert blind.image_alignment == 0.0
+    assert blind.apparent_target_scale == 0.0
+    assert blind.image_plane_motion_safety == 0.0
+    assert blind.visual_loss_risk > 0.0
+    assert blind.visibility_memory < seen.visibility_memory
+    assert blind.centroid_xy == pytest.approx(seen.centroid_xy)
+    explicit_absence = semantic_observation_from_payload(
+        {**payload, "keypoint_visibility": np.zeros(6)}, previous=seen, dt=.1)
+    assert explicit_absence.visible_keypoint_fraction == 0.0
+    assert explicit_absence.image_alignment == 0.0
+
+
+def test_visual_recovery_metrics_measure_climb_reacquisition_and_landing():
+    names = {name: index for index, name in enumerate(SEMANTIC_FEATURE_NAMES)}
+    low = np.ones(len(SEMANTIC_FEATURE_NAMES))
+    low[names["keypoint_confidence"]] = 0.0
+    low[names["visible_keypoint_fraction"]] = 0.0
+    high = np.ones(len(SEMANTIC_FEATURE_NAMES))
+    rows = [
+        {"in_fov": False, "command": np.array([0, 0, .3, 0]),
+         "semantic_features": high, "reward_parts": {"phi": .5, "phi_next": .2}},
+        {"in_fov": False, "command": np.array([0, 0, .3, 0]),
+         "semantic_features": low, "reward_parts": {"phi": .2, "phi_next": .3}},
+        {"in_fov": True, "command": np.array([0, 0, .1, 0]),
+         "semantic_features": low, "reward_parts": {"phi": .3, "phi_next": .7}},
+    ]
+    metric = visual_recovery_metrics(
+        rows, initial_in_fov=True, success=True, dt=.1)
+    assert metric["visual_loss_events"] == 1
+    assert metric["visual_reacquisition_events"] == 1
+    assert metric["visual_reacquisition_rate"] == 1
+    assert metric["mean_visual_reacquisition_time_s"] == pytest.approx(.2)
+    assert metric["recovery_climb_fraction"] == 1
+    assert metric["unsafe_descent_low_visibility_fraction"] == 0
+    assert metric["successful_recovery_landing"] == 1
+
+
 @pytest.mark.parametrize("field", [
     "estimated_relative_state", "true_relative_state", "simulator_truth",
     "relative_position", "platform_velocity"])
@@ -353,6 +413,17 @@ def test_semantic_dataset_requires_both_terminal_classes():
         success=True, episode_id=1, seed=2)
     with pytest.raises(ValueError, match="successful and failed"):
         validate_semantic_dataset(dataset, require_both_classes=True)
+
+
+def test_semantic_monotonic_counterfactuals_only_degrade_allowed_observations():
+    graph = semantic_graph(_observation(.7))
+    source = graph.X.T[None]
+    counterfactuals = semantic_monotonic_counterfactuals(source)
+    assert counterfactuals.shape == (1, 3, *source.shape[1:])
+    names = {name: index for index, name in enumerate(SEMANTIC_NODE_NAMES)}
+    assert counterfactuals[0, 0, names["PerceptionQuality"], 0] == 0.0
+    assert counterfactuals[0, 1, names["VisualLossRisk"], 0] == 1.0
+    assert counterfactuals[0, 2, names["BatteryRisk"], 0] == 1.0
 
 
 def test_rgat_split_is_by_whole_episode():

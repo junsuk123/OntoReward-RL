@@ -18,10 +18,11 @@ class KeypointEncoderOutput:
     embedding: torch.Tensor
     keypoints: torch.Tensor
     heatmaps: torch.Tensor
+    visibility: torch.Tensor
 
 
 class ShinKeypointEncoder(nn.Module):
-    implementation = "hybrid-isaac-validated-six-keypoint-descriptor-v2"
+    implementation = "hybrid-isaac-validated-six-keypoint-descriptor-v3-visibility"
 
     def __init__(self, embedding_dim: int = 512, keypoints: int = 6):
         super().__init__()
@@ -31,6 +32,7 @@ class ShinKeypointEncoder(nn.Module):
             blocks += [nn.Conv2d(cin, cout, 3, stride=2, padding=1), nn.ReLU(inplace=True)]
         self.features = nn.Sequential(*blocks)
         self.heatmap = nn.Conv2d(channels[-1], keypoints, 1)
+        self.visibility_head = nn.Linear(channels[-1], 1)
         # The paper consumes descriptors attached to six keypoints.  Pooling a
         # descriptor at each learned heatmap location makes that information
         # path executable; the former global-average branch never consumed the
@@ -63,4 +65,6 @@ class ShinKeypointEncoder(nn.Module):
         descriptors = torch.einsum("bkn,bcn->bkc", probabilities,
                                    flattened_features)
         embedding = self.embedding(descriptors.flatten(1))
-        return KeypointEncoderOutput(embedding, self._soft_argmax(heatmaps), heatmaps)
+        visibility = torch.sigmoid(self.visibility_head(descriptors).squeeze(-1))
+        return KeypointEncoderOutput(
+            embedding, self._soft_argmax(heatmaps), heatmaps, visibility)

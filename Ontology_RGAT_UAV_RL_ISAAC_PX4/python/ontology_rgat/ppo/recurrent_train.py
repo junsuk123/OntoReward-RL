@@ -13,8 +13,8 @@ import torch
 from ..bridge import BridgeError, GatewayTimeout, PX4Failsafe
 from ..curriculum import PlatformMotionCurriculum
 from ..mathx import quat_to_euler_zyx
-from ..perception import (grayscale_image_tensor, semantic_graph,
-                          semantic_observation)
+from ..perception import (SEMANTIC_FEATURE_NAMES, grayscale_image_tensor,
+                          semantic_graph, semantic_observation)
 from ..pipelines import get_pipeline, primary_pipeline_ids
 from ..reward_modes import (OntoRewardPBRS, ShinReward, ShinRewardConfig,
                             NoSERewardContext, OntologyRewardContext,
@@ -154,8 +154,87 @@ def _semantic_from_output(output, proprioception, state, *, previous, dt):
         output.keypoints[0, -1].detach().cpu().numpy(),
         output.heatmaps[0, -1].detach().cpu().numpy(),
         np.asarray(proprioception, dtype=np.float32).reshape(-1),
+        keypoint_visibility=output.keypoint_visibility[0, -1].detach().cpu().numpy(),
         battery_reserve=_battery_reserve(state), previous=previous, dt=dt)
     return observation, semantic_graph(observation)
+
+
+def visual_recovery_metrics(rows, *, initial_in_fov: bool, success: bool,
+                            dt: float) -> dict[str, float]:
+    """Measure observability loss, action-level recovery and its outcome."""
+    visibility = [bool(initial_in_fov)] + [bool(row["in_fov"]) for row in rows]
+    losses = 0
+    reacquisitions = 0
+    loss_start = None
+    completed_durations = []
+    loss_transitions = []
+    reacquisition_transitions = []
+    for transition, (current, following) in enumerate(
+            zip(visibility[:-1], visibility[1:])):
+        if current and not following:
+            losses += 1
+            loss_start = transition
+            loss_transitions.append(transition)
+        elif not current and following:
+            reacquisitions += 1
+            reacquisition_transitions.append(transition)
+            if loss_start is not None:
+                completed_durations.append(max(1, transition - loss_start) * float(dt))
+                loss_start = None
+
+    feature_index = {name: index for index, name in enumerate(SEMANTIC_FEATURE_NAMES)}
+    lost_commands = []
+    low_visibility_commands = []
+    for index, row in enumerate(rows):
+        command = np.asarray(row.get("command", np.zeros(4)), dtype=float)
+        if not visibility[index]:
+            lost_commands.append(command)
+        semantic = np.asarray(row.get("semantic_features", ()), dtype=float)
+        if semantic.size == len(SEMANTIC_FEATURE_NAMES):
+            low = (semantic[feature_index["visible_keypoint_fraction"]] < 0.5
+                   or semantic[feature_index["keypoint_confidence"]] < 0.01)
+            if low:
+                low_visibility_commands.append(command)
+
+    def fraction(commands, predicate):
+        if not commands:
+            return 0.0
+        return float(np.mean([predicate(command) for command in commands]))
+
+    output = {
+        "visual_loss_events": float(losses),
+        "visual_reacquisition_events": float(reacquisitions),
+        "visual_reacquisition_rate": float(reacquisitions / max(losses, 1)),
+        "mean_visual_reacquisition_time_s": (
+            float(np.mean(completed_durations)) if completed_durations else 0.0),
+        "recovery_climb_fraction": fraction(
+            lost_commands, lambda command: command[2] > 0.05),
+        "unsafe_descent_low_visibility_fraction": fraction(
+            low_visibility_commands, lambda command: command[2] < -0.05),
+        "recovery_landing_opportunity": float(losses > 0 and reacquisitions > 0),
+        "successful_recovery_landing": float(
+            losses > 0 and reacquisitions > 0 and bool(success)),
+    }
+    potential_loss = []
+    potential_reacquisition = []
+    for index in loss_transitions:
+        parts = rows[index].get("reward_parts", {})
+        if "phi" in parts and "phi_next" in parts:
+            potential_loss.append(float(parts["phi_next"]) - float(parts["phi"]))
+    for index in reacquisition_transitions:
+        parts = rows[index].get("reward_parts", {})
+        if "phi" in parts and "phi_next" in parts:
+            potential_reacquisition.append(
+                float(parts["phi_next"]) - float(parts["phi"]))
+    if potential_loss or potential_reacquisition:
+        output.update({
+            "potential_delta_on_visual_loss_mean": (
+                float(np.mean(potential_loss)) if potential_loss else 0.0),
+            "potential_delta_on_reacquisition_mean": (
+                float(np.mean(potential_reacquisition))
+                if potential_reacquisition else 0.0),
+        })
+    return output
 
 
 def collect_episode(env, model: PipelineActorCritic, method: str, seed: int,
@@ -178,6 +257,8 @@ def collect_episode(env, model: PipelineActorCritic, method: str, seed: int,
         "detail") or {})
     domain_randomization = reset_detail.get("domain_randomization") or {}
     initial_battery = dict(_battery_sample(step.state))
+    initial_in_fov = bool(step.pad_in_fov)
+    initial_in_fov = bool(step.pad_in_fov)
     action_scale = float(env.adapter.controller.action_scale)
     if monitor is not None:
         monitor.reset_episode(
@@ -245,6 +326,8 @@ def collect_episode(env, model: PipelineActorCritic, method: str, seed: int,
                 "truth": step.critic.true_relative_state.copy(),
                 "pre_squash": pre_squash.cpu().numpy()[0],
                 "action": action.cpu().numpy()[0],
+                "command": following.command.copy(),
+                "command": following.command.copy(),
                 "log_prob": float(log_prob.item()),
                 "value": float(output.value.item()), "reward": float(reward),
                 "done": float(following.terminal), "in_fov": following.pad_in_fov,
@@ -254,6 +337,7 @@ def collect_episode(env, model: PipelineActorCritic, method: str, seed: int,
                 "reward_parts": parts,
                 "semantic_graph_X": graph.X.copy(),
                 "semantic_features": semantic.feature_vector.copy(),
+                "next_semantic_features": next_semantic.feature_vector.copy(),
                 "hidden_h": hidden[0].cpu().numpy(),
                 "hidden_c": hidden[1].cpu().numpy(),
             }
@@ -338,6 +422,33 @@ def collect_episode(env, model: PipelineActorCritic, method: str, seed: int,
             domain_randomization.get("ground_texture_id", 0)),
         "domain_brightness": float(domain_randomization.get("brightness", 1.0)),
     }
+    metric.update(visual_recovery_metrics(
+        rows, initial_in_fov=initial_in_fov,
+        success=bool(step.physical_contact), dt=float(env.cfg.sim.dt)))
+    potential_loss_delta = []
+    potential_reacquisition_delta = []
+    visibility = [initial_in_fov] + [bool(row["in_fov"]) for row in rows]
+    for index, row in enumerate(rows):
+        parts = row.get("reward_parts", {})
+        if "phi" not in parts or "phi_next" not in parts:
+            continue
+        delta = float(parts["phi_next"]) - float(parts["phi"])
+        if visibility[index] and not visibility[index + 1]:
+            potential_loss_delta.append(delta)
+        elif not visibility[index] and visibility[index + 1]:
+            potential_reacquisition_delta.append(delta)
+    if potential_loss_delta or potential_reacquisition_delta:
+        metric.update({
+            "potential_delta_on_visual_loss_mean": (
+                float(np.mean(potential_loss_delta))
+                if potential_loss_delta else 0.0),
+            "potential_delta_on_reacquisition_mean": (
+                float(np.mean(potential_reacquisition_delta))
+                if potential_reacquisition_delta else 0.0),
+        })
+    metric.update(visual_recovery_metrics(
+        rows, initial_in_fov=initial_in_fov,
+        success=bool(step.physical_contact), dt=float(env.cfg.sim.dt)))
     if model_spec.state_estimation_enabled:
         position_error = np.asarray([
             row["estimate"][:3] - row["truth"][:3] for row in rows])
@@ -577,6 +688,27 @@ def training_health_issue(history, ppo, *, warmup_episodes=0) -> str | None:
         issues.append(f"no landing in the last {window} policy episodes")
     if fov_loss > limit:
         issues.append(f"mean FOV loss is {fov_loss:.1%} (limit {limit:.1%})")
+    loss_events = sum(float(row.get("visual_loss_events", 0.0)) for row in recent)
+    reacquisitions = sum(float(row.get(
+        "visual_reacquisition_events", 0.0)) for row in recent)
+    minimum_events = int(ppo.get("health_min_visual_loss_events", 5))
+    if loss_events >= minimum_events:
+        reacquisition_rate = reacquisitions / max(loss_events, 1.0)
+        minimum_reacquisition = float(ppo.get(
+            "health_min_reacquisition_rate", 0.25))
+        if reacquisition_rate < minimum_reacquisition:
+            issues.append(
+                f"visual reacquisition is {reacquisition_rate:.1%} "
+                f"(minimum {minimum_reacquisition:.1%})")
+        unsafe_descent = float(np.mean([float(row.get(
+            "unsafe_descent_low_visibility_fraction", 0.0))
+            for row in recent]))
+        unsafe_limit = float(ppo.get(
+            "health_max_unsafe_descent_low_visibility_fraction", 0.50))
+        if unsafe_descent > unsafe_limit:
+            issues.append(
+                f"unsafe low-visibility descent is {unsafe_descent:.1%} "
+                f"(limit {unsafe_limit:.1%})")
 
     def stalled_high(field, limit_key, default):
         values = [float(row[field]) for row in policy_rows

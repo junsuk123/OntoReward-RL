@@ -59,3 +59,38 @@ not pre-claim a landing success rate. The next valid evidence is a fresh v3
 checkpoint trained by `./run.sh --mode full`. The dashboard shows normalized
 estimation loss and active-reward saturation; a health-gate stop is a useful
 failed experiment, not a reason to reuse an incompatible checkpoint.
+
+## Observability/recovery follow-up
+
+The first repaired full run still completed 38 PPO episodes with zero landing,
+59.0% mean FOV loss and 3.69 m mean physical relative-position RMSE over its
+last 20 episodes. The run was stopped before changing its executable contract.
+The follow-up therefore adds independently testable mechanisms instead of
+continuing that checkpoint:
+
+- the platform must be detected at handover at every curriculum value,
+  including `c=1` reward-design and evaluation flights;
+- the keypoint network has an explicitly supervised visibility head and is
+  initialized with target-absent negative frames;
+- low-confidence coordinates cannot contribute alignment, scale, or motion;
+- estimator-free visibility memory, reacquisition trend, and loss-duration
+  risk make the semantic graph finite-history-aware;
+- reward-design collection requires successful
+  loss→reacquisition→landing trajectories as well as both terminal classes;
+- adverse perception, recovery, and battery counterfactuals impose and audit
+  the expected potential direction before the R-GAT may be frozen;
+- episode/evaluation records expose reacquisition rate/time, recovery climb,
+  unsafe descent under low confidence, recovery landing, and potential change
+  at loss/reacquisition transitions.
+
+The graph format is now `ontology_rgat.semantic_graph/2-history-aware`, so old
+semantic datasets and potentials are intentionally incompatible. Equal gamma,
+terminal-zero potential and a frozen R-GAT retain the MDP PBRS contract. The
+finite history is not presented as a complete Bayesian belief state, so exact
+POMDP policy-invariance is not claimed; recovery is evaluated empirically.
+
+An independent 128-frame synthetic smoke set for the new shared-descriptor
+visibility head measured 94.5% visibility accuracy, 97.1% true positives on
+visible landmarks, and 0% false positives on 21 target-absent frames. This
+checks the absent-target decision boundary only; the mandatory held-out Isaac
+calibration remains the renderer-domain acceptance test during `run.sh`.

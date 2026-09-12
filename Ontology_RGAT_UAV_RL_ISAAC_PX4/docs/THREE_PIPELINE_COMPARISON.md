@@ -80,7 +80,7 @@ flowchart LR
   K --> O[Direct image semantics]
   U --> O
   B[Onboard battery reserve] --> O
-  O --> G[13-node semantic ontology]
+  O --> G[18-node history-aware semantic ontology]
   G --> P[Frozen direct R-GAT Phi G]
   P --> R[Sparse task + PBRS]
 ```
@@ -97,16 +97,21 @@ onboard UAV signals:
 | Observation node | Meaning and normalization |
 |---|---|
 | `KeypointConfidence` | one minus normalized heatmap entropy |
+| `VisibleKeypointFraction` | fraction of keypoint heatmaps passing the entropy-confidence gate |
 | `ImageAlignment` | one minus centroid distance from image center divided by `sqrt(2)` |
 | `ApparentScale` | keypoint RMS radius divided by `0.75`, clipped |
 | `ImagePlaneMotion` | safety `1 - centroid_speed/4`, clipped |
 | `ScaleRate` | safety `1 - abs(scale_rate)/2`, clipped |
+| `VisibilityMemory` | recent valid visibility, exponentially decayed over 1.5 s |
+| `ReacquisitionTrend` | positive confidence recovery, clipped to `[0,1]` |
 | `VerticalMotionSafety` | `exp(-abs(UAV_vz)/0.6)` |
 | `AttitudeStability` | `exp(-tilt/radians(22))` |
 | `BatteryRisk` | one minus clipped onboard landing reserve |
+| `VisualLossRisk` | consecutive low-confidence duration divided by 2 s, clipped |
 
 Intermediate nodes are `PerceptionQuality`, `ApproachState`,
-`ApproachStability`, and `DescentSafety`; the readout node is `SafeLanding`.
+`ApproachStability`, `RecoveryState`, and `DescentSafety`; the readout node is
+`SafeLanding`.
 Relations are:
 
 - `indicates`: observation to semantic intermediate;
@@ -114,8 +119,8 @@ Relations are:
 - `constrains`: `BatteryRisk` to `SafeLanding`;
 - `self`: one self-loop per node for R-GAT updates.
 
-The executable topology is therefore 13 nodes, 12 semantic directed edges,
-13 self-loops, 25 total directed edges, four relations, and 19 features per
+The executable topology is therefore 18 nodes, 17 semantic directed edges,
+18 self-loops, 35 total directed edges, four relations, and 24 features per
 node. Two 24-wide relational-attention layers with a residual around the second
 layer feed a bounded `SafeLanding` readout. These values describe the primary
 comparison; the retained cooperative legacy graph is 14 nodes/38 edges and is
@@ -128,10 +133,12 @@ not supervised relation-importance labels.
 
 The reward-design behavior source is estimator-free: the trained
 `no_se` policy is mixed deterministically with image-plane servo corrections,
-bounded noise and bounded random exploration. After the configured minimum,
-collection automatically continues with real trajectories until both terminal
-classes are present or the explicit hard cap is reached. Synthetic outcomes
-are never inserted. Training/validation splits by whole episode.
+an explicit climb/hold recovery when confidence is lost, bounded noise and
+bounded random exploration. After the configured minimum, collection
+automatically continues with real trajectories until both terminal classes and
+the configured number of successful loss→reacquisition→landing episodes are
+present, or the explicit hard cap is reached. Synthetic outcomes are never
+inserted. Training/validation splits by whole episode.
 
 For terminal outcome `S_i` (`+1` landing, `-1` failure), trajectory length
 `T_i`, and step `t`, the target is
@@ -145,6 +152,11 @@ L_R-GAT = mean((Phi_theta(G_i,t) - y_i,t) ** 2)
 The configured weak output regularizer is `eta=1e-4`; validation reports the
 unregularized MSE.
 
+The loss also applies adverse semantic counterfactuals. Degrading current
+perception, recent visibility/reacquisition evidence, or battery margin must
+not increase `Phi`; the frozen artifact records compliance and is rejected
+below the configured threshold.
+
 The trained R-GAT is frozen. Its direct output, not distilled linear weights,
 is the primary potential:
 
@@ -155,12 +167,21 @@ r_t = r_sparse + lambda * (gamma * Phi(G_t+1) - Phi(G_t))
 `gamma_design == gamma_PBRS == gamma_PPO`. For terminal/absorbing next states,
 `Phi(G_t+1)=0`. PPO cannot update the frozen R-GAT.
 
+The graph carries finite visual history but is not a complete Bayesian belief
+state. Equal gamma, terminal-zero potential and freezing preserve the intended
+MDP PBRS contract; exact policy-invariance is not claimed for the underlying
+POMDP. The empirical claim is instead tested through FOV-loss, reacquisition,
+recovery-climb, unsafe-blind-descent, and post-reacquisition landing metrics.
+
 ## Environment held common
 
 The default full/quick flight profile is the Meta-Sejong Gwanggaeto/S5 scene.
 The RANGER MINI carries a 1.5×1.5 m deck along a 37-point, 99.70 m closed road
 loop at a seeded 0.25–0.60 m/s. The same route, platform motion, camera,
 multi-scale ArUco board, PX4 limits, and battery draw are used by A, B, and C.
+Every measured episode starts with a detector-confirmed pad observation. FOV
+loss after policy handover remains non-terminal, allowing temporal tracking and
+recovery behavior to be learned and measured.
 
 ![Audited S5 UGV route](images/metasejong_gwanggaeto_ugv_route.png)
 

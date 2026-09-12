@@ -60,7 +60,8 @@ landing:
 benchmark:
   profile: shin2026
   # c=0 starts at the already-stationary airborne hover support. It blends
-  # back to the exact Table-I draw and is unchanged at paired evaluation c=1.
+  # toward the Table-I draw; at every level the horizontal draw is conditioned
+  # on the paper's requirement that the pad starts inside the camera FOV.
   initial_condition_curriculum_min_scale: 0.0
   # Setup-only handover gate, not the touchdown-success threshold. The real
   # PX4/Pegasus hover limit cycle observed in this rendered scene is about
@@ -238,6 +239,9 @@ vision:
     pitch_down_deg: 60.0
     rate_hz: 30.0
     mount_translation_flu_m: [0.0, 0.0, -0.16]
+    # Condition the Table-I lateral/yaw draw on a conservative inscribed part
+    # of the pitched-camera footprint; the detector remains the final gate.
+    entry_visible_footprint_fraction: 0.65
     clipping_range_m: [0.02, 60.0]
 
 battery:

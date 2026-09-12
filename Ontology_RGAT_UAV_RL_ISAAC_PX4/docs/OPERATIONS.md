@@ -202,7 +202,7 @@ terminal failures are not treated as infrastructure recovery.
 | Gateway state lacks current fields | The ASCII ROS workspace contains stale copied source. Stop the stack, run `./scripts/sync_gateway.sh`, then restart. |
 | `Preflight Fail: Battery unhealthy` | Distinguish PX4 SITL's internal battery from the experiment pack. Current SITL clamps only PX4's unrelated internal pack; the 3S 3500 mAh experiment model still discharges and feeds R-GAT. |
 | No success although the deck was reached | Inspect pad-contact topic/source and touchdown physical limits. Height alone is never counted as success. |
-| Training health gate stops | The last configured window had no success and excessive FOV loss. This is deliberate protection against spending the remaining budget on blind rollouts. |
+| Training health gate stops | The configured window detected no success, excessive FOV/RMSE/battery failure, poor reacquisition, unsafe blind descent, or a saturated active reward. The message names each failing gate; this protects the remaining budget from blind rollouts. |
 
 Useful direct probes:
 

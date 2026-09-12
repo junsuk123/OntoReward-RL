@@ -28,12 +28,12 @@ ontology, reward, budget, or output schema.
 | Shared temporal model | frozen six-keypoint encoder, 512-unit LSTM, 256-D latent |
 | Actor latent input | `y[6:256]` + 7-D proprioception |
 | Action | heading-frame `vx, vy, vz, yaw_rate` |
-| Primary ontology | 13 nodes, 25 directed edges, 4 relations, 19 features/node |
+| Primary ontology | 18 nodes, 35 directed edges, 4 relations, 24 features/node |
 | R-GAT | two 24-wide relation-attention layers, direct frozen `Phi(G)` |
 | Default scene | Meta-Sejong S5 / `gwanggaeto` |
 | UGV route/speed | 37-point, 99.70 m closed road loop; 0.25–0.60 m/s draw |
 | Default budget | 8 warm-up + 264 PPO × 3 = 800 training flights |
-| Reward-design data | 40 real flights minimum, 120 hard cap |
+| Reward-design data | 40 real flights minimum; both outcomes and successful visual recovery required; 120 hard cap |
 | Evaluation | 7 scenarios × 5 seeds × 3 pipelines |
 | Dashboard | `http://127.0.0.1:8770/` |
 | Runtime logs | `/tmp/ontology_rgat_stack/` |

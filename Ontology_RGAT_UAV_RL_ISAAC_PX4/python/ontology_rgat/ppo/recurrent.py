@@ -28,6 +28,7 @@ class RecurrentOutput:
     hidden: tuple[torch.Tensor, torch.Tensor]
     keypoints: torch.Tensor
     heatmaps: torch.Tensor
+    keypoint_visibility: torch.Tensor
 
 
 class PipelineActorCritic(nn.Module):
@@ -121,7 +122,8 @@ class PipelineActorCritic(nn.Module):
             visual.keypoints.reshape(batch, steps, 6, 2),
             visual.heatmaps.reshape(batch, steps, 6,
                                     visual.heatmaps.shape[-2],
-                                    visual.heatmaps.shape[-1]))
+                                    visual.heatmaps.shape[-1]),
+            visual.visibility.reshape(batch, steps, 6))
 
     @staticmethod
     def log_prob(pre_squash, action, mean, std):

@@ -28,7 +28,8 @@ The primary benchmark retains these reported elements:
 - heading-frame velocity and yaw-rate commands at 0.1 s control intervals;
 - 300 control steps per episode;
 - initial relative altitude 2–8 m, lateral offsets -3–3 m, and platform yaw
-  misalignment -60–60° at full curriculum;
+  misalignment -60–60° at full curriculum, conditioned on the platform being
+  in the initial camera FOV;
 - Table-III progress/velocity/undershoot/yaw-rate shaping;
 - the estimation-error active-perception term for `shin_se`;
 - `+10/-10` terminal task outcomes and an 80-level curriculum.
@@ -93,7 +94,7 @@ document.
 |---|---|---|
 | simulator | Isaac Sim 5.1 + Pegasus + PX4 SITL | The paper uses AerialGym; results are not backend-identical. |
 | low-level controller | PX4 velocity controller | The exact paper geometric controller is not public. Limits are common across pipelines. |
-| keypoint network | synthetic initialization, live-Isaac board-plane fine-tuning, held-out validation, then frozen before PPO | PACMAN-compatible weights/code are not public; never label this artifact PACMAN. |
+| keypoint network | synthetic initialization including target-absent frames, explicit six-keypoint visibility head, live-Isaac board-plane fine-tuning, held-out validation, then frozen before PPO | PACMAN-compatible weights/code are not public; never label this artifact PACMAN. |
 | landing target | multi-scale ArUco board | Approximation of the paper's known landing geometry, designed for far-to-near visibility. |
 | scene | Meta-Sejong S5/Gwanggaeto road loop | Campus adaptation shared by every pipeline. |
 | platform speed | 0.25–0.60 m/s draw, 1.0 m/s carrier ceiling | The paper's 0–8 m/s envelope is not claimed for this curved-road profile. |
@@ -110,9 +111,12 @@ The 45-tag board has four 0.32 m far tags, four 0.12 m transition tags, and
 ## Setup and handover adaptation
 
 At low curriculum, the UAV entry blends from a stationary camera-centred hover
-to the full Table-I initial-condition draw. The target already moves at
+toward the full Table-I initial-condition draw. At all levels, including
+reward-design and paired evaluation at `c=1`, the horizontal sample is pulled
+inside a conservative camera-footprint subset and the live detector must
+confirm visibility before handover. The target already moves at
 0.0875–0.21 m/s at `c=0` rather than remaining parked for hundreds of episodes.
-Paired evaluation uses `c=1`.
+Paired evaluation uses `c=1` under the same initial-visibility condition.
 
 The first six latent outputs are unbounded normalized coordinates decoded into
 physical `[m, m/s]` units. The auxiliary and active-perception losses divide by

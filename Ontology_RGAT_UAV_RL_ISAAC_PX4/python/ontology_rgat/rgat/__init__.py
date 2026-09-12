@@ -13,7 +13,8 @@ from .semantic_dataset import (
     SEMANTIC_MODEL_FORMAT, assert_no_privileged_semantic_fields,
     load_semantic_dataset, merge_semantic_datasets,
     prepare_semantic_rgat_artifact, save_semantic_dataset,
-    semantic_episode_dataset, validate_semantic_dataset)
+    semantic_episode_dataset, semantic_monotonic_counterfactuals,
+    validate_semantic_dataset)
 from .reward_design import (FixedRewardDesign, distill_reward_design,
                             load_reward_design, save_reward_design)
 from .topology import Topology
@@ -24,5 +25,6 @@ __all__ = ["RGAT", "RelationalGraphAttention", "RGATPotential", "Topology",
            "SEMANTIC_MODEL_FORMAT", "assert_no_privileged_semantic_fields",
            "load_semantic_dataset", "merge_semantic_datasets",
            "prepare_semantic_rgat_artifact", "save_semantic_dataset",
-           "semantic_episode_dataset", "validate_semantic_dataset",
+           "semantic_episode_dataset", "semantic_monotonic_counterfactuals",
+           "validate_semantic_dataset",
            "distill_reward_design", "load_reward_design", "save_reward_design"]

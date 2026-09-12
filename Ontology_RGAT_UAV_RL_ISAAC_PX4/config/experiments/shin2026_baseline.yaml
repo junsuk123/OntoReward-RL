@@ -53,7 +53,10 @@ control:
   # already drives at 35% of its sampled road speed (0.0875--0.21 m/s), then
   # increases continuously to the full configured speed at c=1.
   curriculum_min_pad_motion_scale: 0.35
-  require_initial_pad_visible_during_curriculum: true
+  # The paper conditions every episode on initial visibility, including c=1
+  # reward-design and evaluation flights. Visibility loss may occur only after
+  # policy handover and is deliberately non-terminal.
+  require_initial_pad_visible: true
 ppo:
   gamma: 0.99
   gae_lambda: 0.95
@@ -89,6 +92,9 @@ ppo:
   health_max_fov_loss_fraction: 0.80
   health_max_position_rmse_m: 3.0
   health_max_active_reward_saturation_fraction: 0.80
+  health_min_visual_loss_events: 5
+  health_min_reacquisition_rate: 0.25
+  health_max_unsafe_descent_low_visibility_fraction: 0.50
   # The seeded low-reserve battery is an intended state variable; above 60%
   # termination indicates it is overwhelming task learning rather than merely
   # exposing the ontology to energy risk.
@@ -128,3 +134,8 @@ rgat_design:
   episodes_full: 400
   sample_stride: 3
   outcome_discount: 0.99
+  minimum_successful_recovery_episodes_quick: 1
+  minimum_successful_recovery_episodes_full: 2
+  monotonic_weight: 0.25
+  monotonic_margin: 0.01
+  minimum_monotonic_compliance: 0.90

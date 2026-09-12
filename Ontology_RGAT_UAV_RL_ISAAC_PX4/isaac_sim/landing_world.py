@@ -30,6 +30,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(WORKSPACE / "python"))
 from config_loader import load_config
 from ontology_rgat.initialization import (camera_centered_hover_offset,
+                                          constrain_camera_visible_entry,
                                           curriculum_camera_entry,
                                           yaw_aligned_hover_offset)
 from ontology_rgat.benchmarks.randomization import (
@@ -1252,10 +1253,9 @@ class LandingWorld:
             self.camera.configure_domain_randomization(None)
         initial = benchmark.get("initial_conditions") or {}
         if str(benchmark.get("profile", "")).lower() == "shin2026":
-            # The raw draw is exactly Table I. During training its curriculum
-            # version starts at the already-supported airborne hover and
-            # blends to this draw. Paired evaluation uses c=1 and is therefore
-            # unchanged.
+            # Draw the Table-I box first. During training its curriculum starts
+            # at the supported airborne hover and blends toward that draw;
+            # every level is then conditioned on the paper's initial-FOV rule.
             x_range = initial.get("relative_lateral_x_m", (-3.0, 3.0))
             y_range = initial.get("relative_lateral_y_m", (-3.0, 3.0))
             z_range = initial.get("relative_altitude_m", (2.0, 8.0))
@@ -1274,6 +1274,18 @@ class LandingWorld:
                 # hover with the UGV heading or it is centred only at yaw=0.
                 hover_offset_pad_m=yaw_aligned_hover_offset(
                     self.hover_start_pad_m, self.deck.yaw),
+            )
+            camera_cfg = (CONFIG.get("vision") or {}).get("camera", {}) or {}
+            offset = constrain_camera_visible_entry(
+                offset, self.deck.yaw + math.radians(float(rpy_deg[2])),
+                image_size=camera_cfg.get("resolution", (512, 320)),
+                horizontal_fov_deg=float(camera_cfg.get(
+                    "horizontal_fov_deg", 90.0)),
+                pitch_down_deg=float(camera_cfg.get("pitch_down_deg", 60.0)),
+                mount_translation_flu_m=camera_cfg.get(
+                    "mount_translation_flu_m", (0.0, 0.0, -0.16)),
+                footprint_fraction=float(camera_cfg.get(
+                    "entry_visible_footprint_fraction", 0.65)),
             )
         else:
             # Retained urban distribution, expressed as an offset from the

@@ -104,9 +104,10 @@ class LiveShinEnvironment:
         for attempt in range(1, attempts + 1):
             self.bridge.cfg.pad_scale = motion_scale
             self.bridge.cfg.require_pad_in_view = bool(
-                control.get(
-                    "require_initial_pad_visible_during_curriculum", True)
-                and curriculum < 1.0)
+                control.get("require_initial_pad_visible",
+                            control.get(
+                                "require_initial_pad_visible_during_curriculum",
+                                True)))
             self.adapter.controller.set_curriculum(curriculum)
             try:
                 actor, state = self.adapter.reset(

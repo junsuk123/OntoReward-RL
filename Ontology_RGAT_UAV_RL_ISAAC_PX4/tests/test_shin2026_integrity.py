@@ -32,6 +32,7 @@ from ontology_rgat.controllers import VelocityYawRateController
 from ontology_rgat.curriculum import (PlatformMotionCurriculum,
                                       fitted_update_interval)
 from ontology_rgat.initialization import (camera_centered_hover_offset,
+                                          constrain_camera_visible_entry,
                                           curriculum_motion_scale,
                                           yaw_aligned_hover_offset)
 from ontology_rgat.estimation import LSTMRelativeStateEstimator
@@ -271,11 +272,25 @@ def test_camera_centered_hover_rotates_with_entry_yaw():
         north_facing, [0.0, hover[0], hover[2]], atol=1e-9)
 
 
+def test_full_curriculum_entry_is_conditioned_on_camera_visibility():
+    raw = np.array([3.0, 3.0, 8.0])
+    yaw = math.radians(60.0)
+    constrained = constrain_camera_visible_entry(raw, yaw)
+    centre = yaw_aligned_hover_offset(camera_centered_hover_offset(8.0), yaw)
+    assert constrained[2] == raw[2]
+    assert np.linalg.norm(constrained[:2] - centre[:2]) < np.linalg.norm(
+        raw[:2] - centre[:2])
+    np.testing.assert_allclose(
+        constrain_camera_visible_entry(centre, yaw), centre, atol=1e-12)
+
+
 def test_keypoint_heatmaps_drive_the_descriptor_embedding():
     encoder = ShinKeypointEncoder(embedding_dim=32, keypoints=6)
     output = encoder(torch.rand(2, 1, 320, 512))
     assert output.heatmaps.shape == (2, 6, 20, 32)
     assert output.keypoints.shape == (2, 6, 2)
+    assert output.visibility.shape == (2, 6)
+    assert torch.all((output.visibility >= 0.0) & (output.visibility <= 1.0))
     assert output.embedding.shape == (2, 32)
     output.embedding.square().mean().backward()
     assert encoder.heatmap.weight.grad is not None
@@ -437,8 +452,26 @@ def test_live_benchmark_restarts_owned_stack_after_reset_failure(monkeypatch):
     assert calls == ["close", "restart"]
     assert scales == [0.0, 0.0]
     assert env.bridge.cfg.pad_scale == pytest.approx(0.35)
+    assert env.bridge.cfg.require_pad_in_view is True
     assert reset_kwargs == [{"scenario": "circle", "initial_condition_scale": 0.0}]
     assert result[:2] == ("actor", {"state": "ready"})
+
+
+def test_full_curriculum_still_requires_initial_pad_visibility():
+    flags = []
+    env = LiveShinEnvironment.__new__(LiveShinEnvironment)
+    env.cfg = SimpleNamespace(external=SimpleNamespace(reset_recoveries=0))
+    env.control = {"curriculum_min_pad_motion_scale": .35,
+                   "require_initial_pad_visible": True}
+    env.bridge = SimpleNamespace(cfg=SimpleNamespace(pad_scale=0.0))
+    env.adapter = SimpleNamespace(
+        controller=SimpleNamespace(set_curriculum=lambda _value: None),
+        reset=lambda *_args, **_kwargs: flags.append(
+            env.bridge.cfg.require_pad_in_view) or ("actor", {"ready": True}))
+    env._classify = lambda actor, state, command: (actor, state, command.tolist())
+    result = env.reset(9, curriculum=1.0)
+    assert flags == [True]
+    assert result[0] == "actor"
 
 
 def test_pbrs_gamma_equals_ppo_gamma_and_terminal_potential_is_zero():

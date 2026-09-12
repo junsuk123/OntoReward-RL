@@ -9,7 +9,7 @@ The repository contains two intentionally separate experiment families:
 
 | Family | Launcher | Actor/ontology/reward |
 |---|---|---|
-| **Primary controlled comparison** | repository-root `./run.sh` | image + 7-D UAV proprioception actor; 13-node/25-edge estimator-free graph; frozen direct R-GAT `Phi(G)` |
+| **Primary controlled comparison** | repository-root `./run.sh` | image + 7-D UAV proprioception actor; 18-node/35-edge history-aware estimator-free graph; frozen direct R-GAT `Phi(G)` |
 | **Legacy cooperative urban profile** | `scripts/run_metasejong_pipeline.sh` | 23-channel cooperative actor; 14-node/38-edge graph; eight distilled fixed reward weights |
 
 The simulator/PX4/ROS migration and interfaces below are shared unless a
@@ -605,12 +605,13 @@ velocity/yaw-rate actions, and an asymmetric training critic. Only `shin_se`
 constructs a six-state head on `y[0:6]` and uses its auxiliary MSE and
 active-perception reward.
 
-`onto_no_se` builds eight bounded, non-metric observations from keypoints,
-heatmaps, UAV proprioception, and battery reserve. These become 13 nodes,
-12 semantic edges, 13 self-loops, four relation types, and 19 features per
-node. Two 24-wide R-GAT layers read `SafeLanding`; their direct output is
-frozen for PBRS. No distilled linear coefficient vector is used in the primary
-method.
+`onto_no_se` builds twelve bounded, non-metric observations from keypoints,
+heatmaps, short visual history, UAV proprioception, and battery reserve. These
+become 18 nodes, 17 semantic edges, 18 self-loops, four relation types, and 24
+features per node. Low-confidence heatmaps invalidate rather than hallucinate
+image geometry. Two 24-wide R-GAT layers read `SafeLanding`; their direct
+output is frozen for PBRS. No distilled linear coefficient vector is used in
+the primary method.
 
 The default world is the Meta-Sejong S5/Gwanggaeto asset rather than the
 synthetic city described above. A RANGER MINI follows the audited 37-point,
@@ -621,9 +622,12 @@ tags across three physical scales. The offline mesh audit is shown below.
 
 ### Primary reset and recovery path
 
-The UAV is staged airborne and PX4 flies to a camera-centred pad-relative
-entry hover. Handover requires bounded position error, speed no greater than
-0.40 m/s, and a marker seen within the preceding 2.0 s for a 1.0 s continuous
+The UAV is staged airborne and PX4 flies to a camera-visible pad-relative entry
+hover. Every curriculum level, reward-design rollout, and evaluation episode
+is conditioned on the pad initially being in view. The seeded Table-I draw is
+shortened only relative to the pitched-camera footprint; altitude and yaw are
+retained. Handover requires bounded position error, speed no greater than 0.40
+m/s, and a marker seen within the preceding 2.0 s for a 1.0 s continuous
 settle. The UGV stays parked during estimator initialization/climb and moves
 only after policy handover.
 
@@ -634,3 +638,10 @@ The gateway still reports PX4 failsafe reasons. A pure Offboard-heartbeat loss,
 gateway timeout, or genuine simulated-clock stall is recoverable: the partial
 trajectory is discarded, a runner-owned stack is restarted, and the same seed
 is retried. Mixed or vehicle-safety failsafes remain hard failures.
+
+FOV loss itself is not terminal. Each episode records loss and reacquisition
+event counts, conditional reacquisition rate/time, climb-command fraction while
+blind, descent-command fraction under low keypoint confidence, and whether a
+loss→reacquisition sequence ultimately landed. `onto_no_se` additionally logs
+the potential delta at loss and reacquisition transitions. These metrics test
+observability-preserving behavior directly instead of inferring it from return.

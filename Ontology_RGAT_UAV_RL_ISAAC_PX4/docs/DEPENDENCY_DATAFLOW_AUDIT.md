@@ -36,13 +36,15 @@ during training and has no deployment wrapper input.
 `semantic_observation_from_payload` accepts only:
 
 ```text
-keypoints, heatmaps, proprioception, battery_reserve
+keypoints, heatmaps, keypoint_visibility, proprioception, battery_reserve
 ```
 
 It recursively rejects aliases containing estimate, relative state, platform,
 pad/deck motion, simulator/ground truth, critic, GNSS platform, or privileged
-provenance. Unknown top-level fields also fail. The output is eight normalized
-semantic observations and the fixed 13-node/25-edge graph.
+provenance. Unknown top-level fields also fail. The output is twelve normalized
+semantic/history observations and the fixed 18-node/35-edge graph. Heatmap
+entropy gates image geometry, so soft-argmax coordinates from an uninformative
+frame cannot manufacture alignment or scale.
 
 This prevents the proposed method from secretly reconstructing the explicit
 metric estimator it is intended to replace. Simulator truth may label an
@@ -50,7 +52,8 @@ episode `+1/-1`, but it cannot become an R-GAT feature.
 
 ## Reward-design dataset
 
-The semantic dataset format is `ontology_rgat.semantic_rollouts/1`. Its
+The semantic dataset format is
+`ontology_rgat.semantic_rollouts/2-recovery-aware`. Its
 manifest records graph schema, config hash, source-policy checkpoint digest,
 behavior mixture, seeds, flight/sample/contact counts, environment steps,
 class counts, and forbidden-input declaration.

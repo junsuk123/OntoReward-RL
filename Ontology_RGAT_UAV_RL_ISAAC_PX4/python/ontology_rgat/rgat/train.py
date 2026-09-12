@@ -6,7 +6,7 @@ going to end", not "what is the label of this state".
 
 Why this is worth putting on a GPU at all
 -----------------------------------------
-The graph is 13 nodes with a 24-wide hidden layer, so a single graph is far too
+The primary graph is 18 nodes with a 24-wide hidden layer, so one graph is far too
 small to fill a GPU: the layer is kernel-launch bound, not FLOP bound. The win
 comes entirely from batching graphs, and then from not stalling the launch
 queue between batches. This trainer therefore
@@ -99,6 +99,14 @@ def train_potential(dataset: dict[str, Any], cfg: Config, *,
         raise ValueError("the R-GAT dataset is empty; the rollout stage produced nothing")
     if not np.isfinite(X_all).all() or not np.isfinite(y_all).all():
         raise ValueError("the R-GAT dataset contains non-finite features or labels")
+    monotonic_all = dataset.get("monotonic_X")
+    if monotonic_all is not None:
+        monotonic_all = np.asarray(monotonic_all, dtype=np.float32)
+        if (monotonic_all.ndim != 4 or monotonic_all.shape[0] != X_all.shape[0]
+                or monotonic_all.shape[2:] != X_all.shape[1:]
+                or not np.isfinite(monotonic_all).all()):
+            raise ValueError(
+                "monotonic counterfactuals must have finite [sample,case,node,feature] shape")
 
     batch_size = int(cfg.rgat.batch_size)
     device, why = select_device(cfg, batch_size)
@@ -121,6 +129,12 @@ def train_potential(dataset: dict[str, Any], cfg: Config, *,
     # One upload, then everything is device-resident.
     X = torch.as_tensor(X_all, device=device)
     y = torch.as_tensor(y_all, device=device)
+    monotonic = (None if monotonic_all is None else
+                 torch.as_tensor(monotonic_all, device=device))
+    monotonic_weight = float(getattr(cfg.rgat, "monotonic_weight", 0.0))
+    monotonic_margin = float(getattr(cfg.rgat, "monotonic_margin", 0.0))
+    if monotonic_weight < 0.0 or monotonic_margin < 0.0:
+        raise ValueError("monotonic weight and margin must be non-negative")
     n = X.shape[0]
     generator = torch.Generator(device="cpu").manual_seed(cfg.seed + 303)
     split_unit = "sample"
@@ -168,6 +182,7 @@ def train_potential(dataset: dict[str, Any], cfg: Config, *,
     history = TrainHistory(
         train_loss=list(previous.get("train_loss", [])),
         val_loss=list(previous.get("val_loss", [])),
+        monotonic_compliance=list(previous.get("monotonic_compliance", [])),
         epoch_seconds=list(previous.get("epoch_seconds", [])),
         device=device.type, device_reason=why,
         samples=int(n), train_samples=int(train_idx.numel()),
@@ -192,6 +207,16 @@ def train_potential(dataset: dict[str, Any], cfg: Config, *,
                 pred = forward(X.index_select(0, idx))
                 target = y.index_select(0, idx)
                 loss = ((pred - target) ** 2).mean() + cfg.rgat.output_l2 * (pred ** 2).mean()
+                if monotonic is not None and monotonic_weight > 0.0:
+                    cases = monotonic.index_select(0, idx)
+                    degraded = forward(cases.reshape(-1, *cases.shape[2:])).reshape(
+                        cases.shape[0], cases.shape[1])
+                    changed = (cases - X.index_select(0, idx)[:, None]).abs().amax(
+                        dim=(-1, -2)) > 1e-7
+                    violation = torch.relu(
+                        monotonic_margin - (pred[:, None] - degraded)) * changed
+                    loss = loss + monotonic_weight * (
+                        violation.square().sum() / changed.sum().clamp_min(1))
             if not torch.isfinite(loss):
                 raise FloatingPointError(
                     f"non-finite R-GAT loss at epoch {completed_epochs + epoch}; "
@@ -208,6 +233,18 @@ def train_potential(dataset: dict[str, Any], cfg: Config, *,
             val_pred = forward(X.index_select(0, val_idx)).float()
             val_target = y.index_select(0, val_idx)
             val_loss = float(((val_pred - val_target) ** 2).mean())
+            if monotonic is None:
+                compliance = 1.0
+            else:
+                val_cases = monotonic.index_select(0, val_idx)
+                val_degraded = forward(
+                    val_cases.reshape(-1, *val_cases.shape[2:])).float().reshape(
+                        val_cases.shape[0], val_cases.shape[1])
+                val_changed = (
+                    val_cases - X.index_select(0, val_idx)[:, None]).abs().amax(
+                        dim=(-1, -2)) > 1e-7
+                compliant = (val_pred[:, None] >= val_degraded) | ~val_changed
+                compliance = float(compliant.float().mean())
         train_loss = float(running / max(batches, 1))
         if not np.isfinite(train_loss) or not np.isfinite(val_loss):
             raise FloatingPointError(
@@ -218,6 +255,7 @@ def train_potential(dataset: dict[str, Any], cfg: Config, *,
 
         history["train_loss"].append(train_loss)
         history["val_loss"].append(val_loss)
+        history["monotonic_compliance"].append(compliance)
         history["epoch_seconds"].append(elapsed)
         model._optimizer_state = optimizer.state_dict()
         cumulative_epoch = completed_epochs + epoch
@@ -229,6 +267,7 @@ def train_potential(dataset: dict[str, Any], cfg: Config, *,
         if verbose:
             print(f"R-GAT epoch {cumulative_epoch:3d} "
                   f"(+{epoch}/{cfg.rgat.epochs} this run) | "
-                  f"train {train_loss:.4f} | val {val_loss:.4f} | {elapsed:.2f} s")
+                  f"train {train_loss:.4f} | val {val_loss:.4f} | "
+                  f"mono {compliance:.1%} | {elapsed:.2f} s")
 
     return model.float().cpu(), history

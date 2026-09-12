@@ -450,11 +450,12 @@ class BenchmarkMonitor:
             actor_contract={
                 "camera": "512x320 mono / 90 deg HFOV / -60 deg pitch",
                 "proprioception": "7: body velocity (3) + quaternion (4)",
-                "temporal": "6-keypoint CNN -> generic 512 LSTM -> latent y[256]",
+                "temporal": ("6-keypoint + explicit visibility CNN -> generic "
+                             "512 LSTM -> latent y[256]"),
                 "actor": "y[6:256] + proprioception -> action[4]",
                 "critic": "training only: proprioception[7] + truth[6]",
-                "reward_side": ("A/B: training truth -> Table III; C: keypoints + "
-                                "UAV proprioception + battery reserve -> direct R-GAT"),
+                "reward_side": ("A/B: training truth -> Table III; C: confidence-gated "
+                                "keypoints + visual history + UAV/battery reserve -> direct R-GAT"),
                 "state_estimation": ("shin_se only: unbounded y[0:6] decoded to "
                                      "physical units; scale-normalized loss"),
                 "forbidden": ("deployed actor: platform/GNSS/truth; onto graph: "

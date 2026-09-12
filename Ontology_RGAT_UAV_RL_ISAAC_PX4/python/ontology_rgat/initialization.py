@@ -45,6 +45,60 @@ def yaw_aligned_hover_offset(offset_flu, yaw_enu_rad: float) -> np.ndarray:
                      s * offset[0] + c * offset[1], offset[2]], dtype=float)
 
 
+def constrain_camera_visible_entry(
+        raw_offset, yaw_enu_rad: float, *, image_size=(512, 320),
+        horizontal_fov_deg: float = 90.0, pitch_down_deg: float = 60.0,
+        mount_translation_flu_m=(0.0, 0.0, -0.16),
+        footprint_fraction: float = 0.65) -> np.ndarray:
+    """Condition a seeded entry draw on the deck being inside the camera FOV.
+
+    The paper starts every landing episode with the platform visible.  This
+    keeps the sampled altitude and yaw, then shortens only the horizontal
+    displacement from the camera-axis centre.  The admissible radius is the
+    conservative inscribed circle of the pitched camera's ground footprint,
+    so the subsequent detector gate verifies a physically achievable pose
+    instead of repeatedly timing out on an impossible draw.
+    """
+    offset = np.asarray(raw_offset, dtype=float).reshape(-1)
+    mount = np.asarray(mount_translation_flu_m, dtype=float).reshape(-1)
+    yaw = float(yaw_enu_rad)
+    width, height = (int(value) for value in image_size)
+    hfov = math.radians(float(horizontal_fov_deg))
+    pitch = math.radians(float(pitch_down_deg))
+    fraction = float(footprint_fraction)
+    if (offset.shape != (3,) or mount.shape != (3,)
+            or not np.isfinite(offset).all() or not np.isfinite(mount).all()
+            or not math.isfinite(yaw) or width < 2 or height < 2
+            or not 0.0 < hfov < math.pi or not 0.0 < pitch < math.pi / 2.0
+            or not 0.0 < fraction <= 1.0):
+        raise ValueError("camera-visible entry configuration is invalid")
+    camera_height = float(offset[2] + mount[2])
+    if camera_height <= 0.0:
+        raise ValueError("camera-visible entry must remain above the deck")
+    vfov = 2.0 * math.atan(math.tan(hfov / 2.0) * height / width)
+    centre_distance = camera_height / math.tan(pitch)
+    near_angle = min(pitch + vfov / 2.0, math.radians(89.0))
+    far_angle = max(pitch - vfov / 2.0, math.radians(1.0))
+    near_distance = camera_height / math.tan(near_angle)
+    far_distance = camera_height / math.tan(far_angle)
+    slant = camera_height / math.sin(pitch)
+    lateral_half = slant * math.tan(hfov / 2.0)
+    footprint_radius = fraction * min(
+        lateral_half, abs(centre_distance - near_distance),
+        abs(far_distance - centre_distance))
+    footprint_radius = max(0.20, float(footprint_radius))
+
+    centre_body = camera_centered_hover_offset(
+        float(offset[2]), math.degrees(pitch), mount)
+    centre = yaw_aligned_hover_offset(centre_body, yaw)
+    delta = offset[:2] - centre[:2]
+    reach = float(np.linalg.norm(delta))
+    result = offset.copy()
+    if reach > footprint_radius:
+        result[:2] = centre[:2] + delta * (footprint_radius / reach)
+    return result
+
+
 def curriculum_motion_scale(curriculum: float, minimum_scale: float) -> float:
     """Keep the platform moving slowly while its difficulty ramps to full."""
     c = float(curriculum)

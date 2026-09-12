@@ -60,9 +60,18 @@ def _behavior_transform(variant: int):
             # optical +x projects primarily onto body-forward and optical +y
             # onto body-right. No metric depth/pose is reconstructed.
             cx, cy = semantic.centroid_xy
-            action[0] = np.clip(0.35 * action[0] + 0.75 * cx, -0.8, 0.8)
-            action[1] = np.clip(0.35 * action[1] - 0.75 * cy, -0.8, 0.8)
-            if semantic.image_alignment > 0.65 and semantic.keypoint_confidence > 0.01:
+            recovering = (semantic.visible_keypoint_fraction < 0.5
+                          or semantic.visual_loss_risk > 0.0)
+            correction = 0.45 if recovering else 0.75
+            action[0] = np.clip(0.35 * action[0] + correction * cx, -0.8, 0.8)
+            action[1] = np.clip(0.35 * action[1] - correction * cy, -0.8, 0.8)
+            if recovering:
+                # Preserve the last trustworthy image direction, climb to
+                # widen the footprint, and suppress yaw until keypoints return.
+                action[2] = 0.45
+                action[3] *= 0.15
+            elif (semantic.image_alignment > 0.65
+                  and semantic.keypoint_confidence > 0.01):
                 scale = semantic.apparent_target_scale
                 descent = -0.55 if scale < 0.45 else -0.28 if scale < 0.75 else -0.10
                 action[2] = min(0.25 * action[2], descent)
@@ -104,6 +113,10 @@ def _collect_semantic_data(*, cfg, camera, model, config, config_hash,
     if max_count < count:
         raise ValueError("semantic R-GAT maximum episodes cannot be below its minimum")
     stride = int(design.get("sample_stride", 3))
+    minimum_recoveries = int(design.get(
+        f"minimum_successful_recovery_episodes_{mode}", 1))
+    if minimum_recoveries < 1:
+        raise ValueError("semantic R-GAT data requires a positive recovery minimum")
     gamma = float(design.get("outcome_discount", (config.get("ppo") or {}).get(
         "gamma", .99)))
     seed0 = int((config.get("seeds") or {}).get("rgat_dataset_start", 70000))
@@ -113,10 +126,11 @@ def _collect_semantic_data(*, cfg, camera, model, config, config_hash,
     checkpoint_sha = _sha256_file(checkpoint_path)
     behavior = {
         "name": str(design.get(
-            "behavior_policy", "semantic_visual_servo_noisy_no_se_mixture_v1")),
+            "behavior_policy", "semantic_visual_servo_recovery_noisy_no_se_mixture_v2")),
         "source_pipeline": "no_se",
         "state_estimation_enabled": False,
         "components": ["trained_no_se", "image_plane_servo",
+                       "explicit_visibility_recovery_climb",
                        "bounded_random_exploration"],
         "source_checkpoint_sha256": checkpoint_sha,
         "additional_source_training_episodes": int(source_training_episodes),
@@ -144,21 +158,36 @@ def _collect_semantic_data(*, cfg, camera, model, config, config_hash,
             print(f"Ignoring incompatible semantic rollout cache: {exc}")
             dataset, manifest, episode_rows, completed = None, None, [], []
 
-    def requirements_met(current_manifest):
+    def recovery_statistics(rows):
+        return {
+            "episodes_with_visual_loss": sum(
+                float(row.get("visual_loss_events", 0)) > 0 for row in rows),
+            "episodes_with_reacquisition": sum(
+                float(row.get("visual_reacquisition_events", 0)) > 0
+                for row in rows),
+            "successful_recovery_episodes": sum(
+                float(row.get("successful_recovery_landing", 0)) > 0
+                for row in rows),
+            "required_successful_recovery_episodes": minimum_recoveries,
+        }
+
+    def requirements_met(current_manifest, rows):
         if current_manifest is None:
             return False
         episodes = int(current_manifest.get("episodes", 0))
         successes = int(current_manifest.get("successful_episodes", 0))
-        return episodes >= count and 0 < successes < episodes
+        recoveries = recovery_statistics(rows)["successful_recovery_episodes"]
+        return (episodes >= count and 0 < successes < episodes
+                and recoveries >= minimum_recoveries)
 
     pending = [(index, seed) for index, seed in enumerate(requested_seeds, start=1)
                if seed not in completed]
-    if pending and not requirements_met(manifest):
+    if pending and not requirements_met(manifest, episode_rows):
         monitor.stage("R-GAT data", "estimator-free semantic behavior mixture")
         with LiveShinEnvironment(
                 cfg, camera, horizon_steps=int(cfg.sim.max_steps)) as environment:
             for episode, seed in pending:
-                if requirements_met(manifest):
+                if requirements_met(manifest, episode_rows):
                     break
                 rows, metric = collect_episode_resilient(
                     environment, model, "no_se", seed, curriculum=1.0,
@@ -184,12 +213,26 @@ def _collect_semantic_data(*, cfg, camera, model, config, config_hash,
                     "behavior_component": (episode - 1) % 3,
                     "paper_success": metric["paper_success"],
                     "status": metric["status"], "steps": metric["steps"],
+                    "visual_loss_events": metric["visual_loss_events"],
+                    "visual_reacquisition_events": metric[
+                        "visual_reacquisition_events"],
+                    "visual_reacquisition_rate": metric[
+                        "visual_reacquisition_rate"],
+                    "mean_visual_reacquisition_time_s": metric[
+                        "mean_visual_reacquisition_time_s"],
+                    "recovery_climb_fraction": metric["recovery_climb_fraction"],
+                    "unsafe_descent_low_visibility_fraction": metric[
+                        "unsafe_descent_low_visibility_fraction"],
+                    "successful_recovery_landing": metric[
+                        "successful_recovery_landing"],
                 })
+                recovery = recovery_statistics(episode_rows)
                 manifest = save_semantic_dataset(
                     dataset, dataset_path, config_hash=config_hash,
                     source_behavior_policy=behavior, completed_seeds=completed,
                     environment_steps=sum(
-                        int(float(row.get("steps", 0))) for row in episode_rows))
+                        int(float(row.get("steps", 0))) for row in episode_rows),
+                    recovery_statistics=recovery)
                 _write_csv(episodes_path, episode_rows)
                 print(f"semantic data {len(completed)}/{count} minimum "
                       f"(cap {max_count}): "
@@ -202,6 +245,12 @@ def _collect_semantic_data(*, cfg, camera, model, config, config_hash,
             f"semantic reward-design data still contains only one terminal class "
             f"after its {max_count}-episode hard cap; increase "
             "--rgat-max-data-episodes or improve the estimator-free behavior policy")
+    recovery = recovery_statistics(episode_rows)
+    if recovery["successful_recovery_episodes"] < minimum_recoveries:
+        raise RuntimeError(
+            "semantic reward-design data lacks successful loss/reacquisition/landing "
+            f"trajectories ({recovery['successful_recovery_episodes']}/"
+            f"{minimum_recoveries}) after its {max_count}-episode hard cap")
     total_steps = sum(int(float(row.get("steps", 0))) for row in episode_rows)
     if total_steps == 0:
         total_steps = int(manifest.get("environment_steps") or 0)
@@ -383,7 +432,11 @@ def main():
         "reward_design_collection_contract": {
             "minimum_episodes": design_minimum,
             "maximum_episodes": design_maximum,
-            "stop_condition": "minimum reached and both terminal classes observed",
+            "minimum_successful_recovery_episodes": int(design.get(
+                f"minimum_successful_recovery_episodes_{args.mode}", 1)),
+            "stop_condition": (
+                "minimum reached, both terminal classes observed, and successful "
+                "loss-to-reacquisition-to-landing trajectories observed"),
             "synthetic_outcomes_allowed": False,
         },
         "training_seed_contract": {

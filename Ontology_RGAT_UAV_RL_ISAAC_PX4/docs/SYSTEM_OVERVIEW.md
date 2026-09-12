@@ -29,7 +29,7 @@ flowchart LR
   subgraph LEARN[Python learner]
     KP[Frozen six-keypoint encoder]
     REC[Recurrent actor-critic]
-    SEM[13-node semantic graph]
+    SEM[18-node history-aware semantic graph]
     RGAT[Frozen direct R-GAT Phi]
   end
   CAM --> KP --> REC --> CMD --> CTRL
@@ -84,21 +84,22 @@ training begins.
 
 The primary graph contains:
 
-- 8 observation nodes: confidence, alignment, scale, image motion, scale rate,
-  vertical-motion safety, attitude stability, and battery risk;
-- 4 intermediate nodes: perception quality, approach state, approach
-  stability, and descent safety;
+- 12 observation nodes: confidence, visible-keypoint fraction, alignment,
+  scale, image motion, scale rate, visibility memory, reacquisition trend,
+  vertical-motion safety, attitude stability, battery risk, and visual-loss risk;
+- 5 intermediate nodes: perception quality, approach state, approach
+  stability, recovery state, and descent safety;
 - 1 readout node: `SafeLanding`;
-- 12 semantic directed edges plus 13 self-loops;
+- 17 semantic directed edges plus 18 self-loops;
 - 4 relations: `indicates`, `supports`, `constrains`, and `self`;
-- 19 channels per node: value, complement, role flags, and 13-D node identity.
+- 24 channels per node: value, complement, role flags, and 18-D node identity.
 
 The reward-design behavior source is the trained `no_se` actor combined with
-deterministic image-plane servo corrections and bounded exploration. Each
-sample is labeled from its real terminal contact outcome, discounted backward
-through that episode. Collection continues beyond the configured minimum only
-when necessary to obtain both success and failure classes, and stops at an
-explicit hard cap rather than fabricating a label.
+deterministic image-plane servo corrections, explicit climb/hold recovery, and
+bounded exploration. Each sample is labeled from its real terminal contact
+outcome, discounted backward through that episode. Collection continues until
+it has success, failure, and successful loss→reacquisition→landing examples,
+and stops at an explicit hard cap rather than fabricating a label.
 
 Two 24-wide R-GAT layers regress the target. The direct bounded output is
 frozen before `onto_no_se` PPO:
@@ -112,6 +113,12 @@ Phi(absorbing_terminal) = 0
 
 Attention and counterfactual response are interpretation diagnostics, not
 causal claims.
+
+Three adverse counterfactual families also constrain training: degraded
+perception, degraded recovery evidence, and depleted battery margin must not
+increase `Phi`. Compliance is stored in the artifact and gated before PPO.
+The finite visual history reduces observation aliasing, but it is not claimed
+to be a complete POMDP belief state.
 
 ## Runtime order
 
@@ -192,6 +199,6 @@ presented as the publication-scale result.
 The legacy cooperative urban profile uses a 23-channel actor observation,
 14-node/38-edge ontology, and eight fixed coefficients distilled from R-GAT.
 It runs through `scripts/run_metasejong_pipeline.sh`. Its models, figures, and
-result paths are intentionally incompatible with the primary 13-node direct
+result paths are intentionally incompatible with the primary 18-node direct
 R-GAT comparison. See [Documentation map](README.md) for the list of legacy
 figures.

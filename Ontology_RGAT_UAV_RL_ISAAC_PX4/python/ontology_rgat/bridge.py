@@ -17,7 +17,7 @@ from .config import Config
 from .mathx import quat_to_euler_zyx
 
 __all__ = ["PX4Bridge", "BridgeError", "GatewayRejected", "GatewayTimeout",
-           "pacing_anchor_us"]
+           "PX4Failsafe", "pacing_anchor_us"]
 
 
 def pacing_anchor_us(deadline_us: int, observed_us: int) -> int:
@@ -35,6 +35,23 @@ class GatewayRejected(BridgeError):
 
 class GatewayTimeout(BridgeError):
     """The gateway did not answer inside the configured budget."""
+
+
+class PX4Failsafe(BridgeError):
+    """PX4 entered a failsafe while an episode was being measured.
+
+    The gateway classifies only a pure OFFBOARD heartbeat loss as a recoverable
+    transport fault. Battery, estimator, geofence and failure-detector events
+    remain hard failures so a retry cannot hide a vehicle or policy problem.
+    """
+
+    def __init__(self, reasons: Sequence[str] = (), *, recoverable: bool = False):
+        self.reasons = tuple(str(reason) for reason in reasons)
+        self.recoverable = bool(recoverable)
+        detail = ", ".join(self.reasons) if self.reasons else "unknown"
+        super().__init__(
+            "PX4 reports an active failsafe "
+            f"({detail}); refusing to record this as an RL step.")
 
 
 REQUIRED_STATE_FIELDS = (
@@ -533,8 +550,15 @@ class PX4Bridge:
             raise BridgeError("PX4 estimator state is not valid yet.")
         extra = state.get("extra") if isinstance(state.get("extra"), dict) else {}
         if bool(extra.get("px4_failsafe", False)):
-            raise BridgeError(
-                "PX4 reports an active failsafe; refusing to record this as an RL step.")
+            detail = (extra.get("px4_failsafe_detail")
+                      if isinstance(extra.get("px4_failsafe_detail"), dict)
+                      else {})
+            reasons = detail.get("reasons", ())
+            if not isinstance(reasons, (list, tuple)):
+                reasons = ()
+            raise PX4Failsafe(
+                reasons,
+                recoverable=bool(detail.get("recoverable_infrastructure", False)))
         if int(extra.get("offboard_mode_rejections", 0)) >= 6:
             raise BridgeError(
                 "PX4 repeatedly rejected OFFBOARD mode; refusing a corrupted episode.")

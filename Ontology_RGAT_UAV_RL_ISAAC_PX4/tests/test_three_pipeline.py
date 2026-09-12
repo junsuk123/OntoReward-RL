@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 import torch
 
-from ontology_rgat.bridge import GatewayTimeout
+from ontology_rgat.bridge import GatewayTimeout, PX4Failsafe
 from ontology_rgat.benchmarks.experiment import (configuration_hash,
                                                  controlled_training_seeds,
                                                  episodes_per_method,
@@ -131,6 +131,47 @@ def test_transport_failure_restarts_and_retries_the_same_seed(monkeypatch):
     assert rows == ["complete"] and metric["seed"] == 123
     assert attempts == [123, 123]
     assert recoveries == ["restart"]
+
+
+def test_offboard_failsafe_restarts_and_retries_the_same_seed(monkeypatch):
+    attempts = []
+    recoveries = []
+
+    def collect(_env, _model, _method, seed, **_kwargs):
+        attempts.append(seed)
+        if len(attempts) == 1:
+            raise PX4Failsafe(
+                ["offboard_control_signal_lost"], recoverable=True)
+        return ["complete"], {"seed": seed}
+
+    monkeypatch.setattr(recurrent_train, "collect_episode", collect)
+    env = type("Env", (), {
+        "cfg": type("Cfg", (), {"external": {"episode_recoveries": 2}})(),
+        "recover_infrastructure": lambda self: recoveries.append("restart"),
+    })()
+
+    rows, metric = collect_episode_resilient(env, object(), "shin_se", 321)
+
+    assert rows == ["complete"] and metric["seed"] == 321
+    assert attempts == [321, 321]
+    assert recoveries == ["restart"]
+
+
+def test_hard_px4_failsafe_is_not_retried(monkeypatch):
+    recoveries = []
+
+    def collect(*_args, **_kwargs):
+        raise PX4Failsafe(["battery_warning_2"], recoverable=False)
+
+    monkeypatch.setattr(recurrent_train, "collect_episode", collect)
+    env = type("Env", (), {
+        "cfg": type("Cfg", (), {"external": {"episode_recoveries": 2}})(),
+        "recover_infrastructure": lambda self: recoveries.append("restart"),
+    })()
+
+    with pytest.raises(PX4Failsafe, match="battery_warning_2"):
+        collect_episode_resilient(env, object(), "shin_se", 321)
+    assert recoveries == []
 
 
 def test_illegal_pipeline_combinations_are_rejected():

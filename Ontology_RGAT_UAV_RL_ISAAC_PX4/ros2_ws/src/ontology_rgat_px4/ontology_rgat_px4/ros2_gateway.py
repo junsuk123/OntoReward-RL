@@ -53,13 +53,14 @@ def _load_ros_types():
     from geometry_msgs.msg import PoseStamped, Vector3Stamped
     from nav_msgs.msg import Odometry
     from rclpy.node import Node
-    from px4_msgs.msg import BatteryStatus, OffboardControlMode, TrajectorySetpoint
+    from px4_msgs.msg import BatteryStatus, FailsafeFlags
+    from px4_msgs.msg import OffboardControlMode, TrajectorySetpoint
     from px4_msgs.msg import EstimatorGpsStatus, EstimatorStatusFlags, SensorGps
     from px4_msgs.msg import VehicleAttitudeSetpoint, VehicleCommand, VehicleCommandAck
     from px4_msgs.msg import VehicleLandDetected, VehicleLocalPosition
     from px4_msgs.msg import VehicleOdometry, VehicleStatus, VehicleThrustSetpoint
     from std_msgs.msg import Bool, Float32, String
-    return (Node, PoseStamped, Vector3Stamped, Odometry, BatteryStatus,
+    return (Node, PoseStamped, Vector3Stamped, Odometry, BatteryStatus, FailsafeFlags,
             EstimatorGpsStatus, EstimatorStatusFlags, SensorGps,
             OffboardControlMode, TrajectorySetpoint,
             VehicleAttitudeSetpoint, VehicleCommand, VehicleCommandAck, VehicleLandDetected,
@@ -79,6 +80,60 @@ def _finite_or(value: Any, fallback: float = 0.0) -> float:
     except (TypeError, ValueError):
         return float(fallback)
     return result if math.isfinite(result) else float(fallback)
+
+
+FAILSAFE_BOOLEAN_FIELDS = (
+    "angular_velocity_invalid", "attitude_invalid", "local_altitude_invalid",
+    "local_position_invalid", "local_position_invalid_relaxed",
+    "local_velocity_invalid", "global_position_invalid",
+    "auto_mission_missing", "offboard_control_signal_lost",
+    "home_position_invalid", "manual_control_signal_lost",
+    "gcs_connection_lost", "battery_low_remaining_time", "battery_unhealthy",
+    "primary_geofence_breached", "mission_failure",
+    "vtol_fixed_wing_system_failure", "wind_limit_exceeded",
+    "flight_time_limit_exceeded", "local_position_accuracy_low",
+    "fd_critical_failure", "fd_esc_arming_failure",
+    "fd_imbalanced_prop", "fd_motor_failure",
+)
+
+# These conditions can independently represent a physical, estimator or policy
+# failure. Expected absent RC/GCS/mission flags are deliberately omitted: PX4
+# publishes them in autonomous SITL even when they are irrelevant to OFFBOARD.
+FAILSAFE_HARD_FIELDS = frozenset({
+    "angular_velocity_invalid", "attitude_invalid", "local_altitude_invalid",
+    "local_position_invalid", "local_position_invalid_relaxed",
+    "local_velocity_invalid", "global_position_invalid",
+    "home_position_invalid", "battery_low_remaining_time", "battery_unhealthy",
+    "primary_geofence_breached", "mission_failure",
+    "vtol_fixed_wing_system_failure", "wind_limit_exceeded",
+    "flight_time_limit_exceeded", "local_position_accuracy_low",
+    "fd_critical_failure", "fd_esc_arming_failure",
+    "fd_imbalanced_prop", "fd_motor_failure",
+})
+
+
+def failsafe_detail(message: Any, *, target: str = "sitl") -> dict[str, Any]:
+    """Expose PX4 failsafe inputs and classify safe automatic recovery.
+
+    A pure OFFBOARD signal loss in SITL is a ROS 2/uXRCE transport failure and
+    may be retried after cycling the simulator. Any simultaneous hard flag, or
+    any hardware failsafe, remains non-recoverable.
+    """
+    active = [name for name in FAILSAFE_BOOLEAN_FIELDS
+              if bool(getattr(message, name, False))]
+    battery_warning = int(getattr(message, "battery_warning", 0))
+    if battery_warning:
+        active.append(f"battery_warning_{battery_warning}")
+    hard = bool(FAILSAFE_HARD_FIELDS.intersection(active) or battery_warning)
+    recoverable = bool(
+        str(target).lower() == "sitl"
+        and "offboard_control_signal_lost" in active
+        and not hard)
+    return {
+        "reasons": active,
+        "battery_warning": battery_warning,
+        "recoverable_infrastructure": recoverable,
+    }
 
 
 def advance_pad_contact_latch(latched: bool, armed_clear: bool,
@@ -236,7 +291,7 @@ def _make_qos(rclpy_module):
 
 
 def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
-    (Node, PoseStamped, Vector3Stamped, Odometry, BatteryStatus,
+    (Node, PoseStamped, Vector3Stamped, Odometry, BatteryStatus, FailsafeFlags,
      EstimatorGpsStatus, EstimatorStatusFlags, SensorGps,
      OffboardControlMode, TrajectorySetpoint,
      VehicleAttitudeSetpoint, VehicleCommand, VehicleCommandAck, VehicleLandDetected,
@@ -356,6 +411,11 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             self.last_mode_request_tick = -self.mode_request_period
             self.offboard_mode_rejections = 0
             self.px4_failsafe = False
+            self.px4_failsafe_detail = {
+                "reasons": [], "battery_warning": 0,
+                "recoverable_infrastructure": False,
+            }
+            self.reported_failsafe_signature: tuple[str, ...] | None = None
 
             qos = _make_qos(rclpy)
             self.offboard_pub = self.create_publisher(
@@ -377,6 +437,8 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                                      self._on_odometry, qos)
             self.create_subscription(VehicleStatus, _topic(cfg, "out", "vehicle_status"),
                                      self._on_status, qos)
+            self.create_subscription(FailsafeFlags, _topic(cfg, "out", "failsafe_flags"),
+                                     self._on_failsafe_flags, qos)
             self.create_subscription(VehicleLandDetected, _topic(cfg, "out", "vehicle_land_detected"),
                                      self._on_land, qos)
             self.create_subscription(VehicleLocalPosition, _topic(cfg, "out", "vehicle_local_position"),
@@ -1017,7 +1079,32 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                 getattr(msg, "pre_flight_checks_pass", False))
             self.px4_failsafe = bool(getattr(msg, "failsafe", False))
             self.sample.extra["px4_failsafe"] = self.px4_failsafe
+            self.sample.extra["px4_failsafe_detail"] = dict(
+                self.px4_failsafe_detail)
+            self._report_failsafe()
             self._publish_flight_state()
+
+        def _on_failsafe_flags(self, msg) -> None:
+            self.px4_failsafe_detail = failsafe_detail(msg, target=cfg.target)
+            self.sample.extra["px4_failsafe_detail"] = dict(
+                self.px4_failsafe_detail)
+            self._report_failsafe()
+
+        def _report_failsafe(self) -> None:
+            if not self.px4_failsafe:
+                self.reported_failsafe_signature = None
+                return
+            reasons = tuple(self.px4_failsafe_detail.get("reasons", ()))
+            if reasons == self.reported_failsafe_signature:
+                return
+            self.reported_failsafe_signature = reasons
+            detail = ", ".join(reasons) if reasons else "unknown"
+            recovery = ("recoverable SITL infrastructure fault"
+                        if self.px4_failsafe_detail.get(
+                            "recoverable_infrastructure", False)
+                        else "non-recoverable vehicle/task fault")
+            self.get_logger().warning(
+                f"PX4 failsafe active: {detail} ({recovery})")
 
         def _on_land(self, msg) -> None:
             self.px4_landed = bool(msg.landed)

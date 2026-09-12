@@ -10,7 +10,7 @@ from typing import Callable
 import numpy as np
 import torch
 
-from ..bridge import BridgeError, GatewayTimeout
+from ..bridge import BridgeError, GatewayTimeout, PX4Failsafe
 from ..curriculum import PlatformMotionCurriculum
 from ..mathx import quat_to_euler_zyx
 from ..perception import (grayscale_image_tensor, semantic_graph,
@@ -353,6 +353,7 @@ def collect_episode_resilient(env, model: PipelineActorCritic, method: str,
             return collect_episode(env, model, method, seed, **kwargs)
         except BridgeError as exc:
             recoverable = (isinstance(exc, GatewayTimeout)
+                           or (isinstance(exc, PX4Failsafe) and exc.recoverable)
                            or "simulator has stalled" in str(exc).lower())
             recover = getattr(env, "recover_infrastructure", None)
             if not recoverable or attempt >= recoveries or not callable(recover):

@@ -21,7 +21,35 @@ from ontology_rgat_px4.ros2_gateway import (ContinuousPx4Clock,
                                             advance_velocity_position_target,
                                             advance_pad_contact_latch,
                                             bounded_position_update,
-                                            effective_px4_landed)
+                                            effective_px4_landed,
+                                            failsafe_detail)
+
+
+def test_failsafe_detail_classifies_only_pure_sitl_offboard_loss_as_recoverable():
+    offboard = type("Flags", (), {
+        "offboard_control_signal_lost": True,
+        "manual_control_signal_lost": True,
+        "gcs_connection_lost": True,
+        "battery_warning": 0,
+    })()
+    detail = failsafe_detail(offboard, target="sitl")
+    assert "offboard_control_signal_lost" in detail["reasons"]
+    assert detail["recoverable_infrastructure"] is True
+    assert failsafe_detail(offboard, target="hardware")[
+        "recoverable_infrastructure"] is False
+
+    hard = type("Flags", (), {
+        "offboard_control_signal_lost": True,
+        "local_position_invalid": True,
+        "battery_warning": 0,
+    })()
+    detail = failsafe_detail(hard, target="sitl")
+    assert detail["recoverable_infrastructure"] is False
+
+    battery = type("Flags", (), {"battery_warning": 2})()
+    detail = failsafe_detail(battery, target="sitl")
+    assert "battery_warning_2" in detail["reasons"]
+    assert detail["recoverable_infrastructure"] is False
 
 
 def test_protocol_roundtrip():

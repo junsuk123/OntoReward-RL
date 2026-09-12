@@ -94,3 +94,13 @@ visibility head measured 94.5% visibility accuracy, 97.1% true positives on
 visible landmarks, and 0% false positives on 21 target-absent frames. This
 checks the absent-target decision boundary only; the mandatory held-out Isaac
 calibration remains the renderer-domain acceptance test during `run.sh`.
+
+The first history-aware full launch collected its mandatory 48 Isaac frames.
+On the 12-frame held-out split, fine-tuning changed coordinate RMSE from
+76.46 px to 13.58 px and PCK@20 from 0% to 97.2%; visibility accuracy was 100%
+and the synthetic target-absent false-positive rate was 0%. Episode 1 passed
+the all-curriculum initial-FOV gate, completed atomically, and recorded 40
+reacquisitions from 41 visual-loss events (97.6%), 15.9% unsafe descent under
+low confidence, and 3.3% active-reward saturation. It did not land and the
+curriculum correctly remained at level 1. This is a launcher/instrumentation
+check, not a success-rate claim; the full 800-episode experiment is running.

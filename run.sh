@@ -88,7 +88,7 @@ for argument in "$@"; do
   [[ "$argument" == "--seminar-fast" ]] || arguments+=("$argument")
 done
 if [[ "$seminar_fast" == true ]]; then
-  # 실제 카메라 visual-servo 성공 시연을 공통 BC warm start로 사용하고,
+  # 실제 PX4 안전 착륙 시연을 공통 BC warm start로 사용하고,
   # 핵심 3개 arm을 쉬운 동일 조건에서 빠르게 비교한다. 사용자가 뒤에
   # 같은 CLI 옵션을 주면 argparse의 마지막 값이 이 preview 기본값을 덮는다.
   profile_arguments=(
@@ -98,11 +98,11 @@ if [[ "$seminar_fast" == true ]]; then
     --experiment adaptive_reward_weight_comparison
     --results-dir "$project_root/results/seminar_fast/core3"
     --pipelines shin_se_fixed no_se_fixed onto_rgat_adaptive_weight_no_se
-    --rgat-max-data-episodes 24
+    --rgat-max-data-episodes 12
     --rgat-epochs 10
   )
   if [[ "$training_budget_supplied" == false ]]; then
-    profile_arguments+=(--train-episodes 24)
+    profile_arguments+=(--train-episodes 16)
     training_budget_supplied=true
   fi
   if [[ "$evaluation_budget_supplied" == false ]]; then
@@ -110,7 +110,7 @@ if [[ "$seminar_fast" == true ]]; then
     evaluation_budget_supplied=true
   fi
   if [[ "$rgat_budget_supplied" == false ]]; then
-    profile_arguments+=(--rgat-data-episodes 8)
+    profile_arguments+=(--rgat-data-episodes 6)
     rgat_budget_supplied=true
   fi
   arguments=("${profile_arguments[@]}" "${arguments[@]}")

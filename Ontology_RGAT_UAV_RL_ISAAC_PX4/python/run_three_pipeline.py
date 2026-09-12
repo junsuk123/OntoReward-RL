@@ -22,6 +22,7 @@ from ontology_rgat.benchmarks.experiment import (
     configuration_hash, controlled_training_seeds, episodes_per_method,
     load_experiment, paired_seed_plan)
 from ontology_rgat.benchmarks.live_env import LiveShinEnvironment
+from ontology_rgat.bridge import BridgeError
 from ontology_rgat.cli import ensure_fastdds
 from ontology_rgat.evaluation import (write_adaptive_reward_figures,
                                       write_three_pipeline_outputs)
@@ -202,7 +203,10 @@ def _prepare_fast_demonstrations(*, cfg, camera, config, config_hash,
     if not bool(settings.get("enabled", False)):
         return None
     required = max(1, int(settings.get("successful_episodes", 6)))
-    maximum = max(required, int(settings.get("max_attempts", 12)))
+    maximum_flights = max(required, int(settings.get("max_attempts", 12)))
+    maximum_infrastructure_skips = max(0, int(settings.get(
+        "max_infrastructure_skips", maximum_flights)))
+    maximum_seed_candidates = maximum_flights + maximum_infrastructure_skips
     source_pipeline = str(settings.get("source_pipeline", "no_se_fixed"))
     if get_pipeline(source_pipeline).state_estimation_enabled:
         raise ValueError("the behavior-teacher encoder source must be estimator-free")
@@ -220,6 +224,9 @@ def _prepare_fast_demonstrations(*, cfg, camera, config, config_hash,
     dataset = None
     attempts = _read_csv(attempts_path)
     attempted_seeds = [int(float(row["seed"])) for row in attempts]
+    flight_attempts = sum(
+        str(row.get("status", "")) != "infrastructure_failure"
+        for row in attempts)
     environment_steps = sum(int(float(row.get("steps", 0))) for row in attempts)
     if artifact_path.is_file():
         try:
@@ -234,14 +241,16 @@ def _prepare_fast_demonstrations(*, cfg, camera, config, config_hash,
             print(
                 "Resuming shared training-teacher demonstrations: "
                 f"{payload['successful_episodes']}/{required} successes from "
-                f"{len(attempted_seeds)}/{maximum} attempts.")
+                f"{flight_attempts}/{maximum_flights} flights and "
+                f"{len(attempted_seeds) - flight_attempts} infrastructure skips.")
         except (OSError, ValueError, KeyError) as exc:
             print(f"Ignoring incompatible training-teacher demonstrations: {exc}")
             payload, dataset, attempts, attempted_seeds, environment_steps = (
                 None, None, [], [], 0)
+            flight_attempts = 0
     successes = (0 if dataset is None else
                  int(torch.unique(dataset["episode_id"]).numel()))
-    if successes < required and len(attempted_seeds) < maximum:
+    if successes < required and flight_attempts < maximum_flights:
         torch.manual_seed(int(model_seed))
         teacher_model = _build_model(
             config, device, keypoint_pretraining, pipeline=source_pipeline)
@@ -250,21 +259,59 @@ def _prepare_fast_demonstrations(*, cfg, camera, config, config_hash,
         monitor.stage(
             "training-only teacher demonstrations",
             f"successful real Isaac/PX4 flights {successes}/{required}")
+        original_entry_timeout = float(cfg.external.entry_timeout)
+        original_reset_recoveries = int(cfg.external.reset_recoveries)
+        original_episode_recoveries = int(cfg.external.get(
+            "episode_recoveries", original_reset_recoveries))
+        cfg.external.entry_timeout = min(original_entry_timeout, 45.0)
+        cfg.external.reset_recoveries = 0
+        cfg.external.episode_recoveries = 0
         with LiveShinEnvironment(
                 cfg, camera, horizon_steps=int(cfg.sim.max_steps)) as environment:
             teacher = _privileged_velocity_teacher(
                 environment, settings=settings)
-            for attempt in range(maximum):
+            for attempt in range(maximum_seed_candidates):
+                if flight_attempts >= maximum_flights:
+                    break
                 seed = seed0 + attempt
                 if seed in attempted_seeds:
                     continue
-                rows, metric = collect_episode_resilient(
-                    environment, teacher_model, source_pipeline, seed,
-                    curriculum=float(settings.get("curriculum", 1.0)),
-                    deterministic=True, scenario="training_random_walk",
-                    monitor=monitor, phase="training-only teacher demonstration",
-                    action_transform=teacher)
+                try:
+                    rows, metric = collect_episode_resilient(
+                        environment, teacher_model, source_pipeline, seed,
+                        curriculum=float(settings.get("curriculum", 1.0)),
+                        deterministic=True, scenario="training_random_walk",
+                        monitor=monitor,
+                        phase="training-only teacher demonstration",
+                        action_transform=teacher)
+                except BridgeError as exc:
+                    # One seeded entry can fail PX4 preflight deterministically.
+                    # It is infrastructure downtime, not an RL failure: record
+                    # no transition/label, advance to the next seed, and give
+                    # that seed a freshly owned stack.
+                    attempted_seeds.append(seed)
+                    attempts.append({
+                        "method": "privileged_teacher",
+                        "pipeline": "shared_warm_start",
+                        "episode": len(attempted_seeds),
+                        "seed": seed,
+                        "status": "infrastructure_failure",
+                        "accepted_for_cloning": 0.0,
+                        "paper_success": 0.0,
+                        "strict_success": 0.0,
+                        "steps": 0,
+                        "teacher": teacher_id,
+                        "config_hash": config_hash,
+                        "infrastructure_error": str(exc),
+                    })
+                    _write_csv(attempts_path, attempts)
+                    print(
+                        f"training teacher seed {seed} skipped after PX4/Isaac "
+                        f"reset failure: {exc}")
+                    environment.recover_infrastructure()
+                    continue
                 attempted_seeds.append(seed)
+                flight_attempts += 1
                 environment_steps += int(metric["steps"])
                 metric.update({
                     "method": "privileged_teacher", "pipeline": "shared_warm_start",
@@ -293,18 +340,23 @@ def _prepare_fast_demonstrations(*, cfg, camera, config, config_hash,
                         environment_steps=environment_steps,
                         teacher=teacher_id)
                 print(
-                    f"training teacher attempt {len(attempted_seeds)}/{maximum} "
+                    f"training teacher flight {flight_attempts}/{maximum_flights} "
                     f"success={int(metric['paper_success'])} "
                     f"accepted={successes}/{required}")
                 if successes >= required:
                     break
+        cfg.external.entry_timeout = original_entry_timeout
+        cfg.external.reset_recoveries = original_reset_recoveries
+        cfg.external.episode_recoveries = original_episode_recoveries
         del teacher_model
         if torch.cuda.is_available() and str(device).startswith("cuda"):
             torch.cuda.empty_cache()
     if payload is None or int(payload["successful_episodes"]) < required:
         raise RuntimeError(
             "training teacher did not produce enough real successful landings "
-            f"({successes}/{required}) after {len(attempted_seeds)}/{maximum} attempts")
+            f"({successes}/{required}) after {flight_attempts}/{maximum_flights} "
+            f"flights and {len(attempted_seeds) - flight_attempts} "
+            "infrastructure skips")
     return payload
 
 

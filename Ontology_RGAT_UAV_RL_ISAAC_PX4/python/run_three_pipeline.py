@@ -23,18 +23,23 @@ from ontology_rgat.benchmarks.experiment import (
     load_experiment, paired_seed_plan)
 from ontology_rgat.benchmarks.live_env import LiveShinEnvironment
 from ontology_rgat.cli import ensure_fastdds
-from ontology_rgat.evaluation import write_three_pipeline_outputs
+from ontology_rgat.evaluation import (write_adaptive_reward_figures,
+                                      write_three_pipeline_outputs)
 from ontology_rgat.perception import (RosGrayscaleSource,
                                       calibrate_keypoint_encoder,
                                       prepare_keypoint_encoder)
-from ontology_rgat.pipelines import (get_pipeline, primary_pipeline_ids,
+from ontology_rgat.pipelines import (available_pipeline_ids, get_pipeline,
+                                     primary_pipeline_ids,
                                      validate_pipeline_configuration)
 from ontology_rgat.ppo.recurrent_train import (collect_episode_resilient,
                                                train_live)
+from ontology_rgat.reward_modes import RewardComponentNormalizer
 from ontology_rgat.rgat import (
-    FrozenSemanticRGATPotential, load_semantic_dataset,
+    FrozenAdaptiveRewardWeights, FrozenSemanticRGATPotential,
+    adaptive_episode_records, build_adaptive_dataset, load_adaptive_dataset,
+    load_semantic_dataset, prepare_adaptive_reward_artifact,
     merge_semantic_datasets, prepare_semantic_rgat_artifact,
-    save_semantic_dataset, semantic_episode_dataset)
+    save_adaptive_dataset, save_semantic_dataset, semantic_episode_dataset)
 from ontology_rgat.stack import ExternalStack
 from ontology_rgat.viz.dashboard import Dashboard
 from ontology_rgat.viz.live import BenchmarkMonitor, STORE
@@ -117,7 +122,8 @@ def _collect_semantic_data(*, cfg, camera, model, config, config_hash,
                            episodes_override=None,
                            max_episodes_override=None,
                            source_training_episodes=0,
-                           source_training_environment_steps=0):
+                           source_training_environment_steps=0,
+                           source_pipeline="no_se"):
     design = dict(config.get("rgat_design") or {})
     count = int(episodes_override if episodes_override is not None else
                 design.get(f"episodes_{mode}", 8 if mode == "quick" else 40))
@@ -144,7 +150,7 @@ def _collect_semantic_data(*, cfg, camera, model, config, config_hash,
     behavior = {
         "name": str(design.get(
             "behavior_policy", "semantic_visual_servo_recovery_noisy_no_se_mixture_v2")),
-        "source_pipeline": "no_se",
+        "source_pipeline": str(source_pipeline),
         "state_estimation_enabled": False,
         "components": ["trained_no_se", "image_plane_servo",
                        "explicit_visibility_recovery_climb",
@@ -207,7 +213,7 @@ def _collect_semantic_data(*, cfg, camera, model, config, config_hash,
                 if requirements_met(manifest, episode_rows):
                     break
                 rows, metric = collect_episode_resilient(
-                    environment, model, "no_se", seed, curriculum=1.0,
+                    environment, model, source_pipeline, seed, curriculum=1.0,
                     deterministic=False, gamma=gamma,
                     scenario="training_random_walk", monitor=monitor,
                     phase="semantic reward-design data",
@@ -274,13 +280,139 @@ def _collect_semantic_data(*, cfg, camera, model, config, config_hash,
     return dataset, manifest, dataset_path, total_steps
 
 
+def _records_from_adaptive_dataset(dataset):
+    records = []
+    for index in range(len(dataset["episode_id"])):
+        records.append({
+            "graph_X": dataset["X"][index].T,
+            "rho_raw": dataset["rho_raw"][index],
+            **{name: dataset[name][index].item()
+               for name in (
+                   "episode_id", "time_index", "success", "failure_type",
+                   "touchdown_error", "touchdown_vertical_speed",
+                   "touchdown_roll", "touchdown_pitch", "duration",
+                   "terminal_reason", "scenario", "seed", "phase",
+                   "disturbance_level")},
+        })
+    return records
+
+
+def _collect_adaptive_data(*, cfg, camera, model, source_pipeline, config,
+                           config_hash, results_dir, mode, monitor,
+                           episodes_override=None, max_episodes_override=None):
+    """실제 Isaac/PX4 전이로 5성분 adaptive reward dataset을 만든다."""
+    design = dict(config.get("adaptive_reward_design") or {})
+    reward_cfg = dict(config.get("adaptive_reward") or {})
+    count = int(episodes_override if episodes_override is not None else
+                design.get(f"episodes_{mode}", 8 if mode == "quick" else 40))
+    maximum = int(max_episodes_override if max_episodes_override is not None else
+                  design.get(f"max_episodes_{mode}", max(3 * count, count)))
+    if count < 2 or maximum < count:
+        raise ValueError("adaptive reward data needs at least two episodes and a valid cap")
+    seed0 = int((config.get("seeds") or {}).get("adaptive_dataset_start", 80000))
+    path = Path(results_dir) / "rgat/adaptive_reward_rollouts.npz"
+    records = []
+    if path.is_file() and path.with_suffix(".manifest.json").is_file():
+        try:
+            cached, cached_manifest = load_adaptive_dataset(
+                path, config_hash=config_hash)
+            records = _records_from_adaptive_dataset(cached)
+            print(f"Resuming adaptive reward data: "
+                  f"{len(np.unique(cached['episode_id']))}/{count} minimum.")
+        except (OSError, ValueError, KeyError, json.JSONDecodeError) as exc:
+            print(f"Ignoring incompatible adaptive rollout cache: {exc}")
+            records = []
+
+    scenarios = tuple(design.get("scenarios") or (
+        "training_random_walk", "zigzag", "vertical_heave_boat"))
+    completed_episodes = set(int(row["episode_id"]) for row in records)
+
+    def requirements_met(dataset):
+        if dataset is None:
+            return False
+        episodes = np.unique(dataset["episode_id"])
+        outcomes = set(np.asarray(dataset["success"], dtype=int).tolist())
+        return len(episodes) >= count and outcomes == {0, 1}
+
+    dataset = None
+    manifest = None
+    if records:
+        normalization = dict(reward_cfg.get("component_normalization") or {})
+        dataset = build_adaptive_dataset(
+            records, seed=int(config.get("seed", 42)),
+            validation_fraction=float(design.get("validation_fraction", .2)),
+            test_fraction=float(design.get("test_fraction", 0.0)),
+            physical_scales=normalization.get("scales"),
+            normalization_quantile=float(normalization.get("quantile", .99)),
+            exact_paper_raw=bool(reward_cfg.get("exact_paper_raw", False)))
+    behavior = {
+        "name": str(design.get(
+            "behavior_policy",
+            "mixed_random_fixed_success_collision_drift_near_miss")),
+        "source_pipeline": str(source_pipeline),
+        "components": ["trained_fixed_policy", "visual_servo_success_recovery",
+                       "moderate_noise_near_miss", "bounded_random_exploration",
+                       "empirical_collision_or_drift_failures"],
+        "scenario_cycle": list(scenarios),
+        "synthetic_transitions_allowed": False,
+    }
+    pending = [(episode, seed0 + episode - 1)
+               for episode in range(1, maximum + 1)
+               if episode not in completed_episodes]
+    if pending and not requirements_met(dataset):
+        monitor.stage("adaptive reward data", "real transition outcome mixture")
+        with LiveShinEnvironment(
+                cfg, camera, horizon_steps=int(cfg.sim.max_steps)) as environment:
+            for episode, seed in pending:
+                if requirements_met(dataset):
+                    break
+                scenario = scenarios[(episode - 1) % len(scenarios)]
+                rows, metric = collect_episode_resilient(
+                    environment, model, source_pipeline, seed, curriculum=1.0,
+                    deterministic=False, scenario=scenario, monitor=monitor,
+                    phase="adaptive reward-design data",
+                    action_transform=_behavior_transform((episode - 1) % 3))
+                records.extend(adaptive_episode_records(
+                    rows, metric, episode_id=episode, seed=seed,
+                    scenario=scenario))
+                if len(set(int(row["episode_id"]) for row in records)) >= 2:
+                    normalization = dict(
+                        reward_cfg.get("component_normalization") or {})
+                    dataset = build_adaptive_dataset(
+                        records, seed=int(config.get("seed", 42)),
+                        validation_fraction=float(
+                            design.get("validation_fraction", .2)),
+                        test_fraction=float(design.get("test_fraction", 0.0)),
+                        physical_scales=normalization.get("scales"),
+                        normalization_quantile=float(
+                            normalization.get("quantile", .99)),
+                        exact_paper_raw=bool(
+                            reward_cfg.get("exact_paper_raw", False)))
+                    manifest = save_adaptive_dataset(
+                        dataset, path, config_hash=config_hash,
+                        source_behavior_policy=behavior)
+                print(f"adaptive data episode {episode}/{count} minimum "
+                      f"success={int(metric['paper_success'])} steps={len(rows)}")
+    if dataset is None:
+        raise RuntimeError("adaptive reward-design dataset is unavailable")
+    if not requirements_met(dataset):
+        raise RuntimeError(
+            "adaptive reward data lacks both success and failure outcomes at its hard cap")
+    if manifest is None:
+        manifest = save_adaptive_dataset(
+            dataset, path, config_hash=config_hash,
+            source_behavior_policy=behavior)
+    steps = int(len(dataset["episode_id"]))
+    return dataset, manifest, path, steps
+
+
 def main():
     parser = argparse.ArgumentParser(
         formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    parser.add_argument("--experiment", choices=("three_pipeline",),
-                        default="three_pipeline")
-    parser.add_argument("--pipelines", nargs="+", choices=primary_pipeline_ids(),
-                        default=list(primary_pipeline_ids()))
+    parser.add_argument("--experiment", choices=(
+        "three_pipeline", "adaptive_reward_weight_comparison"),
+                        default=None)
+    parser.add_argument("--pipelines", nargs="+", choices=available_pipeline_ids())
     parser.add_argument("--mode", choices=("quick", "full"), default="quick")
     parser.add_argument("--config", type=Path,
                         default=ROOT / "config/experiments/three_pipeline_comparison.yaml")
@@ -288,6 +420,7 @@ def main():
                         default=ROOT / "config/shin2026-system.yaml")
     parser.add_argument("--results-dir", type=Path)
     parser.add_argument("--reward-design", type=Path)
+    parser.add_argument("--adaptive-reward-design", type=Path)
     parser.add_argument("--no-prepare-reward-design", action="store_true")
     parser.add_argument("--rgat-data-episodes", type=int)
     parser.add_argument(
@@ -325,18 +458,28 @@ def main():
         parser.error("--training-replicate must be non-negative")
 
     config = load_experiment(args.config)
+    if args.experiment is None:
+        args.experiment = str(config.get("experiment", "three_pipeline"))
     validate_pipeline_configuration(config)
     configured = tuple(config.get("pipelines") or ())
+    if args.pipelines is None:
+        args.pipelines = list(configured)
     if any(name not in configured for name in args.pipelines):
         parser.error("selected pipeline is absent from experiment configuration")
     for name in args.pipelines:
         get_pipeline(name)
     if args.results_dir is None:
-        args.results_dir = ROOT / "results/three_pipeline" / args.mode
+        experiment_dir = ("adaptive_reward_weight" if
+                          config.get("experiment") == "adaptive_reward_weight_comparison"
+                          else "three_pipeline")
+        args.results_dir = ROOT / "results" / experiment_dir / args.mode
         if args.training_replicate:
             args.results_dir /= f"replicate_{args.training_replicate}"
     if args.reward_design is None:
         args.reward_design = args.results_dir / "rgat/rgat_model.pt"
+    if args.adaptive_reward_design is None:
+        args.adaptive_reward_design = (
+            args.results_dir / "rgat/adaptive_reward_weights.pt")
     args.results_dir.mkdir(parents=True, exist_ok=True)
 
     system = load_system_config(args.system_config)
@@ -370,11 +513,12 @@ def main():
     configured_count = int(training_cfg.get(
         f"episodes_{args.mode}", 8 if args.mode == "quick" else 40960))
     configured_ppo = dict(config.get("ppo") or {})
-    selected_warmup = (
-        int(configured_ppo.get(
-            f"perception_warmup_episodes_{args.mode}",
-            2 if args.mode == "quick" else 8))
-        if "shin_se" in args.pipelines else 0)
+    se_pipeline_count = sum(
+        get_pipeline(name).state_estimation_enabled for name in args.pipelines)
+    warmup_each = (int(configured_ppo.get(
+        f"perception_warmup_episodes_{args.mode}",
+        2 if args.mode == "quick" else 8)) if se_pipeline_count else 0)
+    selected_warmup = warmup_each * se_pipeline_count
     if args.total_train_episodes is not None:
         try:
             train_count = episodes_per_method(
@@ -410,7 +554,10 @@ def main():
         args.results_dir / "models/shared/keypoint_encoder.pt",
         config_hash=config_hash, experiment=config, system=system,
         mode=args.mode, device=args.device)
-    needs_potential = "onto_no_se" in args.pipelines
+    needs_potential = any(
+        get_pipeline(name).use_direct_rgat_potential for name in args.pipelines)
+    needs_adaptive = any(
+        get_pipeline(name).use_adaptive_reward_weights for name in args.pipelines)
     potential = None
     artifact_error = None
     if needs_potential and args.reward_design.is_file():
@@ -422,7 +569,30 @@ def main():
             artifact_error = str(exc)
             print(f"Existing semantic R-GAT is not reusable: {exc}")
     if needs_potential and potential is None and args.no_prepare_reward_design:
-        parser.error(f"onto_no_se requires a valid semantic R-GAT: {artifact_error}")
+        parser.error(f"PBRS mode requires a valid semantic R-GAT: {artifact_error}")
+    adaptive_weights = None
+    adaptive_error = None
+    if needs_adaptive and args.adaptive_reward_design.is_file():
+        try:
+            adaptive_weights = FrozenAdaptiveRewardWeights(
+                args.adaptive_reward_design, expected_config_hash=config_hash)
+            expected_architectures = {
+                get_pipeline(name).adaptive_reward_architecture
+                for name in args.pipelines
+                if get_pipeline(name).use_adaptive_reward_weights}
+            artifact_architecture = adaptive_weights.metadata[
+                "model_config"]["architecture"]
+            if expected_architectures != {artifact_architecture}:
+                raise ValueError(
+                    "one run may compare adaptive arms only with the same frozen architecture")
+            print(f"Using frozen adaptive reward R-GAT {adaptive_weights.design_id}.")
+        except (OSError, ValueError, KeyError) as exc:
+            adaptive_error = str(exc)
+            adaptive_weights = None
+            print(f"Existing adaptive reward model is not reusable: {exc}")
+    if needs_adaptive and adaptive_weights is None and args.no_prepare_reward_design:
+        parser.error(
+            f"adaptive reward mode requires a valid frozen model: {adaptive_error}")
 
     controlled_fields = {
         name: config.get(name) for name in
@@ -454,7 +624,10 @@ def main():
             "identical_ppo_seeds_for_all_selected_pipelines": True,
             "shin_warmup_seed_start": (warmup_seed0 if selected_warmup else None),
             "shin_warmup_seed_stop_exclusive": (
-                warmup_seed0 + selected_warmup if selected_warmup else None),
+                warmup_seed0 + warmup_each if selected_warmup else None),
+            "warmup_episodes_per_se_pipeline": warmup_each,
+            "se_pipeline_count": se_pipeline_count,
+            "identical_warmup_seeds_for_se_arms": True,
         },
         "evaluation": evaluation_cfg, "paired_seeds": True,
         "primary_comparison_metric_family": "reward-independent physical task metrics",
@@ -462,6 +635,8 @@ def main():
         "checkpoint_selection_rule": (
             "latest completed PPO episode; no reward-return model selection"),
         "reward_design_id": getattr(potential, "design_id", None),
+        "adaptive_reward_design_id": getattr(adaptive_weights, "design_id", None),
+        "adaptive_reward": config.get("adaptive_reward"),
         "execution_status": "configured; real Isaac/Pegasus/PX4 results pending",
     }
     manifest_path = args.results_dir / "manifest.json"
@@ -485,6 +660,18 @@ def main():
     if args.dashboard_port is not None:
         cfg.viz.dashboard.port = int(args.dashboard_port)
     ppo = dict(config.get("ppo") or {})
+    runtime_reward_normalizer = None
+    adaptive_runtime = dict(config.get("adaptive_reward") or {})
+    normalization_runtime = dict(
+        adaptive_runtime.get("component_normalization") or {})
+    if adaptive_runtime.get("enabled") and normalization_runtime.get("scales"):
+        ppo["reward_component_scales"] = list(normalization_runtime["scales"])
+        ppo["exact_paper_raw_reward"] = bool(
+            adaptive_runtime.get("exact_paper_raw", False))
+        runtime_reward_normalizer = RewardComponentNormalizer(
+            scales=tuple(ppo["reward_component_scales"]),
+            exact_paper_raw=ppo["exact_paper_raw_reward"],
+            source="shared_runtime_configuration")
     ppo["perception_warmup_episodes"] = int(ppo.get(
         f"perception_warmup_episodes_{args.mode}",
         2 if args.mode == "quick" else 8))
@@ -512,9 +699,7 @@ def main():
     monitor = BenchmarkMonitor(STORE, rviz=rviz)
     monitor.configure(
         methods=args.pipelines, mode=args.mode, config_hash=config_hash,
-        training_total=(train_count * len(args.pipelines)
-                        + (int(ppo["perception_warmup_episodes"])
-                           if "shin_se" in args.pipelines else 0)),
+        training_total=(train_count * len(args.pipelines) + selected_warmup),
         evaluation_total=len(plan),
         reward_design_id=getattr(potential, "design_id", None),
         reward_design_sha256=getattr(potential, "sha256", None))
@@ -571,13 +756,26 @@ def main():
                 training_seeds = controlled_training_seeds(
                     training_seed0, train_count, warmup_episodes=warmup_count,
                     warmup_seed0=warmup_seed0)
+                spec = get_pipeline(name)
+                reward_design = (adaptive_weights
+                                 if spec.use_adaptive_reward_weights else
+                                 potential if spec.use_direct_rgat_potential else None)
+                if spec.use_adaptive_reward_weights:
+                    if reward_design is None:
+                        raise RuntimeError(f"{name} requires adaptive reward weights")
+                    artifact_architecture = reward_design.metadata[
+                        "model_config"]["architecture"]
+                    if artifact_architecture != spec.adaptive_reward_architecture:
+                        raise RuntimeError(
+                            f"{name} requires {spec.adaptive_reward_architecture} "
+                            f"weights, artifact is {artifact_architecture}")
                 history = train_live(
                     lambda: LiveShinEnvironment(
                         cfg, camera, horizon_steps=int(cfg.sim.max_steps)),
                     model, name,
                     training_seeds,
                     target_dir, config_hash=config_hash,
-                    potential=(potential if name == "onto_no_se" else None),
+                    potential=reward_design,
                     ppo=ppo, curriculum_config=curriculum, monitor=monitor if primary else None,
                     restart_incompatible=True)
                 if primary:
@@ -588,18 +786,27 @@ def main():
                     _write_csv(args.results_dir / f"training/{name}.csv", history)
                 return model, history, target_dir / f"{name}.pt"
 
+            # 먼저 고정 보상 arm을 학습한다. 두 reward-design dataset 모두
+            # 이 실제 정책/visual-servo/noise 혼합 rollout을 출발점으로 쓴다.
             for name in args.pipelines:
-                if name != "onto_no_se":
+                spec = get_pipeline(name)
+                if not (spec.use_direct_rgat_potential
+                        or spec.use_adaptive_reward_weights):
                     train_pipeline(name)
 
             if needs_potential and potential is None:
-                if "no_se" in models:
-                    source_model = models["no_se"]
-                    source_checkpoint = args.results_dir / "models/no_se/no_se.pt"
+                preferred_source = str((config.get("rgat_design") or {}).get(
+                    "source_pipeline", "no_se"))
+                source_name = (preferred_source if preferred_source in available_pipeline_ids()
+                               else "no_se")
+                if source_name in models:
+                    source_model = models[source_name]
+                    source_checkpoint = (args.results_dir
+                                         / f"models/{source_name}/{source_name}.pt")
                     source_training_episodes = 0
                 else:
                     source_model, source_history, source_checkpoint = train_pipeline(
-                        "no_se", primary=False)
+                        source_name, primary=False)
                     source_training_episodes = train_count
                     source_training_steps = sum(
                         int(float(row.get("steps", 0))) for row in source_history
@@ -611,6 +818,7 @@ def main():
                         results_dir=args.results_dir, mode=args.mode,
                         monitor=monitor, episodes_override=args.rgat_data_episodes,
                         max_episodes_override=args.rgat_max_data_episodes,
+                        source_pipeline=source_name,
                         source_training_episodes=source_training_episodes,
                         source_training_environment_steps=source_training_steps))
                 design_episodes = int(dataset_manifest["episodes"])
@@ -649,8 +857,73 @@ def main():
                 source_training_steps = int(source_provenance.get(
                     "additional_source_training_environment_steps", 0))
 
-            if "onto_no_se" in args.pipelines:
-                train_pipeline("onto_no_se")
+            adaptive_design_episodes = 0
+            adaptive_design_steps = 0
+            if needs_adaptive and adaptive_weights is None:
+                source_name = str((config.get("adaptive_reward_design") or {}).get(
+                    "source_pipeline", "no_se_fixed"))
+                if source_name in models:
+                    adaptive_source_model = models[source_name]
+                else:
+                    adaptive_source_model, _, _ = train_pipeline(
+                        source_name, primary=False)
+                adaptive_dataset, adaptive_manifest, _, adaptive_design_steps = (
+                    _collect_adaptive_data(
+                        cfg=cfg, camera=camera, model=adaptive_source_model,
+                        source_pipeline=source_name, config=config,
+                        config_hash=config_hash, results_dir=args.results_dir,
+                        mode=args.mode, monitor=monitor,
+                        episodes_override=args.rgat_data_episodes,
+                        max_episodes_override=args.rgat_max_data_episodes))
+                adaptive_design_episodes = int(adaptive_manifest["episodes"])
+                adaptive_settings = dict(config.get("adaptive_reward_design") or {})
+                reward_constraints = dict(config.get("adaptive_reward") or {})
+                for source_key, target_key in (
+                        ("baseline_weights", "baseline_weights"),
+                        ("total_weight", "total_weight"),
+                        ("logit_scale_kappa", "logit_scale_kappa"),
+                        ("baseline_mixture_epsilon", "baseline_mixture_epsilon")):
+                    if source_key in reward_constraints:
+                        adaptive_settings[target_key] = reward_constraints[source_key]
+                adaptive_settings["epochs"] = int(
+                    args.rgat_epochs or adaptive_settings.get(
+                        f"epochs_{args.mode}", 10 if args.mode == "quick" else 80))
+                expected_architectures = {
+                    get_pipeline(name).adaptive_reward_architecture
+                    for name in args.pipelines
+                    if get_pipeline(name).use_adaptive_reward_weights}
+                if len(expected_architectures) != 1:
+                    raise RuntimeError(
+                        "structural ablations require separate runs/artifacts per architecture")
+                adaptive_settings["architecture"] = next(iter(expected_architectures))
+                monitor.stage("adaptive R-GAT training", "five constrained reward weights")
+                _, adaptive_metadata = prepare_adaptive_reward_artifact(
+                    args.adaptive_reward_design, adaptive_dataset,
+                    dataset_manifest=adaptive_manifest,
+                    config_hash=config_hash, settings=adaptive_settings,
+                    seed=model_seed)
+                adaptive_weights = FrozenAdaptiveRewardWeights(
+                    args.adaptive_reward_design,
+                    expected_config_hash=config_hash)
+                manifest.update({
+                    "adaptive_reward_design_id": adaptive_weights.design_id,
+                    "adaptive_reward_design_sha256": adaptive_weights.sha256,
+                    "adaptive_reward_dataset": adaptive_manifest,
+                    "adaptive_reward_model": adaptive_metadata,
+                })
+                _write_json(manifest_path, manifest)
+            elif needs_adaptive:
+                data_manifest = adaptive_weights.metadata.get(
+                    "dataset_manifest") or {}
+                adaptive_design_episodes = int(data_manifest.get("episodes", 0))
+                adaptive_design_steps = int(data_manifest.get("transitions", 0))
+
+            # 이제 모든 동결 보상 설계가 준비됐다. PBRS/adaptive PPO에서는
+            # 이 모델들이 optimizer에 포함되지 않으며 매 update 뒤 hash를 검사한다.
+            for name in args.pipelines:
+                spec = get_pipeline(name)
+                if spec.use_direct_rgat_potential or spec.use_adaptive_reward_weights:
+                    train_pipeline(name)
 
             training_records = [row for name in args.pipelines
                                 for row in histories.get(name, [])]
@@ -674,9 +947,14 @@ def main():
                         _, metric = collect_episode_resilient(
                             environment, model, name, int(item["seed"]),
                             curriculum=1.0,
-                            potential=(potential if name == "onto_no_se" else None),
+                            potential=(adaptive_weights
+                                       if get_pipeline(name).use_adaptive_reward_weights
+                                       else potential
+                                       if get_pipeline(name).use_direct_rgat_potential
+                                       else None),
                             deterministic=True, gamma=float(ppo.get("gamma", .99)),
                             shaping_lambda=float(ppo.get("shaping_lambda", 1.0)),
+                            reward_normalizer=runtime_reward_normalizer,
                             scenario=item["scenario"], monitor=monitor,
                             phase="evaluation")
                         metric.update({"method": name, "pipeline": name,
@@ -693,25 +971,33 @@ def main():
                 estimator_warmup_episodes=selected_warmup,
                 estimator_warmup_steps=sum(
                     int(float(row.get("steps", 0)))
-                    for row in histories.get("shin_se", [])
+                    for name in args.pipelines
+                    if get_pipeline(name).state_estimation_enabled
+                    for row in histories.get(name, [])
                     if row.get("optimization_phase") == "perception_warmup"))
+            reports["adaptive_reward_figures"] = write_adaptive_reward_figures(
+                args.results_dir)
             reward_design_cost = design_episodes + source_training_episodes
             reward_design_step_cost = design_steps + source_training_steps
             warmup_step_cost = sum(
                 int(float(row.get("steps", 0)))
-                for row in histories.get("shin_se", [])
+                for name in args.pipelines
+                if get_pipeline(name).state_estimation_enabled
+                for row in histories.get(name, [])
                 if row.get("optimization_phase") == "perception_warmup")
+            total_design_episodes = reward_design_cost + adaptive_design_episodes
+            total_design_steps = reward_design_step_cost + adaptive_design_steps
             manifest.update({
                 "execution_status": "complete real Isaac/Pegasus/PX4 run",
                 "N_PPO": train_count * len(args.pipelines),
                 "N_estimator_warmup": selected_warmup,
                 "estimator_warmup_environment_steps": warmup_step_cost,
-                "N_reward_design": reward_design_cost,
-                "N_total": train_count * len(args.pipelines) + reward_design_cost,
+                "N_reward_design": total_design_episodes,
+                "N_total": train_count * len(args.pipelines) + total_design_episodes,
                 "N_total_including_estimator_warmup": (
-                    train_count * len(args.pipelines) + reward_design_cost
+                    train_count * len(args.pipelines) + total_design_episodes
                     + selected_warmup),
-                "reward_design_environment_steps": reward_design_step_cost,
+                "reward_design_environment_steps": total_design_steps,
                 "reports": reports,
             })
             _write_json(manifest_path, manifest)

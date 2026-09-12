@@ -11,6 +11,7 @@ reward, budget 또는 output schema를 추론하는 데 사용하면 안 된다.
 | [프로젝트 README](../README.md) | 설치, 단일 명령 실행, output과 간결한 기술 계약 |
 | [시스템 개요](SYSTEM_OVERVIEW.md) | component 구성과 end-to-end 실행 순서 |
 | [3개 파이프라인 통제 비교](THREE_PIPELINE_COMPARISON.md) | 과학적 통제, 수식, metric과 budget |
+| [상태 적응형 보상 가중치](ONTOLOGY_RGAT_ADAPTIVE_REWARD_WEIGHTING.md) | 5성분 R-GAT 가중치, 데이터, loss, 동결 및 평가 계약 |
 | [운영](OPERATIONS.md) | monitoring, 재시작 의미, log와 fault 진단 |
 | [아키텍처](ARCHITECTURE.md) | simulator, PX4, ROS, 좌표계, timing과 migration 경계 상세 |
 | [Shin-2026 baseline](SHIN2026_BASELINE.md) | 논문-코드 대응과 의도적 변경 |

@@ -21,6 +21,8 @@ class PipelineSpec:
     ontology_input_mode: str | None
     use_direct_rgat_potential: bool
     reserved_latent_dimensions: int = 6
+    use_adaptive_reward_weights: bool = False
+    adaptive_reward_architecture: str | None = None
 
     def __post_init__(self) -> None:
         if not self.name:
@@ -37,22 +39,32 @@ class PipelineSpec:
                 and self.auxiliary_estimation_loss_enabled):
             raise ValueError("active perception requires supervised state estimation")
         if self.reward_mode not in {
-                "shin_table_active", "shin_table_no_active", "semantic_pbrs"}:
+                "shin_table_active", "shin_table_no_active", "semantic_pbrs",
+                "adaptive_weight"}:
             raise ValueError(f"unknown pipeline reward mode: {self.reward_mode}")
-        if ((self.reward_mode == "shin_table_active")
-                != self.active_perception_enabled):
+        if (self.reward_mode in {"shin_table_active", "shin_table_no_active"}
+                and ((self.reward_mode == "shin_table_active")
+                     != self.active_perception_enabled)):
             raise ValueError(
                 "shin_table_active reward and active perception must agree")
         if self.ontology_enabled:
             if self.ontology_input_mode != "semantic_observation":
                 raise ValueError("ontology pipelines require semantic_observation input")
-            if not self.use_direct_rgat_potential:
-                raise ValueError("primary ontology pipeline must use direct R-GAT potential")
-            if self.state_estimation_enabled:
-                raise ValueError("semantic ontology pipeline cannot enable state estimation")
-            if self.reward_mode != "semantic_pbrs":
-                raise ValueError("ontology pipeline must use semantic PBRS")
-        elif self.ontology_input_mode is not None or self.use_direct_rgat_potential:
+            if self.reward_mode == "semantic_pbrs":
+                if not self.use_direct_rgat_potential or self.use_adaptive_reward_weights:
+                    raise ValueError("semantic PBRS must use only the scalar R-GAT potential")
+                if self.state_estimation_enabled:
+                    raise ValueError("semantic PBRS pipeline cannot enable state estimation")
+            elif self.reward_mode == "adaptive_weight":
+                if self.use_direct_rgat_potential or not self.use_adaptive_reward_weights:
+                    raise ValueError("adaptive reward mode must use the R-GAT weight head")
+                if self.adaptive_reward_architecture not in {"rgat", "gat", "mlp"}:
+                    raise ValueError("adaptive reward architecture must be rgat, gat or mlp")
+            else:
+                raise ValueError("ontology pipeline has an incompatible reward mode")
+        elif (self.ontology_input_mode is not None or self.use_direct_rgat_potential
+              or self.use_adaptive_reward_weights
+              or self.adaptive_reward_architecture is not None):
             raise ValueError("non-ontology pipeline cannot configure an ontology input/potential")
         if self.reward_mode == "semantic_pbrs" and not self.ontology_enabled:
             raise ValueError("semantic PBRS requires the ontology pipeline")
@@ -98,6 +110,57 @@ PIPELINES = {
     ),
 }
 
+# 새 연구 질문을 위한 명시적 모드. 위의 세 기존 ID는 결과/체크포인트와
+# 기존 run.sh 호환성을 위해 그대로 둔다.
+ADAPTIVE_PIPELINES = {
+    "shin_se_fixed": PipelineSpec(
+        name="shin_se_fixed", state_estimation_enabled=True,
+        auxiliary_estimation_loss_enabled=True, active_perception_enabled=True,
+        reward_mode="shin_table_active", ontology_enabled=False,
+        ontology_input_mode=None, use_direct_rgat_potential=False),
+    "shin_se_rgat_weight": PipelineSpec(
+        name="shin_se_rgat_weight", state_estimation_enabled=True,
+        auxiliary_estimation_loss_enabled=True, active_perception_enabled=True,
+        reward_mode="adaptive_weight", ontology_enabled=True,
+        ontology_input_mode="semantic_observation", use_direct_rgat_potential=False,
+        use_adaptive_reward_weights=True, adaptive_reward_architecture="rgat"),
+    "no_se_fixed": PipelineSpec(
+        name="no_se_fixed", state_estimation_enabled=False,
+        auxiliary_estimation_loss_enabled=False, active_perception_enabled=False,
+        reward_mode="shin_table_no_active", ontology_enabled=False,
+        ontology_input_mode=None, use_direct_rgat_potential=False),
+    "onto_rgat_adaptive_weight_no_se": PipelineSpec(
+        name="onto_rgat_adaptive_weight_no_se", state_estimation_enabled=False,
+        auxiliary_estimation_loss_enabled=False, active_perception_enabled=False,
+        reward_mode="adaptive_weight", ontology_enabled=True,
+        ontology_input_mode="semantic_observation", use_direct_rgat_potential=False,
+        use_adaptive_reward_weights=True, adaptive_reward_architecture="rgat"),
+    "onto_rgat_potential_pbrs_no_se": PipelineSpec(
+        name="onto_rgat_potential_pbrs_no_se", state_estimation_enabled=False,
+        auxiliary_estimation_loss_enabled=False, active_perception_enabled=False,
+        reward_mode="semantic_pbrs", ontology_enabled=True,
+        ontology_input_mode="semantic_observation", use_direct_rgat_potential=True),
+    "mlp_adaptive_weight_no_se": PipelineSpec(
+        name="mlp_adaptive_weight_no_se", state_estimation_enabled=False,
+        auxiliary_estimation_loss_enabled=False, active_perception_enabled=False,
+        reward_mode="adaptive_weight", ontology_enabled=True,
+        ontology_input_mode="semantic_observation", use_direct_rgat_potential=False,
+        use_adaptive_reward_weights=True, adaptive_reward_architecture="mlp"),
+    "gat_adaptive_weight_no_se": PipelineSpec(
+        name="gat_adaptive_weight_no_se", state_estimation_enabled=False,
+        auxiliary_estimation_loss_enabled=False, active_perception_enabled=False,
+        reward_mode="adaptive_weight", ontology_enabled=True,
+        ontology_input_mode="semantic_observation", use_direct_rgat_potential=False,
+        use_adaptive_reward_weights=True, adaptive_reward_architecture="gat"),
+    "rgat_adaptive_weight_no_se": PipelineSpec(
+        name="rgat_adaptive_weight_no_se", state_estimation_enabled=False,
+        auxiliary_estimation_loss_enabled=False, active_perception_enabled=False,
+        reward_mode="adaptive_weight", ontology_enabled=True,
+        ontology_input_mode="semantic_observation", use_direct_rgat_potential=False,
+        use_adaptive_reward_weights=True, adaptive_reward_architecture="rgat"),
+}
+ALL_PIPELINES = {**PIPELINES, **ADAPTIVE_PIPELINES}
+
 # Old commands remain accepted, but the three new names are the only primary
 # comparison IDs.  In particular, legacy ``ontoreward`` remains legacy rather
 # than silently pretending its estimate-based distilled reward is onto_no_se.
@@ -110,7 +173,7 @@ LEGACY_PIPELINE_ALIASES = {
 def get_pipeline(name: str) -> PipelineSpec:
     canonical = LEGACY_PIPELINE_ALIASES.get(str(name), str(name))
     try:
-        return PIPELINES[canonical]
+        return ALL_PIPELINES[canonical]
     except KeyError as exc:
         raise ValueError(f"unknown pipeline: {name}") from exc
 
@@ -119,17 +182,21 @@ def primary_pipeline_ids() -> tuple[str, ...]:
     return tuple(PIPELINES)
 
 
+def available_pipeline_ids() -> tuple[str, ...]:
+    return tuple(ALL_PIPELINES)
+
+
 def validate_pipeline_configuration(config: dict) -> None:
     """Refuse YAML declarations that disagree with executable presets."""
     configured = tuple(config.get("pipelines") or ())
     if not configured:
         raise ValueError("three-pipeline configuration must list pipelines")
-    unknown = set(configured) - set(PIPELINES)
+    unknown = set(configured) - set(ALL_PIPELINES)
     if unknown:
         raise ValueError(f"unknown configured pipelines: {sorted(unknown)}")
     contracts = config.get("pipeline_contract") or {}
     for name in configured:
-        spec = PIPELINES[name]
+        spec = ALL_PIPELINES[name]
         declared = contracts.get(name) or {}
         expected = {
             "state_estimation": spec.state_estimation_enabled,
@@ -144,8 +211,40 @@ def validate_pipeline_configuration(config: dict) -> None:
             if declared.get(key) != value:
                 raise ValueError(
                     f"pipeline {name} YAML {key} disagrees with executable spec")
+        optional_expected = {
+            "use_adaptive_reward_weights": spec.use_adaptive_reward_weights,
+            "adaptive_reward_architecture": spec.adaptive_reward_architecture,
+        }
+        for key, value in optional_expected.items():
+            if key in declared and declared[key] != value:
+                raise ValueError(
+                    f"pipeline {name} YAML {key} disagrees with executable spec")
     ppo_gamma = float((config.get("ppo") or {}).get("gamma", .99))
     design_gamma = float((config.get("rgat_design") or {}).get(
         "outcome_discount", ppo_gamma))
     if abs(ppo_gamma - design_gamma) > 1e-12:
         raise ValueError("R-GAT design/PBRS gamma must equal PPO gamma")
+    adaptive_specs = [ALL_PIPELINES[name] for name in configured
+                      if ALL_PIPELINES[name].use_adaptive_reward_weights]
+    if adaptive_specs:
+        adaptive = config.get("adaptive_reward") or {}
+        if not bool(adaptive.get("enabled", False)):
+            raise ValueError("adaptive reward pipelines require adaptive_reward.enabled")
+        if int(adaptive.get("num_components", 0)) != 5:
+            raise ValueError("adaptive reward must use exactly five components")
+        weights = tuple(float(v) for v in adaptive.get("baseline_weights", ()))
+        total = float(adaptive.get("total_weight", 0.0))
+        if len(weights) != 5 or any(value <= 0.0 for value in weights):
+            raise ValueError("adaptive baseline weights must be five positive values")
+        if abs(sum(weights) - total) > 1e-9 or abs(total - 5.5) > 1e-9:
+            raise ValueError("adaptive reward weights must preserve total 5.5")
+        if not bool(adaptive.get("freeze_during_ppo", False)):
+            raise ValueError("adaptive R-GAT must remain frozen during PPO")
+        if not 0.0 <= float(adaptive.get(
+                "baseline_mixture_epsilon", -1.0)) <= 1.0:
+            raise ValueError("adaptive baseline mixture epsilon must be in [0,1]")
+        if float(adaptive.get("logit_scale_kappa", -1.0)) < 0.0:
+            raise ValueError("adaptive logit scale must be non-negative")
+        design = config.get("adaptive_reward_design") or {}
+        if abs(float(design.get("trajectory_gamma", ppo_gamma)) - ppo_gamma) > 1e-12:
+            raise ValueError("adaptive trajectory gamma must equal PPO gamma")

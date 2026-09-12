@@ -7,6 +7,7 @@ estimator-free baseline, estimator-free ontology/R-GAT reward 방식을 비교�
 
 [문서 안내](docs/README.md) ·
 [통제 비교](docs/THREE_PIPELINE_COMPARISON.md) ·
+[상태 적응형 보상 가중치](docs/ONTOLOGY_RGAT_ADAPTIVE_REWARD_WEIGHTING.md) ·
 [운영](docs/OPERATIONS.md) ·
 [아키텍처](docs/ARCHITECTURE.md) ·
 [실제 기체 안전](docs/HARDWARE_SAFETY.md)
@@ -63,6 +64,30 @@ dashboard, result file을 건드리기 전에 실패한다.
 | `shin_se` | 있음 | 6-state MSE | 있음 | Shin Table III + active perception |
 | `no_se` | 없음 | 없음 | 없음 | Active term을 뺀 Shin Table III |
 | `onto_no_se` | 없음 | 없음 | 없음 | Sparse task reward + direct R-GAT PBRS |
+
+### 상태 적응형 reward-weight 실험
+
+기존 3개 pipeline과 PBRS 결과를 보존하면서 다음 5개 명시 모드를 별도
+[`adaptive_reward_weight_comparison.yaml`](config/experiments/adaptive_reward_weight_comparison.yaml)로
+추가했다.
+
+| ID | Estimator | Table-III 가중치 | Active | PBRS |
+|---|---:|---|---:|---:|
+| `shin_se_fixed` | 있음 | `[1,1,0.5,1,2]` 고정 | 있음 | 없음 |
+| `shin_se_rgat_weight` | 있음 | 동결 `w(G)` | 있음 | 없음 |
+| `no_se_fixed` | 없음 | `[1,1,0.5,1,2]` 고정 | 없음 | 없음 |
+| `onto_rgat_adaptive_weight_no_se` | 없음 | 동결 `w(G)` | 없음 | 없음 |
+| `onto_rgat_potential_pbrs_no_se` | 없음 | 해당 없음 | 없음 | 기존 `Phi(G)` PBRS |
+
+```bash
+../run.sh --mode quick \
+  --config config/experiments/adaptive_reward_weight_comparison.yaml \
+  --experiment adaptive_reward_weight_comparison
+```
+
+R-GAT 가중치의 양수/합 5.5 제약, 23-node 전용 graph, episode/scenario split,
+trajectory BCE/ranking/prior/smoothness/ontology loss와 PPO 동결 검사는
+[전용 문서](docs/ONTOLOGY_RGAT_ADAPTIVE_REWARD_WEIGHTING.md)에 정의한다.
 
 Camera, 동결 keypoint weight, temporal backbone, actor/critic capacity, action mapping,
 controller limit, PPO hyperparameter, curriculum, initial-condition distribution,
@@ -269,6 +294,9 @@ geometry, policy fault는 숨기지 않고 그대로 표시한다.
 | `rgat/semantic_rollouts.npz` | Versioned estimator-free graph data |
 | `rgat/semantic_rollout_episodes.csv` | Reward-design 비행 outcome |
 | `rgat/rgat_model.pt` | 동결 direct R-GAT artifact |
+| `rgat/adaptive_reward_rollouts.npz` | 적응 5성분 실제 전이 dataset(별도 설정) |
+| `rgat/adaptive_reward_weights.pt` | PPO 전에 학습·동결한 5-weight R-GAT |
+| `models/<pipeline>/*_reward_steps.jsonl` | raw/normalized 성분, weight, 기여도, 최종 reward |
 | `evaluation/paired_plan.csv` | 공통 scenario/seed plan |
 | `evaluation/per_episode.csv` | Reward-independent physical metric |
 | `evaluation/`, `tables/`, `figures/` | Confidence interval, 비교, publication table, plot |

@@ -9,6 +9,14 @@ supervision을 대체할 수 있는지 시험한다. Shin et al. (2026)의 방�
 [SHIN2026_BASELINE.md](SHIN2026_BASELINE.md)에 기록한 Isaac Sim, Pegasus, PX4
 adaptation을 그대로 사용한다.
 
+> 이 문서는 보존된 scalar-potential PBRS 3-arm 실험을 설명한다. 새 주 제안인
+> Table-III 5성분 상태 적응 가중치와 `shin_se_fixed`, `shin_se_rgat_weight`,
+> `no_se_fixed`, `onto_rgat_adaptive_weight_no_se`,
+> `onto_rgat_potential_pbrs_no_se` 비교는
+> [상태 적응형 보상 가중치](ONTOLOGY_RGAT_ADAPTIVE_REWARD_WEIGHTING.md)에 있다.
+> 두 실험은 서로 다른 config/result 디렉터리를 사용하며 기존 PBRS arm은 삭제하거나
+> 이름을 강제 변경하지 않았다.
+
 ![실제 full-run dashboard telemetry](images/live_dashboard_status.png)
 
 Screenshot은 2026-09-12 진행 중인 run에서 얻었다. Monitoring 계약을 보여 주는

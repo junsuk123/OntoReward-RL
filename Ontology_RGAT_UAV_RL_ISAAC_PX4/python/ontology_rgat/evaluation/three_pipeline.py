@@ -11,12 +11,15 @@ PHYSICAL_METRICS = (
     "paper_success", "strict_success", "crash_failure",
     "touchdown_lateral_error", "touchdown_vertical_velocity",
     "touchdown_relative_horizontal_velocity", "touchdown_tilt",
-    "touchdown_angular_rate", "fov_loss_fraction",
+    "touchdown_roll", "touchdown_pitch", "touchdown_angular_rate",
+    "collision_rate", "excessive_drift_rate", "fov_loss_fraction",
     "longest_visual_loss_s", "visual_loss_events",
     "visual_reacquisition_events", "visual_reacquisition_rate",
     "mean_visual_reacquisition_time_s", "recovery_climb_fraction",
     "unsafe_descent_low_visibility_fraction", "recovery_landing_opportunity",
     "successful_recovery_landing", "touchdown_time_s",
+    "adaptive_rgat_inference_latency_ms_mean",
+    "adaptive_rgat_parameter_count",
 )
 PRIMARY_PIPELINES = ("shin_se", "no_se", "onto_no_se")
 
@@ -90,7 +93,16 @@ def physical_summary(records):
                         float(row[metric]))
             mean, low, high, unit = _hierarchical_bootstrap_mean(
                 list(by_replicate.values()))
+            replicate_means = [float(np.mean(values))
+                               for values in by_replicate.values()]
+            standard_deviation = (float(np.std(replicate_means, ddof=1))
+                                  if len(replicate_means) > 1 else
+                                  float(np.std([value for values in by_replicate.values()
+                                                for value in values], ddof=1))
+                                  if sum(len(values) for values in by_replicate.values()) > 1
+                                  else 0.0)
             summary.update({f"{metric}_mean": mean,
+                            f"{metric}_std": standard_deviation,
                             f"{metric}_ci95_low": low,
                             f"{metric}_ci95_high": high,
                             f"{metric}_bootstrap_unit": unit})
@@ -102,7 +114,15 @@ def paired_differences(records):
     """Raw within-replicate, within-scenario, within-seed differences."""
     index = {(_replicate(row), row["pipeline"], row["scenario"], int(row["seed"])): row
              for row in records}
-    comparisons = (("onto_no_se", "shin_se"), ("onto_no_se", "no_se"))
+    present = {row["pipeline"] for row in records}
+    if "onto_rgat_adaptive_weight_no_se" in present:
+        proposed = "onto_rgat_adaptive_weight_no_se"
+        baselines = [name for name in (
+            "shin_se_fixed", "shin_se_rgat_weight", "no_se_fixed",
+            "onto_rgat_potential_pbrs_no_se") if name in present]
+        comparisons = tuple((proposed, baseline) for baseline in baselines)
+    else:
+        comparisons = (("onto_no_se", "shin_se"), ("onto_no_se", "no_se"))
     scenarios = sorted({row["scenario"] for row in records})
     output = []
     for proposed, baseline in comparisons:
@@ -191,7 +211,9 @@ def learning_efficiency(training_records, *, reward_design_episodes=0,
                         reward_design_steps=0, estimator_warmup_episodes=0,
                         estimator_warmup_steps=0):
     output = []
-    for pipeline in PRIMARY_PIPELINES:
+    pipelines = list(dict.fromkeys(
+        row.get("pipeline") for row in training_records if row.get("pipeline")))
+    for pipeline in pipelines:
         rows = [row for row in training_records if row.get("pipeline") == pipeline]
         if not rows:
             continue
@@ -200,22 +222,27 @@ def learning_efficiency(training_records, *, reward_design_episodes=0,
             continue
         auc = float(np.trapz(success, episodes) / max(float(episodes[-1] - episodes[0]), 1.0))
         extra_episodes = (
-            int(reward_design_episodes) if pipeline == "onto_no_se" else
-            int(estimator_warmup_episodes) if pipeline == "shin_se" else 0)
+            int(reward_design_episodes) if (pipeline == "onto_no_se"
+                or "rgat" in pipeline or "pbrs" in pipeline) else
+            int(estimator_warmup_episodes) if pipeline.startswith("shin_se") else 0)
         extra_steps = (
-            int(reward_design_steps) if pipeline == "onto_no_se" else
-            int(estimator_warmup_steps) if pipeline == "shin_se" else 0)
+            int(reward_design_steps) if (pipeline == "onto_no_se"
+                or "rgat" in pipeline or "pbrs" in pipeline) else
+            int(estimator_warmup_steps) if pipeline.startswith("shin_se") else 0)
         item = {
             "pipeline": pipeline, "ppo_episodes": int(episodes[-1]),
             "ppo_environment_steps": int(steps[-1]),
             "reward_design_episodes": (int(reward_design_episodes)
-                                       if pipeline == "onto_no_se" else 0),
+                                       if (pipeline == "onto_no_se" or "rgat" in pipeline
+                                           or "pbrs" in pipeline) else 0),
             "reward_design_environment_steps": (int(reward_design_steps)
-                                                  if pipeline == "onto_no_se" else 0),
+                                                  if (pipeline == "onto_no_se"
+                                                      or "rgat" in pipeline
+                                                      or "pbrs" in pipeline) else 0),
             "estimator_warmup_episodes": (int(estimator_warmup_episodes)
-                                           if pipeline == "shin_se" else 0),
+                                           if pipeline.startswith("shin_se") else 0),
             "estimator_warmup_environment_steps": (int(estimator_warmup_steps)
-                if pipeline == "shin_se" else 0),
+                if pipeline.startswith("shin_se") else 0),
             "total_environment_episodes": int(episodes[-1]) + extra_episodes,
             "total_environment_steps": int(steps[-1]) + extra_steps,
             "success_curve_auc": auc,
@@ -231,7 +258,8 @@ def learning_efficiency(training_records, *, reward_design_episodes=0,
 def _publication_table(summary, efficiency):
     rows = []
     costs = {row["pipeline"]: row for row in efficiency}
-    for pipeline in PRIMARY_PIPELINES:
+    pipelines = list(dict.fromkeys(row["pipeline"] for row in summary))
+    for pipeline in pipelines:
         values = [row for row in summary if row["pipeline"] == pipeline]
         if not values:
             continue
@@ -241,8 +269,9 @@ def _publication_table(summary, efficiency):
             return float(np.mean(numbers)) if numbers else np.nan
         row = {
             "pipeline": pipeline,
-            "state_estimation_supervision": pipeline == "shin_se",
-            "direct_semantic_rgat": pipeline == "onto_no_se",
+            "state_estimation_supervision": pipeline.startswith("shin_se"),
+            "direct_semantic_rgat": (pipeline == "onto_no_se"
+                                      or "rgat" in pipeline),
             "success_rate": average("paper_success_mean"),
             "strict_success_rate": average("strict_success_mean"),
             "crash_rate": average("crash_failure_mean"),
@@ -285,7 +314,9 @@ def _write_figures(records, training_records, figures_dir: Path,
         return []
     figures_dir.mkdir(parents=True, exist_ok=True)
     paths = []
-    colors = ("#0072BD", "#D95319", "#EDB120")
+    colors = ("#0072BD", "#D95319", "#EDB120", "#7E2F8E", "#77AC30",
+              "#4DBEEE", "#A2142F")
+    pipelines = list(dict.fromkeys(row["pipeline"] for row in records))
 
     def save(name):
         path = figures_dir / name
@@ -308,8 +339,9 @@ def _write_figures(records, training_records, figures_dir: Path,
             ("landing_time.png", "touchdown_time_s", "Landing time (s)")):
         fig, ax = plt.subplots(figsize=(6.4, 4.0))
         data = [[float(row[metric]) for row in records if row["pipeline"] == pipeline]
-                for pipeline in PRIMARY_PIPELINES]
-        ax.boxplot(data, labels=PRIMARY_PIPELINES, showmeans=True)
+                for pipeline in pipelines]
+        ax.boxplot(data, labels=pipelines, showmeans=True)
+        ax.tick_params(axis="x", labelrotation=18)
         ax.set_ylabel(ylabel)
         ax.grid(True, linestyle=":", alpha=.45)
         save(name)
@@ -318,7 +350,7 @@ def _write_figures(records, training_records, figures_dir: Path,
                              ("sample_efficiency_ppo_only.png", "steps"),
                              ("sample_efficiency_total_interactions.png", "total")):
         fig, ax = plt.subplots(figsize=(6.4, 4.0))
-        for color, pipeline in zip(colors, PRIMARY_PIPELINES):
+        for color, pipeline in zip(colors, pipelines):
             rows = [row for row in training_records if row.get("pipeline") == pipeline]
             if not rows:
                 continue
@@ -330,8 +362,9 @@ def _write_figures(records, training_records, figures_dir: Path,
                 x = steps
                 xlabel = "PPO environment steps"
             else:
-                shift = (reward_design_steps if pipeline == "onto_no_se" else
-                         estimator_warmup_steps if pipeline == "shin_se" else 0)
+                shift = (reward_design_steps if (pipeline == "onto_no_se"
+                         or "rgat" in pipeline or "pbrs" in pipeline) else
+                         estimator_warmup_steps if pipeline.startswith("shin_se") else 0)
                 x = steps + shift
                 xlabel = "Total environment steps (pre-training + PPO)"
             ax.plot(x, success, color=color, label=pipeline)
@@ -344,17 +377,25 @@ def _write_figures(records, training_records, figures_dir: Path,
     index = {(_replicate(row), row["pipeline"], row["scenario"], int(row["seed"])): row
              for row in records}
     labels, values = [], []
-    for baseline in ("shin_se", "no_se"):
+    proposed = ("onto_rgat_adaptive_weight_no_se"
+                if "onto_rgat_adaptive_weight_no_se" in pipelines else "onto_no_se")
+    baselines = ([name for name in (
+        "shin_se_fixed", "shin_se_rgat_weight", "no_se_fixed",
+        "onto_rgat_potential_pbrs_no_se") if name in pipelines]
+        if proposed != "onto_no_se" else ["shin_se", "no_se"])
+    for baseline in baselines:
         diff = []
         for key, row in index.items():
-            if key[1] != "onto_no_se":
+            if key[1] != proposed:
                 continue
             other = index.get((key[0], baseline, key[2], key[3]))
             if other is not None:
                 diff.append(float(row["paper_success"]) - float(other["paper_success"]))
-        labels.append(f"Onto-NoSE - {baseline}")
+        labels.append(f"{proposed} - {baseline}")
         values.append(float(np.mean(diff)) if diff else np.nan)
-    ax.bar(labels, values, color=colors[1:])
+    ax.bar(labels, values, color=[colors[(i + 1) % len(colors)]
+                                  for i in range(len(labels))])
+    ax.tick_params(axis="x", labelrotation=18)
     ax.axhline(0.0, color="black", linewidth=.8)
     ax.set_ylabel("Paired success difference")
     save("paired_success_difference.png")
@@ -380,6 +421,26 @@ def write_three_pipeline_outputs(records, training_records, output_dir, *,
         estimator_warmup_steps=estimator_warmup_steps)
     table = _publication_table(summary, efficiency)
     _write_csv(evaluation_dir / "paired_summary.csv", summary)
+    nominal = {(row["pipeline"]): row for row in summary
+               if row["scenario"] == "training_random_walk"}
+    degradation = []
+    for row in summary:
+        reference = nominal.get(row["pipeline"])
+        if reference is None:
+            continue
+        degradation.append({
+            "pipeline": row["pipeline"], "scenario": row["scenario"],
+            "success_rate_degradation": (
+                float(reference["paper_success_mean"])
+                - float(row["paper_success_mean"])),
+            "touchdown_error_increase_m": (
+                float(row["touchdown_lateral_error_mean"])
+                - float(reference["touchdown_lateral_error_mean"])),
+            "fov_loss_increase": (
+                float(row["fov_loss_fraction_mean"])
+                - float(reference["fov_loss_fraction_mean"])),
+        })
+    _write_csv(evaluation_dir / "disturbance_degradation.csv", degradation)
     _write_csv(evaluation_dir / "confidence_intervals.csv", paired)
     _write_csv(evaluation_dir / "paired_differences.csv", raw_paired)
     _write_csv(tables_dir / "primary_comparison.csv", table)
@@ -393,4 +454,5 @@ def write_three_pipeline_outputs(records, training_records, output_dir, *,
         estimator_warmup_episodes=estimator_warmup_episodes,
         estimator_warmup_steps=estimator_warmup_steps)
     return {"summary": summary, "paired": paired,
+            "disturbance_degradation": degradation,
             "sample_efficiency": efficiency, "figures": figures}

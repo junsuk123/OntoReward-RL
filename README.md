@@ -33,6 +33,8 @@ ontology/R-GAT reward 방식을 포함한다.
 ```bash
 ./run.sh --mode quick --headless
 ./run.sh --mode full --pipelines shin_se no_se onto_no_se
+./run.sh --mode quick \
+  --config Ontology_RGAT_UAV_RL_ISAAC_PX4/config/experiments/adaptive_reward_weight_comparison.yaml
 ./run.sh --mode full --training-replicate 1 \
   --train-episodes 40960 --rgat-data-episodes 400
 ./run.sh --help
@@ -49,6 +51,16 @@ result를 수정하기 전에 종료된다. 호환 checkpoint와 완료 CSV row�
 | `no_se` | 없음 | 없음 | 없음 |
 | `onto_no_se` | 없음 | 없음 | 동결 direct R-GAT PBRS |
 
+새 제안 실험은 기존 3개 arm을 삭제하지 않고 별도 설정으로 실행한다.
+
+| 명시적 모드 | 보상 함수 | Active perception |
+|---|---|---:|
+| `shin_se_fixed` | 고정 Shin 5성분 | 있음 |
+| `shin_se_rgat_weight` | 동결 R-GAT 상태 적응 5성분 | 있음 |
+| `no_se_fixed` | 고정 Shin 5성분 | 없음 |
+| `onto_rgat_adaptive_weight_no_se` | 동결 R-GAT 상태 적응 5성분, PBRS 없음 | 없음 |
+| `onto_rgat_potential_pbrs_no_se` | 보존된 scalar `Phi(G)` PBRS | 없음 |
+
 세 pipeline은 512×320 mono camera, 동결 6-keypoint encoder, 512-unit LSTM,
 256-D latent, `y[6:256]` actor slice, 7-D UAV proprioception, 4-D velocity/yaw-rate
 action, PX4 controller, PPO 설정, curriculum과 paired seed를 공유한다. Simulator
@@ -64,6 +76,12 @@ truth는 asymmetric critic, reset, terminal label과 physical evaluation에만 �
 | Ontology shaping | 없음 | 없음 | `lambda [gamma Phi(G_t+1)-Phi(G_t)]` |
 | 상수 | `alpha=0.1`, `beta=1`, `tau=0.01` | 해당 없음 | `lambda=1`, `gamma=0.99` |
 | Reward 정보 경계 | 실제 상대 상태와 privileged estimator loss | 실제 상대 상태 | Estimator-free semantic graph와 terminal event |
+
+적응 가중치 arm의 무가중 성분은 동일한 Table-III 순수 함수를 공유한다. Baseline
+가중치 `[1,1,0.5,1,2]`와 합 5.5를 보존하면서 `w(G_t)`만 상태에 따라 바뀐다.
+Terminal `+10/-10`은 shaping을 대체하며 제안 no-SE arm에는 active-perception이나
+PBRS가 없다. 자세한 수식과 누출/동결 계약은
+[상태 적응형 보상 가중치 문서](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/ONTOLOGY_RGAT_ADAPTIVE_REWARD_WEIGHTING.md)를 참고한다.
 
 자세한 항별 수식은
 [프로젝트 guide의 보상함수 비교표](Ontology_RGAT_UAV_RL_ISAAC_PX4/README.md)를 참고한다.
@@ -107,6 +125,7 @@ clearance 1.00 m, waypoint 최대 elevation error 0.001 m를 측정했다.
 - [문서 안내](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/README.md)
 - [시스템 개요](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/SYSTEM_OVERVIEW.md)
 - [3개 파이프라인 통제 비교](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/THREE_PIPELINE_COMPARISON.md)
+- [상태 적응형 보상 가중치](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/ONTOLOGY_RGAT_ADAPTIVE_REWARD_WEIGHTING.md)
 - [운영 및 fault 진단](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/OPERATIONS.md)
 - [아키텍처와 interface](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/ARCHITECTURE.md)
 - [논문-코드 baseline](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/SHIN2026_BASELINE.md)

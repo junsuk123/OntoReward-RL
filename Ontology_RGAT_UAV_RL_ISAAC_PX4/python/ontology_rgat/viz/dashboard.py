@@ -151,7 +151,10 @@ border:1px solid var(--line)}.gate.pass{border-left:4px solid #77AC30}.gate.fail
 // MATLAB default color order (R2025a), shared with the PNG exporters.
 const PALETTE=['#0072BD','#D95319','#EDB120','#7E2F8E','#77AC30','#4DBEEE','#A2142F'];
 const BENCHMARK_METHODS=['shin_se','no_se','onto_no_se','shin2026','sparse',
-  'manual_no_active','ontoreward','ontoreward_plus_active'];
+  'manual_no_active','ontoreward','ontoreward_plus_active',
+  'shin_se_fixed','shin_se_rgat_weight','no_se_fixed',
+  'onto_rgat_adaptive_weight_no_se','onto_rgat_potential_pbrs_no_se',
+  'mlp_adaptive_weight_no_se','gat_adaptive_weight_no_se','rgat_adaptive_weight_no_se'];
 const BENCHMARK_TRAIN=BENCHMARK_METHODS.map(x=>'benchmark_train_'+x);
 const BENCHMARK_EVAL=BENCHMARK_METHODS.map(x=>'benchmark_eval_'+x);
 const CARDS=[
@@ -176,6 +179,13 @@ const CARDS=[
  {id:'benchmark_active_saturation',view:'benchmark',title:'Active-reward saturation rate',
   series:BENCHMARK_TRAIN,x:'episode',y:'active_reward_saturation_fraction',
   smooth:12,ymin:0,ymax:1},
+ {id:'benchmark_adaptive_weights',view:'benchmark',
+  title:'Frozen adaptive reward weights (episode mean)',series:BENCHMARK_TRAIN,
+  x:'episode',y:['adaptive_weight_1_mean','adaptive_weight_2_mean',
+   'adaptive_weight_3_mean','adaptive_weight_4_mean','adaptive_weight_5_mean'],
+  labels:['lateral','vertical','vz safety','undershoot','yaw']},
+ {id:'benchmark_adaptive_latency',view:'benchmark',title:'Adaptive R-GAT inference latency',
+  series:BENCHMARK_TRAIN,x:'episode',y:'adaptive_rgat_inference_latency_ms_mean',smooth:12},
  {id:'benchmark_policy_loss',view:'benchmark',title:'Recurrent PPO policy loss',
   series:BENCHMARK_TRAIN,x:'episode',y:'ppo_loss',smooth:12},
  {id:'benchmark_value_loss',view:'benchmark',title:'Asymmetric critic value loss',
@@ -283,6 +293,16 @@ const LABELS={ppo_manual:'Manual',ppo_proposed:'Ontology-RGAT',rgat:'R-GAT',
  benchmark_train_onto_no_se:'C · Onto No SE',
  benchmark_eval_shin_se:'A · Shin SE',benchmark_eval_no_se:'B · No SE',
  benchmark_eval_onto_no_se:'C · Onto No SE',
+ benchmark_train_shin_se_fixed:'Shin SE · fixed',
+ benchmark_train_shin_se_rgat_weight:'Shin SE · R-GAT weight',
+ benchmark_train_no_se_fixed:'No SE · fixed',
+ benchmark_train_onto_rgat_adaptive_weight_no_se:'Onto R-GAT adaptive · no SE',
+ benchmark_train_onto_rgat_potential_pbrs_no_se:'Onto R-GAT potential PBRS · no SE',
+ benchmark_eval_shin_se_fixed:'Shin SE · fixed',
+ benchmark_eval_shin_se_rgat_weight:'Shin SE · R-GAT weight',
+ benchmark_eval_no_se_fixed:'No SE · fixed',
+ benchmark_eval_onto_rgat_adaptive_weight_no_se:'Onto R-GAT adaptive · no SE',
+ benchmark_eval_onto_rgat_potential_pbrs_no_se:'Onto R-GAT potential PBRS · no SE',
  benchmark_train_shin2026:'Shin + active',benchmark_train_sparse:'Sparse',
  benchmark_train_manual_no_active:'Shin − active',benchmark_train_ontoreward:'OntoReward',
  benchmark_train_ontoreward_plus_active:'OntoReward + active',
@@ -846,7 +866,7 @@ function applyProfile(state){
   }
   if(profile==='benchmark'){
     const pipeline=state.scalars.current_pipeline||state.scalars.current_method||'';
-    const estimator=pipeline==='shin_se'||pipeline==='shin2026';
+    const estimator=pipeline.startsWith('shin_se')||pipeline==='shin2026';
     for(const id of ['benchmark_position_rmse','benchmark_velocity_rmse','benchmark_aux',
                      'benchmark_active_saturation',
                      'benchmark_live_state','benchmark_live_error',
@@ -854,9 +874,13 @@ function applyProfile(state){
                      'benchmark_eval_visual_loss']){
       const el=document.getElementById('card-'+id);if(el)el.hidden=!estimator;
     }
-    const ontology=pipeline==='onto_no_se';
+    const ontology=pipeline==='onto_no_se'||pipeline.includes('rgat')||pipeline.includes('pbrs');
     for(const id of ['benchmark_live_semantic','benchmark_live_phi']){
       const el=document.getElementById('card-'+id);if(el)el.hidden=!ontology;
+    }
+    const adaptive=pipeline.includes('adaptive_weight')||pipeline==='shin_se_rgat_weight';
+    for(const id of ['benchmark_adaptive_weights','benchmark_adaptive_latency']){
+      const el=document.getElementById('card-'+id);if(el)el.hidden=!adaptive;
     }
   }
   return profile;

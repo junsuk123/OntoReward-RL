@@ -14,17 +14,16 @@ from ..semantic import OntologyGraph
 from .layers import RelationalGraphAttention
 from .topology import Topology
 
-__all__ = ["RGATPotential", "build_potential", "save_potential", "load_potential"]
+__all__ = ["RGATEncoder", "PotentialHead", "RGATPotential", "build_potential",
+           "save_potential", "load_potential"]
 
 
-class RGATPotential(nn.Module):
-    """Bounded potential ``Phi(G)`` in ``[-1, 1]`` for one graph or a batch.
+class RGATEncoder(nn.Module):
+    """공통 2계층 관계 그래프 인코더.
 
-    Two relational attention layers with a ``tanh`` between them, a residual
-    around the second, and a linear read-out from the goal node. The residual
-    is why the second layer must return ``hidden_dim``, which rules out
-    ``head_aggregation='concat'`` with more than one head unless the residual
-    is switched off.
+    기존 potential 모델의 ``layer1``/``layer2`` 파라미터 경로를 그대로
+    유지한다. 따라서 이 리팩터링 이전 체크포인트도 동일한 state dict로
+    읽을 수 있고, 적응 보상 가중치 모델은 같은 구현을 재사용한다.
     """
 
     def __init__(self, topology: Topology, in_dim: int, hidden_dim: int, *,
@@ -45,14 +44,63 @@ class RGATPotential(nn.Module):
                 f"return the same width, got {self.layer1.out_dim} and "
                 f"{self.layer2.out_dim}. Use head_aggregation='mean' or set "
                 "cfg.rgat.residual=False.")
+
+    @property
+    def out_dim(self) -> int:
+        return int(self.layer2.out_dim)
+
+    def reset_encoder_parameters(self, generator: torch.Generator, *,
+                                 scheme: str = "matlab", scale: float = 0.12) -> None:
+        self.layer1.reset_parameters(generator, scheme=scheme, scale=scale)
+        self.layer2.reset_parameters(generator, scheme=scheme, scale=scale)
+
+    def forward(self, X: torch.Tensor, *, return_attention: bool = False):
+        if X.dim() == 2:
+            X = X.unsqueeze(0)
+        h1 = torch.tanh(self.layer1(X))
+        if return_attention:
+            h2, attention = self.layer2(h1, return_attention=True)
+        else:
+            h2 = self.layer2(h1)
+        encoded = torch.tanh(h2 + h1) if self.residual else torch.tanh(h2)
+        return (encoded, attention) if return_attention else encoded
+
+
+class PotentialHead(nn.Module):
+    """목표 노드 임베딩을 bounded scalar potential로 읽는 무상태 head.
+
+    학습 파라미터는 하위 호환성을 위해 계속 ``RGATPotential.w_out``과
+    ``b_out``에 둔다. head의 계산 책임만 분리했으므로 기존 state-dict의
+    키와 PBRS 수치가 바뀌지 않는다.
+    """
+
+    def forward(self, goal_embedding: torch.Tensor, weight: torch.Tensor,
+                bias: torch.Tensor) -> torch.Tensor:
+        return torch.tanh(goal_embedding @ weight.t() + bias).squeeze(-1)
+
+
+class RGATPotential(RGATEncoder):
+    """Bounded potential ``Phi(G)`` in ``[-1, 1]`` for one graph or a batch.
+
+    Two relational attention layers with a ``tanh`` between them, a residual
+    around the second, and a linear read-out from the goal node. The residual
+    is why the second layer must return ``hidden_dim``, which rules out
+    ``head_aggregation='concat'`` with more than one head unless the residual
+    is switched off.
+    """
+
+    def __init__(self, topology: Topology, in_dim: int, hidden_dim: int, *,
+                 relation_dim: int = 6, residual: bool = True, **layer_kwargs: Any):
+        super().__init__(topology, in_dim, hidden_dim, relation_dim=relation_dim,
+                         residual=residual, **layer_kwargs)
         self.w_out = nn.Parameter(torch.empty(1, self.layer2.out_dim))
         self.b_out = nn.Parameter(torch.zeros(1))
+        self.potential_head = PotentialHead()
 
     def reset_parameters(self, seed: int, scheme: str = "matlab",
                          scale: float = 0.12) -> None:
         generator = torch.Generator(device="cpu").manual_seed(int(seed))
-        self.layer1.reset_parameters(generator, scheme=scheme, scale=scale)
-        self.layer2.reset_parameters(generator, scheme=scheme, scale=scale)
+        self.reset_encoder_parameters(generator, scheme=scheme, scale=scale)
         with torch.no_grad():
             if scheme == "matlab":
                 self.w_out.normal_(0.0, 1.0, generator=generator).mul_(scale)
@@ -63,13 +111,9 @@ class RGATPotential(nn.Module):
 
     def forward(self, X: torch.Tensor) -> torch.Tensor:
         """``X`` is ``[batch, nodes, in_dim]`` (or one graph); returns ``[batch]``."""
-        if X.dim() == 2:
-            X = X.unsqueeze(0)
-        h1 = torch.tanh(self.layer1(X))
-        h2 = self.layer2(h1)
-        h2 = torch.tanh(h2 + h1) if self.residual else torch.tanh(h2)
-        goal = h2[:, self.topology.goal_node, :]
-        return torch.tanh(goal @ self.w_out.t() + self.b_out).squeeze(-1)
+        encoded = super().forward(X)
+        goal = encoded[:, self.topology.goal_node, :]
+        return self.potential_head(goal, self.w_out, self.b_out)
 
     # -------------------------------------------------------------- inference
     @torch.no_grad()
@@ -109,8 +153,7 @@ class RGATPotential(nn.Module):
         """
         device = self.w_out.device
         X = torch.as_tensor(graph.X.T, dtype=self.w_out.dtype, device=device).unsqueeze(0)
-        h1 = torch.tanh(self.layer1(X))
-        _, alpha = self.layer2(h1, return_attention=True)
+        _, alpha = super().forward(X, return_attention=True)
         edge_alpha = alpha.mean(dim=(0, 1)).cpu().numpy()   # mean over batch and heads
         rel = np.asarray(graph.rel)
         n_rel = len(graph.relation_names)

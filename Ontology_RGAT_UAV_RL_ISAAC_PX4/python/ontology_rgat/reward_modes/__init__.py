@@ -11,6 +11,12 @@ from .contexts import (NoSERewardContext, OntologyRewardContext,
 from .shin2026 import (ShinReward, ShinRewardConfig,
                        active_perception_approximation, active_perception_reward)
 from .sparse import sparse_terminal_reward
+from .adaptive_weight import (
+    BASELINE_REWARD_WEIGHTS, DEFAULT_COMPONENT_SCALES,
+    REWARD_COMPONENT_NAMES, TOTAL_REWARD_WEIGHT, AdaptiveRewardConfig,
+    AdaptiveWeightReward, FixedBaselineRewardWeights, RewardComponentNormalizer,
+    constrained_adaptive_weights, optional_estimation_error_component,
+    shin_reward_components)
 
 __all__ = ["OntoRewardPBRS", "FrozenControlledPotential",
            "NoSERewardContext", "OntologyRewardContext",
@@ -19,4 +25,10 @@ __all__ = ["OntoRewardPBRS", "FrozenControlledPotential",
            "load_rollout_dataset", "merge_rollout_datasets",
            "save_rollout_dataset", "ShinReward", "ShinRewardConfig",
            "active_perception_approximation", "active_perception_reward",
-           "sparse_terminal_reward"]
+           "sparse_terminal_reward", "BASELINE_REWARD_WEIGHTS",
+           "DEFAULT_COMPONENT_SCALES", "REWARD_COMPONENT_NAMES",
+           "TOTAL_REWARD_WEIGHT", "AdaptiveRewardConfig",
+           "AdaptiveWeightReward", "RewardComponentNormalizer",
+           "FixedBaselineRewardWeights",
+           "constrained_adaptive_weights", "optional_estimation_error_component",
+           "shin_reward_components"]

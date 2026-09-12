@@ -9,9 +9,15 @@ import yaml
 
 
 PRIMARY_PIPELINES = ("shin_se", "no_se", "onto_no_se")
+ADAPTIVE_PIPELINES = (
+    "shin_se_fixed", "shin_se_rgat_weight", "no_se_fixed",
+    "onto_rgat_adaptive_weight_no_se", "onto_rgat_potential_pbrs_no_se",
+    "mlp_adaptive_weight_no_se", "gat_adaptive_weight_no_se",
+    "rgat_adaptive_weight_no_se",
+)
 LEGACY_METHODS = ("shin2026", "sparse", "manual_no_active", "ontoreward",
                   "ontoreward_plus_active")
-METHODS = PRIMARY_PIPELINES + LEGACY_METHODS
+METHODS = PRIMARY_PIPELINES + ADAPTIVE_PIPELINES + LEGACY_METHODS
 
 
 def _merge(base: dict, overlay: dict) -> dict:

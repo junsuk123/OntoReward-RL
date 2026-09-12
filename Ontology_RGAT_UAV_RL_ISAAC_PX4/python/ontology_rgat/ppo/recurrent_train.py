@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import csv
+import json
 import math
 from pathlib import Path
 from typing import Callable
@@ -15,11 +16,17 @@ from ..curriculum import PlatformMotionCurriculum
 from ..mathx import quat_to_euler_zyx
 from ..perception import (SEMANTIC_FEATURE_NAMES, grayscale_image_tensor,
                           semantic_graph, semantic_observation)
-from ..pipelines import get_pipeline, primary_pipeline_ids
-from ..reward_modes import (OntoRewardPBRS, ShinReward, ShinRewardConfig,
+from ..pipelines import (available_pipeline_ids, get_pipeline,
+                         primary_pipeline_ids)
+from ..rgat.adaptive_model import adaptive_reward_graph
+from ..reward_modes import (AdaptiveRewardConfig, AdaptiveWeightReward,
+                            FixedBaselineRewardWeights,
+                            OntoRewardPBRS, ShinReward, ShinRewardConfig,
                             NoSERewardContext, OntologyRewardContext,
                             ShinSERewardContext, TerminalFlags,
                             active_perception_reward, sparse_terminal_reward)
+from ..reward_modes.adaptive_weight import shin_reward_components
+from ..reward_modes.adaptive_weight import RewardComponentNormalizer
 from .recurrent import PipelineActorCritic, recurrent_ppo_loss
 
 
@@ -48,9 +55,19 @@ def _terminal_flags(following) -> TerminalFlags:
         terminal=following.terminal)
 
 
+def _transition_result_vertical_velocity(previous, following) -> float:
+    """실제 전이 결과 속도. 최소 legacy test double만 이전 값을 fallback한다."""
+    actor = getattr(following, "actor", None)
+    if actor is None:  # 이전 API의 단위-test fixture 호환성
+        actor = previous.actor
+    return float(actor.body_velocity[2])
+
+
 def _reward(method, previous, following, estimate, next_estimate, potential,
             *, gamma=0.99, shaping_lambda=1.0,
             current_semantic_graph=None, next_semantic_graph=None,
+            current_adaptive_graph=None,
+            reward_normalizer=None,
             estimation_loss_fn=None):
     """Dispatch reward through the selected pipeline's narrow data contract."""
     terminal = _terminal_flags(following)
@@ -78,6 +95,24 @@ def _reward(method, previous, following, estimate, next_estimate, potential,
     if method == "sparse":
         value = sparse_terminal_reward(**terminal.as_kwargs())
         return value, {"task": value}, next_loss
+    if (spec is not None and spec.name in {"shin_se_fixed", "no_se_fixed"}
+            and reward_normalizer is not None):
+        if current_adaptive_graph is None:
+            raise ValueError("normalized fixed reward requires current adaptive graph")
+        value, parts = AdaptiveWeightReward(
+            FixedBaselineRewardWeights(reward_normalizer),
+            config=AdaptiveRewardConfig(
+                active_enabled=spec.active_perception_enabled),
+            normalizer=reward_normalizer)(
+                current_adaptive_graph,
+                previous.critic.true_relative_state,
+                following.critic.true_relative_state,
+                following.command,
+                    next_uav_vertical_velocity=_transition_result_vertical_velocity(
+                        previous, following),
+                next_estimation_loss=next_loss,
+                **terminal.as_kwargs())
+        return value, parts, next_loss
     if spec is not None and spec.reward_mode in {
             "shin_table_active", "shin_table_no_active"}:
         if spec.active_perception_enabled:
@@ -85,14 +120,16 @@ def _reward(method, previous, following, estimate, next_estimate, potential,
                 current_training_relative_state=previous.critic.true_relative_state,
                 next_training_relative_state=following.critic.true_relative_state,
                 next_estimation_loss=float(next_loss), action=following.command,
-                uav_vertical_velocity=float(previous.actor.body_velocity[2]),
+                uav_vertical_velocity=_transition_result_vertical_velocity(
+                    previous, following),
                 terminal=terminal)
         else:
             context = NoSERewardContext(
                 current_training_relative_state=previous.critic.true_relative_state,
                 next_training_relative_state=following.critic.true_relative_state,
                 action=following.command,
-                uav_vertical_velocity=float(previous.actor.body_velocity[2]),
+                uav_vertical_velocity=_transition_result_vertical_velocity(
+                    previous, following),
                 terminal=terminal)
         value, parts = ShinReward(ShinRewardConfig(
             active_enabled=spec.active_perception_enabled))(
@@ -104,6 +141,26 @@ def _reward(method, previous, following, estimate, next_estimate, potential,
                                       else None),
                 **context.terminal.as_kwargs())
         return value, parts, next_loss
+    if spec is not None and spec.reward_mode == "adaptive_weight":
+        if current_adaptive_graph is None:
+            raise ValueError("adaptive reward requires the current semantic ontology graph")
+        if potential is None or not hasattr(potential, "normalizer"):
+            raise ValueError("adaptive reward requires a frozen weight artifact")
+        reward = AdaptiveWeightReward(
+            potential,
+            config=AdaptiveRewardConfig(
+                active_enabled=spec.active_perception_enabled),
+            normalizer=potential.normalizer)
+        value, parts = reward(
+            current_adaptive_graph,
+            previous.critic.true_relative_state,
+            following.critic.true_relative_state,
+            following.command,
+            next_uav_vertical_velocity=_transition_result_vertical_velocity(
+                previous, following),
+            next_estimation_loss=next_loss,
+            **terminal.as_kwargs())
+        return value, parts, next_loss
     if method in {"shin2026", "manual_no_active"}:
         # Table III uses the un-tilded physical relative geometry. Only the
         # active-perception term is coupled to the tilded estimator output.
@@ -113,7 +170,8 @@ def _reward(method, previous, following, estimate, next_estimate, potential,
             active_enabled=method == "shin2026"))(
                 previous.critic.true_relative_state,
                 following.critic.true_relative_state, following.command,
-                drone_vertical_velocity=previous.actor.body_velocity[2],
+                drone_vertical_velocity=_transition_result_vertical_velocity(
+                    previous, following),
                 next_estimation_loss=next_loss, **terminal.as_kwargs())
         return value, parts, next_loss
     if spec is not None and spec.reward_mode == "semantic_pbrs":
@@ -157,6 +215,16 @@ def _semantic_from_output(output, proprioception, state, *, previous, dt):
         keypoint_visibility=output.keypoint_visibility[0, -1].detach().cpu().numpy(),
         battery_reserve=_battery_reserve(state), previous=previous, dt=dt)
     return observation, semantic_graph(observation)
+
+
+def _landing_phase(observation) -> str:
+    if observation.visual_loss_risk > 0.0 or observation.visible_keypoint_fraction < 0.5:
+        return "recovery"
+    if observation.apparent_target_scale < 0.25:
+        return "approach"
+    if observation.apparent_target_scale < 0.70:
+        return "descent"
+    return "touchdown"
 
 
 def visual_recovery_metrics(rows, *, initial_in_fov: bool, success: bool,
@@ -241,14 +309,15 @@ def collect_episode(env, model: PipelineActorCritic, method: str, seed: int,
                     *, curriculum=1.0, potential=None, deterministic=False,
                     gamma=0.99, shaping_lambda=1.0,
                     scenario="training_random_walk", monitor=None,
-                    phase="evaluation", action_transform=None):
+                    phase="evaluation", action_transform=None,
+                    reward_normalizer=None):
     """Collect one real episode while keeping actor/reward contracts separate."""
     model_spec = model.pipeline_spec
     try:
         requested_spec = get_pipeline(method)
     except ValueError:
         requested_spec = None
-    if (method in primary_pipeline_ids() and requested_spec is not None
+    if (method in available_pipeline_ids() and requested_spec is not None
             and requested_spec.name != model_spec.name):
         raise ValueError(
             f"model pipeline {model_spec.name} cannot run reward pipeline {method}")
@@ -257,7 +326,6 @@ def collect_episode(env, model: PipelineActorCritic, method: str, seed: int,
         "detail") or {})
     domain_randomization = reset_detail.get("domain_randomization") or {}
     initial_battery = dict(_battery_sample(step.state))
-    initial_in_fov = bool(step.pad_in_fov)
     initial_in_fov = bool(step.pad_in_fov)
     action_scale = float(env.adapter.controller.action_scale)
     if monitor is not None:
@@ -280,6 +348,7 @@ def collect_episode(env, model: PipelineActorCritic, method: str, seed: int,
         semantic, graph = _semantic_from_output(
             output, step.actor.proprioception, step.state,
             previous=None, dt=float(env.cfg.sim.dt))
+        adaptive_graph = adaptive_reward_graph(semantic)
         while True:
             mean = output.action_mean[:, -1]
             std = output.action_std[:, -1]
@@ -307,6 +376,7 @@ def collect_episode(env, model: PipelineActorCritic, method: str, seed: int,
             next_semantic, next_graph = _semantic_from_output(
                 next_output, following.actor.proprioception, following.state,
                 previous=semantic, dt=float(env.cfg.sim.dt))
+            next_adaptive_graph = adaptive_reward_graph(next_semantic)
             estimate = (None if output.relative_state is None else
                         output.relative_state[0, -1].cpu().numpy())
             next_estimate = (None if next_output.relative_state is None else
@@ -315,6 +385,8 @@ def collect_episode(env, model: PipelineActorCritic, method: str, seed: int,
                 method, step, following, estimate, next_estimate, potential,
                 gamma=gamma, shaping_lambda=shaping_lambda,
                 current_semantic_graph=graph, next_semantic_graph=next_graph,
+                current_adaptive_graph=adaptive_graph,
+                reward_normalizer=reward_normalizer,
                 estimation_loss_fn=(
                     None if model.relative_state_head is None else
                     model.relative_state_head.numpy_loss))
@@ -324,9 +396,9 @@ def collect_episode(env, model: PipelineActorCritic, method: str, seed: int,
                 "image": np.asarray(step.actor.image, dtype=np.uint8),
                 "proprioception": step.actor.proprioception.copy(),
                 "truth": step.critic.true_relative_state.copy(),
+                "next_truth": following.critic.true_relative_state.copy(),
                 "pre_squash": pre_squash.cpu().numpy()[0],
                 "action": action.cpu().numpy()[0],
-                "command": following.command.copy(),
                 "command": following.command.copy(),
                 "log_prob": float(log_prob.item()),
                 "value": float(output.value.item()), "reward": float(reward),
@@ -336,8 +408,19 @@ def collect_episode(env, model: PipelineActorCritic, method: str, seed: int,
                     "remaining_j", 0.0)),
                 "reward_parts": parts,
                 "semantic_graph_X": graph.X.copy(),
+                "adaptive_graph_X": adaptive_graph.X.copy(),
+                "rho_raw": shin_reward_components(
+                    step.critic.true_relative_state,
+                    following.critic.true_relative_state,
+                    following.command,
+                    next_uav_vertical_velocity=float(
+                        following.actor.body_velocity[2])),
+                "next_uav_vertical_velocity": float(
+                    following.actor.body_velocity[2]),
                 "semantic_features": semantic.feature_vector.copy(),
                 "next_semantic_features": next_semantic.feature_vector.copy(),
+                "phase": str(phase), "scenario": str(scenario),
+                "landing_phase": _landing_phase(semantic),
                 "hidden_h": hidden[0].cpu().numpy(),
                 "hidden_c": hidden[1].cpu().numpy(),
             }
@@ -362,6 +445,7 @@ def collect_episode(env, model: PipelineActorCritic, method: str, seed: int,
             hidden = output.hidden
             step, output = following, next_output
             semantic, graph = next_semantic, next_graph
+            adaptive_graph = next_adaptive_graph
             if following.terminal:
                 break
     env.finish_episode()
@@ -374,11 +458,15 @@ def collect_episode(env, model: PipelineActorCritic, method: str, seed: int,
         "paper_success": float(step.physical_contact),
         "strict_success": float(step.strict_success),
         "crash_failure": float(step.crash),
+        "collision_rate": float(step.crash),
+        "excessive_drift_rate": float(step.excessive_drift),
         "failure": float(not step.physical_contact),
         "touchdown_lateral_error": float(np.linalg.norm(truth_final[:2])),
         "touchdown_vertical_velocity": float(step.actor.body_velocity[2]),
         "touchdown_relative_horizontal_velocity": float(np.linalg.norm(truth_final[3:5])),
         "touchdown_tilt": float(np.linalg.norm(rpy[:2])),
+        "touchdown_roll": float(rpy[0]),
+        "touchdown_pitch": float(rpy[1]),
         "touchdown_angular_rate": float(np.linalg.norm(state["angular_velocity"])),
         "fov_loss_fraction": float(np.mean([not row["in_fov"] for row in rows])),
         # Reward-independent physical tracking error, available to every arm
@@ -396,20 +484,22 @@ def collect_episode(env, model: PipelineActorCritic, method: str, seed: int,
         "battery_depleted": float(step.battery_depleted),
         "steps": len(rows), "status": ("success" if step.physical_contact else
                                          "battery_depleted" if step.battery_depleted else
+                                         "collision" if step.crash else
+                                         "excessive_drift" if step.excessive_drift else
                                          "timeout" if step.timeout else "failure"),
-        "pipeline": (model_spec.name if method in primary_pipeline_ids()
+        "pipeline": (model_spec.name if method in available_pipeline_ids()
                      else str(method)),
         "state_estimation_enabled": bool(model_spec.state_estimation_enabled),
         "active_perception_enabled": bool(
             model_spec.active_perception_enabled
-            if method in primary_pipeline_ids()
+            if method in available_pipeline_ids()
             else method in {"shin2026", "ontoreward_plus_active"}),
         "ontology_enabled": bool(
             model_spec.ontology_enabled
-            if method in primary_pipeline_ids()
+            if method in available_pipeline_ids()
             else method.startswith("ontoreward")),
         "reward_source": (model_spec.reward_mode
-                          if method in primary_pipeline_ids() else str(method)),
+                          if method in available_pipeline_ids() else str(method)),
         "rgat_design_id": (getattr(potential, "design_id", "")
                            if (model_spec.ontology_enabled
                                or method.startswith("ontoreward")) else ""),
@@ -472,6 +562,17 @@ def collect_episode(env, model: PipelineActorCritic, method: str, seed: int,
             "visual_loss_estimation_error": (
                 float(np.mean(lost_errors)) if lost_errors else 0.0),
         })
+    if rows and "weight_1" in rows[0].get("reward_parts", {}):
+        for index in range(1, 6):
+            metric[f"adaptive_weight_{index}_mean"] = float(np.mean([
+                row["reward_parts"].get(f"weight_{index}", 0.0) for row in rows]))
+            metric[f"adaptive_component_{index}_cumulative"] = float(np.sum([
+                row["reward_parts"].get(f"weighted_{index}", 0.0) for row in rows]))
+        metric["adaptive_rgat_inference_latency_ms_mean"] = float(np.mean([
+            row["reward_parts"].get("rgat_inference_latency_ms", 0.0)
+            for row in rows]))
+        metric["adaptive_rgat_parameter_count"] = int(
+            getattr(potential, "parameter_count", 0))
     return rows, metric
 
 
@@ -779,10 +880,25 @@ def train_live(env_factory: Callable, model, method, seeds, output_dir,
                monitor=None, restart_incompatible=False):
     ppo = ppo or {}
     curriculum = PlatformMotionCurriculum(**(curriculum_config or {}))
+    if hasattr(potential, "assert_frozen"):
+        potential.assert_frozen()
     optimizer = torch.optim.Adam(model.parameters(), lr=float(ppo.get("learning_rate", 2e-4)))
     output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
     checkpoint_path = output_dir / f"{method}.pt"
     history_path = output_dir / f"{method}_training.csv"
+    reward_trace_path = output_dir / f"{method}_reward_steps.jsonl"
+    logged_reward_episodes = set()
+    if reward_trace_path.is_file():
+        for line in reward_trace_path.read_text(encoding="utf-8").splitlines():
+            try:
+                record = json.loads(line)
+                if bool(record.get("episode_complete", False)):
+                    logged_reward_episodes.add(int(record["episode"]))
+            except (ValueError, KeyError, json.JSONDecodeError):
+                # 마지막 줄이 중단 중 잘렸다면 안전하게 무시한다. 완성된
+                # checkpoint/history가 권위이며 다음 commit 때 다시 쓴다.
+                continue
     history = []
     completed = 0
     model_spec = getattr(model, "pipeline_spec", None)
@@ -793,6 +909,12 @@ def train_live(env_factory: Callable, model, method, seeds, output_dir,
             model_spec = get_pipeline("shin_se")
     warmup_episodes = (max(0, int(ppo.get("perception_warmup_episodes", 0)))
                        if model_spec.state_estimation_enabled else 0)
+    reward_normalizer = None
+    if ppo.get("reward_component_scales") is not None:
+        reward_normalizer = RewardComponentNormalizer(
+            scales=tuple(float(value) for value in ppo["reward_component_scales"]),
+            exact_paper_raw=bool(ppo.get("exact_paper_raw_reward", False)),
+            source="shared_runtime_configuration")
     if checkpoint_path.is_file():
         saved = torch.load(checkpoint_path, map_location=model.device, weights_only=False)
         incompatibility = None
@@ -898,6 +1020,7 @@ def train_live(env_factory: Callable, model, method, seeds, output_dir,
                 env, model, method, seed, curriculum=c, potential=potential,
                 gamma=float(ppo.get("gamma", .99)),
                 shaping_lambda=float(ppo.get("shaping_lambda", 1.0)),
+                reward_normalizer=reward_normalizer,
                 monitor=monitor, phase=("perception warm-up" if perception_warmup
                                         else "training"),
                 # Position-backed velocity setpoints bound this exploration.
@@ -926,6 +1049,10 @@ def train_live(env_factory: Callable, model, method, seeds, output_dir,
                     target_kl=float(ppo.get("target_kl", .03)),
                     minimum_learning_rate=float(ppo.get(
                         "minimum_learning_rate", 5e-6)))
+            if hasattr(potential, "assert_frozen"):
+                # Reward design is not a PPO module/optimizer parameter. This
+                # hash+mode assertion catches accidental mutation immediately.
+                potential.assert_frozen()
             metric.update(loss)
             prior_steps = sum(
                 int(float(row.get("steps", 0))) for row in history
@@ -939,6 +1066,31 @@ def train_live(env_factory: Callable, model, method, seeds, output_dir,
                            "ppo_episode": ppo_episode,
                            "ppo_environment_steps": (prior_steps
                                + (0 if perception_warmup else int(metric["steps"])))})
+            log_every = max(1, int(ppo.get("reward_log_every_steps", 1)))
+            if episode not in logged_reward_episodes:
+                with reward_trace_path.open("a", encoding="utf-8") as stream:
+                    for step_index, transition in enumerate(rows):
+                        if step_index % log_every and step_index != len(rows) - 1:
+                            continue
+                        record = {
+                            "episode": episode, "time_index": step_index,
+                            "episode_complete": step_index == len(rows) - 1,
+                            "method": method,
+                            "phase": ("perception_warmup" if perception_warmup else "ppo"),
+                            "landing_phase": transition.get("landing_phase", "unknown"),
+                            "scenario": "training_random_walk",
+                            "success": int(metric["paper_success"]),
+                            "failure": int(metric["failure"]),
+                            "failure_type": metric["status"],
+                            "disturbance_level": float(
+                                metric.get("domain_external_force_n", 0.0)),
+                            "reward": float(transition["reward"]),
+                            **{key: (float(value) if isinstance(
+                                value, (int, float, np.integer, np.floating)) else value)
+                               for key, value in transition["reward_parts"].items()},
+                        }
+                        stream.write(json.dumps(record, allow_nan=False) + "\n")
+                logged_reward_episodes.add(episode)
             advanced = (False if perception_warmup else curriculum.observe(metric))
             metric["curriculum_advanced"] = float(advanced)
             metric["next_curriculum_level"] = curriculum.level

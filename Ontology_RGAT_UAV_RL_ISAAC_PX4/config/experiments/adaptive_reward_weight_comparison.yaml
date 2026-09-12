@@ -1,0 +1,117 @@
+extends: three_pipeline_comparison.yaml
+experiment: adaptive_reward_weight_comparison
+pipelines:
+  - shin_se_fixed
+  - shin_se_rgat_weight
+  - no_se_fixed
+  - onto_rgat_adaptive_weight_no_se
+  - onto_rgat_potential_pbrs_no_se
+
+pipeline_contract:
+  shin_se_fixed:
+    state_estimation: true
+    auxiliary_estimation_loss: true
+    active_perception: true
+    reward_mode: shin_table_active
+    ontology_enabled: false
+    ontology_input_mode: null
+    use_direct_rgat_potential: false
+    use_adaptive_reward_weights: false
+    adaptive_reward_architecture: null
+  shin_se_rgat_weight:
+    state_estimation: true
+    auxiliary_estimation_loss: true
+    active_perception: true
+    reward_mode: adaptive_weight
+    ontology_enabled: true
+    ontology_input_mode: semantic_observation
+    use_direct_rgat_potential: false
+    use_adaptive_reward_weights: true
+    adaptive_reward_architecture: rgat
+  no_se_fixed:
+    state_estimation: false
+    auxiliary_estimation_loss: false
+    active_perception: false
+    reward_mode: shin_table_no_active
+    ontology_enabled: false
+    ontology_input_mode: null
+    use_direct_rgat_potential: false
+    use_adaptive_reward_weights: false
+    adaptive_reward_architecture: null
+  onto_rgat_adaptive_weight_no_se:
+    state_estimation: false
+    auxiliary_estimation_loss: false
+    active_perception: false
+    reward_mode: adaptive_weight
+    ontology_enabled: true
+    ontology_input_mode: semantic_observation
+    use_direct_rgat_potential: false
+    use_adaptive_reward_weights: true
+    adaptive_reward_architecture: rgat
+  onto_rgat_potential_pbrs_no_se:
+    state_estimation: false
+    auxiliary_estimation_loss: false
+    active_perception: false
+    reward_mode: semantic_pbrs
+    ontology_enabled: true
+    ontology_input_mode: semantic_observation
+    use_direct_rgat_potential: true
+    use_adaptive_reward_weights: false
+    adaptive_reward_architecture: null
+
+adaptive_reward:
+  enabled: true
+  num_components: 5
+  baseline_weights: [1.0, 1.0, 0.5, 1.0, 2.0]
+  total_weight: 5.5
+  logit_scale_kappa: 0.69314718056
+  baseline_mixture_epsilon: 0.2
+  freeze_during_ppo: true
+  # 논문 수식 그대로 비교할 때 true. 기본 실험은 아래 공통 scale을 fixed와
+  # adaptive arm 모두에 적용한다.
+  exact_paper_raw: false
+  component_normalization:
+    source: physical_bounds
+    scales: [1.0, 1.0, 1.5, 3.0, 1.5707963267948966]
+    quantile: 0.99
+  optional_active_perception_component:
+    enabled: false
+    formula: -clip(L_est_next - tau, 0, 1)
+    baseline_weight: 0.1
+    note: no-SE proposed mode에서는 항상 비활성
+
+adaptive_reward_design:
+  source_pipeline: no_se_fixed
+  behavior_policy: mixed_random_fixed_success_collision_drift_near_miss
+  episodes_quick: 8
+  episodes_full: 40
+  max_episodes_quick: 24
+  max_episodes_full: 120
+  validation_fraction: 0.2
+  test_fraction: 0.0
+  trajectory_gamma: 0.99
+  epochs_quick: 10
+  epochs_full: 80
+  learning_rate: 0.0005
+  hidden_dim: 24
+  relation_dim: 6
+  architecture: rgat
+  loss:
+    outcome_bce: 1.0
+    ranking: 0.5
+    ranking_temperature: 1.0
+    baseline_prior: 0.05
+    temporal_smoothness: 0.02
+    ontology_hinge: 0.1
+    ontology_margin: 0.05
+    yaw_safety_floor: 0.2
+    condition_threshold: 0.6
+  structural_ablations:
+    - mlp_adaptive_weight_no_se
+    - gat_adaptive_weight_no_se
+    - rgat_adaptive_weight_no_se
+
+# 보존된 PBRS arm도 같은 no-SE fixed source rollout을 재사용해 별도의 숨은 PPO
+# source 학습 비용을 만들지 않는다. 두 artifact는 서로 다른 dataset schema/loss다.
+rgat_design:
+  source_pipeline: no_se_fixed

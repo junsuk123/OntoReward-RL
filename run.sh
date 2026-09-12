@@ -49,7 +49,14 @@ training_budget_supplied=false
 evaluation_budget_supplied=false
 rgat_budget_supplied=false
 expect_mode_value=false
+expect_config_value=false
+adaptive_config=false
 for argument in "$@"; do
+  if [[ "$expect_config_value" == true ]]; then
+    [[ "$argument" == *adaptive_reward_weight_comparison.yaml ]] && adaptive_config=true
+    expect_config_value=false
+    continue
+  fi
   if [[ "$expect_mode_value" == true ]]; then
     selected_mode="$argument"
     expect_mode_value=false
@@ -64,6 +71,8 @@ for argument in "$@"; do
       mode_supplied=true
       selected_mode="${argument#--mode=}"
       ;;
+    --config) expect_config_value=true ;;
+    --config=*adaptive_reward_weight_comparison.yaml) adaptive_config=true ;;
     --train-episodes|--train-episodes=*|--total-train-episodes|--total-train-episodes=*)
       training_budget_supplied=true
       ;;
@@ -82,7 +91,13 @@ if [[ "$selected_mode" == full ]]; then
   # The runner subtracts that explicit overhead before dividing the remaining
   # PPO budget equally, including when --pipelines selects a subset.
   if [[ "$training_budget_supplied" == false ]]; then
-    arguments+=(--total-train-episodes 800)
+    if [[ "$adaptive_config" == true ]]; then
+      # 5개 arm에 동일하게 PPO 160회를 배정한다. 두 SE arm의 warm-up은
+      # 편향을 숨기지 않도록 별도 interaction cost로 보고한다.
+      arguments+=(--train-episodes 160)
+    else
+      arguments+=(--total-train-episodes 800)
+    fi
   fi
   # The original 32,000-flight evaluation and 400-flight reward-design pass are
   # also incompatible with a two-day seminar deadline. Keep every scenario but

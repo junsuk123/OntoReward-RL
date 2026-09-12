@@ -139,9 +139,11 @@ def test_all_five_ablation_arms_inherit_one_stable_control_configuration():
     controller = VelocityYawRateController.from_mapping(config["control"])
     np.testing.assert_allclose(controller.max_velocity, [2.0, 2.0, 1.0])
     np.testing.assert_allclose(controller.max_acceleration, [1.5, 1.5, 1.0])
-    assert controller.curriculum_min_action_scale == pytest.approx(0.35)
+    assert controller.curriculum_min_action_scale == pytest.approx(0.50)
     assert math.exp(float(config["ppo"]["init_log_std"])) == pytest.approx(
-        0.2231301601)
+        0.3011942119)
+    assert float(config["ppo"]["actor_output_gain"]) == pytest.approx(0.03)
+    assert int(config["ppo"]["perception_warmup_episodes_full"]) == 8
 
 
 def test_one_command_run_archives_an_incompatible_policy(tmp_path):

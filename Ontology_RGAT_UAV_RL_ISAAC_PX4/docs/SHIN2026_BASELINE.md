@@ -96,27 +96,32 @@ five reward arms retain the paper-compatible observation boundary.
 - PPO discount, learning rates, minibatch sizes, decision-head widths,
   training length, and checkpoint rule are not specified in the paper and must
   be reported from the experiment configuration. The recurrent policy starts
-  at `log_std=-1.5` (standard deviation 0.223 per normalized action) to avoid
-  violent random commands from an untrained policy.
+  at `log_std=-1.2` (standard deviation 0.301 per normalized action). This is
+  large enough to avoid a nearly stationary early policy while remaining far
+  below the original 0.607 standard deviation; the command slew limiter still
+  bounds acceleration.
 - Table-III lateral/vertical shaping is calculated from the un-tilded
   simulator relative state during training. Only the active-perception term
   uses the next recurrent-estimator MSE, matching the paper's separation of
   physical progress and estimation reliability. No truth enters the actor.
 - The paper gives `c` and the update interval but not its promotion rule. The
   supplied schedule advances linearly and serializes its state. UAV commands
-  and UGV motion use separate lower bounds: the UAV envelope and road-speed
-  draw are both scaled by `0.35 + 0.65c`, while initial-condition geometry uses
-  `c` directly. Thus the target moves at 0.0875--0.21 m/s even at `c=0`,
+  and UGV motion use separate lower bounds: the UAV envelope is scaled by
+  `0.50 + 0.50c`, while the road-speed draw uses `0.35 + 0.65c` and
+  initial-condition geometry uses `c` directly. Thus the target moves at
+  0.0875--0.21 m/s even at `c=0`,
   instead of remaining parked for 512 episodes. At `c=0`, the reset entry is
   a stationary camera-centred hover approximately `[-2.51, 0, 4.5]` m behind
   the pad. This puts the pad on the 60-degree camera's optical axis instead of
   at the short-axis image boundary. The entry continuously blends to the exact
   Table-I draw at `c=1`. Paired evaluation always uses
   `c=1`, and all five reward arms receive exactly the same envelope.
-- During estimator-only warm-up, actions are sampled from the deliberately
-  narrow initial policy distribution rather than fixed at its mean. The
-  position-backed PX4 setpoint and 35% envelope keep this excitation bounded,
-  while avoiding a static image/state dataset. If the learner misses its SITL
+- During the eight full-mode estimator-only warm-up episodes, actions are
+  sampled from the initial policy distribution rather than fixed at its mean.
+  The position-backed PX4 setpoint, 50% envelope, and acceleration slew limit
+  keep this excitation bounded while avoiding a static image/state dataset.
+  The warm-up is short because the keypoint encoder is already synthetically
+  pretrained and frozen. If the learner misses its SITL
   action deadline, the gateway atomically replaces stale velocity with a
   current-position hover and continues the OFFBOARD heartbeat; hardware keeps
   the ordinary PX4 link-loss behavior.

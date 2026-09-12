@@ -31,8 +31,9 @@ control:
   max_acceleration_m_s2: [1.5, 1.5, 1.0]
   max_yaw_rate_deg_s: 60.0
   max_yaw_acceleration_deg_s2: 90.0
-  # c=0 begins as hover/slow-follow at 35%; c=1 uses the full limits above.
-  curriculum_min_action_scale: 0.35
+  # Keep early exploration mobile: c=0 uses 50% of the safe command envelope,
+  # while the acceleration slew limiter below still rejects abrupt commands.
+  curriculum_min_action_scale: 0.50
   # Do not park the target for hundreds of early episodes. At c=0 the UGV
   # already drives at 35% of its sampled road speed (0.0875--0.21 m/s), then
   # increases continuously to the full configured speed at c=1.
@@ -51,15 +52,18 @@ ppo:
   grad_clip: 5.0
   auxiliary_estimation_coefficient: 0.05
   asymmetric_critic: true
-  # Initial action standard deviation exp(-1.5)=0.223 (formerly 0.607).
-  init_log_std: -1.5
-  # Near-zero initial actor mean prevents an untrained visual stack from
-  # commanding a persistent direction before it has learned image geometry.
-  actor_output_gain: 0.01
+  # exp(-1.2)=0.301 provides useful motion from episode one without returning
+  # to the original violent standard deviation of 0.607.
+  init_log_std: -1.2
+  # The visual encoder is now pretrained and frozen, so permit a small but
+  # observable state-dependent mean instead of an almost-zero initial policy.
+  actor_output_gain: 0.03
   target_kl: 0.03
-  # Actual Isaac/PX4 hover frames train only the visual estimator first.
+  # The frozen encoder is already synthetically pretrained. A short live
+  # warm-up remains for recurrent state estimation, but must not consume 32 of
+  # the seminar run's 160 episodes per arm before the actor starts updating.
   perception_warmup_episodes_quick: 2
-  perception_warmup_episodes_full: 32
+  perception_warmup_episodes_full: 8
   perception_warmup_epochs: 2
   # The position-backed PX4 interface makes low-amplitude policy sampling safe;
   # use it during warm-up so both the image target and UAV state are excited.

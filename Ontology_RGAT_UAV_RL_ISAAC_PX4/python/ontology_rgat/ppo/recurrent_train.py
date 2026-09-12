@@ -47,9 +47,14 @@ def _reward(method, previous, following, estimate, next_estimate, potential,
         value = sparse_terminal_reward(**terminal)
         return value, {"task": value}, next_loss
     if method in {"shin2026", "manual_no_active"}:
+        # Table III uses the un-tilded physical relative geometry. Only the
+        # active-perception term is coupled to the tilded estimator output.
+        # Feeding estimates into both made a blind estimator manufacture its
+        # own progress reward and removed the simulator's useful early signal.
         value, parts = ShinReward(ShinRewardConfig(
             active_enabled=method == "shin2026"))(
-                estimate, next_estimate, following.command,
+                previous.critic.true_relative_state,
+                following.critic.true_relative_state, following.command,
                 drone_vertical_velocity=previous.actor.body_velocity[2],
                 next_estimation_loss=next_loss, **terminal)
         return value, parts, next_loss

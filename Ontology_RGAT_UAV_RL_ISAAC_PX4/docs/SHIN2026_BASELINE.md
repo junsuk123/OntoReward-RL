@@ -69,10 +69,13 @@ five reward arms retain the paper-compatible observation boundary.
   to all methods. The configured full envelope is 2.0/2.0/1.0 m/s body-heading
   velocity, 1.5/1.5/1.0 m/s² acceleration, 60°/s yaw rate, and 90°/s² yaw
   acceleration.
-- No official PACMAN-compatible code and weights are bundled. The included
-  six-keypoint CNN is an independently implemented approximation and is never
-  labeled PACMAN. The current simulated board is also an ArUco approximation,
-  not Park et al.'s exact hexagonal target. The S5 road profile uses
+- No official PACMAN-compatible code and weights are bundled. Before the live
+  stack starts, the independent encoder is now supervised on synthetic
+  projections of six fixed hexagonal pad landmarks over the configured
+  multi-scale board. Its six heatmaps pool six local descriptors into the
+  512-dimensional image embedding, and the resulting artifact is frozen for
+  PPO. It is still never labeled PACMAN. The current simulated board is also
+  an ArUco approximation, not Park et al.'s exact hexagonal target. The S5 road profile uses
   `DICT_4X4_100`: four 0.32 m approach tags, four 0.12 m transition tags and
   37 0.04 m touchdown tags covering the 0.35 m success disk.
 - The paper's Table-I platform range is 0–8 m/s. The default Sejong S5
@@ -95,15 +98,20 @@ five reward arms retain the paper-compatible observation boundary.
   be reported from the experiment configuration. The recurrent policy starts
   at `log_std=-1.5` (standard deviation 0.223 per normalized action) to avoid
   violent random commands from an untrained policy.
+- Table-III lateral/vertical shaping is calculated from the un-tilded
+  simulator relative state during training. Only the active-perception term
+  uses the next recurrent-estimator MSE, matching the paper's separation of
+  physical progress and estimation reliability. No truth enters the actor.
 - The paper gives `c` and the update interval but not its promotion rule. The
   supplied schedule advances linearly and serializes its state. UAV commands
   and UGV motion use separate lower bounds: the UAV envelope and road-speed
   draw are both scaled by `0.35 + 0.65c`, while initial-condition geometry uses
   `c` directly. Thus the target moves at 0.0875--0.21 m/s even at `c=0`,
   instead of remaining parked for 512 episodes. At `c=0`, the reset entry is
-  the existing stationary `[0, 0, 4.5]` m airborne support, avoiding a large
-  unmeasured motion before an untrained policy takes over; it continuously
-  blends to the exact Table-I draw at `c=1`. Paired evaluation always uses
+  a stationary camera-centred hover approximately `[-2.51, 0, 4.5]` m behind
+  the pad. This puts the pad on the 60-degree camera's optical axis instead of
+  at the short-axis image boundary. The entry continuously blends to the exact
+  Table-I draw at `c=1`. Paired evaluation always uses
   `c=1`, and all five reward arms receive exactly the same envelope.
 - During estimator-only warm-up, actions are sampled from the deliberately
   narrow initial policy distribution rather than fixed at its mean. The
@@ -201,7 +209,8 @@ of the real-capacity pack, not a reduced-capacity fictional cell. PX4 SITL's
 separate built-in 60 s battery is clamped full only to prevent commander
 failsafes; it is never used as the experimental energy signal.
 
-The dataset, sidecar manifest, episode metrics, and reward artifact are written
+The frozen synthetic keypoint artifact, dataset, sidecar manifest, episode
+metrics, and reward artifact are written
 under `results/shin2026/<mode>/data` and `models`. They record the experiment
 configuration hash, source-policy checkpoint hash, sample/episode/contact
 counts, and dataset digest. Only `ontology_rgat.controlled_rollouts/2` data and

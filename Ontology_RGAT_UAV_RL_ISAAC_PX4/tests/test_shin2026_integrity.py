@@ -11,6 +11,7 @@ import torch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "isaac_sim"))
 
+from config_loader import load_config  # noqa: E402
 from pad_motion import PadMotionConfig, PadTrajectory  # noqa: E402
 from ontology_rgat_px4.protocol import ProtocolError, validate_velocity_action
 
@@ -29,10 +30,15 @@ from ontology_rgat.bridge import BridgeError
 from ontology_rgat.controllers import VelocityYawRateController
 from ontology_rgat.curriculum import (PlatformMotionCurriculum,
                                       fitted_update_interval)
-from ontology_rgat.initialization import curriculum_motion_scale
+from ontology_rgat.initialization import (camera_centered_hover_offset,
+                                          curriculum_motion_scale)
 from ontology_rgat.estimation import LSTMRelativeStateEstimator
+from ontology_rgat.perception import (PRETRAIN_FORMAT, ShinKeypointEncoder,
+                                      prepare_keypoint_encoder,
+                                      synthetic_keypoint_dataset)
 from ontology_rgat.ppo.recurrent import ShinRecurrentActorCritic
-from ontology_rgat.ppo.recurrent_train import train_live, update_episode
+from ontology_rgat.ppo.recurrent_train import (_reward, train_live,
+                                               update_episode)
 from ontology_rgat.reward_modes import (OntoRewardPBRS, ShinReward,
                                         ShinRewardConfig, FrozenControlledPotential,
                                         active_perception_reward,
@@ -228,13 +234,74 @@ def test_reward_mode_does_not_change_trajectory_seed():
 
 def test_beginner_curriculum_starts_at_stationary_airborne_hover():
     easy = sample_initial_condition(7, curriculum=0.0)
-    np.testing.assert_allclose(easy["relative_position_m"], [0.0, 0.0, 4.5])
+    np.testing.assert_allclose(
+        easy["relative_position_m"],
+        camera_centered_hover_offset(4.5), atol=1e-8)
     assert easy["platform_yaw_misalignment_rad"] == 0.0
     assert easy["platform_speed_m_s"] == 0.0
     full = sample_initial_condition(7, curriculum=1.0)
     assert -3.0 <= full["relative_position_m"][0] <= 3.0
     assert -3.0 <= full["relative_position_m"][1] <= 3.0
     assert 2.0 <= full["relative_position_m"][2] <= 8.0
+
+
+def test_beginner_hover_centres_pad_on_sixty_degree_camera_axis():
+    mount = np.array([0.0, 0.0, -0.16])
+    offset = camera_centered_hover_offset(4.5, 60.0, mount)
+    assert offset[0] == pytest.approx(-4.34 / math.tan(math.radians(60.0)))
+    np.testing.assert_allclose(offset[1:], [0.0, 4.5])
+    ray = np.array([math.cos(math.radians(60.0)), 0.0,
+                    -math.sin(math.radians(60.0))])
+    camera = offset + mount
+    pad_intersection = camera + ray * camera[2] / -ray[2]
+    np.testing.assert_allclose(pad_intersection, np.zeros(3), atol=1e-9)
+    config = load_config(ROOT / "config" / "shin2026-system.yaml")
+    assert config["isaac"]["center_hover_on_landing_camera"] is True
+
+
+def test_keypoint_heatmaps_drive_the_descriptor_embedding():
+    encoder = ShinKeypointEncoder(embedding_dim=32, keypoints=6)
+    output = encoder(torch.rand(2, 1, 320, 512))
+    assert output.heatmaps.shape == (2, 6, 20, 32)
+    assert output.keypoints.shape == (2, 6, 2)
+    assert output.embedding.shape == (2, 32)
+    output.embedding.square().mean().backward()
+    assert encoder.heatmap.weight.grad is not None
+    assert float(encoder.heatmap.weight.grad.abs().sum()) > 0.0
+
+
+def test_synthetic_pretraining_labels_six_deployed_board_keypoints():
+    config = load_config(ROOT / "config" / "shin2026-system.yaml")
+    dataset = synthetic_keypoint_dataset(config, samples=4, seed=9)
+    assert dataset["images"].shape == (4, 320, 512)
+    assert dataset["heatmaps"].shape == (4, 6, 20, 32)
+    assert dataset["coordinates"].shape == (4, 6, 2)
+    assert float(dataset["visible"].mean()) > 0.3
+    visible_heatmaps = dataset["heatmaps"][dataset["visible"].astype(bool)]
+    np.testing.assert_allclose(visible_heatmaps.sum(axis=(1, 2)), 1.0, atol=1e-5)
+
+
+def test_keypoint_pretraining_artifact_is_reused_and_frozen(tmp_path):
+    system = load_config(ROOT / "config" / "shin2026-system.yaml")
+    experiment = {"estimator": {
+        "image_embedding": 32,
+        "keypoint_pretraining": {
+            "enabled": True, "samples_quick": 4, "epochs_quick": 1,
+            "batch_size": 2, "learning_rate": 1e-3, "seed": 17,
+        },
+    }}
+    path = tmp_path / "keypoints.pt"
+    trained = prepare_keypoint_encoder(
+        path, config_hash="cfg", experiment=experiment, system=system,
+        mode="quick", device="cpu")
+    reused = prepare_keypoint_encoder(
+        path, config_hash="cfg", experiment=experiment, system=system,
+        mode="quick", device="cpu")
+    assert trained["format"] == PRETRAIN_FORMAT
+    assert reused["metrics"] == trained["metrics"]
+    model = ShinRecurrentActorCritic(image_embedding=32, freeze_keypoint=True)
+    model.encoder.load_state_dict(reused["encoder"])
+    assert all(not parameter.requires_grad for parameter in model.encoder.parameters())
 
 
 def test_beginner_curriculum_keeps_the_ugv_moving_at_a_safe_fraction():
@@ -455,6 +522,27 @@ def test_shin_active_reward_uses_training_only_estimation_target():
     reward = ShinReward(cfg)
     with pytest.raises(ValueError, match="training-only"):
         reward(np.zeros(6), np.zeros(6), np.zeros(4), drone_vertical_velocity=0.0)
+
+
+def test_shin_dense_reward_uses_truth_while_active_term_uses_estimate():
+    previous = SimpleNamespace(
+        critic=SimpleNamespace(true_relative_state=np.array([2, 0, -3, 0, 0, 0])),
+        actor=SimpleNamespace(body_velocity=np.array([0, 0, -0.5])))
+    following = SimpleNamespace(
+        critic=SimpleNamespace(true_relative_state=np.array([0.5, 0, -2, 0, 0, 0])),
+        command=np.zeros(4), physical_contact=False, crash=False,
+        excessive_drift=False, battery_depleted=False, terminal=False)
+    # Deliberately contradictory estimates would report motion away from the
+    # pad if they accidentally entered the Table-III progress terms.
+    estimate = np.array([100, 0, -100, 0, 0, 0], dtype=float)
+    next_estimate = np.array([200, 0, -200, 0, 0, 0], dtype=float)
+    total, parts, estimation_loss = _reward(
+        "shin2026", previous, following, estimate, next_estimate, None)
+    assert parts["lateral_progress"] == 1.0
+    assert parts["vertical_progress"] == 1.0
+    assert parts["active_perception"] == -0.1
+    assert total == pytest.approx(1.9)
+    assert estimation_loss > 1.0
 
 
 def test_table_iii_reward_equations():

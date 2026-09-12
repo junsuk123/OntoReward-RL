@@ -29,7 +29,8 @@ WORKSPACE = CONFIG_PATH.parent.parent
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(WORKSPACE / "python"))
 from config_loader import load_config
-from ontology_rgat.initialization import curriculum_camera_entry
+from ontology_rgat.initialization import (camera_centered_hover_offset,
+                                          curriculum_camera_entry)
 
 CONFIG = load_config(CONFIG_PATH)
 from sensor_profiles import isaac_runtime_profile
@@ -989,6 +990,12 @@ class LandingWorld:
         self.hover_start_pad_m = np.array(
             [float(v) for v in isaac_cfg.get("hover_start_offset_pad_m", (0.0, 0.0, 4.5))],
             dtype=float)
+        if bool(isaac_cfg.get("center_hover_on_landing_camera", False)):
+            camera_cfg = CONFIG["vision"]["camera"]
+            self.hover_start_pad_m = camera_centered_hover_offset(
+                self.hover_start_pad_m[2],
+                float(camera_cfg.get("pitch_down_deg", 60.0)),
+                camera_cfg.get("mount_translation_flu_m", (0.0, 0.0, -0.16)))
         self.hover_hold_release_s = float(
             isaac_cfg.get("airborne_hold_release_s", 2.0))
         if not math.isfinite(self.hover_hold_release_s) or self.hover_hold_release_s < 0.0:

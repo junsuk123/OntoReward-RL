@@ -5,7 +5,23 @@ paper:
   doi: 10.1109/LRA.2026.3674011
   reproduction_claim: methodological-interface
 camera: {resolution: [512, 320], grayscale: true, horizontal_fov_deg: 90, pitch_down_deg: 60}
-estimator: {image_embedding: 512, lstm_hidden: 512, latent_dimension: 256, output_dimension: 6}
+estimator:
+  image_embedding: 512
+  lstm_hidden: 512
+  latent_dimension: 256
+  output_dimension: 6
+  # PACMAN weights are not public. Pretrain the executable six-keypoint and
+  # local-descriptor path on projections of this run's actual marker board,
+  # then freeze it before recurrent PPO as in the paper's architecture.
+  keypoint_pretraining:
+    enabled: true
+    samples_quick: 64
+    samples_full: 512
+    epochs_quick: 2
+    epochs_full: 6
+    batch_size: 16
+    learning_rate: 0.001
+    seed: 41026
 control:
   dt_seconds: 0.1
   horizon_steps: 300

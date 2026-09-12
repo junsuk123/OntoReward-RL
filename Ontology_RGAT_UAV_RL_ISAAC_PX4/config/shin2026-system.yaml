@@ -13,6 +13,10 @@ isaac:
   # hover while PX4 aligns instead of balancing it on a platform only 1.5 m
   # wide; the seeded Table-I entry pose is still flown before data collection.
   start_airborne: true
+  # A 60-deg forward/down camera sees a directly-below pad at the edge of its
+  # short FOV. Keep the airborne start, but move it behind the deck so the pad
+  # centre lies on the optical axis (about -2.51 m X at 4.5 m body altitude).
+  center_hover_on_landing_camera: true
   # The campus scene is substantially heavier than Flat Plane. Keep physics
   # and the PX4 HIL loop at full rate while rendering a deterministic GUI
   # subset, as in the validated Meta-Sejong pipeline profile.

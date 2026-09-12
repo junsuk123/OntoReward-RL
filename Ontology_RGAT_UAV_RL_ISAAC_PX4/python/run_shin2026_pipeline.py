@@ -29,7 +29,8 @@ from ontology_rgat.cli import ensure_fastdds
 from ontology_rgat.config import default_config
 from ontology_rgat.curriculum import fitted_update_interval
 from ontology_rgat.evaluation.shin2026 import write_benchmark_outputs
-from ontology_rgat.perception import RosGrayscaleSource
+from ontology_rgat.perception import (RosGrayscaleSource,
+                                      prepare_keypoint_encoder)
 from ontology_rgat.ppo.recurrent import ShinRecurrentActorCritic
 from ontology_rgat.ppo.recurrent_train import collect_episode, train_live
 from ontology_rgat.reward_modes import (FrozenControlledPotential,
@@ -88,11 +89,15 @@ def _live_config(mode, results_dir, system_config):
     return cfg
 
 
-def _build_model(config, device):
+def _build_model(config, device, keypoint_pretraining=None):
     estimator = config.get("estimator") or {}
     ppo = config.get("ppo") or {}
     torch_device = torch.device(device)
-    return ShinRecurrentActorCritic(
+    pretraining_enabled = bool(
+        (estimator.get("keypoint_pretraining") or {}).get("enabled", False))
+    if pretraining_enabled and keypoint_pretraining is None:
+        raise ValueError("enabled keypoint pretraining artifact was not prepared")
+    model = ShinRecurrentActorCritic(
         image_embedding=int(estimator.get("image_embedding", 512)),
         lstm_hidden=int(estimator.get("lstm_hidden", 512)),
         latent_dim=int(estimator.get("latent_dimension", 256)),
@@ -100,7 +105,11 @@ def _build_model(config, device):
         critic_hidden=int(ppo.get("hidden", 256)),
         init_log_std=float(ppo.get("init_log_std", -1.5)),
         actor_output_gain=float(ppo.get("actor_output_gain", 0.01)),
-    ).to(torch_device)
+        freeze_keypoint=pretraining_enabled,
+    )
+    if keypoint_pretraining is not None:
+        model.encoder.load_state_dict(keypoint_pretraining["encoder"])
+    return model.to(torch_device)
 
 
 def _sha256_file(path):
@@ -331,6 +340,10 @@ def main():
     model_seed = int(seed_config.get("model_initialization", 42))
     training_seed0 = int(seed_config.get("training_start", 20000))
     args.results_dir.mkdir(parents=True, exist_ok=True)
+    keypoint_pretraining = prepare_keypoint_encoder(
+        args.results_dir / "models/shin2026_keypoint_encoder.pt",
+        config_hash=config_hash, experiment=config, system=resolved_system_config,
+        mode=args.mode, device=args.device)
     manifest = {
         "config": str(args.config.resolve()), "config_hash": config_hash,
         "system_config": str(args.system_config.resolve()), "mode": args.mode,
@@ -341,6 +354,14 @@ def main():
         "reward_design_sha256": getattr(potential, "sha256", None),
         "trajectory_note": "named evaluation trajectories are documented approximations",
         "table_ii_runtime_application": "incomplete; see docs/SHIN2026_BASELINE.md",
+        "keypoint_pretraining": (
+            None if keypoint_pretraining is None else {
+                "format": keypoint_pretraining["format"],
+                "implementation": keypoint_pretraining["implementation"],
+                "frozen_for_ppo": keypoint_pretraining["frozen_for_ppo"],
+                "training_source": keypoint_pretraining["training_source"],
+                "metrics": keypoint_pretraining["metrics"],
+            }),
         "execution_status": "live Isaac/Pegasus/PX4 pipeline",
     }
     manifest_path = args.results_dir / "manifest.json"
@@ -418,7 +439,7 @@ def main():
                 monitor.stage("training", f"recurrent PPO · {method}")
                 # Identical initialization is part of the paired comparison.
                 torch.manual_seed(model_seed)
-                model = _build_model(config, args.device)
+                model = _build_model(config, args.device, keypoint_pretraining)
                 method_potential = potential if method.startswith("ontoreward") else None
                 history = train_live(
                     lambda: LiveShinEnvironment(
@@ -441,7 +462,8 @@ def main():
                 else:
                     monitor.stage("design-source training", "Shin recurrent PPO")
                     torch.manual_seed(model_seed)
-                    source_model = _build_model(config, args.device)
+                    source_model = _build_model(
+                        config, args.device, keypoint_pretraining)
                     source_dir = args.results_dir / "models/rgat_design_source"
                     train_live(
                         lambda: LiveShinEnvironment(

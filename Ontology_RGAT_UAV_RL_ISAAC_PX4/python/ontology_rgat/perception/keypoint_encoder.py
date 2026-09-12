@@ -1,4 +1,4 @@
-"""Keypoint/image encoder used by the Shin-compatible approximation.
+"""Keypoint/descriptor encoder used by the Shin-compatible approximation.
 
 No official PACMAN implementation or compatible weights were available when
 this benchmark was authored.  This independent network therefore deliberately
@@ -21,7 +21,7 @@ class KeypointEncoderOutput:
 
 
 class ShinKeypointEncoder(nn.Module):
-    implementation = "shin-compatible-keypoint-approximation"
+    implementation = "synthetic-pretrained-six-keypoint-descriptor-v1"
 
     def __init__(self, embedding_dim: int = 512, keypoints: int = 6):
         super().__init__()
@@ -31,9 +31,13 @@ class ShinKeypointEncoder(nn.Module):
             blocks += [nn.Conv2d(cin, cout, 3, stride=2, padding=1), nn.ReLU(inplace=True)]
         self.features = nn.Sequential(*blocks)
         self.heatmap = nn.Conv2d(channels[-1], keypoints, 1)
+        # The paper consumes descriptors attached to six keypoints.  Pooling a
+        # descriptor at each learned heatmap location makes that information
+        # path executable; the former global-average branch never consumed the
+        # keypoint outputs at all.
         self.embedding = nn.Sequential(
-            nn.AdaptiveAvgPool2d((4, 4)), nn.Flatten(),
-            nn.Linear(channels[-1] * 16, embedding_dim), nn.Tanh())
+            nn.Linear(channels[-1] * keypoints, embedding_dim), nn.Tanh())
+        self.keypoint_count = int(keypoints)
 
     @staticmethod
     def _soft_argmax(heatmaps: torch.Tensor) -> torch.Tensor:
@@ -53,5 +57,10 @@ class ShinKeypointEncoder(nn.Module):
             raise ValueError("keypoint encoder expects Bx1xHxW grayscale images")
         features = self.features(image)
         heatmaps = self.heatmap(features)
-        return KeypointEncoderOutput(self.embedding(features),
-                                     self._soft_argmax(heatmaps), heatmaps)
+        probabilities = heatmaps.reshape(
+            heatmaps.shape[0], heatmaps.shape[1], -1).softmax(-1)
+        flattened_features = features.reshape(features.shape[0], features.shape[1], -1)
+        descriptors = torch.einsum("bkn,bcn->bkc", probabilities,
+                                   flattened_features)
+        embedding = self.embedding(descriptors.flatten(1))
+        return KeypointEncoderOutput(embedding, self._soft_argmax(heatmaps), heatmaps)

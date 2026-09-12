@@ -6,6 +6,7 @@ import argparse
 import csv
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import shutil
@@ -72,11 +73,25 @@ def _live_config(mode, results_dir, system_config):
     cfg.paths.results = str(Path(results_dir).resolve())
     cfg.paths.models = str((Path(results_dir) / "models").resolve())
     cfg.paths.live = str((Path(results_dir) / "live").resolve())
-    # RViz is a learner-side process and does not read Isaac's YAML itself.
-    # Copy only presentation geometry from the authoritative merged simulator
-    # profile so its deck and surveyed campus route match the live world.
+    # The learner does not read Isaac's YAML directly. Copy the scoring/safety
+    # contract plus presentation geometry from the authoritative merged live
+    # profile so evaluation, deck rendering and the surveyed route agree.
     pad = simulator_config.get("pad") or {}
     benchmark = simulator_config.get("benchmark") or {}
+    landing = simulator_config.get("landing") or {}
+    cfg.criteria.xy = float(landing.get("success_xy_m", cfg.criteria.xy))
+    cfg.criteria.vz = float(landing.get("success_vz_m_s", cfg.criteria.vz))
+    cfg.criteria.tilt = math.radians(float(landing.get(
+        "success_tilt_deg", math.degrees(cfg.criteria.tilt))))
+    cfg.criteria.rate = math.radians(float(landing.get(
+        "success_rate_deg_s", math.degrees(cfg.criteria.rate))))
+    cfg.criteria.rel_speed_xy = float(landing.get(
+        "success_rel_speed_xy_m_s", cfg.criteria.rel_speed_xy))
+    cfg.sim.ground_z = float(landing.get("ground_z_m", cfg.sim.ground_z))
+    cfg.sim.crash_tilt = math.radians(float(landing.get(
+        "crash_tilt_deg", math.degrees(cfg.sim.crash_tilt))))
+    cfg.sim.world_xy_limit = float(landing.get(
+        "world_xy_limit_m", cfg.sim.world_xy_limit))
     cfg.external.entry_speed_tolerance = float(
         benchmark.get("entry_speed_tolerance_m_s",
                       cfg.external.entry_speed_tolerance))
@@ -232,7 +247,7 @@ def _collect_empirical_rgat_data(*, cfg, camera, model, config, config_hash,
                     rgat_dataset_samples=dataset_manifest["samples"],
                     rgat_dataset_successes=dataset_manifest["successful_episodes"])
                 print(f"R-GAT data episode {index}/{count} | "
-                      f"contact={int(metric['paper_success'])} | "
+                      f"safe_landing={int(metric['paper_success'])} | "
                       f"samples={len(batch['y'])} | c={curriculum:.3f}")
     if dataset is None or dataset_manifest is None:
         raise RuntimeError("empirical R-GAT dataset collection produced no data")
@@ -305,6 +320,8 @@ def main():
     config_hash = configuration_hash({
         "experiment": config,
         "system": resolved_system_config,
+        "outcome_contract": (
+            "safe_landing_contact_position_velocity_attitude_rate_v2"),
     })
     needs_potential = any(name.startswith("ontoreward") for name in args.methods)
     potential = None
@@ -356,6 +373,26 @@ def main():
         "methods": args.methods, "training_episodes_per_method": train_count,
         "training_episodes_total": train_count * len(args.methods),
         "evaluation": scenarios, "paired_seeds": True,
+        "landing_success_contract": {
+            "version": "safe_landing_v2", "all_required": True,
+            "pad_contact": True,
+            "maximum_lateral_error_m": float(
+                (resolved_system_config.get("landing") or {}).get(
+                    "success_xy_m", 0.35)),
+            "maximum_vertical_speed_m_s": float(
+                (resolved_system_config.get("landing") or {}).get(
+                    "success_vz_m_s", 0.55)),
+            "maximum_relative_horizontal_speed_m_s": float(
+                (resolved_system_config.get("landing") or {}).get(
+                    "success_rel_speed_xy_m_s", 0.45)),
+            "maximum_tilt_deg": float(
+                (resolved_system_config.get("landing") or {}).get(
+                    "success_tilt_deg", 10.0)),
+            "maximum_angular_rate_deg_s": float(
+                (resolved_system_config.get("landing") or {}).get(
+                    "success_rate_deg_s", 45.0)),
+            "unsafe_contact_is_failure": True,
+        },
         "reward_design_id": getattr(potential, "design_id", None),
         "reward_design_sha256": getattr(potential, "sha256", None),
         "trajectory_note": "named evaluation trajectories are documented approximations",

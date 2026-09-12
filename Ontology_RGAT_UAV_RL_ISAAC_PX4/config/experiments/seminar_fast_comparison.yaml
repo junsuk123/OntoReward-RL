@@ -20,8 +20,8 @@ estimator:
     empirical_epochs: 8
 
 control:
-  # 쉬운 20초 착륙에서 불필요한 timeout 비행을 줄인다.
-  horizon_steps: 200
+  # 성공은 일찍 종료하되 안전한 flare를 위해 최대 30초를 허용한다.
+  horizon_steps: 300
   # BC가 방향을 정하므로 초기에도 정상 속도 envelope를 허용한다.
   curriculum_min_action_scale: 0.75
   curriculum_min_pad_motion_scale: 1.0
@@ -51,17 +51,17 @@ curriculum:
 
 training:
   episodes_quick: 8
-  episodes_full: 24
+  episodes_full: 16
 
 rgat_design:
-  episodes_full: 8
-  max_episodes_full: 24
+  episodes_full: 6
+  max_episodes_full: 12
   epochs_full: 10
   minimum_successful_recovery_episodes_full: 1
 
 adaptive_reward_design:
-  episodes_full: 8
-  max_episodes_full: 24
+  episodes_full: 6
+  max_episodes_full: 12
   epochs_full: 10
 
 seeds:
@@ -78,14 +78,18 @@ seminar_fast:
   behavior_cloning:
     enabled: true
     source_pipeline: no_se_fixed
-    successful_episodes: 6
-    max_attempts: 12
+    # 마감용 teacher에만 simulator 상대상태를 허용한다. 저장되는 BC 입력과
+    # 최종 actor/evaluation에는 image embedding과 UAV proprioception만 남는다.
+    teacher: privileged_relative_state_velocity_pd_v4
+    successful_episodes: 4
+    max_attempts: 8
     curriculum: 1.0
-    servo_gain: 1.20
+    position_gain: 0.35
+    velocity_gain: 0.75
+    horizontal_speed_limit_m_s: 0.60
     noise_std: 0.01
     epochs: 12
     learning_rate: 0.0003
     sequence_length: 48
     auxiliary_coefficient: 0.20
     post_log_std: -1.8
-

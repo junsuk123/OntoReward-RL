@@ -581,6 +581,17 @@ class BenchmarkMonitor:
             "state_estimation_status": (
                 "ENABLED" if point.get("state_estimation_enabled", False)
                 else "DISABLED"),
+            "last_landing_gate": {
+                "status": point.get("status"),
+                "safe_landing": point.get("paper_success"),
+                "pad_contact": point.get("pad_contact"),
+                "position": point.get("landing_gate_position"),
+                "vertical_speed": point.get("landing_gate_vertical_speed"),
+                "relative_horizontal_speed": point.get(
+                    "landing_gate_relative_horizontal_speed"),
+                "attitude": point.get("landing_gate_attitude"),
+                "angular_rate": point.get("landing_gate_angular_rate"),
+            },
         })
 
     def restore_evaluation(self, rows: Sequence[dict[str, Any]]) -> None:
@@ -606,7 +617,18 @@ class BenchmarkMonitor:
         self.store.set(
             benchmark_phase="evaluation", current_method=str(method),
             current_scenario=str(point.get("scenario", "")),
-            evaluation_completed=completed)
+            evaluation_completed=completed,
+            last_landing_gate={
+                "status": point.get("status"),
+                "safe_landing": point.get("paper_success"),
+                "pad_contact": point.get("pad_contact"),
+                "position": point.get("landing_gate_position"),
+                "vertical_speed": point.get("landing_gate_vertical_speed"),
+                "relative_horizontal_speed": point.get(
+                    "landing_gate_relative_horizontal_speed"),
+                "attitude": point.get("landing_gate_attitude"),
+                "angular_rate": point.get("landing_gate_angular_rate"),
+            })
 
 
 class EpisodeMonitor:

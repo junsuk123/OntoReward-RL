@@ -48,7 +48,7 @@ def episode_rollout_dataset(rows: Sequence[dict[str, Any]], metric: dict[str, An
 
     Graph features come from the recurrent visual estimator and modeled
     onboard battery reserve. Simulator truth determines the already-reported
-    physical-contact outcome but is never copied into ``X``.
+    safe-landing outcome but is never copied into ``X``.
     """
     if not rows:
         raise ValueError("cannot build an R-GAT dataset from an empty rollout")
@@ -58,7 +58,7 @@ def episode_rollout_dataset(rows: Sequence[dict[str, Any]], metric: dict[str, An
         raise ValueError("R-GAT outcome discount must be in (0, 1]")
     success = float(metric["paper_success"])
     if success not in (0.0, 1.0):
-        raise ValueError("paper_success must be a binary physical-contact outcome")
+        raise ValueError("paper_success must be a binary safe-landing outcome")
     outcome = 2.0 * success - 1.0
     total = len(rows)
     indices = list(range(0, total, stride))
@@ -71,7 +71,7 @@ def episode_rollout_dataset(rows: Sequence[dict[str, Any]], metric: dict[str, An
     y = np.asarray([
         outcome * gamma ** (total - index - 1) for index in indices
     ], dtype=np.float32)
-    # episode, control step, physical-contact success, environment seed
+    # episode, control step, safe-landing success, environment seed
     meta = np.asarray([
         (int(episode), int(index), success, int(seed)) for index in indices
     ], dtype=np.float64)
@@ -110,7 +110,7 @@ def _validated_rollout_arrays(dataset: dict[str, Any]):
     if not np.isfinite(X).all() or not np.isfinite(y).all() or not np.isfinite(meta).all():
         raise ValueError("controlled rollout dataset contains non-finite values")
     if not np.isin(meta[:, 2], (0.0, 1.0)).all():
-        raise ValueError("controlled rollout outcomes must be binary physical contact")
+        raise ValueError("controlled rollout outcomes must be binary safe landings")
     if not np.equal(meta[:, (0, 1, 3)], np.floor(meta[:, (0, 1, 3)])).all():
         raise ValueError("controlled rollout episode, step and seed metadata must be integers")
     return X, y, meta

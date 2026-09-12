@@ -48,8 +48,14 @@ def _tensor_observation(model, observation):
 
 
 def _terminal_flags(following) -> TerminalFlags:
+    raw_contact = bool(following.physical_contact)
+    safe_contact = bool(getattr(following, "strict_success", raw_contact))
     return TerminalFlags(
-        physical_contact=following.physical_contact, crash=following.crash,
+        # The reward's historical ``physical_contact`` argument means a valid
+        # landing outcome. Raw deck contact is insufficient: an off-centre or
+        # tilted strike is a terminal failure.
+        physical_contact=safe_contact,
+        crash=bool(following.crash or (raw_contact and not safe_contact)),
         excessive_drift=following.excessive_drift,
         battery_depleted=following.battery_depleted,
         terminal=following.terminal)
@@ -429,7 +435,8 @@ def collect_episode(env, model: PipelineActorCritic, method: str, seed: int,
                 row["estimation_loss"] = float(estimation_loss)
             rows.append(row)
             if monitor is not None:
-                status = ("success" if following.physical_contact
+                status = ("success" if following.strict_success
+                          else "unsafe_pad_contact" if following.unsafe_pad_contact
                           else "battery_depleted" if following.battery_depleted
                           else "failure" if following.terminal else "running")
                 monitor.step(
@@ -453,21 +460,41 @@ def collect_episode(env, model: PipelineActorCritic, method: str, seed: int,
     state = step.state
     final_battery = _battery_sample(state)
     rpy = quat_to_euler_zyx(np.asarray(state["quaternion_wxyz"], dtype=float))
+    lateral_error = float(np.linalg.norm(truth_final[:2]))
+    vertical_speed = abs(float(step.actor.body_velocity[2]))
+    relative_horizontal_speed = float(np.linalg.norm(truth_final[3:5]))
+    tilt = float(np.linalg.norm(rpy[:2]))
+    angular_rate = float(np.linalg.norm(state["angular_velocity"]))
     metric = {
         "seed": int(seed), "episode_return": float(sum(row["reward"] for row in rows)),
-        "paper_success": float(step.physical_contact),
+        # Retain the established report column name, but define it as the
+        # complete safe-landing gate instead of raw contact.
+        "paper_success": float(step.strict_success),
         "strict_success": float(step.strict_success),
+        "pad_contact": float(step.physical_contact),
+        "unsafe_pad_contact": float(step.unsafe_pad_contact),
         "crash_failure": float(step.crash),
         "collision_rate": float(step.crash),
         "excessive_drift_rate": float(step.excessive_drift),
-        "failure": float(not step.physical_contact),
-        "touchdown_lateral_error": float(np.linalg.norm(truth_final[:2])),
+        "failure": float(not step.strict_success),
+        "touchdown_lateral_error": lateral_error,
         "touchdown_vertical_velocity": float(step.actor.body_velocity[2]),
-        "touchdown_relative_horizontal_velocity": float(np.linalg.norm(truth_final[3:5])),
-        "touchdown_tilt": float(np.linalg.norm(rpy[:2])),
+        "touchdown_relative_horizontal_velocity": relative_horizontal_speed,
+        "touchdown_tilt": tilt,
         "touchdown_roll": float(rpy[0]),
         "touchdown_pitch": float(rpy[1]),
-        "touchdown_angular_rate": float(np.linalg.norm(state["angular_velocity"])),
+        "touchdown_angular_rate": angular_rate,
+        "landing_gate_contact": float(step.physical_contact),
+        "landing_gate_position": float(
+            lateral_error <= float(env.cfg.criteria.xy)),
+        "landing_gate_vertical_speed": float(
+            vertical_speed <= float(env.cfg.criteria.vz)),
+        "landing_gate_relative_horizontal_speed": float(
+            relative_horizontal_speed <= float(env.cfg.criteria.rel_speed_xy)),
+        "landing_gate_attitude": float(
+            tilt <= float(env.cfg.criteria.tilt)),
+        "landing_gate_angular_rate": float(
+            angular_rate <= float(env.cfg.criteria.rate)),
         "fov_loss_fraction": float(np.mean([not row["in_fov"] for row in rows])),
         # Reward-independent physical tracking error, available to every arm
         # and therefore safe to use for a common performance curriculum.
@@ -482,7 +509,8 @@ def collect_episode(env, model: PipelineActorCritic, method: str, seed: int,
         "battery_energy_final_j": float(final_battery.get("remaining_j", 0.0)),
         "battery_energy_used_j": float(final_battery.get("energy_used_j", 0.0)),
         "battery_depleted": float(step.battery_depleted),
-        "steps": len(rows), "status": ("success" if step.physical_contact else
+        "steps": len(rows), "status": ("success" if step.strict_success else
+                                         "unsafe_pad_contact" if step.unsafe_pad_contact else
                                          "battery_depleted" if step.battery_depleted else
                                          "collision" if step.crash else
                                          "excessive_drift" if step.excessive_drift else
@@ -514,7 +542,7 @@ def collect_episode(env, model: PipelineActorCritic, method: str, seed: int,
     }
     metric.update(visual_recovery_metrics(
         rows, initial_in_fov=initial_in_fov,
-        success=bool(step.physical_contact), dt=float(env.cfg.sim.dt)))
+        success=bool(step.strict_success), dt=float(env.cfg.sim.dt)))
     potential_loss_delta = []
     potential_reacquisition_delta = []
     visibility = [initial_in_fov] + [bool(row["in_fov"]) for row in rows]
@@ -538,7 +566,7 @@ def collect_episode(env, model: PipelineActorCritic, method: str, seed: int,
         })
     metric.update(visual_recovery_metrics(
         rows, initial_in_fov=initial_in_fov,
-        success=bool(step.physical_contact), dt=float(env.cfg.sim.dt)))
+        success=bool(step.strict_success), dt=float(env.cfg.sim.dt)))
     if model_spec.state_estimation_enabled:
         position_error = np.asarray([
             row["estimate"][:3] - row["truth"][:3] for row in rows])

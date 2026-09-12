@@ -33,9 +33,11 @@ estimator-free baseline, estimator-free ontology/R-GAT reward 방식을 비교�
 ../run.sh --seminar-fast
 ```
 
-별도 `results/seminar_fast/core3` 폴더에서 실제 visual-servo 성공 착륙 6회를
-공통 behavior-cloning 자료로 만든 뒤 `shin_se_fixed`, `no_se_fixed`,
-`onto_rgat_adaptive_weight_no_se`를 PPO 24회씩 학습한다. 최종 평가는 교사 없이
+별도 `results/seminar_fast/core3` 폴더에서 실제 training-only PD 교사 성공 착륙
+4회를 공통 behavior-cloning 자료로 만든 뒤 `shin_se_fixed`, `no_se_fixed`,
+`onto_rgat_adaptive_weight_no_se`를 PPO 16회씩 학습한다. 교사는 움직이는 UGV 속도
+feed-forward와 simulator 상대상태를 action label 생성에만 사용한다. 저장되는 BC
+actor 입력은 camera와 UAV proprioception뿐이며, 최종 평가는 교사 없이
 쉬운 조건의 scenario 3종 × paired seed 2개로 수행한다. 기존 full checkpoint는
 변경하지 않는다. 이 결과는 경향 확인용이며 publication-scale 결과가 아니다.
 
@@ -116,7 +118,7 @@ potential이다.
 
 | Reward 항 | `shin_se` 논문 baseline | `no_se` 제거 대조군 | `onto_no_se` 제안 pipeline |
 |---|---|---|---|
-| 성공한 물리 접촉 | `+10`, 모든 shaping 항을 대체 | `+10`, 모든 shaping 항을 대체 | Sparse task `+10`, absorbing `Phi(G_t+1)=0` |
+| 안전 착륙 gate를 모두 통과한 접촉 | `+10`, 모든 shaping 항을 대체 | `+10`, 모든 shaping 항을 대체 | Sparse task `+10`, absorbing `Phi(G_t+1)=0` |
 | Crash, excessive drift 또는 battery depletion | `-10`, 모든 shaping 항을 대체 | `-10`, 모든 shaping 항을 대체 | Sparse task `-10`, absorbing `Phi(G_t+1)=0` |
 | Lateral progress | `C(d_t-d_{t+1})` | `shin_se`와 동일 | 명시 항 없음 |
 | Vertical progress | `C(|Delta z_t|-|Delta z_{t+1}|) / max(d_{t+1},1)` | `shin_se`와 동일 | 명시 항 없음 |
@@ -133,6 +135,12 @@ potential이다.
 loss를 제거하지만 baseline의 나머지 Table-III shaping은 유지한다. `onto_no_se`의
 sparse task term은 일반 non-terminal transition에서 0이다. R-GAT은 PPO 전에 학습하고
 동결하므로 PPO가 policy는 update하지만 reward potential은 바꿀 수 없다.
+
+성공 gate는 패드 접촉, 패드 중심 수평 오차 `<= 0.35 m`, 수직속도
+`<= 0.55 m/s`, 패드 상대 수평속도 `<= 0.45 m/s`, roll/pitch 합성 tilt
+`<= 10 deg`, 기체 각속도 `<= 45 deg/s`를 모두 요구한다. 접촉만 하고 위치·자세·속도
+중 하나라도 위반하면 `unsafe_pad_contact` 실패와 terminal `-10`으로 처리한다.
+`paper_success`는 호환성을 위해 이름만 유지하며 이제 이 전체 gate의 결과다.
 
 ### 행위자(Actor)와 가치망(Critic) 경계
 

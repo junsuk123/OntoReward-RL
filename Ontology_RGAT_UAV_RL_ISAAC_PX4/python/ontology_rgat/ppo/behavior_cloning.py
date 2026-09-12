@@ -1,4 +1,4 @@
-"""Shared visual-teacher warm start for deadline-limited live experiments."""
+"""Shared behavior-teacher warm start for deadline-limited live experiments."""
 from __future__ import annotations
 
 import math
@@ -10,7 +10,7 @@ import torch
 from torch.nn import functional as F
 
 
-DEMONSTRATION_FORMAT = "ontology-rgat-encoded-visual-demonstrations-v1"
+DEMONSTRATION_FORMAT = "ontology-rgat-encoded-behavior-demonstrations-v2"
 DATA_FIELDS = ("embedding", "proprioception", "action", "truth", "episode_id")
 
 
@@ -77,14 +77,15 @@ def validate_encoded_demonstrations(dataset) -> int:
 
 def save_encoded_demonstrations(path, dataset, *, config_hash: str,
                                 encoder_sha256: str, attempted_seeds,
-                                environment_steps: int) -> dict:
+                                environment_steps: int,
+                                teacher: str = "unspecified") -> dict:
     count = validate_encoded_demonstrations(dataset)
     episode_count = int(torch.unique(dataset["episode_id"]).numel())
     payload = {
         "format": DEMONSTRATION_FORMAT,
         "config_hash": str(config_hash),
         "encoder_sha256": str(encoder_sha256),
-        "teacher": "onboard-keypoint semantic visual servo; no critic truth action input",
+        "teacher": str(teacher),
         "successful_episodes": episode_count,
         "attempted_seeds": [int(value) for value in attempted_seeds],
         "environment_steps": int(environment_steps),
@@ -103,14 +104,14 @@ def load_encoded_demonstrations(path, *, config_hash: str,
                                 encoder_sha256: str) -> dict:
     payload = torch.load(Path(path), map_location="cpu", weights_only=False)
     if payload.get("format") != DEMONSTRATION_FORMAT:
-        raise ValueError("unsupported visual demonstration format")
+        raise ValueError("unsupported behavior demonstration format")
     if payload.get("config_hash") != str(config_hash):
-        raise ValueError("visual demonstration config mismatch")
+        raise ValueError("behavior demonstration config mismatch")
     if payload.get("encoder_sha256") != str(encoder_sha256):
-        raise ValueError("visual demonstration encoder mismatch")
+        raise ValueError("behavior demonstration encoder mismatch")
     count = validate_encoded_demonstrations(payload.get("dataset"))
     if count != int(payload.get("transitions", -1)):
-        raise ValueError("visual demonstration transition count mismatch")
+        raise ValueError("behavior demonstration transition count mismatch")
     return payload
 
 
@@ -163,7 +164,7 @@ def behavior_clone(model, dataset, *, epochs: int = 12,
                    learning_rate: float = 3e-4, sequence_length: int = 48,
                    auxiliary_coefficient: float = .20,
                    post_log_std: float = -1.8) -> dict[str, float]:
-    """Warm-start one arm from a shared visual-only teacher dataset."""
+    """Warm-start one arm from a shared encoded observation/action dataset."""
     transitions = validate_encoded_demonstrations(dataset)
     epochs = int(epochs)
     sequence_length = int(sequence_length)

@@ -8,7 +8,10 @@ import numpy as np
 
 
 PHYSICAL_METRICS = (
-    "paper_success", "strict_success", "crash_failure",
+    "paper_success", "strict_success", "pad_contact", "unsafe_pad_contact",
+    "landing_gate_contact", "landing_gate_position",
+    "landing_gate_vertical_speed", "landing_gate_relative_horizontal_speed",
+    "landing_gate_attitude", "landing_gate_angular_rate", "crash_failure",
     "touchdown_lateral_error", "touchdown_vertical_velocity",
     "touchdown_relative_horizontal_velocity", "touchdown_tilt",
     "touchdown_roll", "touchdown_pitch", "touchdown_angular_rate",

@@ -21,6 +21,7 @@ class LiveStep:
     state: dict
     command: np.ndarray
     physical_contact: bool
+    unsafe_pad_contact: bool
     crash: bool
     excessive_drift: bool
     battery_depleted: bool
@@ -65,11 +66,9 @@ class LiveShinEnvironment:
         off_pad_ground = bool(
             state.get("landed", False) and not contact and self.steps > 0
             and (near_deck or not truth_is_finite))
-        crash = bool(off_pad_ground or tilt > float(self.cfg.sim.crash_tilt))
         battery = state.get("battery") if isinstance(state.get("battery"), dict) else {}
         battery_depleted = bool(battery.get("enabled", False)
                                 and battery.get("depleted", False))
-        terminal = bool(contact or crash or drift or battery_depleted or timeout)
         rel = critic.true_relative_state
         angular_rate = float(np.linalg.norm(np.asarray(state["angular_velocity"], dtype=float)))
         strict = bool(contact
@@ -78,9 +77,15 @@ class LiveShinEnvironment:
                       and np.linalg.norm(rel[3:5]) <= float(self.cfg.criteria.rel_speed_xy)
                       and tilt <= float(self.cfg.criteria.tilt)
                       and angular_rate <= float(self.cfg.criteria.rate))
+        unsafe_contact = bool(contact and not strict)
+        crash = bool(off_pad_ground
+                     or tilt > float(self.cfg.sim.crash_tilt)
+                     or unsafe_contact)
+        terminal = bool(contact or crash or drift or battery_depleted or timeout)
         return LiveStep(
             actor=actor, critic=critic, state=state,
             command=np.asarray(command, dtype=float), physical_contact=contact,
+            unsafe_pad_contact=unsafe_contact,
             crash=crash, excessive_drift=drift,
             battery_depleted=battery_depleted, terminal=terminal,
             timeout=bool(timeout), strict_success=strict,

@@ -502,7 +502,7 @@ function benchmarkPanel(state){
     `<div class="contract-item ${key==='forbidden'?'forbidden':''}"><b>${label}</b>`+
     `<span>${escapeHTML(contract[key]||'--')}</span></div>`).join('');
   const methods=s.benchmark_methods||[];
-  document.getElementById('benchmark-methods').innerHTML=methods.map((method,index)=>{
+  const methodChips=methods.map((method,index)=>{
     const rows=state.series['benchmark_train_'+method]||[],n=Math.min(50,rows.length);
     const success=n?rows.slice(-n).reduce((sum,row)=>sum+Number(row.paper_success||0),0)/n:null;
     // The run-level budget can include a Shin-only estimator warm-up, so it
@@ -512,6 +512,19 @@ function benchmarkPanel(state){
     return `<div class="method-chip" style="border-left-color:${PALETTE[index%PALETTE.length]}">`+
       `<b>${escapeHTML(LABELS['benchmark_train_'+method]||method)}</b>`+
       `<small>${progress} episodes · ${rate}</small></div>`;}).join('');
+  const gate=s.last_landing_gate||null;
+  let gateChip='';
+  if(gate){
+    const checks=[['접촉','pad_contact'],['위치','position'],['수직속도','vertical_speed'],
+      ['상대수평속도','relative_horizontal_speed'],['자세','attitude'],['각속도','angular_rate']];
+    const safe=Number(gate.safe_landing)===1;
+    const detail=checks.map(([label,key])=>
+      `${label}:${Number(gate[key])===1?'통과':'실패'}`).join(' · ');
+    gateChip=`<div class="method-chip" style="border-left-color:${safe?'#2ca02c':'#d62728'}">`+
+      `<b>최근 착륙 판정: ${safe?'성공':'실패'}</b>`+
+      `<small>${escapeHTML(detail)}</small></div>`;
+  }
+  document.getElementById('benchmark-methods').innerHTML=methodChips+gateChip;
 }
 function drawEvaluationBars(card,state){
   const cv=document.getElementById('cv-'+card.id),lg=document.getElementById('lg-'+card.id);

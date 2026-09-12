@@ -26,9 +26,11 @@ ontology/R-GAT reward 방식을 포함한다.
 ```
 
 이 명령은 기존 full 결과를 건드리지 않고 `results/seminar_fast/core3`에 저장한다.
-실제 Isaac/PX4에서 성공한 visual-servo 착륙 6회를 먼저 수집하고, 압축된 공통
-camera embedding/action으로 세 actor를 behavior-cloning 초기화한다. 이후
-`shin_se_fixed`, `no_se_fixed`, `onto_rgat_adaptive_weight_no_se`를 각각 PPO 24회
+실제 Isaac/PX4에서 성공한 training-only PD 교사 착륙 4회를 먼저 수집하고, 압축된
+공통 camera embedding/action으로 세 actor를 behavior-cloning 초기화한다. 교사는
+움직이는 UGV의 속도를 feed-forward하며 시연 action label 생성에만 simulator 상대
+상태를 쓴다. 학습·평가 actor 입력은 계속 camera와 UAV proprioception뿐이다. 이후
+`shin_se_fixed`, `no_se_fixed`, `onto_rgat_adaptive_weight_no_se`를 각각 PPO 16회
 학습하고 쉬운 scenario 3종을 paired seed 2개씩 평가한다. 실제 배터리 방전 모델은
 유지하지만 시작 잔량을 35--55 hover-second로 제한한다. 이는 쉬운 조건의 예비 비교이며
 논문 재현 또는 통계적으로 충분한 성능 주장이 아니다.
@@ -84,7 +86,7 @@ truth는 asymmetric critic, reset, terminal label과 physical evaluation에만 �
 
 | Reward 항 | `shin_se` baseline | `no_se` 대조군 | `onto_no_se` 제안 방식 |
 |---|---|---|---|
-| Terminal | 성공 `+10`, crash/drift/battery 실패 `-10`; shaping을 대체 | `shin_se`와 동일 | Sparse terminal `+10/-10`, next potential 0 |
+| Terminal | 안전 착륙 `+10`, 충돌/이탈/배터리 실패 `-10`; shaping을 대체 | `shin_se`와 동일 | Sparse terminal `+10/-10`, next potential 0 |
 | Physical shaping | Lateral/vertical progress, vertical-speed/undershoot/yaw-rate penalty | Active term을 제외하고 동일 | 명시적 physical shaping 없음 |
 | Active perception | `-0.1 clip(L_est,t+1-0.01,0,1)` | 없음 | 없음 |
 | Ontology shaping | 없음 | 없음 | `lambda [gamma Phi(G_t+1)-Phi(G_t)]` |
@@ -96,6 +98,11 @@ truth는 asymmetric critic, reset, terminal label과 physical evaluation에만 �
 Terminal `+10/-10`은 shaping을 대체하며 제안 no-SE arm에는 active-perception이나
 PBRS가 없다. 자세한 수식과 누출/동결 계약은
 [상태 적응형 보상 가중치 문서](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/ONTOLOGY_RGAT_ADAPTIVE_REWARD_WEIGHTING.md)를 참고한다.
+
+착륙 성공은 접촉 신호 하나로 판정하지 않는다. 패드 접촉과 함께 중심 수평 오차
+`<= 0.35 m`, 수직속도 `<= 0.55 m/s`, 패드 상대 수평속도 `<= 0.45 m/s`, roll/pitch
+합성 tilt `<= 10 deg`, 기체 각속도 `<= 45 deg/s`를 모두 만족해야 한다. 하나라도
+위반한 접촉은 `unsafe_pad_contact` 실패이고 terminal reward는 `-10`이다.
 
 자세한 항별 수식은
 [프로젝트 guide의 보상함수 비교표](Ontology_RGAT_UAV_RL_ISAAC_PX4/README.md)를 참고한다.

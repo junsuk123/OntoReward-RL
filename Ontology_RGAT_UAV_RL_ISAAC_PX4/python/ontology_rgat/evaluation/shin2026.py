@@ -9,7 +9,11 @@ import numpy as np
 
 
 METRICS = (
-    "paper_success", "strict_success", "position_rmse", "velocity_rmse",
+    "paper_success", "strict_success", "pad_contact", "unsafe_pad_contact",
+    "landing_gate_contact", "landing_gate_position",
+    "landing_gate_vertical_speed", "landing_gate_relative_horizontal_speed",
+    "landing_gate_attitude", "landing_gate_angular_rate",
+    "position_rmse", "velocity_rmse",
     "touchdown_lateral_error", "touchdown_vertical_velocity",
     "touchdown_relative_horizontal_velocity", "touchdown_tilt",
     "touchdown_angular_rate", "fov_loss_fraction", "longest_visual_loss_s",
@@ -107,6 +111,12 @@ def write_benchmark_outputs(records: list[dict], output_dir: str | Path) -> dict
         "state_estimation_metrics.csv": ("position_rmse", "velocity_rmse",
                                          "visual_loss_estimation_error"),
         "touchdown_metrics.csv": ("paper_success", "strict_success",
+                                  "pad_contact", "unsafe_pad_contact",
+                                  "landing_gate_contact", "landing_gate_position",
+                                  "landing_gate_vertical_speed",
+                                  "landing_gate_relative_horizontal_speed",
+                                  "landing_gate_attitude",
+                                  "landing_gate_angular_rate",
                                   "touchdown_lateral_error", "touchdown_vertical_velocity",
                                   "touchdown_relative_horizontal_velocity", "touchdown_tilt",
                                   "touchdown_angular_rate", "touchdown_time_s"),

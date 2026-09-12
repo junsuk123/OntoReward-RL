@@ -41,7 +41,7 @@ from ontology_rgat.perception import (PRETRAIN_FORMAT, ShinKeypointEncoder,
                                       prepare_keypoint_encoder,
                                       synthetic_keypoint_dataset)
 from ontology_rgat.ppo.recurrent import ShinRecurrentActorCritic
-from ontology_rgat.ppo.recurrent_train import (_reward, train_live,
+from ontology_rgat.ppo.recurrent_train import (_reward, _terminal_flags, train_live,
                                                update_episode)
 from ontology_rgat.reward_modes import (OntoRewardPBRS, ShinReward,
                                         ShinRewardConfig, FrozenControlledPotential,
@@ -446,6 +446,58 @@ def test_ground_contact_is_stopped_before_the_next_airborne_episode():
     env.finish_episode()
 
     assert calls == ["stop"]
+
+
+def _classify_pad_contact(*, lateral=0.10, roll_deg=0.0,
+                          vertical_speed=-0.10, relative_speed=0.10):
+    env = LiveShinEnvironment.__new__(LiveShinEnvironment)
+    env.steps = 10
+    env.cfg = SimpleNamespace(
+        sim=SimpleNamespace(
+            world_xy_limit=30.0, ground_z=0.08,
+            crash_tilt=math.radians(75.0)),
+        criteria=SimpleNamespace(
+            xy=0.35, vz=0.55, tilt=math.radians(10.0),
+            rate=math.radians(45.0), rel_speed_xy=0.45))
+    half = math.radians(roll_deg) / 2.0
+    quaternion = np.array([math.cos(half), math.sin(half), 0.0, 0.0])
+    actor = ActorObservation(
+        image=np.zeros((32, 32), dtype=np.uint8),
+        body_velocity=np.array([0.0, 0.0, vertical_speed]),
+        attitude_quaternion=quaternion)
+    state = {
+        "truth": {
+            "valid": True, "position": [-lateral, 0.0, 0.2],
+            "velocity": [-relative_speed, 0.0, 0.0]},
+        "quaternion_wxyz": quaternion,
+        "angular_velocity": np.zeros(3),
+        "extra": {"pad_contact": True},
+        "battery": {"enabled": False},
+        "landed": False,
+    }
+    return env._classify(actor, state, np.zeros(4))
+
+
+def test_pad_contact_is_success_only_when_position_and_attitude_are_safe():
+    safe = _classify_pad_contact()
+    assert safe.physical_contact
+    assert safe.strict_success
+    assert not safe.unsafe_pad_contact
+    assert not safe.crash
+    assert _terminal_flags(safe).physical_contact
+
+    for unsafe in (
+            _classify_pad_contact(lateral=.50),
+            _classify_pad_contact(roll_deg=15.0),
+            _classify_pad_contact(vertical_speed=-.70),
+            _classify_pad_contact(relative_speed=.60)):
+        assert unsafe.physical_contact
+        assert not unsafe.strict_success
+        assert unsafe.unsafe_pad_contact
+        assert unsafe.crash
+        flags = _terminal_flags(unsafe)
+        assert not flags.physical_contact
+        assert flags.crash
 
 
 def test_live_benchmark_restarts_owned_stack_after_reset_failure(monkeypatch):

@@ -42,6 +42,7 @@ from ontology_rgat.rgat import (FrozenSemanticRGATPotential,
 from ontology_rgat.rgat.semantic_dataset import semantic_rgat_config
 from ontology_rgat.rgat.train import train_potential
 from run_three_pipeline import (_behavior_transform,
+                                _privileged_velocity_teacher_action,
                                 _reward_design_collection_contract)
 
 
@@ -112,6 +113,39 @@ def test_visual_teacher_is_directional_without_random_policy_leakage():
     action = teacher(
         0, np.ones(4), semantic, np.random.default_rng(1))
     np.testing.assert_allclose(action, [.36, .18, -.55, 0.0], atol=1e-8)
+
+
+def test_deadline_teacher_tracks_deck_and_descends_only_after_alignment():
+    semantic = replace(
+        _observation(.8), visible_keypoint_fraction=1.0,
+        visual_loss_risk=0.0)
+    # Platform moves forward at 0.2 m/s relative to a hovering UAV and is
+    # 0.8 m ahead. The label includes feed-forward and position correction,
+    # while altitude is held until lateral alignment.
+    chase = _privileged_velocity_teacher_action(
+        [.8, 0., -2., .2, 0., 0.], [0., 0., 0.], semantic,
+        [2., 2., 1.], noise_std=0.)
+    assert chase[0] == pytest.approx(.30)
+    assert chase[2] == 0.0
+
+    aligned = _privileged_velocity_teacher_action(
+        [.1, 0., -2., 0., 0., 0.], [.2, 0., 0.], semantic,
+        [2., 2., 1.], noise_std=0.)
+    np.testing.assert_allclose(aligned, [.1175, 0., -.35, 0.], atol=1e-8)
+
+
+def test_deadline_teacher_only_climbs_on_high_altitude_visual_loss():
+    lost = replace(
+        _observation(.2), visible_keypoint_fraction=0.0,
+        visual_loss_risk=1.0)
+    high = _privileged_velocity_teacher_action(
+        [0., 0., -2., 0., 0., 0.], [0., 0., 0.], lost,
+        [2., 2., 1.], noise_std=0.)
+    assert high[2] > 0.0
+    flare = _privileged_velocity_teacher_action(
+        [0., 0., -.3, 0., 0., 0.], [0., 0., 0.], lost,
+        [2., 2., 1.], noise_std=0.)
+    assert flare[2] < 0.0
 
 
 def test_learning_efficiency_reports_shared_behavior_cloning_cost():

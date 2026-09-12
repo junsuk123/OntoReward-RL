@@ -102,6 +102,90 @@ def _behavior_transform(variant: int, *, policy_blend: float = .35,
     return transform
 
 
+def _privileged_velocity_teacher_action(
+        relative_state, body_velocity, semantic, velocity_limit,
+        *, position_gain: float = .35, velocity_gain: float = .75,
+        horizontal_speed_limit: float = .60,
+        noise_std: float = .01, rng=None):
+    """Return a stable training-only velocity label for deadline warm starts.
+
+    ``relative_state`` is platform-in-UAV-body simulator truth and is never an
+    actor input. The teacher reconstructs the deck's horizontal velocity from
+    ``v_uav + v_relative`` and adds a damped position correction. A
+    position-only image servo commands zero at image centre, lets a moving UGV
+    escape, and repeatedly crosses the target.
+    """
+    relative = np.asarray(relative_state, dtype=np.float64).reshape(-1)
+    velocity = np.asarray(body_velocity, dtype=np.float64).reshape(-1)
+    limit = np.asarray(velocity_limit, dtype=np.float64).reshape(-1)
+    if relative.shape != (6,) or velocity.shape != (3,) or limit.shape != (3,):
+        raise ValueError("privileged teacher expects 6-D truth and 3-D velocities")
+    if (not np.isfinite(relative).all() or not np.isfinite(velocity).all()
+            or not np.isfinite(limit).all() or np.any(limit <= 0.0)):
+        raise ValueError("privileged teacher inputs must be finite with positive limits")
+
+    position_xy = relative[:2]
+    relative_velocity_xy = relative[3:5]
+    deck_velocity_xy = velocity[:2] + relative_velocity_xy
+    target_xy = (deck_velocity_xy
+                 + float(position_gain) * position_xy
+                 + float(velocity_gain) * relative_velocity_xy)
+    speed_limit = float(horizontal_speed_limit)
+    if not np.isfinite(speed_limit) or speed_limit <= 0.0:
+        raise ValueError("privileged teacher speed limit must be positive")
+    speed = float(np.linalg.norm(target_xy))
+    if speed > speed_limit:
+        target_xy *= speed_limit / speed
+
+    lateral_error = float(np.linalg.norm(position_xy))
+    relative_speed = float(np.linalg.norm(relative_velocity_xy))
+    altitude = max(0.0, -float(relative[2]))
+    visual_lost = (float(semantic.visible_keypoint_fraction) < 0.5
+                   or float(semantic.visual_loss_risk) > 0.0)
+    # The multi-scale marker naturally fills and then leaves the downward
+    # camera at the end of a correct flare. Treating that expected low-altitude
+    # disappearance as a recovery event traps the vehicle centimetres above
+    # the deck. Only climb on loss while still high or laterally displaced.
+    if visual_lost and (altitude > 0.80 or lateral_error > 0.40):
+        target_vz = 0.22
+    elif lateral_error > 0.50 or relative_speed > 0.45:
+        target_vz = 0.0
+    elif altitude > 1.10:
+        target_vz = -0.35
+    elif altitude > 0.60:
+        target_vz = -0.14
+    else:
+        target_vz = -0.04
+
+    target_velocity = np.r_[target_xy, target_vz]
+    action = np.r_[target_velocity / limit, 0.0]
+    if float(noise_std) > 0.0:
+        generator = rng if rng is not None else np.random.default_rng()
+        action += generator.normal(0.0, float(noise_std), 4)
+    return np.clip(action, -0.90, 0.90)
+
+
+def _privileged_velocity_teacher(environment, *, settings):
+    """Bind the training-only teacher to the environment's current live step."""
+    def transform(step, policy_action, semantic, rng):
+        current = environment.last_step
+        if current is None:
+            raise RuntimeError("privileged teacher requires a reset live environment")
+        controller = environment.adapter.controller
+        return _privileged_velocity_teacher_action(
+            current.critic.true_relative_state,
+            current.actor.body_velocity,
+            semantic,
+            controller.max_velocity * controller.action_scale,
+            position_gain=float(settings.get("position_gain", .35)),
+            velocity_gain=float(settings.get("velocity_gain", .75)),
+            horizontal_speed_limit=float(settings.get(
+                "horizontal_speed_limit_m_s", .60)),
+            noise_std=float(settings.get("noise_std", .01)),
+            rng=rng)
+    return transform
+
+
 def _read_csv(path: Path):
     if not path.is_file():
         return []
@@ -112,7 +196,7 @@ def _read_csv(path: Path):
 def _prepare_fast_demonstrations(*, cfg, camera, config, config_hash,
                                  keypoint_pretraining, results_dir, device,
                                  model_seed, monitor):
-    """Collect successful visual-servo flights once and store compact embeddings."""
+    """Collect successful teacher flights once and store compact actor inputs."""
     fast = dict(config.get("seminar_fast") or {})
     settings = dict(fast.get("behavior_cloning") or {})
     if not bool(settings.get("enabled", False)):
@@ -121,9 +205,15 @@ def _prepare_fast_demonstrations(*, cfg, camera, config, config_hash,
     maximum = max(required, int(settings.get("max_attempts", 12)))
     source_pipeline = str(settings.get("source_pipeline", "no_se_fixed"))
     if get_pipeline(source_pipeline).state_estimation_enabled:
-        raise ValueError("the visual teacher source must be estimator-free")
-    artifact_path = Path(results_dir) / "models/shared/visual_teacher_demonstrations.pt"
-    attempts_path = Path(results_dir) / "training/visual_teacher_attempts.csv"
+        raise ValueError("the behavior-teacher encoder source must be estimator-free")
+    teacher_id = str(settings.get(
+        "teacher", "privileged_relative_state_velocity_pd_v4"))
+    if teacher_id != "privileged_relative_state_velocity_pd_v4":
+        raise ValueError(f"unknown seminar-fast behavior teacher: {teacher_id}")
+    artifact_path = (Path(results_dir) / "models/shared"
+                     / f"teacher_demonstrations_{config_hash[:12]}.pt")
+    attempts_path = (Path(results_dir) / "training"
+                     / f"teacher_attempts_{config_hash[:12]}.csv")
     encoder_path = Path(results_dir) / "models/shared/keypoint_encoder.pt"
     encoder_sha = _sha256_file(encoder_path)
     payload = None
@@ -142,11 +232,11 @@ def _prepare_fast_demonstrations(*, cfg, camera, config, config_hash,
             environment_steps = max(
                 int(payload.get("environment_steps", 0)), environment_steps)
             print(
-                "Resuming shared visual-teacher demonstrations: "
+                "Resuming shared training-teacher demonstrations: "
                 f"{payload['successful_episodes']}/{required} successes from "
                 f"{len(attempted_seeds)}/{maximum} attempts.")
         except (OSError, ValueError, KeyError) as exc:
-            print(f"Ignoring incompatible visual-teacher demonstrations: {exc}")
+            print(f"Ignoring incompatible training-teacher demonstrations: {exc}")
             payload, dataset, attempts, attempted_seeds, environment_steps = (
                 None, None, [], [], 0)
     successes = (0 if dataset is None else
@@ -155,17 +245,15 @@ def _prepare_fast_demonstrations(*, cfg, camera, config, config_hash,
         torch.manual_seed(int(model_seed))
         teacher_model = _build_model(
             config, device, keypoint_pretraining, pipeline=source_pipeline)
-        teacher = _behavior_transform(
-            0, policy_blend=0.0,
-            servo_gain=float(settings.get("servo_gain", 1.20)),
-            noise_std=float(settings.get("noise_std", .01)), yaw_blend=0.0)
         seed0 = int((config.get("seeds") or {}).get(
             "behavior_cloning_start", 90000))
         monitor.stage(
-            "visual-teacher demonstrations",
+            "training-only teacher demonstrations",
             f"successful real Isaac/PX4 flights {successes}/{required}")
         with LiveShinEnvironment(
                 cfg, camera, horizon_steps=int(cfg.sim.max_steps)) as environment:
+            teacher = _privileged_velocity_teacher(
+                environment, settings=settings)
             for attempt in range(maximum):
                 seed = seed0 + attempt
                 if seed in attempted_seeds:
@@ -174,15 +262,20 @@ def _prepare_fast_demonstrations(*, cfg, camera, config, config_hash,
                     environment, teacher_model, source_pipeline, seed,
                     curriculum=float(settings.get("curriculum", 1.0)),
                     deterministic=True, scenario="training_random_walk",
-                    monitor=monitor, phase="visual-teacher demonstration",
+                    monitor=monitor, phase="training-only teacher demonstration",
                     action_transform=teacher)
                 attempted_seeds.append(seed)
                 environment_steps += int(metric["steps"])
                 metric.update({
-                    "method": "visual_teacher", "pipeline": "shared_warm_start",
+                    "method": "privileged_teacher", "pipeline": "shared_warm_start",
                     "episode": len(attempted_seeds),
                     "accepted_for_cloning": float(metric["paper_success"]),
-                    "teacher_information": "onboard keypoints and UAV proprioception",
+                    "teacher": teacher_id,
+                    "config_hash": config_hash,
+                    "teacher_information": (
+                        "training-only simulator relative state for action labels; "
+                        "stored/deployed actor inputs are image embedding and UAV "
+                        "proprioception only"),
                 })
                 attempts.append(metric)
                 _write_csv(attempts_path, attempts)
@@ -197,9 +290,10 @@ def _prepare_fast_demonstrations(*, cfg, camera, config, config_hash,
                         artifact_path, dataset, config_hash=config_hash,
                         encoder_sha256=encoder_sha,
                         attempted_seeds=attempted_seeds,
-                        environment_steps=environment_steps)
+                        environment_steps=environment_steps,
+                        teacher=teacher_id)
                 print(
-                    f"visual teacher attempt {len(attempted_seeds)}/{maximum} "
+                    f"training teacher attempt {len(attempted_seeds)}/{maximum} "
                     f"success={int(metric['paper_success'])} "
                     f"accepted={successes}/{required}")
                 if successes >= required:
@@ -209,7 +303,7 @@ def _prepare_fast_demonstrations(*, cfg, camera, config, config_hash,
             torch.cuda.empty_cache()
     if payload is None or int(payload["successful_episodes"]) < required:
         raise RuntimeError(
-            "visual teacher did not produce enough real successful landings "
+            "training teacher did not produce enough real successful landings "
             f"({successes}/{required}) after {len(attempted_seeds)}/{maximum} attempts")
     return payload
 
@@ -439,6 +533,9 @@ def _collect_adaptive_data(*, cfg, camera, model, source_pipeline, config,
 
     scenarios = tuple(design.get("scenarios") or (
         "training_random_walk", "zigzag", "vertical_heave_boat"))
+    fast_settings = dict(
+        ((config.get("seminar_fast") or {}).get("behavior_cloning") or {}))
+    deadline_teacher_enabled = bool(fast_settings.get("enabled", False))
     completed_episodes = set(int(row["episode_id"]) for row in records)
 
     def requirements_met(dataset):
@@ -464,9 +561,15 @@ def _collect_adaptive_data(*, cfg, camera, model, source_pipeline, config,
             "behavior_policy",
             "mixed_random_fixed_success_collision_drift_near_miss")),
         "source_pipeline": str(source_pipeline),
-        "components": ["trained_fixed_policy", "visual_servo_success_recovery",
-                       "moderate_noise_near_miss", "bounded_random_exploration",
-                       "empirical_collision_or_drift_failures"],
+        "components": [
+            "trained_fixed_policy",
+            ("training_only_privileged_velocity_teacher"
+             if deadline_teacher_enabled else "visual_servo_success_recovery"),
+            "moderate_noise_near_miss", "bounded_random_exploration",
+            "empirical_collision_or_drift_failures"],
+        "deadline_teacher": (
+            str(fast_settings.get("teacher"))
+            if deadline_teacher_enabled else None),
         "scenario_cycle": list(scenarios),
         "synthetic_transitions_allowed": False,
     }
@@ -481,11 +584,17 @@ def _collect_adaptive_data(*, cfg, camera, model, source_pipeline, config,
                 if requirements_met(dataset):
                     break
                 scenario = scenarios[(episode - 1) % len(scenarios)]
+                variant = (episode - 1) % 3
+                transform = (
+                    _privileged_velocity_teacher(
+                        environment, settings=fast_settings)
+                    if deadline_teacher_enabled and variant == 0 else
+                    _behavior_transform(variant))
                 rows, metric = collect_episode_resilient(
                     environment, model, source_pipeline, seed, curriculum=1.0,
                     deterministic=False, scenario=scenario, monitor=monitor,
                     phase="adaptive reward-design data",
-                    action_transform=_behavior_transform((episode - 1) % 3))
+                    action_transform=transform)
                 records.extend(adaptive_episode_records(
                     rows, metric, episode_id=episode, seed=seed,
                     scenario=scenario))
@@ -624,6 +733,8 @@ def main():
         "experiment": config, "system": system,
         "training_replicate": args.training_replicate,
         "model_seed": model_seed, "training_seed_start": training_seed0,
+        "outcome_contract": (
+            "safe_landing_contact_position_velocity_attitude_rate_v2"),
     })
     configured_count = int(training_cfg.get(
         f"episodes_{args.mode}", 8 if args.mode == "quick" else 40960))
@@ -722,6 +833,7 @@ def main():
         name: config.get(name) for name in
         ("camera", "estimator", "control", "ppo", "curriculum", "seeds")
     }
+    landing_contract = dict(system.get("landing") or {})
     manifest = {
         "format": "ontology_rgat.three_pipeline_experiment/1",
         "experiment": args.experiment, "mode": args.mode,
@@ -755,6 +867,22 @@ def main():
         },
         "evaluation": evaluation_cfg, "paired_seeds": True,
         "primary_comparison_metric_family": "reward-independent physical task metrics",
+        "landing_success_contract": {
+            "version": "safe_landing_v2",
+            "all_required": True,
+            "pad_contact": True,
+            "maximum_lateral_error_m": float(landing_contract.get(
+                "success_xy_m", 0.35)),
+            "maximum_vertical_speed_m_s": float(landing_contract.get(
+                "success_vz_m_s", 0.55)),
+            "maximum_relative_horizontal_speed_m_s": float(
+                landing_contract.get("success_rel_speed_xy_m_s", 0.45)),
+            "maximum_tilt_deg": float(landing_contract.get(
+                "success_tilt_deg", 10.0)),
+            "maximum_angular_rate_deg_s": float(landing_contract.get(
+                "success_rate_deg_s", 45.0)),
+            "unsafe_contact_is_failure": True,
+        },
         "episode_return_role": "debugging only; never used for cross-pipeline ranking",
         "checkpoint_selection_rule": (
             "latest completed PPO episode; no reward-return model selection"),
@@ -892,7 +1020,7 @@ def main():
                               args.results_dir / "models/reward_design_source")
                 if demonstrations is not None:
                     cloning = dict((seminar_fast.get("behavior_cloning") or {}))
-                    monitor.stage("behavior cloning", f"shared visual teacher · {name}")
+                    monitor.stage("behavior cloning", f"shared training teacher · {name}")
                     cloning_metrics[name] = behavior_clone(
                         model, demonstrations["dataset"],
                         epochs=int(cloning.get("epochs", 12)),
@@ -904,7 +1032,7 @@ def main():
                     manifest["behavior_cloning_by_pipeline"] = cloning_metrics
                     _write_json(manifest_path, manifest)
                     print(
-                        f"{name} visual-teacher warm start: action loss "
+                        f"{name} teacher warm start: action loss "
                         f"{cloning_metrics[name]['action_loss_before']:.4f} -> "
                         f"{cloning_metrics[name]['action_loss_after']:.4f}, "
                         f"std={cloning_metrics[name]['post_action_std']:.3f}")

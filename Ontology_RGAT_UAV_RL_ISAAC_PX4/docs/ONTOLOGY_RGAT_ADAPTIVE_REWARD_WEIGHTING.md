@@ -59,7 +59,8 @@ w0   = [1, 1, 0.5, 1, 2], sum(w0) = 5.5
 ```
 
 `v_z,t`는 전이 결과 시점의 UAV body-frame vertical velocity다. 기존 dispatch가
-이전 시점 속도를 넘기던 오류도 같은 정의로 수정했다. 성공 접촉은 `+10`, crash,
+이전 시점 속도를 넘기던 오류도 같은 정의로 수정했다. 위치·자세·속도 gate를 모두
+통과한 안전 접촉은 `+10`, unsafe contact와 crash,
 excessive drift, 현재 시스템의 battery-depleted terminal은 `-10`이며 terminal
 reward가 모든 shaping/active 항을 대체한다.
 

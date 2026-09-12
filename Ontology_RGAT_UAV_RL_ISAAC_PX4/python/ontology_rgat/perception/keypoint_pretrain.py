@@ -585,6 +585,37 @@ def prepare_keypoint_encoder(
                 and saved.get("implementation") == ShinKeypointEncoder.implementation):
             print(f"Using frozen synthetic six-keypoint encoder from {path}.")
             return saved
+    bootstrap_value = settings.get("bootstrap_artifact")
+    if bootstrap_value:
+        bootstrap = Path(str(bootstrap_value)).expanduser()
+        if not bootstrap.is_absolute():
+            # Collapse ``..`` before testing existence: the new artifact's
+            # parent may not have been created yet on the first fast run.
+            bootstrap = (path.parent / bootstrap).resolve()
+        if bootstrap.is_file():
+            saved = torch.load(bootstrap, map_location="cpu", weights_only=False)
+            compatible = (saved.get("format") == PRETRAIN_FORMAT
+                          and saved.get("mode") == str(mode)
+                          and saved.get("implementation")
+                          == ShinKeypointEncoder.implementation)
+            if compatible:
+                probe = ShinKeypointEncoder(
+                    settings["image_embedding"], keypoints=6)
+                probe.load_state_dict(saved["encoder"])
+                copied = dict(saved)
+                copied.update({
+                    "config_hash": str(config_hash),
+                    "bootstrap_source": str(bootstrap.resolve()),
+                    "training_source": (
+                        f"compatible encoder bootstrapped from {bootstrap}"),
+                })
+                path.parent.mkdir(parents=True, exist_ok=True)
+                temporary = path.with_suffix(path.suffix + ".tmp")
+                torch.save(copied, temporary)
+                os.replace(temporary, path)
+                print(f"Bootstrapped compatible six-keypoint encoder from "
+                      f"{bootstrap} into {path}.")
+                return copied
     print("Pretraining six-keypoint descriptor encoder on synthetic deployed-board views...")
     state, metrics = _train_encoder(
         system, settings, mode=str(mode), device=torch.device(device))

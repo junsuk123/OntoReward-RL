@@ -14,6 +14,20 @@ Git 저장소 루트에서 실행한다.
 ./run.sh
 ```
 
+마감용 쉬운 조건의 핵심 3-arm preview는 다음 명령을 사용한다.
+
+```bash
+./run.sh --seminar-fast
+```
+
+Preview는 `config/experiments/seminar_fast_comparison.yaml`과
+`config/seminar-fast-system.yaml`을 사용한다. 성공한 실제 visual-servo 시연만 공통
+BC warm start에 포함하며, actor label에는 critic truth를 사용하지 않는다. SE arm의
+auxiliary head supervision과 평가/terminal 판정에만 training-only truth가 남는다.
+시연, reward-design, PPO, paired evaluation interaction 수는 manifest와
+`tables/sample_efficiency.csv`에 각각 기록된다. 중단 후 같은 명령을 실행하면 시연
+artifact, pipeline checkpoint와 완료 평가 row를 재개한다.
+
 루트 wrapper가 기준 launcher다. 인수가 없으면 다음을 추가한다.
 
 ```text

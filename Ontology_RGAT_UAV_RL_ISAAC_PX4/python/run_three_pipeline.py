@@ -31,6 +31,10 @@ from ontology_rgat.perception import (RosGrayscaleSource,
 from ontology_rgat.pipelines import (available_pipeline_ids, get_pipeline,
                                      primary_pipeline_ids,
                                      validate_pipeline_configuration)
+from ontology_rgat.ppo.behavior_cloning import (
+    behavior_clone, encoded_demonstration_episode,
+    load_encoded_demonstrations, merge_encoded_demonstrations,
+    save_encoded_demonstrations)
 from ontology_rgat.ppo.recurrent_train import (collect_episode_resilient,
                                                train_live)
 from ontology_rgat.reward_modes import RewardComponentNormalizer
@@ -56,7 +60,9 @@ def _write_json(path: Path, value) -> None:
     os.replace(temporary, path)
 
 
-def _behavior_transform(variant: int):
+def _behavior_transform(variant: int, *, policy_blend: float = .35,
+                        servo_gain: float = 1.0, noise_std: float | None = None,
+                        yaw_blend: float = .25):
     """Estimator-free mixture: no_se action, image servo and bounded noise."""
     def transform(step, policy_action, semantic, rng):
         action = np.asarray(policy_action, dtype=np.float64).copy()
@@ -67,14 +73,16 @@ def _behavior_transform(variant: int):
             cx, cy = semantic.centroid_xy
             recovering = (semantic.visible_keypoint_fraction < 0.5
                           or semantic.visual_loss_risk > 0.0)
-            correction = 0.45 if recovering else 0.75
-            action[0] = np.clip(0.35 * action[0] + correction * cx, -0.8, 0.8)
-            action[1] = np.clip(0.35 * action[1] - correction * cy, -0.8, 0.8)
+            correction = float(servo_gain) * (0.45 if recovering else 0.75)
+            action[0] = np.clip(
+                float(policy_blend) * action[0] + correction * cx, -0.8, 0.8)
+            action[1] = np.clip(
+                float(policy_blend) * action[1] - correction * cy, -0.8, 0.8)
             if recovering:
                 # Preserve the last trustworthy image direction, climb to
                 # widen the footprint, and suppress yaw until keypoints return.
                 action[2] = 0.45
-                action[3] *= 0.15
+                action[3] *= min(float(yaw_blend), 0.15)
             elif (semantic.image_alignment > 0.65
                   and semantic.keypoint_confidence > 0.01):
                 scale = semantic.apparent_target_scale
@@ -82,8 +90,9 @@ def _behavior_transform(variant: int):
                 action[2] = min(0.25 * action[2], descent)
             else:
                 action[2] = max(0.25 * action[2], 0.0)
-            action[3] *= 0.25
-            action += rng.normal(0.0, 0.04, 4)
+            action[3] *= float(yaw_blend)
+            action += rng.normal(
+                0.0, 0.04 if noise_std is None else float(noise_std), 4)
         elif variant == 1:
             action += rng.normal(0.0, 0.18, 4)
         else:
@@ -98,6 +107,111 @@ def _read_csv(path: Path):
         return []
     with path.open(newline="", encoding="utf-8") as stream:
         return list(csv.DictReader(stream))
+
+
+def _prepare_fast_demonstrations(*, cfg, camera, config, config_hash,
+                                 keypoint_pretraining, results_dir, device,
+                                 model_seed, monitor):
+    """Collect successful visual-servo flights once and store compact embeddings."""
+    fast = dict(config.get("seminar_fast") or {})
+    settings = dict(fast.get("behavior_cloning") or {})
+    if not bool(settings.get("enabled", False)):
+        return None
+    required = max(1, int(settings.get("successful_episodes", 6)))
+    maximum = max(required, int(settings.get("max_attempts", 12)))
+    source_pipeline = str(settings.get("source_pipeline", "no_se_fixed"))
+    if get_pipeline(source_pipeline).state_estimation_enabled:
+        raise ValueError("the visual teacher source must be estimator-free")
+    artifact_path = Path(results_dir) / "models/shared/visual_teacher_demonstrations.pt"
+    attempts_path = Path(results_dir) / "training/visual_teacher_attempts.csv"
+    encoder_path = Path(results_dir) / "models/shared/keypoint_encoder.pt"
+    encoder_sha = _sha256_file(encoder_path)
+    payload = None
+    dataset = None
+    attempts = _read_csv(attempts_path)
+    attempted_seeds = [int(float(row["seed"])) for row in attempts]
+    environment_steps = sum(int(float(row.get("steps", 0))) for row in attempts)
+    if artifact_path.is_file():
+        try:
+            payload = load_encoded_demonstrations(
+                artifact_path, config_hash=config_hash,
+                encoder_sha256=encoder_sha)
+            dataset = payload["dataset"]
+            attempted_seeds = list(dict.fromkeys(
+                [*payload.get("attempted_seeds", ()), *attempted_seeds]))
+            environment_steps = max(
+                int(payload.get("environment_steps", 0)), environment_steps)
+            print(
+                "Resuming shared visual-teacher demonstrations: "
+                f"{payload['successful_episodes']}/{required} successes from "
+                f"{len(attempted_seeds)}/{maximum} attempts.")
+        except (OSError, ValueError, KeyError) as exc:
+            print(f"Ignoring incompatible visual-teacher demonstrations: {exc}")
+            payload, dataset, attempts, attempted_seeds, environment_steps = (
+                None, None, [], [], 0)
+    successes = (0 if dataset is None else
+                 int(torch.unique(dataset["episode_id"]).numel()))
+    if successes < required and len(attempted_seeds) < maximum:
+        torch.manual_seed(int(model_seed))
+        teacher_model = _build_model(
+            config, device, keypoint_pretraining, pipeline=source_pipeline)
+        teacher = _behavior_transform(
+            0, policy_blend=0.0,
+            servo_gain=float(settings.get("servo_gain", 1.20)),
+            noise_std=float(settings.get("noise_std", .01)), yaw_blend=0.0)
+        seed0 = int((config.get("seeds") or {}).get(
+            "behavior_cloning_start", 90000))
+        monitor.stage(
+            "visual-teacher demonstrations",
+            f"successful real Isaac/PX4 flights {successes}/{required}")
+        with LiveShinEnvironment(
+                cfg, camera, horizon_steps=int(cfg.sim.max_steps)) as environment:
+            for attempt in range(maximum):
+                seed = seed0 + attempt
+                if seed in attempted_seeds:
+                    continue
+                rows, metric = collect_episode_resilient(
+                    environment, teacher_model, source_pipeline, seed,
+                    curriculum=float(settings.get("curriculum", 1.0)),
+                    deterministic=True, scenario="training_random_walk",
+                    monitor=monitor, phase="visual-teacher demonstration",
+                    action_transform=teacher)
+                attempted_seeds.append(seed)
+                environment_steps += int(metric["steps"])
+                metric.update({
+                    "method": "visual_teacher", "pipeline": "shared_warm_start",
+                    "episode": len(attempted_seeds),
+                    "accepted_for_cloning": float(metric["paper_success"]),
+                    "teacher_information": "onboard keypoints and UAV proprioception",
+                })
+                attempts.append(metric)
+                _write_csv(attempts_path, attempts)
+                if bool(metric["paper_success"]):
+                    successes += 1
+                    episode = encoded_demonstration_episode(
+                        teacher_model, rows, episode_id=successes,
+                        batch_size=int(settings.get("encoding_batch_size", 64)))
+                    dataset = merge_encoded_demonstrations(dataset, episode)
+                if dataset is not None:
+                    payload = save_encoded_demonstrations(
+                        artifact_path, dataset, config_hash=config_hash,
+                        encoder_sha256=encoder_sha,
+                        attempted_seeds=attempted_seeds,
+                        environment_steps=environment_steps)
+                print(
+                    f"visual teacher attempt {len(attempted_seeds)}/{maximum} "
+                    f"success={int(metric['paper_success'])} "
+                    f"accepted={successes}/{required}")
+                if successes >= required:
+                    break
+        del teacher_model
+        if torch.cuda.is_available() and str(device).startswith("cuda"):
+            torch.cuda.empty_cache()
+    if payload is None or int(payload["successful_episodes"]) < required:
+        raise RuntimeError(
+            "visual teacher did not produce enough real successful landings "
+            f"({successes}/{required}) after {len(attempted_seeds)}/{maximum} attempts")
+    return payload
 
 
 def _reward_design_collection_contract(design, mode, minimum, maximum):
@@ -458,6 +572,7 @@ def main():
         parser.error("--training-replicate must be non-negative")
 
     config = load_experiment(args.config)
+    seminar_fast = dict(config.get("seminar_fast") or {})
     if args.experiment is None:
         args.experiment = str(config.get("experiment", "three_pipeline"))
     validate_pipeline_configuration(config)
@@ -544,6 +659,15 @@ def main():
     elif args.mode == "quick":
         evaluation_cfg = {name: (4 if name == "training_random_walk" else 2)
                           for name in evaluation_cfg}
+    selected_scenarios = seminar_fast.get("evaluation_scenarios")
+    if selected_scenarios:
+        unknown_scenarios = set(selected_scenarios) - set(evaluation_cfg)
+        if unknown_scenarios:
+            parser.error(
+                f"seminar-fast evaluation has unknown scenarios: "
+                f"{sorted(unknown_scenarios)}")
+        evaluation_cfg = {
+            name: evaluation_cfg[name] for name in selected_scenarios}
     warmup_seed0 = int(seed_cfg.get(
         "estimator_warmup_start", base_training_seed - selected_warmup))
     warmup_seed0 += 100000 * args.training_replicate
@@ -637,6 +761,7 @@ def main():
         "reward_design_id": getattr(potential, "design_id", None),
         "adaptive_reward_design_id": getattr(adaptive_weights, "design_id", None),
         "adaptive_reward": config.get("adaptive_reward"),
+        "seminar_fast": seminar_fast or None,
         "execution_status": "configured; real Isaac/Pegasus/PX4 results pending",
     }
     manifest_path = args.results_dir / "manifest.json"
@@ -683,6 +808,7 @@ def main():
     curriculum = {
         "levels": levels,
         "episodes_per_update": interval,
+        "initial_level": int(curriculum_raw.get("initial_level", 1)),
         "performance_gated": bool(curriculum_raw.get("performance_gated", False)),
         "assessment_window": int(curriculum_raw.get("assessment_window", 20)),
         "minimum_episodes_at_level": int(curriculum_raw.get(
@@ -741,6 +867,19 @@ def main():
                         "empirical_dataset"),
                 })
             _write_json(manifest_path, manifest)
+            demonstrations = _prepare_fast_demonstrations(
+                cfg=cfg, camera=camera, config=config,
+                config_hash=config_hash,
+                keypoint_pretraining=keypoint_pretraining,
+                results_dir=args.results_dir, device=args.device,
+                model_seed=model_seed, monitor=monitor)
+            cloning_metrics = {}
+            if demonstrations is not None:
+                manifest["behavior_cloning_demonstrations"] = {
+                    key: demonstrations[key] for key in (
+                        "teacher", "successful_episodes", "attempted_seeds",
+                        "environment_steps", "transitions")}
+                _write_json(manifest_path, manifest)
             models = {}
             histories = {}
 
@@ -751,6 +890,24 @@ def main():
                     config, args.device, keypoint_pretraining, pipeline=name)
                 target_dir = (args.results_dir / f"models/{name}" if primary else
                               args.results_dir / "models/reward_design_source")
+                if demonstrations is not None:
+                    cloning = dict((seminar_fast.get("behavior_cloning") or {}))
+                    monitor.stage("behavior cloning", f"shared visual teacher · {name}")
+                    cloning_metrics[name] = behavior_clone(
+                        model, demonstrations["dataset"],
+                        epochs=int(cloning.get("epochs", 12)),
+                        learning_rate=float(cloning.get("learning_rate", 3e-4)),
+                        sequence_length=int(cloning.get("sequence_length", 48)),
+                        auxiliary_coefficient=float(cloning.get(
+                            "auxiliary_coefficient", .20)),
+                        post_log_std=float(cloning.get("post_log_std", -1.8)))
+                    manifest["behavior_cloning_by_pipeline"] = cloning_metrics
+                    _write_json(manifest_path, manifest)
+                    print(
+                        f"{name} visual-teacher warm start: action loss "
+                        f"{cloning_metrics[name]['action_loss_before']:.4f} -> "
+                        f"{cloning_metrics[name]['action_loss_after']:.4f}, "
+                        f"std={cloning_metrics[name]['post_action_std']:.3f}")
                 warmup_count = (int(ppo["perception_warmup_episodes"])
                                 if get_pipeline(name).state_estimation_enabled else 0)
                 training_seeds = controlled_training_seeds(
@@ -946,7 +1103,8 @@ def main():
                             continue
                         _, metric = collect_episode_resilient(
                             environment, model, name, int(item["seed"]),
-                            curriculum=1.0,
+                            curriculum=float(seminar_fast.get(
+                                "evaluation_curriculum", 1.0)),
                             potential=(adaptive_weights
                                        if get_pipeline(name).use_adaptive_reward_weights
                                        else potential
@@ -968,6 +1126,10 @@ def main():
                 evaluation_rows, training_records, args.results_dir,
                 reward_design_episodes=design_episodes + source_training_episodes,
                 reward_design_steps=design_steps + source_training_steps,
+                behavior_cloning_episodes=(0 if demonstrations is None else
+                    len(demonstrations.get("attempted_seeds", ()))),
+                behavior_cloning_steps=(0 if demonstrations is None else
+                    int(demonstrations.get("environment_steps", 0))),
                 estimator_warmup_episodes=selected_warmup,
                 estimator_warmup_steps=sum(
                     int(float(row.get("steps", 0)))
@@ -987,16 +1149,23 @@ def main():
                 if row.get("optimization_phase") == "perception_warmup")
             total_design_episodes = reward_design_cost + adaptive_design_episodes
             total_design_steps = reward_design_step_cost + adaptive_design_steps
+            cloning_episodes = (0 if demonstrations is None else
+                                len(demonstrations.get("attempted_seeds", ())))
+            cloning_steps = (0 if demonstrations is None else
+                             int(demonstrations.get("environment_steps", 0)))
             manifest.update({
                 "execution_status": "complete real Isaac/Pegasus/PX4 run",
                 "N_PPO": train_count * len(args.pipelines),
                 "N_estimator_warmup": selected_warmup,
                 "estimator_warmup_environment_steps": warmup_step_cost,
                 "N_reward_design": total_design_episodes,
-                "N_total": train_count * len(args.pipelines) + total_design_episodes,
+                "N_behavior_cloning_demonstrations": cloning_episodes,
+                "behavior_cloning_environment_steps": cloning_steps,
+                "N_total": (train_count * len(args.pipelines)
+                            + total_design_episodes + cloning_episodes),
                 "N_total_including_estimator_warmup": (
                     train_count * len(args.pipelines) + total_design_episodes
-                    + selected_warmup),
+                    + cloning_episodes + selected_warmup),
                 "reward_design_environment_steps": total_design_steps,
                 "reports": reports,
             })

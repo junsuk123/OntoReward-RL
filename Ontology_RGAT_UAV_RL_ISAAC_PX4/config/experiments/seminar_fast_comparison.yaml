@@ -1,0 +1,91 @@
+extends: adaptive_reward_weight_comparison.yaml
+
+# 세미나 직전의 경향 확인용 예비 실험이다. 논문 재현/최종 통계로 사용하지 않는다.
+experiment: adaptive_reward_weight_comparison
+pipelines:
+  - shin_se_fixed
+  - shin_se_rgat_weight
+  - no_se_fixed
+  - onto_rgat_adaptive_weight_no_se
+  - onto_rgat_potential_pbrs_no_se
+
+estimator:
+  keypoint_pretraining:
+    # 동일 카메라/보드를 사용한 기존 검증 encoder가 있으면 그대로 복사한다.
+    # 별도 결과 디렉터리의 config provenance는 새 artifact에 다시 기록된다.
+    bootstrap_artifact: ../../../../adaptive_reward_weight/full/models/shared/keypoint_encoder.pt
+    samples_full: 128
+    epochs_full: 3
+    empirical_samples_full: 16
+    empirical_epochs: 8
+
+control:
+  # 쉬운 20초 착륙에서 불필요한 timeout 비행을 줄인다.
+  horizon_steps: 200
+  # BC가 방향을 정하므로 초기에도 정상 속도 envelope를 허용한다.
+  curriculum_min_action_scale: 0.75
+  curriculum_min_pad_motion_scale: 1.0
+
+ppo:
+  learning_rate: 0.00015
+  minimum_learning_rate: 0.00002
+  epochs: 5
+  entropy_coef: 0.001
+  init_log_std: -1.8
+  actor_output_gain: 0.05
+  target_kl: 0.02
+  # 성공 시연의 embedding으로 LSTM/SE head까지 예열하므로 별도 hover
+  # warm-up을 반복하지 않는다.
+  perception_warmup_episodes_quick: 0
+  perception_warmup_episodes_full: 0
+  health_window_episodes: 12
+  health_grace_episodes: 32
+  health_max_battery_depletion_fraction: 0.90
+
+curriculum:
+  # 별도 system profile의 좁고 쉬운 분포 전체를 처음부터 사용한다.
+  levels: 1
+  initial_level: 1
+  performance_gated: false
+  update_every_episodes: 24
+
+training:
+  episodes_quick: 8
+  episodes_full: 24
+
+rgat_design:
+  episodes_full: 8
+  max_episodes_full: 24
+  epochs_full: 10
+  minimum_successful_recovery_episodes_full: 1
+
+adaptive_reward_design:
+  episodes_full: 8
+  max_episodes_full: 24
+  epochs_full: 10
+
+seeds:
+  behavior_cloning_start: 90000
+
+seminar_fast:
+  label: easy-condition preliminary comparison
+  publication_claim_allowed: false
+  evaluation_curriculum: 1.0
+  evaluation_scenarios:
+    - training_random_walk
+    - circle
+    - zigzag
+  behavior_cloning:
+    enabled: true
+    source_pipeline: no_se_fixed
+    successful_episodes: 6
+    max_attempts: 12
+    curriculum: 1.0
+    servo_gain: 1.20
+    noise_std: 0.01
+    epochs: 12
+    learning_rate: 0.0003
+    sequence_length: 48
+    auxiliary_coefficient: 0.20
+    post_log_std: -1.8
+

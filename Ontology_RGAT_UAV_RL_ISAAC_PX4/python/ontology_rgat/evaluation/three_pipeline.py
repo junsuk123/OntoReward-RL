@@ -209,7 +209,9 @@ def _rolling_success(rows, window=20):
 
 def learning_efficiency(training_records, *, reward_design_episodes=0,
                         reward_design_steps=0, estimator_warmup_episodes=0,
-                        estimator_warmup_steps=0):
+                        estimator_warmup_steps=0,
+                        behavior_cloning_episodes=0,
+                        behavior_cloning_steps=0):
     output = []
     pipelines = list(dict.fromkeys(
         row.get("pipeline") for row in training_records if row.get("pipeline")))
@@ -221,28 +223,29 @@ def learning_efficiency(training_records, *, reward_design_episodes=0,
         if episodes.size == 0:
             continue
         auc = float(np.trapz(success, episodes) / max(float(episodes[-1] - episodes[0]), 1.0))
-        extra_episodes = (
-            int(reward_design_episodes) if (pipeline == "onto_no_se"
-                or "rgat" in pipeline or "pbrs" in pipeline) else
-            int(estimator_warmup_episodes) if pipeline.startswith("shin_se") else 0)
-        extra_steps = (
-            int(reward_design_steps) if (pipeline == "onto_no_se"
-                or "rgat" in pipeline or "pbrs" in pipeline) else
-            int(estimator_warmup_steps) if pipeline.startswith("shin_se") else 0)
+        uses_reward_design = (pipeline == "onto_no_se"
+                              or "rgat" in pipeline or "pbrs" in pipeline)
+        uses_estimator_warmup = pipeline.startswith("shin_se")
+        reward_extra_episodes = (int(reward_design_episodes)
+                                 if uses_reward_design else 0)
+        reward_extra_steps = int(reward_design_steps) if uses_reward_design else 0
+        estimator_extra_episodes = (int(estimator_warmup_episodes)
+                                    if uses_estimator_warmup else 0)
+        estimator_extra_steps = (int(estimator_warmup_steps)
+                                 if uses_estimator_warmup else 0)
+        extra_episodes = (int(behavior_cloning_episodes)
+                          + reward_extra_episodes + estimator_extra_episodes)
+        extra_steps = (int(behavior_cloning_steps)
+                       + reward_extra_steps + estimator_extra_steps)
         item = {
             "pipeline": pipeline, "ppo_episodes": int(episodes[-1]),
             "ppo_environment_steps": int(steps[-1]),
-            "reward_design_episodes": (int(reward_design_episodes)
-                                       if (pipeline == "onto_no_se" or "rgat" in pipeline
-                                           or "pbrs" in pipeline) else 0),
-            "reward_design_environment_steps": (int(reward_design_steps)
-                                                  if (pipeline == "onto_no_se"
-                                                      or "rgat" in pipeline
-                                                      or "pbrs" in pipeline) else 0),
-            "estimator_warmup_episodes": (int(estimator_warmup_episodes)
-                                           if pipeline.startswith("shin_se") else 0),
-            "estimator_warmup_environment_steps": (int(estimator_warmup_steps)
-                if pipeline.startswith("shin_se") else 0),
+            "behavior_cloning_episodes": int(behavior_cloning_episodes),
+            "behavior_cloning_environment_steps": int(behavior_cloning_steps),
+            "reward_design_episodes": reward_extra_episodes,
+            "reward_design_environment_steps": reward_extra_steps,
+            "estimator_warmup_episodes": estimator_extra_episodes,
+            "estimator_warmup_environment_steps": estimator_extra_steps,
             "total_environment_episodes": int(episodes[-1]) + extra_episodes,
             "total_environment_steps": int(steps[-1]) + extra_steps,
             "success_curve_auc": auc,
@@ -307,7 +310,8 @@ def _write_markdown(path: Path, rows):
 
 def _write_figures(records, training_records, figures_dir: Path,
                    reward_design_episodes=0, reward_design_steps=0,
-                   estimator_warmup_episodes=0, estimator_warmup_steps=0):
+                   estimator_warmup_episodes=0, estimator_warmup_steps=0,
+                   behavior_cloning_episodes=0, behavior_cloning_steps=0):
     try:
         import matplotlib.pyplot as plt
     except ImportError:
@@ -362,9 +366,11 @@ def _write_figures(records, training_records, figures_dir: Path,
                 x = steps
                 xlabel = "PPO environment steps"
             else:
-                shift = (reward_design_steps if (pipeline == "onto_no_se"
-                         or "rgat" in pipeline or "pbrs" in pipeline) else
-                         estimator_warmup_steps if pipeline.startswith("shin_se") else 0)
+                shift = int(behavior_cloning_steps)
+                if pipeline == "onto_no_se" or "rgat" in pipeline or "pbrs" in pipeline:
+                    shift += int(reward_design_steps)
+                if pipeline.startswith("shin_se"):
+                    shift += int(estimator_warmup_steps)
                 x = steps + shift
                 xlabel = "Total environment steps (pre-training + PPO)"
             ax.plot(x, success, color=color, label=pipeline)
@@ -406,7 +412,9 @@ def write_three_pipeline_outputs(records, training_records, output_dir, *,
                                  reward_design_episodes=0,
                                  reward_design_steps=0,
                                  estimator_warmup_episodes=0,
-                                 estimator_warmup_steps=0):
+                                 estimator_warmup_steps=0,
+                                 behavior_cloning_episodes=0,
+                                 behavior_cloning_steps=0):
     output_dir = Path(output_dir)
     evaluation_dir = output_dir / "evaluation"
     tables_dir = output_dir / "tables"
@@ -418,7 +426,9 @@ def write_three_pipeline_outputs(records, training_records, output_dir, *,
         training_records, reward_design_episodes=reward_design_episodes,
         reward_design_steps=reward_design_steps,
         estimator_warmup_episodes=estimator_warmup_episodes,
-        estimator_warmup_steps=estimator_warmup_steps)
+        estimator_warmup_steps=estimator_warmup_steps,
+        behavior_cloning_episodes=behavior_cloning_episodes,
+        behavior_cloning_steps=behavior_cloning_steps)
     table = _publication_table(summary, efficiency)
     _write_csv(evaluation_dir / "paired_summary.csv", summary)
     nominal = {(row["pipeline"]): row for row in summary
@@ -452,7 +462,9 @@ def write_three_pipeline_outputs(records, training_records, output_dir, *,
         reward_design_episodes=reward_design_episodes,
         reward_design_steps=reward_design_steps,
         estimator_warmup_episodes=estimator_warmup_episodes,
-        estimator_warmup_steps=estimator_warmup_steps)
+        estimator_warmup_steps=estimator_warmup_steps,
+        behavior_cloning_episodes=behavior_cloning_episodes,
+        behavior_cloning_steps=behavior_cloning_steps)
     return {"summary": summary, "paired": paired,
             "disturbance_degradation": degradation,
             "sample_efficiency": efficiency, "figures": figures}

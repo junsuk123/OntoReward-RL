@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import fields
+from dataclasses import fields, replace
 from pathlib import Path
 
 import numpy as np
@@ -14,7 +14,8 @@ from ontology_rgat.benchmarks.experiment import (configuration_hash,
                                                  load_experiment,
                                                  paired_seed_plan)
 from ontology_rgat.evaluation.three_pipeline import (
-    PHYSICAL_METRICS, paired_confidence_intervals, physical_summary)
+    PHYSICAL_METRICS, learning_efficiency, paired_confidence_intervals,
+    physical_summary)
 from ontology_rgat.perception import (SEMANTIC_FEATURE_NAMES,
                                       SEMANTIC_GRAPH_INPUT_DIM,
                                       SEMANTIC_NODE_NAMES, SemanticObservation,
@@ -40,7 +41,8 @@ from ontology_rgat.rgat import (FrozenSemanticRGATPotential,
                                 validate_semantic_dataset)
 from ontology_rgat.rgat.semantic_dataset import semantic_rgat_config
 from ontology_rgat.rgat.train import train_potential
-from run_three_pipeline import _reward_design_collection_contract
+from run_three_pipeline import (_behavior_transform,
+                                _reward_design_collection_contract)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -96,6 +98,36 @@ def _semantic_dataset():
             seed=100 + episode, sample_stride=1)
         dataset = merge_semantic_datasets(dataset, current)
     return dataset
+
+
+def test_visual_teacher_is_directional_without_random_policy_leakage():
+    semantic = replace(
+        _observation(.8), centroid_xy=(.4, -.2),
+        image_alignment=.8, keypoint_confidence=.8,
+        visible_keypoint_fraction=1.0, visual_loss_risk=0.0,
+        apparent_target_scale=.2)
+    teacher = _behavior_transform(
+        0, policy_blend=0.0, servo_gain=1.2,
+        noise_std=0.0, yaw_blend=0.0)
+    action = teacher(
+        0, np.ones(4), semantic, np.random.default_rng(1))
+    np.testing.assert_allclose(action, [.36, .18, -.55, 0.0], atol=1e-8)
+
+
+def test_learning_efficiency_reports_shared_behavior_cloning_cost():
+    rows = [{
+        "pipeline": "onto_rgat_adaptive_weight_no_se",
+        "optimization_phase": "ppo", "episode": episode,
+        "ppo_episode": episode,
+        "ppo_environment_steps": episode * 10,
+        "paper_success": float(episode == 2),
+    } for episode in (1, 2)]
+    [summary] = learning_efficiency(
+        rows, reward_design_episodes=4, reward_design_steps=40,
+        behavior_cloning_episodes=3, behavior_cloning_steps=30)
+    assert summary["behavior_cloning_episodes"] == 3
+    assert summary["total_environment_episodes"] == 9
+    assert summary["total_environment_steps"] == 90
 
 
 def test_primary_specs_encode_the_intended_information_boundaries():

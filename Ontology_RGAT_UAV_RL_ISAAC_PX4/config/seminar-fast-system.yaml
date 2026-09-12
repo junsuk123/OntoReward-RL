@@ -1,0 +1,29 @@
+extends: shin2026-system.yaml
+
+# 세미나용 예비 비교 프로필. 실제 Isaac/Pegasus/PX4 동역학은 유지하되,
+# 보상 차이가 짧은 시간 안에 나타나도록 초기 분포와 외란만 좁힌다.
+landing:
+  max_time_s: 20.0
+
+benchmark:
+  # PPO와 평가가 같은 좁은 실제 분포를 사용한다.
+  initial_condition_curriculum_min_scale: 1.0
+  initial_conditions:
+    relative_altitude_m: [2.0, 3.5]
+    relative_lateral_x_m: [-0.8, 0.8]
+    relative_lateral_y_m: [-0.8, 0.8]
+    platform_yaw_misalignment_deg: [-15.0, 15.0]
+
+domain_randomization:
+  enabled: false
+
+pad:
+  speed_range_m_s: [0.10, 0.20]
+  speed_step_perturbation_m_s: [-0.03, 0.03]
+  yaw_rate_step_perturbation_deg_s: [-1.0, 1.0]
+  waypoint_ramp_s: 5.0
+
+battery:
+  # 실제 3S 3500 mAh 방전 모델은 그대로 사용한다. 다만 20초 preview가
+  # 학습과 무관한 조기 고갈로 끝나지 않도록 시작 잔량만 충분히 둔다.
+  episode_hover_seconds_range: [35.0, 55.0]

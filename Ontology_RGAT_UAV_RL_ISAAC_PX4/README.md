@@ -27,6 +27,18 @@ estimator-free baseline, estimator-free ontology/R-GAT reward 방식을 비교�
 ../run.sh
 ```
 
+시간 제한이 큰 세미나용 핵심 3-arm 예비 비교는 다음 한 줄로 실행한다.
+
+```bash
+../run.sh --seminar-fast
+```
+
+별도 `results/seminar_fast/core3` 폴더에서 실제 visual-servo 성공 착륙 6회를
+공통 behavior-cloning 자료로 만든 뒤 `shin_se_fixed`, `no_se_fixed`,
+`onto_rgat_adaptive_weight_no_se`를 PPO 24회씩 학습한다. 최종 평가는 교사 없이
+쉬운 조건의 scenario 3종 × paired seed 2개로 수행한다. 기존 full checkpoint는
+변경하지 않는다. 이 결과는 경향 확인용이며 publication-scale 결과가 아니다.
+
 DDS, Isaac Sim, Pegasus, PX4 SITL, ROS 2 gateway, RViz 2, MATLAB 스타일 web
 dashboard를 시작하거나 기존 호환 process를 인수한다. 이어 세 pipeline을 재개/학습하고,
 실제 semantic trajectory를 수집해 R-GAT을 학습·동결하며, paired evaluation과 report를

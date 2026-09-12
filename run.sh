@@ -51,6 +51,7 @@ rgat_budget_supplied=false
 expect_mode_value=false
 expect_config_value=false
 adaptive_config=false
+seminar_fast=false
 for argument in "$@"; do
   if [[ "$expect_config_value" == true ]]; then
     [[ "$argument" == *adaptive_reward_weight_comparison.yaml ]] && adaptive_config=true
@@ -63,6 +64,7 @@ for argument in "$@"; do
     continue
   fi
   case "$argument" in
+    --seminar-fast) seminar_fast=true ;;
     --mode)
       mode_supplied=true
       expect_mode_value=true
@@ -81,7 +83,41 @@ for argument in "$@"; do
   esac
 done
 
-arguments=("$@")
+arguments=()
+for argument in "$@"; do
+  [[ "$argument" == "--seminar-fast" ]] || arguments+=("$argument")
+done
+if [[ "$seminar_fast" == true ]]; then
+  # 실제 카메라 visual-servo 성공 시연을 공통 BC warm start로 사용하고,
+  # 핵심 3개 arm을 쉬운 동일 조건에서 빠르게 비교한다. 사용자가 뒤에
+  # 같은 CLI 옵션을 주면 argparse의 마지막 값이 이 preview 기본값을 덮는다.
+  profile_arguments=(
+    --mode full
+    --config "$project_root/config/experiments/seminar_fast_comparison.yaml"
+    --system-config "$project_root/config/seminar-fast-system.yaml"
+    --experiment adaptive_reward_weight_comparison
+    --results-dir "$project_root/results/seminar_fast/core3"
+    --pipelines shin_se_fixed no_se_fixed onto_rgat_adaptive_weight_no_se
+    --rgat-max-data-episodes 24
+    --rgat-epochs 10
+  )
+  if [[ "$training_budget_supplied" == false ]]; then
+    profile_arguments+=(--train-episodes 24)
+    training_budget_supplied=true
+  fi
+  if [[ "$evaluation_budget_supplied" == false ]]; then
+    profile_arguments+=(--eval-episodes 2)
+    evaluation_budget_supplied=true
+  fi
+  if [[ "$rgat_budget_supplied" == false ]]; then
+    profile_arguments+=(--rgat-data-episodes 8)
+    rgat_budget_supplied=true
+  fi
+  arguments=("${profile_arguments[@]}" "${arguments[@]}")
+  mode_supplied=true
+  selected_mode=full
+  adaptive_config=true
+fi
 if [[ "$mode_supplied" == false ]]; then
   arguments=(--mode full "${arguments[@]}")
 fi

@@ -19,6 +19,20 @@ ontology/R-GAT reward 방식을 포함한다.
 ./run.sh
 ```
 
+세미나용 결과를 몇 시간 안에 우선 확보해야 하면 별도 preview를 사용한다.
+
+```bash
+./run.sh --seminar-fast
+```
+
+이 명령은 기존 full 결과를 건드리지 않고 `results/seminar_fast/core3`에 저장한다.
+실제 Isaac/PX4에서 성공한 visual-servo 착륙 6회를 먼저 수집하고, 압축된 공통
+camera embedding/action으로 세 actor를 behavior-cloning 초기화한다. 이후
+`shin_se_fixed`, `no_se_fixed`, `onto_rgat_adaptive_weight_no_se`를 각각 PPO 24회
+학습하고 쉬운 scenario 3종을 paired seed 2개씩 평가한다. 실제 배터리 방전 모델은
+유지하지만 시작 잔량을 35--55 hover-second로 제한한다. 이는 쉬운 조건의 예비 비교이며
+논문 재현 또는 통계적으로 충분한 성능 주장이 아니다.
+
 인수 없는 명령은 마감/seminar budget의 `--mode full`을 실행한다.
 
 - `shin_se` estimator warm-up 8회

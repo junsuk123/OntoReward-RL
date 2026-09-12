@@ -331,6 +331,36 @@ def test_keypoint_pretraining_artifact_is_reused_and_frozen(tmp_path):
     assert all(not parameter.requires_grad for parameter in model.encoder.parameters())
 
 
+def test_keypoint_pretraining_can_bootstrap_a_compatible_validated_encoder(tmp_path):
+    system = load_config(ROOT / "config" / "shin2026-system.yaml")
+    base_experiment = {"estimator": {
+        "image_embedding": 32,
+        "keypoint_pretraining": {
+            "enabled": True, "samples_quick": 4, "epochs_quick": 1,
+            "batch_size": 2, "learning_rate": 1e-3, "seed": 23,
+        },
+    }}
+    source = tmp_path / "source.pt"
+    original = prepare_keypoint_encoder(
+        source, config_hash="old", experiment=base_experiment,
+        system=system, mode="quick", device="cpu")
+    copied_experiment = {"estimator": {
+        "image_embedding": 32,
+        "keypoint_pretraining": {
+            **base_experiment["estimator"]["keypoint_pretraining"],
+            "bootstrap_artifact": "../source.pt",
+        },
+    }}
+    target = tmp_path / "copied" / "target.pt"
+    copied = prepare_keypoint_encoder(
+        target, config_hash="new", experiment=copied_experiment,
+        system=system, mode="quick", device="cpu")
+    assert copied["config_hash"] == "new"
+    assert copied["bootstrap_source"] == str(source.resolve())
+    for name in original["encoder"]:
+        torch.testing.assert_close(copied["encoder"][name], original["encoder"][name])
+
+
 def test_beginner_curriculum_keeps_the_ugv_moving_at_a_safe_fraction():
     assert curriculum_motion_scale(0.0, 0.35) == pytest.approx(0.35)
     assert curriculum_motion_scale(0.5, 0.35) == pytest.approx(0.675)

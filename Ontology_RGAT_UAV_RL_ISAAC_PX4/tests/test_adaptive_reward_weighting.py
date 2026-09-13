@@ -266,6 +266,7 @@ def test_offline_cpu_smoke_loss_and_gradients_are_finite():
     assert np.isfinite([row["total_loss"] for row in history]).all()
     assert min(row["total_loss"] for row in history[1:]) < history[0]["total_loss"]
     assert metrics["parameter_count"] > 0
+    assert 0.0 <= metrics["validation_ranking_accuracy"] <= 1.0
     assert all(not parameter.requires_grad for parameter in model.parameters())
 
 
@@ -275,6 +276,10 @@ def test_checkpoint_roundtrip_is_deterministic_and_frozen(tmp_path):
     manifest = save_adaptive_dataset(
         dataset, dataset_path, config_hash="abc",
         source_behavior_policy={"name": "test_mixture"})
+    assert manifest["outcome_strata"]["risky_failure"] == 3
+    assert manifest["outcome_strata"]["collision"] == 3
+    assert manifest["validation_episodes"] >= 2
+    assert manifest["validation_outcome_classes"] == [0, 1]
     loaded, _ = load_adaptive_dataset(dataset_path, config_hash="abc")
     assert loaded["X"] == pytest.approx(dataset["X"])
     model_path = tmp_path / "weight.pt"

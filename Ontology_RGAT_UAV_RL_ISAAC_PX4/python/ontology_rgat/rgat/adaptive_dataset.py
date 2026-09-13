@@ -273,6 +273,16 @@ def save_adaptive_dataset(dataset: Mapping[str, Any], path: str | Path, *,
         and float(dataset["touchdown_error"][index]) <= 0.70
         and abs(float(dataset["touchdown_vertical_speed"][index])) <= 1.0
         for index in representative)
+    risky_failure = sum(
+        not int(success[index]) and (
+            str(dataset["failure_type"][index]) in {
+                "collision", "unsafe_pad_contact", "excessive_drift"}
+            or (float(dataset["touchdown_error"][index]) <= 0.70
+                and abs(float(dataset["touchdown_vertical_speed"][index])) <= 1.0))
+        for index in representative)
+    split = np.asarray(dataset["split"]).astype(str)
+    validation_indices = [index for index in representative
+                          if split[index] == "validation"]
     manifest = {
         "format": ADAPTIVE_DATASET_FORMAT,
         "graph_schema_version": ADAPTIVE_GRAPH_VERSION,
@@ -297,10 +307,16 @@ def save_adaptive_dataset(dataset: Mapping[str, Any], path: str | Path, *,
             "success": int(sum(int(success[index]) for index in representative)),
             "failure": int(sum(not int(success[index]) for index in representative)),
             "collision": int(sum(value == "collision" for value in failure_types)),
+            "unsafe_pad_contact": int(sum(
+                value == "unsafe_pad_contact" for value in failure_types)),
             "excessive_drift": int(sum(value == "excessive_drift"
                                         for value in failure_types)),
             "near_miss": int(near_miss),
+            "risky_failure": int(risky_failure),
         },
+        "validation_episodes": int(len(validation_indices)),
+        "validation_outcome_classes": sorted(set(
+            int(success[index]) for index in validation_indices)),
     }
     manifest_path = path.with_suffix(".manifest.json")
     temporary_manifest = manifest_path.with_suffix(manifest_path.suffix + ".tmp")

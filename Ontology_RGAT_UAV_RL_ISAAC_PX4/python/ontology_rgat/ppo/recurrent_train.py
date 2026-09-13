@@ -553,6 +553,10 @@ def collect_episode(env, model: PipelineActorCritic, method: str, seed: int,
             model, "_selected_checkpoint_episode", 0)),
         "selected_checkpoint_score": float(getattr(
             model, "_selected_checkpoint_score", 0.0)),
+        "selected_checkpoint_kind": str(getattr(
+            model, "_selected_checkpoint_kind", "training_single_rollout")),
+        "selected_checkpoint_sha256": str(getattr(
+            model, "_selected_checkpoint_sha256", "")),
     }
     metric.update(visual_recovery_metrics(
         rows, initial_in_fov=initial_in_fov,
@@ -734,6 +738,9 @@ def update_episode(model, optimizer, rows, *, gamma=.99, gae_lambda=.95,
                    epochs=5, clip=.2, value_coef=.5, entropy_coef=.003,
                    auxiliary_coef=1.0, grad_clip=5.0, sequence_length=32,
                    target_kl=.03, minimum_learning_rate=5e-6,
+                   maximum_learning_rate=None,
+                   learning_rate_recovery_factor=1.0,
+                   learning_rate_recovery_kl_fraction=.5,
                    rollback_on_excessive_kl=True,
                    log_std_bounds=(-3.0, -0.8)):
     advantage, returns = _gae(rows, gamma, gae_lambda)
@@ -829,11 +836,24 @@ def update_episode(model, optimizer, rows, *, gamma=.99, gae_lambda=.95,
         key: float(np.mean([row[key] for row in metrics]))
         for key in metrics[0]
     }
+    recovered = False
+    recovery_factor = float(learning_rate_recovery_factor)
+    recovery_fraction = float(learning_rate_recovery_kl_fraction)
+    if (not early_stop and recovery_factor > 1.0 and target_kl > 0.0
+            and float(summary["kl_divergence"]) <= target_kl * recovery_fraction):
+        current_lr = float(optimizer.param_groups[0]["lr"])
+        ceiling = (current_lr if maximum_learning_rate is None
+                   else float(maximum_learning_rate))
+        recovered_lr = min(ceiling, current_lr * recovery_factor)
+        recovered = recovered_lr > current_lr
+        for group in optimizer.param_groups:
+            group["lr"] = recovered_lr
     summary.update({
         "ppo_early_stop": float(early_stop),
         "ppo_kl_rollback_count": float(rollback_count),
         "ppo_epochs_completed": float(epochs_completed),
         "effective_learning_rate": float(optimizer.param_groups[0]["lr"]),
+        "learning_rate_recovered": float(recovered),
     })
     return summary
 
@@ -982,6 +1002,51 @@ def deployment_checkpoint_score(metric) -> float:
     return float(100.0 * success + 10.0 * contact - 45.0 * unsafe
                  - 35.0 * crash - 7.0 * lateral - 10.0 * fov
                  - 8.0 * blind_descent - 3.0 * relative_speed)
+
+
+def aggregate_deployment_validation(metrics) -> dict[str, float]:
+    """Aggregate held-out deterministic flights for checkpoint selection.
+
+    A single sampled training flight is not evidence that the actor mean is a
+    deployable policy. Keep success and unsafe outcomes explicit, then use the
+    reward-independent physical score only to resolve equally safe candidates.
+    """
+    rows = list(metrics)
+    if not rows:
+        raise ValueError("checkpoint validation requires at least one episode")
+
+    def mean(name: str, default: float = 0.0) -> float:
+        return float(np.mean([float(row.get(name, default)) for row in rows]))
+
+    return {
+        "episodes": float(len(rows)),
+        "successes": float(sum(float(
+            row.get("paper_success", 0.0)) for row in rows)),
+        "success_rate": mean("paper_success"),
+        "unsafe_contacts": float(sum(float(
+            row.get("unsafe_pad_contact", 0.0)) for row in rows)),
+        "crashes": float(sum(float(
+            row.get("crash_failure", 0.0)) for row in rows)),
+        "contact_rate": mean("pad_contact"),
+        "mean_fov_loss_fraction": mean("fov_loss_fraction", 1.0),
+        "mean_touchdown_lateral_error": mean(
+            "touchdown_lateral_error", 5.0),
+        "mean_physical_score": float(np.mean([
+            deployment_checkpoint_score(row) for row in rows])),
+    }
+
+
+def deployment_validation_key(summary) -> tuple[float, ...]:
+    """Lexicographic safety key used on held-out deterministic flights."""
+    return (
+        float(summary["successes"]),
+        -float(summary["unsafe_contacts"]),
+        -float(summary["crashes"]),
+        float(summary["mean_physical_score"]),
+        float(summary["contact_rate"]),
+        -float(summary["mean_fov_loss_fraction"]),
+        -float(summary["mean_touchdown_lateral_error"]),
+    )
 
 
 def _migrate_legacy_shin_state_dict(state_dict):
@@ -1225,6 +1290,12 @@ def train_live(env_factory: Callable, model, method, seeds, output_dir,
                     target_kl=float(ppo.get("target_kl", .03)),
                     minimum_learning_rate=float(ppo.get(
                         "minimum_learning_rate", 5e-6)),
+                    maximum_learning_rate=float(ppo.get(
+                        "learning_rate", 2e-4)),
+                    learning_rate_recovery_factor=float(ppo.get(
+                        "learning_rate_recovery_factor", 1.0)),
+                    learning_rate_recovery_kl_fraction=float(ppo.get(
+                        "learning_rate_recovery_kl_fraction", .5)),
                     rollback_on_excessive_kl=bool(ppo.get(
                         "rollback_on_excessive_kl", True)),
                     log_std_bounds=tuple(ppo.get(

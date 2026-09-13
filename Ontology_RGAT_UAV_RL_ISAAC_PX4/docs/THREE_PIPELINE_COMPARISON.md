@@ -119,7 +119,11 @@ train과 validation에 동시에 들어가지 않는다.
 
 ## 평가
 
-동일 `(scenario, seed)` 쌍을 세 arm이 모두 실행한다.
+학습 중 단일 stochastic episode로 선택한 best는 결정론 policy에서 재현되지
+않을 수 있다. 따라서 각 arm의 training-best와 training-latest를 학습·최종
+평가 seed와 분리된 3개 scenario에서 결정론으로 비교한 뒤 selected checkpoint를
+고정한다. 동일 `(scenario, seed)` 쌍은 세 arm이 모두 실행하며, 경로
+phase와 물리 pair의 편향을 줄이기 위해 각 arm을 pair 0·1·2에 교차 배정한다.
 
 ### 1차 지표
 

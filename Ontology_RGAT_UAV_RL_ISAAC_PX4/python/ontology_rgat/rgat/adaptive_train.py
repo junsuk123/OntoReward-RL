@@ -407,9 +407,19 @@ def train_adaptive_reward_weights(dataset: Mapping[str, Any], *, settings=None,
                 validation_logits, validation_outcomes))
             validation_accuracy = float(((validation_logits >= 0.0)
                                          == (validation_outcomes >= 0.5)).float().mean())
+            validation_good = validation_scores[validation_outcomes >= .5]
+            validation_bad = validation_scores[validation_outcomes < .5]
+            if validation_good.numel() and validation_bad.numel():
+                differences = validation_good[:, None] - validation_bad[None, :]
+                validation_ranking_accuracy = float(
+                    ((differences > 0.0).float()
+                     + .5 * (differences == 0.0).float()).mean())
+            else:
+                validation_ranking_accuracy = None
         else:
             validation_bce = None
             validation_accuracy = None
+            validation_ranking_accuracy = None
         weight_mean = weights.detach().cpu().numpy().mean(axis=0).tolist()
         weight_array = weights.detach().cpu().numpy()
         weight_cv = (weight_array.std(axis=0)
@@ -435,6 +445,7 @@ def train_adaptive_reward_weights(dataset: Mapping[str, Any], *, settings=None,
     model_sha = freeze_adaptive_reward_model(model)
     metrics = {"final": history[-1], "validation_outcome_bce": validation_bce,
                "validation_accuracy": validation_accuracy,
+               "validation_ranking_accuracy": validation_ranking_accuracy,
                "best_epoch": int(best_epoch),
                "best_validation_objective": float(best_validation),
                "mean_weights": weight_mean,
@@ -465,11 +476,22 @@ def prepare_adaptive_reward_artifact(path: str | Path, dataset: Mapping[str, Any
     model_config = adaptive_model_config(settings)
     gate_config = dict(settings.get("quality_gate") or {})
     gate_enabled = bool(gate_config.get("enabled", False))
+    validation_episode_count = len(set(np.asarray(dataset["episode_id"])[
+        np.asarray(dataset["split"]).astype(str) == "validation"].astype(int).tolist()))
+    strata = dict(dataset_manifest.get("outcome_strata") or {})
     checks = {
+        "validation_episode_count": (
+            validation_episode_count >= int(gate_config.get(
+                "minimum_validation_episodes", 2))),
         "validation_accuracy": (
             metrics["validation_accuracy"] is not None
             and float(metrics["validation_accuracy"])
             >= float(gate_config.get("minimum_validation_accuracy", .50))),
+        "validation_ranking_accuracy": (
+            metrics["validation_ranking_accuracy"] is not None
+            and float(metrics["validation_ranking_accuracy"])
+            >= float(gate_config.get(
+                "minimum_validation_ranking_accuracy", .50))),
         "weight_state_variation": (
             float(metrics["mean_weight_coefficient_of_variation"])
             >= float(gate_config.get("minimum_mean_weight_cv", .005))),
@@ -477,18 +499,29 @@ def prepare_adaptive_reward_artifact(path: str | Path, dataset: Mapping[str, Any
             float(metrics["potential_observability_monotonic_compliance"])
             >= float(gate_config.get(
                 "minimum_potential_monotonic_compliance", .55))),
+        "unsafe_failure_coverage": (
+            int(strata.get("unsafe_pad_contact", 0))
+            + int(strata.get("collision", 0))
+            + int(strata.get("excessive_drift", 0))
+            >= int(gate_config.get("minimum_unsafe_failure_episodes", 0))),
     }
     quality_gate = {
         "enabled": gate_enabled,
         "passed": bool(not gate_enabled or all(checks.values())),
         "checks": checks,
         "thresholds": {
+            "minimum_validation_episodes": int(gate_config.get(
+                "minimum_validation_episodes", 2)),
             "minimum_validation_accuracy": float(gate_config.get(
                 "minimum_validation_accuracy", .50)),
+            "minimum_validation_ranking_accuracy": float(gate_config.get(
+                "minimum_validation_ranking_accuracy", .50)),
             "minimum_mean_weight_cv": float(gate_config.get(
                 "minimum_mean_weight_cv", .005)),
             "minimum_potential_monotonic_compliance": float(gate_config.get(
                 "minimum_potential_monotonic_compliance", .55)),
+            "minimum_unsafe_failure_episodes": int(gate_config.get(
+                "minimum_unsafe_failure_episodes", 0)),
         },
     }
     if not quality_gate["passed"]:

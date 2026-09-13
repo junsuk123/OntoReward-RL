@@ -29,7 +29,8 @@
 ./run.sh
 ```
 
-인자 없는 기본값은 아래의 핵심 3-arm 병렬 비교와 동일하다.
+인자 없는 기본값은 아래의 핵심 3-arm 병렬 비교에 robust adaptive
+R-GAT 품질 게이트와 완료 후 시각화 유지를 더한 프로필이다.
 
 ```bash
 ./run.sh --seminar-fast --parallel-pairs 3 --stay-open
@@ -108,10 +109,16 @@ R-GAT 입력에는 metric 패드 위치·속도, simulator truth, critic input�
 실제 trajectory dataset은 성공·실패·위험 실패를 episode/scenario 단위로 분리한다.
 Validation-best artifact는 다음 조건을 통과해야 PPO에 로드된다.
 
+- validation episode 수와 성공/실패 ranking accuracy
+- unsafe contact/collision/drift 실패 coverage
 - validation outcome accuracy
 - 상태별 weight 변동성
 - visual loss/reacquisition에 대한 potential monotonic compliance
 - artifact/config/dataset hash와 정보경계 provenance
+
+기본 실행은 24개 실제 rollout에서 시작한다. 학습된 artifact가 품질 게이트를
+통과하지 못하면 36, 최대 48 episode까지 실제 flight data를 보강해 재학습하고,
+하드캡에서도 실패하면 약한 artifact를 PPO에 전달하지 않는다.
 
 PPO optimizer는 동결 R-GAT parameter를 소유하지 않는다.
 
@@ -120,10 +127,13 @@ PPO optimizer는 동결 R-GAT parameter를 소유하지 않는다.
 - 모든 arm에 동일한 tanh-squashed Gaussian actor와 action envelope 적용
 - 짧은 세미나 profile에서는 동일한 성공 시연 BC warm start 사용
 - 초기 exploration $\sigma=\exp(-2.5)\approx0.082$
-- PPO 1–16회에서만 모든 arm에 동일한 감쇠형 imitation anchor 적용
+- robust 32-episode 프로필은 PPO 1–28회에 모든 arm에 동일한 감쇠형
+  imitation anchor 적용
 - epoch KL 초과 시 해당 update rollback, learning rate 감소
+- KL이 충분히 낮은 안정 update에서 learning rate를 상한까지 서서히 회복
 - 탐색 variance bound와 gradient clipping
-- reward와 독립적인 안전성 점수로 `<pipeline>.best.pt` 선택
+- reward와 독립적인 안전성 점수로 `<pipeline>.best.pt`를 저장하고, best/latest를
+  held-out 결정론 flight로 비교해 `<pipeline>.selected.pt`를 배포
 - 인프라 중단 trajectory는 PPO 자료에서 제외하고 같은 seed 재시도
 
 ## 착륙 성공 조건
@@ -161,10 +171,13 @@ XYZ, UAV/UGV 속도, battery, 착륙 gate, PX4 namespace, UDP endpoint와 camera
 | `models/shared/keypoint_encoder.pt` | 검증 후 동결한 keypoint encoder |
 | `models/<pipeline>/<pipeline>.pt` | 재개용 최신 PPO checkpoint |
 | `models/<pipeline>/<pipeline>.best.pt` | reward-independent 안전성 기준 배포 후보 |
+| `models/<pipeline>/<pipeline>.selected.pt` | held-out 결정론 검증으로 선택한 최종 배포 checkpoint |
 | `models/<pipeline>/*_training.csv` | episode별 training metric |
 | `rgat/adaptive_reward_rollouts.npz` | 실제 adaptive reward transition dataset |
 | `rgat/adaptive_reward_weights.pt` | 검증 후 동결한 hybrid R-GAT artifact |
-| `evaluation/per_episode.csv` | paired seed의 물리 성능 metric |
+| `evaluation/checkpoint_selection.csv` | best/latest 결정론 선택 flight |
+| `evaluation/crossover_plan.csv` | method·scenario·seed의 물리 pair 교차 배정 |
+| `evaluation/per_episode.csv` | paired seed와 교차 pair의 물리 성능 metric |
 | `tables/`, `figures/` | 비교표와 MATLAB 스타일 그래프 |
 
 Reward 정의가 서로 다르므로 arm 간 순위는 episode return이 아니라 안전 착륙률,

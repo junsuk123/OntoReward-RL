@@ -11,7 +11,8 @@
 ./run.sh
 ```
 
-이 기본값은 다음 명시적 명령과 같다.
+이 기본값은 핵심 3-arm, 3-pair, `--stay-open`, robust adaptive R-GAT
+품질 프로필을 모두 포함한다. 병렬 구성을 명시하는 개발용 명령은 다음과 같다.
 
 ```bash
 ./run.sh --seminar-fast --parallel-pairs 3 --stay-open
@@ -52,6 +53,8 @@ Isaac physics stage만 공유한다. R-GAT artifact가 없으면 pair 0에서 re
 세 UGV는 `parallel.route_phase_fractions`의 0/8/16% 지점부터 동일 campus waypoint를
 따라가며, 도로 밖으로 평행 이동한 복제 경로를 사용하지 않는다. 공유 장애로 연결만
 끊긴 worker는 자신의 복구 횟수를 소모하지 않고 새 stack generation에 다시 연결한다.
+학습 방법↔pair 대응은 replicate별로 순환하고, 최종 평가는 같은
+scenario/seed에서 각 방법을 세 물리 pair에 교차 배정한다.
 
 ## 단계
 
@@ -65,7 +68,8 @@ Isaac physics stage만 공유한다. R-GAT artifact가 없으면 pair 0에서 re
 8. 실제 adaptive reward dataset 수집
 9. Hybrid R-GAT 학습·validation·동결
 10. `onto_rgat_adaptive_weight_no_se` PPO
-11. Paired evaluation과 report 생성
+11. best/latest checkpoint의 held-out 결정론 비교와 selected checkpoint 저장
+12. Pair-crossover paired evaluation과 report 생성
 
 ## 재개
 
@@ -161,7 +165,7 @@ teacher flight, reward-data collection, evaluation stage에서는 실제 vehicle
 | Offboard heartbeat loss | gateway failsafe reason | control path 복구 후 같은 seed 재시도 |
 | FOV loss 증가 | marker quality, keypoint visibility, camera view | marker/camera가 아니라 policy 문제인지 semantic telemetry로 분리 |
 | 접촉했지만 실패 | landing gate columns | lateral, pre-contact vertical/relative speed, tilt, rate를 각각 확인 |
-| R-GAT artifact 거부 | quality gate와 hash | dataset class/split 또는 R-GAT 학습 품질을 개선한 뒤 재생성 |
+| R-GAT artifact 거부 | quality gate와 hash | 기본 실행은 실제 rollout을 24→36→48회로 자동 보강·재학습; 하드캡 실패는 즉시 중단 |
 
 인프라 오류가 난 episode의 부분 trajectory는 PPO와 reward-design dataset에 기록하지 않는다.
 Policy/geometry/착륙 실패는 실제 학습 결과이므로 실패 class로 유지한다.
@@ -183,8 +187,11 @@ find Ontology_RGAT_UAV_RL_ISAAC_PX4/results/seminar_fast/core3_hybrid_v3 \
 
 - `manifest.json`
 - `models/<pipeline>/<pipeline>.best.pt`
+- `models/<pipeline>/<pipeline>.selected.pt`
 - `models/<pipeline>/<pipeline>_training.csv`
 - `rgat/adaptive_reward_weights.pt`
+- `evaluation/checkpoint_selection.csv`
+- `evaluation/crossover_plan.csv`
 - `evaluation/per_episode.csv`
 - `tables/*.csv`
 - `figures/*`

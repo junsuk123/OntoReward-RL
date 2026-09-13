@@ -28,7 +28,9 @@ from ontology_rgat.ppo.recurrent import (PipelineActorCritic,
                                          recurrent_ppo_loss)
 from ontology_rgat.ppo import recurrent_train
 from ontology_rgat.ppo.recurrent_train import collect_episode_resilient
-from ontology_rgat.ppo.recurrent_train import (training_health_issue,
+from ontology_rgat.ppo.recurrent_train import (aggregate_deployment_validation,
+                                               deployment_validation_key,
+                                               training_health_issue,
                                                deployment_checkpoint_score,
                                                update_episode,
                                                visual_recovery_metrics)
@@ -44,6 +46,11 @@ from ontology_rgat.rgat import (FrozenSemanticRGATPotential,
 from ontology_rgat.rgat.semantic_dataset import semantic_rgat_config
 from ontology_rgat.rgat.train import train_potential
 from run_three_pipeline import (_behavior_transform,
+                                _adaptive_artifact_quality_issues,
+                                _adaptive_reward_settings,
+                                _balanced_training_pair_assignment,
+                                _checkpoint_validation_plan,
+                                _crossover_evaluation_tasks,
                                 _hold_after_complete,
                                 _privileged_velocity_teacher_action,
                                 _reward_design_collection_contract)
@@ -228,6 +235,85 @@ def test_safe_deployment_checkpoint_outranks_unsafe_contact_and_timeout():
     assert deployment_checkpoint_score(timeout) > deployment_checkpoint_score(unsafe)
 
 
+def test_held_out_checkpoint_selection_prioritizes_repeatable_safe_landings():
+    lucky = aggregate_deployment_validation([
+        {"paper_success": 1, "pad_contact": 1, "fov_loss_fraction": .1,
+         "touchdown_lateral_error": .1},
+        {"paper_success": 0, "pad_contact": 0, "fov_loss_fraction": .8,
+         "touchdown_lateral_error": 2.0},
+        {"paper_success": 0, "pad_contact": 0, "fov_loss_fraction": .8,
+         "touchdown_lateral_error": 2.0},
+    ])
+    repeatable = aggregate_deployment_validation([
+        {"paper_success": 1, "pad_contact": 1, "fov_loss_fraction": .2,
+         "touchdown_lateral_error": .2},
+        {"paper_success": 1, "pad_contact": 1, "fov_loss_fraction": .2,
+         "touchdown_lateral_error": .2},
+        {"paper_success": 0, "pad_contact": 0, "fov_loss_fraction": .7,
+         "touchdown_lateral_error": 1.0},
+    ])
+    assert repeatable["success_rate"] == pytest.approx(2 / 3)
+    assert deployment_validation_key(repeatable) > deployment_validation_key(lucky)
+
+
+def test_held_out_checkpoint_selection_rejects_unsafe_contact_on_tie():
+    safe_miss = aggregate_deployment_validation([
+        {"paper_success": 0, "pad_contact": 0, "unsafe_pad_contact": 0,
+         "fov_loss_fraction": .4, "touchdown_lateral_error": .5},
+    ])
+    collision = aggregate_deployment_validation([
+        {"paper_success": 0, "pad_contact": 1, "unsafe_pad_contact": 1,
+         "fov_loss_fraction": .1, "touchdown_lateral_error": .4},
+    ])
+    assert deployment_validation_key(safe_miss) > deployment_validation_key(collision)
+
+
+def test_checkpoint_validation_seeds_are_disjoint_and_crossover_balances_pairs():
+    pipelines = ["shin_se_fixed", "no_se_fixed",
+                 "onto_rgat_adaptive_weight_no_se"]
+    plan = paired_seed_plan(pipelines, {"training_random_walk": 3}, seed0=5000)
+    tasks = _crossover_evaluation_tasks(plan, pipelines, 3)
+    assert [len(rows) for rows in tasks] == [3, 3, 3]
+    for name in pipelines:
+        assert {row["physical_pair_index"] for rows in tasks for row in rows
+                if row["method"] == name} == {0, 1, 2}
+    validation = _checkpoint_validation_plan(
+        pipelines[0], ["training_random_walk", "circle", "zigzag"], seed0=4000)
+    assert {row["seed"] for row in validation}.isdisjoint(
+        {row["seed"] for row in plan})
+    assignments = [_balanced_training_pair_assignment(
+        pipelines, 3, replicate)[0] for replicate in range(3)]
+    for name in pipelines:
+        assert {assignment[name] for assignment in assignments} == {0, 1, 2}
+
+
+def test_robust_adaptive_profile_rejects_the_collapsed_seminar_artifact():
+    config = load_experiment(
+        ROOT / "config/experiments/seminar_fast_comparison.yaml")
+    settings = _adaptive_reward_settings(config, robust=True)
+    assert settings["runtime_profile"] == "robust_live_v1"
+    assert settings["semantic_potential_shaping_lambda"] >= 1.5
+    assert settings["loss"]["contextual_weight"] >= 1.5
+    metadata = {
+        "dataset_manifest": {
+            "episodes": 12, "validation_episodes": 2,
+            "outcome_strata": {"unsafe_pad_contact": 0}},
+        "validation_episode_ids": [10, 11],
+        "metrics": {
+            "validation_accuracy": .5,
+            "validation_ranking_accuracy": .5,
+            "mean_weight_coefficient_of_variation": .00317,
+            "potential_observability_monotonic_compliance": .96,
+        },
+    }
+    issues = _adaptive_artifact_quality_issues(
+        metadata, settings, minimum_episodes=24)
+    assert any("dataset episodes" in issue for issue in issues)
+    assert any("validation ranking accuracy" in issue for issue in issues)
+    assert any("weight CV" in issue for issue in issues)
+    assert any("unsafe failure" in issue for issue in issues)
+
+
 def test_excessive_post_update_kl_rolls_back_the_ppo_epoch():
     model = _model("no_se")
     optimizer = torch.optim.Adam(model.parameters(), lr=.05)
@@ -261,6 +347,14 @@ def test_excessive_post_update_kl_rolls_back_the_ppo_epoch():
     assert metrics["ppo_kl_rollback_count"] == 1.0
     for name, value in model.state_dict().items():
         torch.testing.assert_close(value, before[name], rtol=0.0, atol=0.0)
+    recovered = update_episode(
+        model, optimizer, rows, epochs=1, sequence_length=4,
+        target_kl=100.0, maximum_learning_rate=.05,
+        learning_rate_recovery_factor=2.0,
+        learning_rate_recovery_kl_fraction=.5,
+        entropy_coef=0.0, value_coef=0.0)
+    assert recovered["learning_rate_recovered"] == 1.0
+    assert recovered["effective_learning_rate"] == pytest.approx(.05)
 
 
 def test_primary_specs_encode_the_intended_information_boundaries():

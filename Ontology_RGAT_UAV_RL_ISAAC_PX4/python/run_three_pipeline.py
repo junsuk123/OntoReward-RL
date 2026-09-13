@@ -42,6 +42,8 @@ from ontology_rgat.ppo.behavior_cloning import (
     load_encoded_demonstrations, merge_encoded_demonstrations,
     save_encoded_demonstrations)
 from ontology_rgat.ppo.recurrent_train import (collect_episode_resilient,
+                                               aggregate_deployment_validation,
+                                               deployment_validation_key,
                                                train_live)
 from ontology_rgat.reward_modes import RewardComponentNormalizer
 from ontology_rgat.rgat import (
@@ -308,6 +310,212 @@ def _read_csv(path: Path):
         return []
     with path.open(newline="", encoding="utf-8") as stream:
         return list(csv.DictReader(stream))
+
+
+def _checkpoint_candidates(results_dir: Path, method: str) -> list[dict]:
+    """Return training-best/latest snapshots with stable identities."""
+    model_dir = Path(results_dir) / "models" / str(method)
+    candidates = []
+    for kind, path in (
+            ("training_best", model_dir / f"{method}.best.pt"),
+            ("training_latest", model_dir / f"{method}.pt")):
+        if not path.is_file():
+            continue
+        payload = torch.load(path, map_location="cpu", weights_only=False)
+        candidates.append({
+            "kind": kind, "path": path, "sha256": _sha256_file(path),
+            "episode": int(payload.get("episode", 0)),
+        })
+    if not candidates:
+        raise FileNotFoundError(f"no checkpoint candidates for {method}")
+    return candidates
+
+
+def _checkpoint_validation_plan(method: str, scenarios, *, seed0: int) -> list[dict]:
+    """Use one held-out deterministic seed per scenario for deployment selection."""
+    return [{"method": str(method), "scenario": str(scenario),
+             "seed": int(seed0) + index}
+            for index, scenario in enumerate(scenarios)]
+
+
+def _atomic_save_selected_checkpoint(path: Path, payload: dict, *, candidate,
+                                     summary: dict, validation_seeds) -> None:
+    selected = dict(payload)
+    selected["training_selection_score"] = selected.get("selection_score")
+    selected["selection_score"] = float(summary["mean_physical_score"])
+    selected["selection_metric"] = dict(summary)
+    selected["selection_method"] = "held_out_deterministic_multi_seed_v1"
+    selected["selection_candidate_kind"] = str(candidate["kind"])
+    selected["selection_candidate_sha256"] = str(candidate["sha256"])
+    selected["selection_validation_seeds"] = [int(seed) for seed in validation_seeds]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    torch.save(selected, temporary)
+    os.replace(temporary, path)
+
+
+def _crossover_evaluation_tasks(plan, pipelines, pair_count: int) -> list[list[dict]]:
+    """Balance every method across the available physical route phases."""
+    count = int(pair_count)
+    if count < 1:
+        raise ValueError("pair_count must be positive")
+    methods = list(pipelines)
+    by_method = {name: [dict(row) for row in plan if row["method"] == name]
+                 for name in methods}
+    tasks = [[] for _ in range(count)]
+    rounds = max((len(rows) for rows in by_method.values()), default=0)
+    for episode_index in range(rounds):
+        for method_index, name in enumerate(methods):
+            if episode_index >= len(by_method[name]):
+                continue
+            row = by_method[name][episode_index]
+            pair_index = (method_index + episode_index) % count
+            row["physical_pair_index"] = pair_index
+            tasks[pair_index].append(row)
+    return tasks
+
+
+def _balanced_training_pair_assignment(pipelines, pair_count: int,
+                                       replicate: int) -> tuple[dict, list]:
+    """Counterbalance method-to-route-phase assignment across replicates."""
+    methods = list(pipelines)
+    count = int(pair_count)
+    if count < 1 or (count > 1 and count != len(methods)):
+        raise ValueError("parallel training needs one method per physical pair")
+    if count == 1:
+        return {name: 0 for name in methods}, methods[:1]
+    offset = int(replicate) % count
+    assignment = {
+        name: (method_index + offset) % count
+        for method_index, name in enumerate(methods)}
+    pair_methods = [next(name for name, index in assignment.items()
+                         if index == pair_index)
+                    for pair_index in range(count)]
+    return assignment, pair_methods
+
+
+def _adaptive_reward_settings(config, *, robust: bool = False) -> dict:
+    """Resolve artifact settings, including the explicit robust live profile."""
+    settings = deepcopy(dict(config.get("adaptive_reward_design") or {}))
+    reward = dict(config.get("adaptive_reward") or {})
+    for source_key, target_key in (
+            ("baseline_weights", "baseline_weights"),
+            ("total_weight", "total_weight"),
+            ("logit_scale_kappa", "logit_scale_kappa"),
+            ("baseline_mixture_epsilon", "baseline_mixture_epsilon"),
+            ("semantic_potential_shaping_lambda",
+             "semantic_potential_shaping_lambda")):
+        if source_key in reward:
+            settings[target_key] = reward[source_key]
+    if robust:
+        # The small seminar artifact collapsed to nearly constant baseline
+        # weights. This profile is explicit in the CLI/manifest and trades a
+        # modest offline cost for observable state-dependent reward variation.
+        settings["logit_scale_kappa"] = max(
+            1.0, float(settings.get("logit_scale_kappa", 1.0)))
+        settings["baseline_mixture_epsilon"] = min(
+            .10, float(settings.get("baseline_mixture_epsilon", .10)))
+        settings["semantic_potential_shaping_lambda"] = max(
+            1.50, float(settings.get("semantic_potential_shaping_lambda", 1.50)))
+        loss = dict(settings.get("loss") or {})
+        loss.update({
+            "baseline_prior": min(.002, float(loss.get("baseline_prior", .002))),
+            "contextual_weight": max(1.50, float(loss.get("contextual_weight", 1.50))),
+            "semantic_potential": max(1.0, float(loss.get(
+                "semantic_potential", 1.0))),
+            "observability_monotonic": max(.50, float(loss.get(
+                "observability_monotonic", .50))),
+        })
+        settings["loss"] = loss
+        quality = dict(settings.get("quality_gate") or {})
+        quality.update({
+            "enabled": True,
+            "minimum_validation_episodes": max(
+                4, int(quality.get("minimum_validation_episodes", 4))),
+            "minimum_validation_accuracy": max(
+                .50, float(quality.get("minimum_validation_accuracy", .50))),
+            "minimum_validation_ranking_accuracy": max(
+                .70, float(quality.get(
+                    "minimum_validation_ranking_accuracy", .70))),
+            "minimum_mean_weight_cv": max(
+                .008, float(quality.get("minimum_mean_weight_cv", .008))),
+            "minimum_potential_monotonic_compliance": max(
+                .70, float(quality.get(
+                    "minimum_potential_monotonic_compliance", .70))),
+            "minimum_unsafe_failure_episodes": max(
+                2, int(quality.get("minimum_unsafe_failure_episodes", 2))),
+        })
+        settings["quality_gate"] = quality
+        settings["runtime_profile"] = "robust_live_v1"
+    return settings
+
+
+def _adaptive_artifact_quality_issues(metadata, settings, *,
+                                      minimum_episodes: int = 0) -> list[str]:
+    """Audit a cached artifact against today's requested quality contract."""
+    model_metrics = dict(metadata.get("metrics") or {})
+    dataset = dict(metadata.get("dataset_manifest") or {})
+    strata = dict(dataset.get("outcome_strata") or {})
+    quality = dict(settings.get("quality_gate") or {})
+    issues = []
+    episodes = int(dataset.get("episodes", 0))
+    if episodes < int(minimum_episodes):
+        issues.append(f"dataset episodes {episodes} < {int(minimum_episodes)}")
+    validation_count = int(dataset.get(
+        "validation_episodes", len(metadata.get("validation_episode_ids") or ())))
+    required_validation = int(quality.get("minimum_validation_episodes", 2))
+    if validation_count < required_validation:
+        issues.append(
+            f"validation episodes {validation_count} < {required_validation}")
+    accuracy = model_metrics.get("validation_accuracy")
+    required_accuracy = float(quality.get("minimum_validation_accuracy", .50))
+    if accuracy is None or float(accuracy) < required_accuracy:
+        issues.append(f"validation accuracy {accuracy} < {required_accuracy:.3f}")
+    ranking_accuracy = model_metrics.get("validation_ranking_accuracy")
+    required_ranking = float(quality.get(
+        "minimum_validation_ranking_accuracy", .50))
+    if ranking_accuracy is None or float(ranking_accuracy) < required_ranking:
+        issues.append(
+            f"validation ranking accuracy {ranking_accuracy} < "
+            f"{required_ranking:.3f}")
+    cv = float(model_metrics.get("mean_weight_coefficient_of_variation", 0.0))
+    required_cv = float(quality.get("minimum_mean_weight_cv", .005))
+    if cv < required_cv:
+        issues.append(f"mean weight CV {cv:.6f} < {required_cv:.6f}")
+    compliance = float(model_metrics.get(
+        "potential_observability_monotonic_compliance", 0.0))
+    required_compliance = float(quality.get(
+        "minimum_potential_monotonic_compliance", .55))
+    if compliance < required_compliance:
+        issues.append(
+            f"potential compliance {compliance:.3f} < {required_compliance:.3f}")
+    unsafe = sum(int(strata.get(name, 0)) for name in (
+        "unsafe_pad_contact", "collision", "excessive_drift"))
+    required_unsafe = int(quality.get("minimum_unsafe_failure_episodes", 0))
+    if unsafe < required_unsafe:
+        issues.append(f"unsafe failure episodes {unsafe} < {required_unsafe}")
+    return issues
+
+
+def _archive_rejected_adaptive_artifact(path: Path, design_id: str = "unknown") -> None:
+    """Preserve a rejected reward model and its provenance before replacement."""
+    path = Path(path)
+    if not path.is_file():
+        return
+    label = str(design_id or "unknown")[:16]
+    targets = [path, path.with_suffix(".manifest.json"),
+               path.parent / "adaptive_training_history.csv"]
+    for source in targets:
+        if not source.is_file():
+            continue
+        destination = source.with_name(
+            f"{source.stem}.rejected-{label}{source.suffix}")
+        sequence = 1
+        while destination.exists():
+            destination = source.with_name(
+                f"{source.stem}.rejected-{label}-{sequence}{source.suffix}")
+            sequence += 1
+        os.replace(source, destination)
 
 
 def _prepare_fast_demonstrations(*, cfg, camera, config, config_hash,
@@ -675,7 +883,8 @@ def _records_from_adaptive_dataset(dataset):
 
 def _collect_adaptive_data(*, cfg, camera, model, source_pipeline, config,
                            config_hash, results_dir, mode, monitor,
-                           episodes_override=None, max_episodes_override=None):
+                           episodes_override=None, max_episodes_override=None,
+                           minimum_unsafe_failures_override=None):
     """실제 Isaac/PX4 전이로 5성분 adaptive reward dataset을 만든다."""
     design = dict(config.get("adaptive_reward_design") or {})
     reward_cfg = dict(config.get("adaptive_reward") or {})
@@ -709,11 +918,15 @@ def _collect_adaptive_data(*, cfg, camera, model, source_pipeline, config,
     minimum_successes = max(2, int(design.get("minimum_successful_episodes", 3)))
     minimum_failures = max(2, int(design.get("minimum_failed_episodes", 3)))
     minimum_risky = max(1, int(design.get("minimum_risky_failures", 2)))
+    minimum_unsafe = max(0, int(
+        minimum_unsafe_failures_override
+        if minimum_unsafe_failures_override is not None else
+        design.get("minimum_unsafe_failure_episodes", 0)))
 
     def dataset_quality(dataset):
         if dataset is None:
             return {"ready": False, "episodes": 0, "success": 0,
-                    "failure": 0, "risky_failure": 0,
+                    "failure": 0, "risky_failure": 0, "unsafe_failure": 0,
                     "validation_classes": []}
         episodes = np.unique(dataset["episode_id"])
         representative = [int(np.flatnonzero(dataset["episode_id"] == ep)[0])
@@ -726,16 +939,21 @@ def _collect_adaptive_data(*, cfg, camera, model, source_pipeline, config,
                 or (float(dataset["touchdown_error"][index]) <= .70
                     and abs(float(dataset["touchdown_vertical_speed"][index])) <= 1.0))
             for index in representative)
+        unsafe = sum(
+            not int(success[index]) and failure_type[index] in {
+                "collision", "unsafe_pad_contact", "excessive_drift"}
+            for index in representative)
         validation = np.asarray(dataset["split"]).astype(str) == "validation"
         validation_classes = sorted(set(success[validation].tolist()))
         successes = sum(int(success[index]) for index in representative)
         failures = len(representative) - successes
         ready = (len(episodes) >= count and successes >= minimum_successes
                  and failures >= minimum_failures and risky >= minimum_risky
+                 and unsafe >= minimum_unsafe
                  and validation_classes == [0, 1])
         return {"ready": bool(ready), "episodes": len(episodes),
                 "success": successes, "failure": failures,
-                "risky_failure": int(risky),
+                "risky_failure": int(risky), "unsafe_failure": int(unsafe),
                 "validation_classes": validation_classes}
 
     def requirements_met(dataset):
@@ -819,7 +1037,7 @@ def _collect_adaptive_data(*, cfg, camera, model, source_pipeline, config,
                 print(f"adaptive data episode {episode}/{count} minimum "
                       f"success={int(metric['paper_success'])} steps={len(rows)} "
                       f"strata=S{quality['success']}/F{quality['failure']}/"
-                      f"R{quality['risky_failure']}")
+                      f"R{quality['risky_failure']}/U{quality['unsafe_failure']}")
     if dataset is None:
         raise RuntimeError("adaptive reward-design dataset is unavailable")
     if not requirements_met(dataset):
@@ -827,7 +1045,7 @@ def _collect_adaptive_data(*, cfg, camera, model, source_pipeline, config,
         raise RuntimeError(
             "adaptive reward data failed its stratified quality contract at the hard "
             f"cap: {quality}; require at least S{minimum_successes}/F{minimum_failures}/"
-            f"risky-F{minimum_risky} and both validation classes")
+            f"risky-F{minimum_risky}/unsafe-F{minimum_unsafe} and both validation classes")
     if manifest is None:
         manifest = save_adaptive_dataset(
             dataset, path, config_hash=config_hash,
@@ -857,6 +1075,9 @@ def main():
         "--rgat-max-data-episodes", type=int,
         help="hard cap for automatic real rollout extension when one class is missing")
     parser.add_argument("--rgat-epochs", type=int)
+    parser.add_argument(
+        "--robust-adaptive-reward", action="store_true",
+        help="reject collapsed adaptive artifacts and use the robust live R-GAT profile")
     parser.add_argument("--train-episodes", type=int)
     parser.add_argument("--total-train-episodes", type=int)
     parser.add_argument("--eval-episodes", type=int)
@@ -1032,6 +1253,12 @@ def main():
         parser.error(f"PBRS mode requires a valid semantic R-GAT: {artifact_error}")
     adaptive_weights = None
     adaptive_error = None
+    adaptive_rejected_design_id = "unknown"
+    adaptive_settings = _adaptive_reward_settings(
+        config, robust=args.robust_adaptive_reward)
+    adaptive_settings["epochs"] = int(
+        args.rgat_epochs or adaptive_settings.get(
+            f"epochs_{args.mode}", 10 if args.mode == "quick" else 80))
     if needs_adaptive and args.adaptive_reward_design.is_file():
         try:
             adaptive_weights = FrozenAdaptiveRewardWeights(
@@ -1045,9 +1272,18 @@ def main():
             if expected_architectures != {artifact_architecture}:
                 raise ValueError(
                     "one run may compare adaptive arms only with the same frozen architecture")
+            quality_issues = _adaptive_artifact_quality_issues(
+                adaptive_weights.metadata, adaptive_settings,
+                minimum_episodes=int(args.rgat_data_episodes or
+                    adaptive_settings.get(
+                        f"episodes_{args.mode}", 8 if args.mode == "quick" else 40)))
+            if quality_issues:
+                raise ValueError("; ".join(quality_issues))
             print(f"Using frozen adaptive reward R-GAT {adaptive_weights.design_id}.")
         except (OSError, ValueError, KeyError) as exc:
             adaptive_error = str(exc)
+            adaptive_rejected_design_id = getattr(
+                adaptive_weights, "design_id", "unknown")
             adaptive_weights = None
             print(f"Existing adaptive reward model is not reusable: {exc}")
     if needs_adaptive and adaptive_weights is None and args.no_prepare_reward_design:
@@ -1110,10 +1346,12 @@ def main():
         },
         "episode_return_role": "debugging only; never used for cross-pipeline ranking",
         "checkpoint_selection_rule": (
-            "latest completed PPO episode; no reward-return model selection"),
+            "pending held-out deterministic best-vs-latest validation"),
         "reward_design_id": getattr(potential, "design_id", None),
         "adaptive_reward_design_id": getattr(adaptive_weights, "design_id", None),
         "adaptive_reward": config.get("adaptive_reward"),
+        "adaptive_reward_runtime_profile": adaptive_settings.get(
+            "runtime_profile", "configured"),
         "seminar_fast": seminar_fast or None,
         "execution_status": "configured; real Isaac/Pegasus/PX4 results pending",
         "parallel_execution": {
@@ -1147,7 +1385,28 @@ def main():
         cfg.viz.dashboard.port = int(args.dashboard_port)
     pair_cfgs = [_pair_live_config(cfg, index, args.parallel_pairs)
                  for index in range(args.parallel_pairs)]
+    training_pair_for, pair_training_methods = _balanced_training_pair_assignment(
+        args.pipelines, args.parallel_pairs, args.training_replicate)
     ppo = dict(config.get("ppo") or {})
+    ppo_runtime_overrides = {}
+    if args.robust_adaptive_reward:
+        ppo_runtime_overrides = {
+            "learning_rate": min(float(ppo.get("learning_rate", 5e-5)), 5e-5),
+            "minimum_learning_rate": min(
+                float(ppo.get("minimum_learning_rate", 1e-5)), 1e-5),
+            "epochs": min(int(ppo.get("epochs", 4)), 4),
+            "target_kl": max(float(ppo.get("target_kl", .025)), .025),
+            "learning_rate_recovery_factor": 1.10,
+            "learning_rate_recovery_kl_fraction": .50,
+        }
+        ppo.update(ppo_runtime_overrides)
+    manifest["ppo_runtime_overrides"] = ppo_runtime_overrides
+    manifest["parallel_execution"]["training_pair_assignment"] = {
+        name: int(index) for name, index in training_pair_for.items()}
+    manifest["parallel_execution"]["assignment_rule"] = (
+        "cyclic Latin-square counterbalance by training_replicate; final "
+        "evaluation crosses every method over every physical pair")
+    _write_json(manifest_path, manifest)
     runtime_reward_normalizer = None
     adaptive_runtime = dict(config.get("adaptive_reward") or {})
     normalization_runtime = dict(
@@ -1213,7 +1472,7 @@ def main():
             "gateway_port": int(pair_cfgs[index].external.gateway_port),
             "learner_port": int(pair_cfgs[index].external.local_port),
         } for index, name in enumerate(
-            args.pipelines if args.parallel_pairs > 1 else args.pipelines[:1])])
+            pair_training_methods if args.parallel_pairs > 1 else args.pipelines[:1])])
     dashboard = Dashboard(cfg, STORE).start()
     rviz_process, rviz_log = _start_rviz(
         cfg.viz.rviz.enabled and not args.no_rviz and not args.headless,
@@ -1281,7 +1540,8 @@ def main():
             worker_monitors = [
                 _LockedMonitor(
                     monitor, monitor_lock,
-                    method=(args.pipelines[index] if args.parallel_pairs > 1 else ""),
+                    method=(pair_training_methods[index]
+                            if args.parallel_pairs > 1 else ""),
                     pair_index=index, pair_count=args.parallel_pairs)
                 for index in range(args.parallel_pairs)]
 
@@ -1319,6 +1579,13 @@ def main():
                 target_dir = (args.results_dir / f"models/{name}" if primary else
                               args.results_dir / "models/reward_design_source")
                 cloning = dict((seminar_fast.get("behavior_cloning") or {}))
+                anchor = deepcopy(dict(cloning.get("ppo_anchor") or {}))
+                if args.robust_adaptive_reward and anchor.get("enabled", False):
+                    anchor["until_policy_episode"] = max(
+                        int(anchor.get("until_policy_episode", 0)),
+                        max(1, int(train_count) - 4))
+                    anchor["minimum_learning_rate"] = min(
+                        float(anchor.get("minimum_learning_rate", 5e-6)), 5e-6)
                 warmup_count = (int(ppo["perception_warmup_episodes"])
                                 if get_pipeline(name).state_estimation_enabled else 0)
                 training_seeds = controlled_training_seeds(
@@ -1353,7 +1620,7 @@ def main():
                         demonstrations["dataset"]),
                     demonstration_anchor=(
                         {} if demonstrations is None else
-                        dict(cloning.get("ppo_anchor") or {})),
+                        anchor),
                     optimizer_lock=gpu_update_lock)
                 if primary:
                     for row in history:
@@ -1443,10 +1710,20 @@ def main():
             adaptive_design_episodes = 0
             adaptive_design_steps = 0
             if needs_adaptive and adaptive_weights is None:
+                _archive_rejected_adaptive_artifact(
+                    args.adaptive_reward_design, adaptive_rejected_design_id)
                 source_name = str((config.get("adaptive_reward_design") or {}).get(
                     "source_pipeline", "no_se_fixed"))
                 if source_name in models:
                     adaptive_source_model = models[source_name]
+                elif source_name in args.pipelines:
+                    # Reuse the primary fixed checkpoint. In parallel mode the
+                    # reward artifact is prepared before the three workers, so
+                    # it is not in ``models`` yet even when its completed
+                    # checkpoint is already on disk.
+                    adaptive_source_model, _, _ = train_pipeline(
+                        source_name, primary=True,
+                        pair_index=training_pair_for[source_name])
                 else:
                     adaptive_source_model, _, _ = train_pipeline(
                         source_name, primary=False)
@@ -1457,22 +1734,11 @@ def main():
                         config_hash=config_hash, results_dir=args.results_dir,
                         mode=args.mode, monitor=monitor,
                         episodes_override=args.rgat_data_episodes,
-                        max_episodes_override=args.rgat_max_data_episodes))
+                        max_episodes_override=args.rgat_max_data_episodes,
+                        minimum_unsafe_failures_override=(
+                            (adaptive_settings.get("quality_gate") or {}).get(
+                                "minimum_unsafe_failure_episodes"))))
                 adaptive_design_episodes = int(adaptive_manifest["episodes"])
-                adaptive_settings = dict(config.get("adaptive_reward_design") or {})
-                reward_constraints = dict(config.get("adaptive_reward") or {})
-                for source_key, target_key in (
-                        ("baseline_weights", "baseline_weights"),
-                        ("total_weight", "total_weight"),
-                        ("logit_scale_kappa", "logit_scale_kappa"),
-                        ("baseline_mixture_epsilon", "baseline_mixture_epsilon"),
-                        ("semantic_potential_shaping_lambda",
-                         "semantic_potential_shaping_lambda")):
-                    if source_key in reward_constraints:
-                        adaptive_settings[target_key] = reward_constraints[source_key]
-                adaptive_settings["epochs"] = int(
-                    args.rgat_epochs or adaptive_settings.get(
-                        f"epochs_{args.mode}", 10 if args.mode == "quick" else 80))
                 expected_architectures = {
                     get_pipeline(name).adaptive_reward_architecture
                     for name in args.pipelines
@@ -1482,11 +1748,55 @@ def main():
                         "structural ablations require separate runs/artifacts per architecture")
                 adaptive_settings["architecture"] = next(iter(expected_architectures))
                 monitor.stage("adaptive R-GAT training", "five constrained reward weights")
-                _, adaptive_metadata = prepare_adaptive_reward_artifact(
-                    args.adaptive_reward_design, adaptive_dataset,
-                    dataset_manifest=adaptive_manifest,
-                    config_hash=config_hash, settings=adaptive_settings,
-                    seed=model_seed)
+                adaptive_minimum = int(
+                    args.rgat_data_episodes or adaptive_settings.get(
+                        f"episodes_{args.mode}", 8 if args.mode == "quick" else 40))
+                adaptive_maximum = int(
+                    args.rgat_max_data_episodes or adaptive_settings.get(
+                        f"max_episodes_{args.mode}", max(
+                            adaptive_minimum, 3 * adaptive_minimum)))
+                while True:
+                    try:
+                        _, adaptive_metadata = prepare_adaptive_reward_artifact(
+                            args.adaptive_reward_design, adaptive_dataset,
+                            dataset_manifest=adaptive_manifest,
+                            config_hash=config_hash, settings=adaptive_settings,
+                            seed=model_seed)
+                        break
+                    except RuntimeError as exc:
+                        if "quality gate rejected" not in str(exc):
+                            raise
+                        current_episodes = len(np.unique(
+                            adaptive_dataset["episode_id"]))
+                        if current_episodes >= adaptive_maximum:
+                            raise RuntimeError(
+                                f"{exc}; exhausted the {adaptive_maximum}-episode "
+                                "real-rollout cap") from exc
+                        next_minimum = min(
+                            adaptive_maximum,
+                            current_episodes + max(4, adaptive_minimum // 2))
+                        print(
+                            f"Adaptive R-GAT did not pass its quality gate after "
+                            f"{current_episodes} episodes ({exc}). Extending the "
+                            f"real dataset to at least {next_minimum} episodes.")
+                        adaptive_dataset, adaptive_manifest, _, adaptive_design_steps = (
+                            _collect_adaptive_data(
+                                cfg=cfg, camera=camera,
+                                model=adaptive_source_model,
+                                source_pipeline=source_name, config=config,
+                                config_hash=config_hash,
+                                results_dir=args.results_dir,
+                                mode=args.mode, monitor=monitor,
+                                episodes_override=next_minimum,
+                                max_episodes_override=adaptive_maximum,
+                                minimum_unsafe_failures_override=(
+                                    (adaptive_settings.get("quality_gate") or {}).get(
+                                        "minimum_unsafe_failure_episodes"))))
+                        adaptive_design_episodes = int(
+                            adaptive_manifest["episodes"])
+                        monitor.stage(
+                            "adaptive R-GAT retraining",
+                            f"quality-gated real data · {adaptive_design_episodes} episodes")
                 adaptive_weights = FrozenAdaptiveRewardWeights(
                     args.adaptive_reward_design,
                     expected_config_hash=config_hash)
@@ -1521,9 +1831,10 @@ def main():
                 try:
                     futures = {
                         executor.submit(
-                            train_pipeline, name, pair_index=index,
+                            train_pipeline, name,
+                            pair_index=training_pair_for[name],
                             model=prepared_models[name]): name
-                        for index, name in enumerate(args.pipelines)}
+                        for name in args.pipelines}
                     for future in as_completed(futures):
                         future.result()
                 except BaseException:
@@ -1540,39 +1851,208 @@ def main():
 
             training_records = [row for name in args.pipelines
                                 for row in histories.get(name, [])]
+
+            # A training-best checkpoint is based on one sampled rollout. It
+            # can therefore encode a lucky exploration action that disappears
+            # when evaluation deploys the actor mean. Compare training-best
+            # and training-latest on disjoint deterministic seeds before any
+            # reported evaluation and persist every selection flight.
+            selection_path = (
+                args.results_dir / "evaluation/checkpoint_selection.csv")
+            selection_rows = _read_csv(selection_path)
+            selection_lock = threading.RLock()
+            selection_seed0 = int(seed_cfg.get(
+                "checkpoint_validation_start",
+                int(seed_cfg.get("evaluation_start", 5000)) - 1000))
+            selection_scenarios = tuple(
+                seminar_fast.get("evaluation_scenarios") or evaluation_cfg)
+            selection_scenarios = selection_scenarios[:3]
+            selected_checkpoints = {}
+
+            def reward_design_for(name):
+                spec = get_pipeline(name)
+                return (adaptive_weights if spec.use_adaptive_reward_weights
+                        else potential if spec.use_direct_rgat_potential else None)
+
+            def select_pipeline_checkpoint(index, name):
+                model = models[name]
+                candidates = _checkpoint_candidates(args.results_dir, name)
+                validation_plan = _checkpoint_validation_plan(
+                    name, selection_scenarios, seed0=selection_seed0)
+                local_monitor = _LockedMonitor(
+                    monitor, monitor_lock, method=name, pair_index=index,
+                    pair_count=args.parallel_pairs)
+                summaries = []
+                with LiveShinEnvironment(
+                        pair_cfgs[index], cameras[index],
+                        horizon_steps=int(pair_cfgs[index].sim.max_steps)) as environment:
+                    for candidate in candidates:
+                        payload = torch.load(
+                            candidate["path"], map_location=model.device,
+                            weights_only=False)
+                        model.load_state_dict(payload["model"])
+                        model.eval()
+                        candidate_metrics = []
+                        for item in validation_plan:
+                            key = (name, candidate["sha256"],
+                                   item["scenario"], int(item["seed"]))
+                            with selection_lock:
+                                cached = next((row for row in selection_rows
+                                    if (row.get("method"),
+                                        row.get("checkpoint_candidate_sha256"),
+                                        row.get("scenario"), int(row.get("seed", -1)))
+                                    == key), None)
+                            if cached is None:
+                                local_monitor.stage(
+                                    "deterministic checkpoint validation",
+                                    f"pair {index} · {name} · {candidate['kind']}")
+                                _, metric = collect_episode_resilient(
+                                    environment, model, name, int(item["seed"]),
+                                    curriculum=float(seminar_fast.get(
+                                        "evaluation_curriculum", 1.0)),
+                                    potential=reward_design_for(name),
+                                    deterministic=True,
+                                    gamma=float(ppo.get("gamma", .99)),
+                                    shaping_lambda=float(ppo.get(
+                                        "shaping_lambda", 1.0)),
+                                    reward_normalizer=runtime_reward_normalizer,
+                                    scenario=item["scenario"], monitor=local_monitor,
+                                    phase="checkpoint validation")
+                                metric.update({
+                                    "method": name, "pipeline": name,
+                                    "scenario": item["scenario"],
+                                    "training_replicate": args.training_replicate,
+                                    "physical_pair_index": index,
+                                    "checkpoint_candidate_kind": candidate["kind"],
+                                    "checkpoint_candidate_episode": candidate["episode"],
+                                    "checkpoint_candidate_sha256": candidate["sha256"],
+                                    "checkpoint_validation_protocol": (
+                                        "held_out_deterministic_multi_seed_v1"),
+                                })
+                                with selection_lock:
+                                    selection_rows.append(metric)
+                                    _write_csv(selection_path, selection_rows)
+                                cached = metric
+                            candidate_metrics.append(cached)
+                        summary = aggregate_deployment_validation(candidate_metrics)
+                        summaries.append((deployment_validation_key(summary),
+                                          candidate["episode"], candidate,
+                                          payload, summary))
+                # Prefer the later snapshot only when every held-out safety and
+                # physical metric ties exactly.
+                _, _, candidate, payload, summary = max(
+                    summaries, key=lambda item: (item[0], item[1]))
+                selected_path = (args.results_dir / "models" / name
+                                 / f"{name}.selected.pt")
+                _atomic_save_selected_checkpoint(
+                    selected_path, payload, candidate=candidate, summary=summary,
+                    validation_seeds=[item["seed"] for item in validation_plan])
+                model.load_state_dict(payload["model"])
+                model.eval()
+                model._selected_checkpoint_episode = int(candidate["episode"])
+                model._selected_checkpoint_score = float(
+                    summary["mean_physical_score"])
+                model._selected_checkpoint_kind = str(candidate["kind"])
+                model._selected_checkpoint_sha256 = str(candidate["sha256"])
+                with selection_lock:
+                    selected_checkpoints[name] = {
+                        **candidate, "path": str(selected_path), "summary": summary}
+                print(
+                    f"Selected {name} {candidate['kind']} episode "
+                    f"{candidate['episode']} by {int(summary['successes'])}/"
+                    f"{int(summary['episodes'])} held-out deterministic landings.")
+
+            if args.parallel_pairs > 1:
+                executor = ThreadPoolExecutor(
+                    max_workers=args.parallel_pairs,
+                    thread_name_prefix="checkpoint-selection")
+                futures = []
+                try:
+                    futures = [executor.submit(
+                        select_pipeline_checkpoint, training_pair_for[name], name)
+                        for name in args.pipelines]
+                    for future in as_completed(futures):
+                        future.result()
+                except BaseException:
+                    _abort_parallel_workers(executor, futures, owned)
+                    raise
+                else:
+                    executor.shutdown(wait=True)
+            else:
+                for name in args.pipelines:
+                    select_pipeline_checkpoint(0, name)
+            manifest["checkpoint_selection_rule"] = (
+                "best and latest training snapshots compared on three held-out "
+                "deterministic scenario seeds; safe success count is primary")
+            manifest["selected_checkpoints"] = selected_checkpoints
+            _write_json(manifest_path, manifest)
+
             evaluation_rows = _read_csv(existing_eval)
             for row in evaluation_rows:
                 row.setdefault("training_replicate", args.training_replicate)
+            valid_evaluation_rows, superseded_rows = [], []
+            for row in evaluation_rows:
+                name = row.get("pipeline", row.get("method"))
+                selected = selected_checkpoints.get(name)
+                recorded_digest = str(row.get("selected_checkpoint_sha256", ""))
+                recorded_episode = int(float(row.get(
+                    "selected_checkpoint_episode", 0)))
+                crossover_missing = (
+                    args.parallel_pairs > 1 and not str(
+                        row.get("physical_pair_index", "")).strip())
+                mismatch = selected is None or crossover_missing or (
+                    bool(recorded_digest)
+                    and recorded_digest != selected["sha256"]) or (
+                    not recorded_digest
+                    and recorded_episode != int(selected["episode"]))
+                if mismatch:
+                    row["superseded_reason"] = (
+                        "pre_crossover_evaluation" if crossover_missing
+                        else "deployment_checkpoint_changed")
+                    superseded_rows.append(row)
+                    continue
+                row["selected_checkpoint_kind"] = selected["kind"]
+                row["selected_checkpoint_sha256"] = selected["sha256"]
+                row["selected_checkpoint_score"] = selected[
+                    "summary"]["mean_physical_score"]
+                valid_evaluation_rows.append(row)
+            if superseded_rows:
+                superseded_path = (
+                    args.results_dir / "evaluation/per_episode.superseded.csv")
+                _write_csv(superseded_path,
+                           _read_csv(superseded_path) + superseded_rows)
+                print(f"Archived {len(superseded_rows)} evaluation rows collected "
+                      "before deterministic selection/crossover balancing.")
+            evaluation_rows = valid_evaluation_rows
+            _write_csv(existing_eval, evaluation_rows)
             completed = {(row["pipeline"], row["scenario"], int(row["seed"]))
                          for row in evaluation_rows}
             monitor.restore_evaluation(evaluation_rows)
             evaluation_lock = threading.RLock()
 
-            def evaluate_pipeline(index, name):
-                model = models[name]
-                local_monitor = worker_monitors[index]
-                local_monitor.stage(
-                    "parallel paired evaluation" if args.parallel_pairs > 1
-                    else "paired evaluation", f"pair {index} · {name}")
+            def evaluate_pair(index, tasks):
                 new_rows = []
                 with LiveShinEnvironment(
                         pair_cfgs[index], cameras[index],
                         horizon_steps=int(pair_cfgs[index].sim.max_steps)) as environment:
-                    for item in plan:
-                        if item["method"] != name:
-                            continue
+                    for item in tasks:
+                        name = item["method"]
                         key = (name, item["scenario"], int(item["seed"]))
                         if key in completed:
                             continue
+                        model = models[name]
+                        local_monitor = _LockedMonitor(
+                            monitor, monitor_lock, method=name, pair_index=index,
+                            pair_count=args.parallel_pairs)
+                        local_monitor.stage(
+                            "parallel crossover evaluation"
+                            if args.parallel_pairs > 1 else "paired evaluation",
+                            f"pair {index} · {name}")
                         _, metric = collect_episode_resilient(
                             environment, model, name, int(item["seed"]),
                             curriculum=float(seminar_fast.get(
                                 "evaluation_curriculum", 1.0)),
-                            potential=(adaptive_weights
-                                       if get_pipeline(name).use_adaptive_reward_weights
-                                       else potential
-                                       if get_pipeline(name).use_direct_rgat_potential
-                                       else None),
+                            potential=reward_design_for(name),
                             deterministic=True, gamma=float(ppo.get("gamma", .99)),
                             shaping_lambda=float(ppo.get("shaping_lambda", 1.0)),
                             reward_normalizer=runtime_reward_normalizer,
@@ -1580,7 +2060,12 @@ def main():
                             phase="evaluation")
                         metric.update({"method": name, "pipeline": name,
                                        "training_replicate": args.training_replicate,
-                                       "scenario": item["scenario"]})
+                                       "scenario": item["scenario"],
+                                       "physical_pair_index": index,
+                                       "route_phase_fraction": float(
+                                           ((system.get("parallel") or {}).get(
+                                               "route_phase_fractions",
+                                               [0.0, 0.08, 0.16]))[index])})
                         new_rows.append(metric)
                         local_monitor.evaluation_update(name, metric)
                         # Evaluation is real-time flight and can take long
@@ -1592,14 +2077,19 @@ def main():
                             _write_csv(existing_eval, evaluation_rows)
                 return new_rows
 
+            crossover_tasks = _crossover_evaluation_tasks(
+                plan, args.pipelines, args.parallel_pairs)
+            _write_csv(
+                args.results_dir / "evaluation/crossover_plan.csv",
+                [row for rows in crossover_tasks for row in rows])
             if args.parallel_pairs > 1:
                 executor = ThreadPoolExecutor(
                     max_workers=args.parallel_pairs,
                     thread_name_prefix="landing-eval")
                 futures = []
                 try:
-                    futures = [executor.submit(evaluate_pipeline, index, name)
-                               for index, name in enumerate(args.pipelines)]
+                    futures = [executor.submit(evaluate_pair, index, tasks)
+                               for index, tasks in enumerate(crossover_tasks)]
                     for future in as_completed(futures):
                         future.result()
                 except BaseException:
@@ -1608,8 +2098,7 @@ def main():
                 else:
                     executor.shutdown(wait=True)
             else:
-                for name in args.pipelines:
-                    evaluate_pipeline(0, name)
+                evaluate_pair(0, crossover_tasks[0])
             _write_csv(existing_eval, evaluation_rows)
 
             semantic_cost = {

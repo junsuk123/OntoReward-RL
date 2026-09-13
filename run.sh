@@ -108,8 +108,9 @@ if [[ "$seminar_fast" == true ]]; then
     --pipelines shin_se_fixed no_se_fixed onto_rgat_adaptive_weight_no_se
     --parallel-pairs 3
     --stay-open
-    --rgat-max-data-episodes 24
-    --rgat-epochs 40
+    --robust-adaptive-reward
+    --rgat-max-data-episodes 48
+    --rgat-epochs 80
   )
   if [[ "$training_budget_supplied" == false ]]; then
     profile_arguments+=(--train-episodes 32)
@@ -120,7 +121,7 @@ if [[ "$seminar_fast" == true ]]; then
     evaluation_budget_supplied=true
   fi
   if [[ "$rgat_budget_supplied" == false ]]; then
-    profile_arguments+=(--rgat-data-episodes 12)
+    profile_arguments+=(--rgat-data-episodes 24)
     rgat_budget_supplied=true
   fi
   arguments=("${profile_arguments[@]}" "${arguments[@]}")

@@ -195,7 +195,8 @@ $$
 
 인자 없는 기본 실행은 세미나용 핵심 3-arm 프로필을 선택하고, 한 Isaac stage의
 UAV/UGV 3쌍에서 세 방법을 병렬 학습·평가하며, 완료 후 시각화 stack을 유지한다.
-즉 다음 명시적 명령과 같다.
+이 기본 프로필은 `--parallel-pairs 3`, `--stay-open` 및 robust adaptive R-GAT
+품질 게이트를 함께 적용한다. 개발용 명시적 호출은 다음과 같다.
 
 ```bash
 ./run.sh --seminar-fast --parallel-pairs 3 --stay-open
@@ -216,8 +217,9 @@ UAV/UGV 3쌍에서 세 방법을 병렬 학습·평가하며, 완료 후 시각�
 3. 공통 keypoint encoder 준비 및 검증
 4. 실제 trajectory 수집과 hybrid R-GAT 학습·검증·동결
 5. 비교군과 제안 모델 PPO 학습(병렬 모드에서는 세 쌍 동시 실행)
-6. 안전성 기준 best checkpoint 저장
-7. 동일 scenario/seed의 paired evaluation
+6. 학습 best/latest를 별도의 결정론 3-scenario flight로 검증하여
+   `<pipeline>.selected.pt` 선택
+7. 동일 scenario/seed를 세 물리 pair에 교차 배정한 paired evaluation
 8. 표·그래프·manifest 생성
 
 중단된 실행은 같은 명령으로 checkpoint와 완료 row부터 재개한다. 동시에 두 개의
@@ -228,7 +230,8 @@ flight pipeline을 시작하지 않도록 실행 lock을 사용한다.
 - Dashboard: `http://127.0.0.1:8770/`
 - ROS/RViz namespace: `/landing_rl/pair_0`, `/landing_rl/pair_1`, `/landing_rl/pair_2`
 - 세미나 결과: `Ontology_RGAT_UAV_RL_ISAAC_PX4/results/seminar_fast/core3_hybrid_v3/`
-- 모델: `models/<pipeline>/<pipeline>.pt`, `<pipeline>.best.pt`
+- 모델: `models/<pipeline>/<pipeline>.pt`, `<pipeline>.best.pt`,
+  `<pipeline>.selected.pt`
 - 학습 이력: `training/*.csv`, `models/*/*_training.csv`
 - 평가: `evaluation/`
 - 표·그림: `tables/`, `figures/`

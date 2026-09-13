@@ -40,9 +40,9 @@ $$
 
 ```text
 Isaac Sim physics/render stage
-├─ pair 0: UAV 0 + UGV 0 + PX4 0 + gateway 0 → Shin SE
-├─ pair 1: UAV 1 + UGV 1 + PX4 1 + gateway 1 → No SE
-└─ pair 2: UAV 2 + UGV 2 + PX4 2 + gateway 2 → Onto R-GAT
+├─ pair 0: UAV 0 + UGV 0 + PX4 0 + gateway 0 → method A
+├─ pair 1: UAV 1 + UGV 1 + PX4 1 + gateway 1 → method B
+└─ pair 2: UAV 2 + UGV 2 + PX4 2 + gateway 2 → method C
 ```
 
 세 쌍은 하나의 물리 clock에서 진행하지만 prim, camera, contact sensor, marker ID,
@@ -50,6 +50,8 @@ ROS topic, UDP endpoint와 episode state는 공유하지 않는다. 동일 route
 진행률(0%, 8%, 16%)에서 시작하므로 세 UGV가 조사된 도로 위를 열차처럼 같은 방향으로
 따른다. 0이 아닌 world offset은 선택적 보정용이며 기본값은 세 쌍 모두 0이다. 쌍별
 marker ID 집합과 충분한 경로 간격으로 다른 패드의 오검출과 기체 간 접촉을 방지한다.
+학습 방법과 pair의 대응은 `training_replicate` 마다 cyclic Latin square로 바꾸어
+경로 phase 편향을 분리한다. 최종 평가에서는 각 방법이 세 pair를 모두 순환한다.
 제안 방법의 R-GAT은 PPO 전에 학습·검증한 뒤
 동결하며, 병렬 구간에서는 각 방법의 PPO actor/critic/optimizer만 갱신된다.
 
@@ -183,6 +185,7 @@ Terminal class:
 | Actor/LSTM/critic | PPO stage | 학습 |
 | Latest checkpoint | episode commit | 재개용 갱신 |
 | Best checkpoint | 안전성 score 개선 | pre-update policy snapshot |
+| Selected checkpoint | held-out 결정론 best/latest 검증 후 | 최종 평가·배포용 동결 |
 
 Artifact는 config/dataset/encoder hash와 architecture version을 저장하며 불일치하면 재사용하지
 않는다.

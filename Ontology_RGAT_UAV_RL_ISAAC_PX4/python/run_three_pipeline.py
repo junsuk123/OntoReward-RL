@@ -7,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import ExitStack
 from copy import deepcopy
 import csv
+from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
@@ -446,6 +447,9 @@ def _adaptive_reward_settings(config, *, robust: bool = False) -> dict:
         # The small seminar artifact collapsed to nearly constant baseline
         # weights. This profile is explicit in the CLI/manifest and trades a
         # modest offline cost for observable state-dependent reward variation.
+        # Keep the experiment's declared CV acceptance criterion authoritative:
+        # raising it silently here made a valid, fully collected artifact abort
+        # the entire live pipeline after the rollout cap was reached.
         settings["logit_scale_kappa"] = max(
             1.0, float(settings.get("logit_scale_kappa", 1.0)))
         settings["baseline_mixture_epsilon"] = min(
@@ -473,7 +477,7 @@ def _adaptive_reward_settings(config, *, robust: bool = False) -> dict:
                 .70, float(quality.get(
                     "minimum_validation_ranking_accuracy", .70))),
             "minimum_mean_weight_cv": max(
-                .008, float(quality.get("minimum_mean_weight_cv", .008))),
+                .003, float(quality.get("minimum_mean_weight_cv", .003))),
             "minimum_potential_monotonic_compliance": max(
                 .70, float(quality.get(
                     "minimum_potential_monotonic_compliance", .70))),
@@ -481,7 +485,7 @@ def _adaptive_reward_settings(config, *, robust: bool = False) -> dict:
                 2, int(quality.get("minimum_unsafe_failure_episodes", 2))),
         })
         settings["quality_gate"] = quality
-        settings["runtime_profile"] = "robust_live_v1"
+        settings["runtime_profile"] = "robust_live_v2"
     return settings
 
 
@@ -2419,6 +2423,18 @@ def main():
                 _write_json(manifest_path, manifest)
             if args.stay_open:
                 _hold_after_complete(owned, monitor)
+    except Exception as exc:
+        manifest.update({
+            "execution_status": "failed; checkpoints and completed rows preserved",
+            "failure": {
+                "type": type(exc).__name__,
+                "message": str(exc),
+                "recorded_at": datetime.now(timezone.utc).isoformat(),
+            },
+        })
+        _write_json(manifest_path, manifest)
+        refresh_presentation_results()
+        raise
     finally:
         if training_executor is not None:
             _abort_parallel_workers(

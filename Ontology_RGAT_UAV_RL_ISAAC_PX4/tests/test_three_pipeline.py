@@ -378,9 +378,10 @@ def test_robust_adaptive_profile_rejects_the_collapsed_seminar_artifact():
     config = load_experiment(
         ROOT / "config/experiments/seminar_fast_comparison.yaml")
     settings = _adaptive_reward_settings(config, robust=True)
-    assert settings["runtime_profile"] == "robust_live_v1"
+    assert settings["runtime_profile"] == "robust_live_v2"
     assert settings["semantic_potential_shaping_lambda"] >= 1.5
     assert settings["loss"]["contextual_weight"] >= 1.5
+    assert settings["quality_gate"]["minimum_mean_weight_cv"] == pytest.approx(.003)
     metadata = {
         "dataset_manifest": {
             "episodes": 12, "validation_episodes": 2,
@@ -389,7 +390,7 @@ def test_robust_adaptive_profile_rejects_the_collapsed_seminar_artifact():
         "metrics": {
             "validation_accuracy": .5,
             "validation_ranking_accuracy": .5,
-            "mean_weight_coefficient_of_variation": .00317,
+            "mean_weight_coefficient_of_variation": .001,
             "potential_observability_monotonic_compliance": .96,
         },
     }

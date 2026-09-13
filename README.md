@@ -5,7 +5,24 @@ NVIDIA Isaac Sim·Pegasus·PX4 SITL에서 도로를 주행하는 UGV의 패드�
 추정기 없이 영상 의미를 ontology graph로 구성하고, 동결된 R-GAT이 상태별 보상
 가중치와 관측성 potential을 함께 생성하는 것이다.
 
-![Isaac Sim의 Meta-Sejong S5 이동식 착륙 환경](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/images/isaac_sim_s5_live.png)
+## 현재 기본 실행: 3쌍 병렬 학습
+
+`./run.sh`는 하나의 Meta-Sejong Isaac Sim world에 UGV 3대와 UAV 3대를
+배치하고, `shin_se_fixed`·`no_se_fixed`·`onto_rgat_adaptive_weight_no_se`를
+각각 독립된 PX4·UDP·ROS namespace·PPO optimizer로 병렬 실행한다. 아래는
+실제 full-mode 학습 세션에서 저장한 화면이며 임의로 합성한 예시가 아니다.
+
+![Isaac Sim의 3개 UAV/UGV pair와 도로 waypoint 궤적](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/images/runtime/isaac_sim_three_pair_live.png)
+
+*Isaac Sim — 같은 캠퍼스 world의 3개 착륙 pair, 도로 위 UGV/pad와 pair별 UAV 궤적.*
+
+![RViz2의 3개 pair 태그 인식 overlay와 독립 TF 및 비행 궤적](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/images/runtime/rviz_three_pair_live.png)
+
+*RViz2 — 세 landing camera의 태그 인식 overlay, `landing_pad_0..2` TF, UAV/UGV 궤적.*
+
+![3쌍 병렬 학습을 표시하는 MATLAB 스타일 웹 대시보드](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/images/runtime/dashboard_three_pair_live.png)
+
+*Web dashboard — committed episode와 live step을 분리하고, 세 pair의 보상·속도·마커·배터리를 독립적으로 갱신한다. 수치는 캡처 시점의 실시간 값이다.*
 
 ## 1. 강화학습 문제 정의
 
@@ -256,7 +273,7 @@ Dashboard는 단일 pipeline용 레거시 화면 없이 항상 3-pair 전용으�
 `landing_pad_0..2` 독립 TF/trajectory를 사용하며 Isaac GUI는 전체 편대를 자동으로
 한 화면에 맞춘다.
 
-![MATLAB 스타일 실시간 대시보드](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/images/live_dashboard_status.png)
+![MATLAB 스타일 3-pair 실시간 대시보드](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/images/runtime/dashboard_three_pair_live.png)
 
 ## 7. 문서
 

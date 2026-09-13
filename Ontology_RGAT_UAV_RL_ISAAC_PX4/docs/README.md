@@ -28,5 +28,8 @@
 | [isaac_sim_s5_live.png](images/isaac_sim_s5_live.png) | 실제 Isaac Sim runtime |
 | [live_dashboard_status.png](images/live_dashboard_status.png) | MATLAB 스타일 dashboard |
 | [metasejong_gwanggaeto_ugv_route.png](images/metasejong_gwanggaeto_ugv_route.png) | 활성 UGV 도로 경로 |
+| [isaac_sim_three_pair_live.png](images/runtime/isaac_sim_three_pair_live.png) | 하나의 Isaac world에서 실행한 3개 UAV/UGV pair |
+| [rviz_three_pair_live.png](images/runtime/rviz_three_pair_live.png) | 3개 태그 인식 camera overlay·TF·비행 궤적 |
+| [dashboard_three_pair_live.png](images/runtime/dashboard_three_pair_live.png) | 실제 telemetry로 갱신된 3-pair 웹 dashboard |
 
 알고리즘 다이어그램은 편집·검토 가능한 SVG, 실제 환경 화면은 원본 PNG로 관리한다.

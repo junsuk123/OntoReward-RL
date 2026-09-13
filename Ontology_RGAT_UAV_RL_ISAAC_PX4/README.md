@@ -4,6 +4,17 @@
 연구 정의와 전체 수식은 [저장소 README](../README.md)에 있으며, 여기서는 실행 코드와
 설치·출력 계약을 설명한다.
 
+## `./run.sh` 3-pair 실행 화면
+
+| Isaac Sim 공유 world | RViz2 태그 인식·TF·궤적 |
+|---|---|
+| [![Isaac Sim 3-pair runtime](docs/images/runtime/isaac_sim_three_pair_live.png)](docs/images/runtime/isaac_sim_three_pair_live.png) | [![RViz2 3-pair runtime](docs/images/runtime/rviz_three_pair_live.png)](docs/images/runtime/rviz_three_pair_live.png) |
+
+[![3-pair live dashboard](docs/images/runtime/dashboard_three_pair_live.png)](docs/images/runtime/dashboard_three_pair_live.png)
+
+위 이미지는 실제 full-mode 세션 캡처다. Dashboard 숫자는 정적 예시가 아니라
+checkpoint/history와 각 pair의 live telemetry에서 갱신된다.
+
 ## 강화학습 구성
 
 | 요소 | 구현 |

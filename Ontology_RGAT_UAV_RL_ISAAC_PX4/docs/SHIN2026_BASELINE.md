@@ -54,7 +54,7 @@ Actor는 논문 Fig. 4와 같이 $y_{t,6:256}$과 UAV state를 사용한다. 추
 
 $$
 r_t^{\mathrm{active}}
-=-0.1\,\operatorname{clip}
+=-0.1\,\mathrm{clip}
 \left(L_{t+1}^{\mathrm{est}}-0.01,0,1\right).
 $$
 

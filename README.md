@@ -62,7 +62,7 @@ $$
 
 $$
 r^{\mathrm{active}}_t
-=-\alpha\,\operatorname{clip}
+=-\alpha\,\mathrm{clip}
 \!\left(\beta(L^{\mathrm{est}}_{t+1}-\tau),0,1\right),
 \quad (\alpha,\beta,\tau)=(0.1,1,0.01).
 $$
@@ -112,8 +112,8 @@ $d^{xy}_t=\|\Delta x^{b}_{t,xy}\|_2$라 두고, 코드와 데이터 설계가 �
 
 $$
 \begin{aligned}
-\rho_{1,t}&=\operatorname{clip}(d^{xy}_t-d^{xy}_{t+1},-1,1),\\
-\rho_{2,t}&=\frac{\operatorname{clip}(|\Delta z_t|-|\Delta z_{t+1}|,-1,1)}
+\rho_{1,t}&=\mathrm{clip}(d^{xy}_t-d^{xy}_{t+1},-1,1),\\
+\rho_{2,t}&=\frac{\mathrm{clip}(|\Delta z_t|-|\Delta z_{t+1}|,-1,1)}
 {\max(d^{xy}_{t+1},1)},\\
 \rho_{3,t}&=-\max(v^{\mathrm{uav}}_{z,t+1}+0.5,0),\\
 \rho_{4,t}&=-\max(\Delta z_{t+1},0),\\
@@ -124,7 +124,7 @@ $$
 서로 다른 단위를 직접 합산하지 않도록
 
 $$
-\bar\rho_{i,t}=\operatorname{clip}\!\left(\frac{\rho_{i,t}}{c_i},-1,1\right),
+\bar\rho_{i,t}=\mathrm{clip}\!\left(\frac{\rho_{i,t}}{c_i},-1,1\right),
 \qquad
 c=\left(1,1,1.5,3,\frac{\pi}{2}\right)
 $$

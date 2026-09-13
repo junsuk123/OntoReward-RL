@@ -109,6 +109,10 @@ def test_evaluation_pair_uses_evaluation_index_not_finished_training_episode():
     monitor.restore_evaluation([{
         "method": "shin2026", "scenario": "circle", "seed": "5",
         "paper_success": "1.0"}])
+    restored_pair = store.snapshot()["scalars"]["parallel_pair_status"][0]
+    assert restored_pair["episode"] == 1
+    assert restored_pair["episode_kind"] == "평가"
+    assert restored_pair["status"] == "complete"
 
     monitor.reset_episode(
         method="shin2026", phase="evaluation", seed=6,

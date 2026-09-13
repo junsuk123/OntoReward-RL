@@ -81,7 +81,7 @@ class _LockedMonitor:
         with self._lock:
             if self._pair_count > 1:
                 self._monitor.store.stage(
-                    name, f"{self._pair_count} independent UAV/UGV pairs active")
+                    name, f"{self._pair_count} independent UAV/UGV pairs configured")
                 self._monitor._update_pair(
                     self._method, activity=str(name), activity_detail=str(detail),
                     index=self._pair_index)

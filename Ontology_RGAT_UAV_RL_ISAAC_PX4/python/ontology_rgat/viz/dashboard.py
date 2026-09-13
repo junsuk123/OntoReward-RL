@@ -113,6 +113,7 @@ font-variant-numeric:tabular-nums}.pair-metrics small{font-size:9px;color:var(--
 overflow-wrap:anywhere}.pair-state{font-weight:600}.pair-state.running{color:var(--accent)}
 .pair-state.success{color:var(--good)}.pair-state.failure,.pair-state.unsafe_touchdown{
 color:var(--bad)}
+.pair-state.complete{color:var(--good)}
 .pair-plot{min-width:0;border:1px solid #b8b8b8;background:#fff;padding:7px}
 .pair-plot h3{height:34px;margin:0 0 3px;font-size:11px;line-height:1.3;text-align:center}
 .pair-plot canvas{height:170px}.pair-gates{display:flex;gap:3px;flex-wrap:wrap;margin-top:6px}

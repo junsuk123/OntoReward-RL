@@ -681,6 +681,13 @@ class BenchmarkMonitor:
                     selected.append(point)
             self.store.replace(f"benchmark_eval_{method}", selected)
             completed += len(selected)
+            if selected and method in self.pair_status:
+                self._update_pair(
+                    method, phase="evaluation", episode=len(selected),
+                    episode_kind="평가", completed_episode=len(selected),
+                    step=0, status="complete",
+                    scenario=str(selected[-1].get("scenario", "")),
+                    success=float(selected[-1].get("paper_success", 0.0)))
         self.store.set(evaluation_completed=completed)
 
     def evaluation_update(self, method: str, metric: dict[str, Any]) -> None:

@@ -126,6 +126,34 @@ def test_evaluation_pair_uses_evaluation_index_not_finished_training_episode():
     assert state["scalars"]["current_training_episode"] is None
 
 
+def test_pair_status_routes_by_physical_index_during_crossover():
+    store = LiveStore()
+    monitor = BenchmarkMonitor(store)
+    monitor.configure(
+        methods=["shin2026", "ontoreward"], mode="full", config_hash="h",
+        training_total=2, evaluation_total=2,
+        pair_layout=[
+            {"index": 0, "method": "shin2026"},
+            {"index": 1, "method": "ontoreward"},
+        ])
+
+    monitor.reset_episode(
+        method="ontoreward", phase="evaluation", seed=8,
+        scenario="circle", curriculum=1.0, pair_index=0)
+    monitor.step(
+        index=3, dt=.1, method="ontoreward", reward=.1,
+        reward_parts={}, estimate=None, truth=np.zeros(6), in_fov=True,
+        estimation_loss=None, state={"position": [0.0, 0.0, -1.0]},
+        pair_index=0)
+
+    pairs = store.snapshot()["scalars"]["parallel_pair_status"]
+    assert pairs[0]["index"] == 0
+    assert pairs[0]["method"] == "ontoreward"
+    assert pairs[0]["step"] == 3
+    assert pairs[1]["index"] == 1
+    assert pairs[1]["step"] == 0
+
+
 def test_dashboard_has_self_contained_matlab_style_benchmark_view():
     assert "세 방법론 공통 RL 계약과 정보 경계" in PAGE
     assert "benchmark_eval_scenario" in PAGE

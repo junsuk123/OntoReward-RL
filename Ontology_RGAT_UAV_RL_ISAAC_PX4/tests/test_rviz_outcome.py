@@ -74,6 +74,16 @@ def test_rviz_group_routes_reset_and_step_by_method():
     assert first.steps[0]["method"] == "a" and not second.steps
     assert first.potential == second.potential == "frozen"
 
+    # Crossover evaluation follows the physical pair even when the method was
+    # initially associated with another publisher.
+    group.clear_trails(method="b", pair_index=0)
+    group.publish_benchmark_step(
+        method="b", pair_index=0, state={}, scenario="y", step=2,
+        dt=.1, in_fov=True, status="running")
+    assert first.cleared == 1 and second.cleared == 1
+    assert first.steps[-1]["method"] == "b"
+    assert first.steps[-1]["pair_index"] == 0
+
 
 class _Message:
     ADD = 0

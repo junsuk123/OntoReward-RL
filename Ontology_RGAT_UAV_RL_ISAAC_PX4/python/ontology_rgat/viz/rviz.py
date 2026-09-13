@@ -188,7 +188,8 @@ class RvizPublisher:
         except Exception:                              # pragma: no cover
             pass
 
-    def clear_trails(self, method: str | None = None) -> None:
+    def clear_trails(self, method: str | None = None,
+                     pair_index: int | None = None) -> None:
         self._uav_trail.clear()
         self._pad_trail.clear()
         self._delete_all(self.scene_pub)
@@ -504,7 +505,8 @@ class RvizPublisher:
 
     def publish_benchmark_step(self, *, state: dict[str, Any], method: str,
                                scenario: str, step: int, dt: float,
-                               in_fov: bool, status: str) -> None:
+                               in_fov: bool, status: str,
+                               pair_index: int | None = None) -> None:
         """Publish the recurrent Shin benchmark without its legacy log type.
 
         The controlled benchmark has a stricter actor boundary and therefore
@@ -632,6 +634,7 @@ class RvizPublisherGroup:
         if not publishers:
             raise ValueError("an RViz publisher group needs at least one pair")
         self.publishers = dict(publishers)
+        self.publishers_by_index = list(publishers.values())
 
     @property
     def potential(self):
@@ -642,20 +645,28 @@ class RvizPublisherGroup:
         for publisher in self.publishers.values():
             publisher.potential = value
 
-    def _for(self, method: str | None) -> RvizPublisher:
+    def _for(self, method: str | None,
+             pair_index: int | None = None) -> RvizPublisher:
+        if pair_index is not None:
+            index = int(pair_index)
+            if 0 <= index < len(self.publishers_by_index):
+                return self.publishers_by_index[index]
         if method in self.publishers:
             return self.publishers[str(method)]
         return next(iter(self.publishers.values()))
 
-    def clear_trails(self, method: str | None = None) -> None:
-        if method is None:
+    def clear_trails(self, method: str | None = None,
+                     pair_index: int | None = None) -> None:
+        if method is None and pair_index is None:
             for publisher in self.publishers.values():
                 publisher.clear_trails()
             return
-        self._for(method).clear_trails()
+        self._for(method, pair_index).clear_trails()
 
-    def publish_benchmark_step(self, *, method: str, **kwargs) -> None:
-        self._for(method).publish_benchmark_step(method=method, **kwargs)
+    def publish_benchmark_step(self, *, method: str,
+                               pair_index: int | None = None, **kwargs) -> None:
+        self._for(method, pair_index).publish_benchmark_step(
+            method=method, pair_index=pair_index, **kwargs)
 
     def publish_step(self, log, cur, info: dict[str, Any]) -> None:
         self._for(None).publish_step(log, cur, info)

@@ -413,7 +413,7 @@ class BenchmarkMonitor:
         self.training_total = 0
         self.evaluation_total = 0
         self.pair_layout: list[dict[str, Any]] = []
-        self.pair_status: dict[str, dict[str, Any]] = {}
+        self.pair_status: dict[int, dict[str, Any]] = {}
 
     @property
     def potential(self):
@@ -425,11 +425,18 @@ class BenchmarkMonitor:
         if self.rviz is not None:
             self.rviz.potential = value
 
-    def _update_pair(self, method: str, **values: Any) -> None:
+    def _update_pair(self, method: str, *, pair_index: int | None = None,
+                     **values: Any) -> None:
         """Atomically publish one pair without overwriting another worker."""
-        key = str(method)
-        current = dict(self.pair_status.get(key) or {"method": key, "index": 0})
+        if pair_index is None:
+            matching = [index for index, status in self.pair_status.items()
+                        if str(status.get("method")) == str(method)]
+            pair_index = matching[0] if matching else 0
+        key = int(pair_index)
+        current = dict(self.pair_status.get(key) or {"index": key})
+        current["method"] = str(method)
         current.update(values)
+        current["index"] = key
         self.pair_status[key] = current
         ordered = sorted(self.pair_status.values(), key=lambda item: int(item["index"]))
         self.store.set(parallel_pair_status=ordered)
@@ -464,7 +471,7 @@ class BenchmarkMonitor:
         self.evaluation_total = int(evaluation_total)
         self.pair_layout = [dict(item) for item in (pair_layout or ())]
         self.pair_status = {
-            str(item["method"]): {
+            int(item["index"]): {
                 **dict(item), "phase": "waiting", "episode": 0,
                 "step": 0, "status": "waiting",
             }
@@ -502,7 +509,8 @@ class BenchmarkMonitor:
     def reset_episode(self, *, method: str, phase: str, seed: int,
                       scenario: str, curriculum: float,
                       action_scale: float = 1.0,
-                      motion_scale: float | None = None) -> None:
+                      motion_scale: float | None = None,
+                      pair_index: int | None = None) -> None:
         if len(self.methods) <= 1:
             self.store.replace("benchmark_step", [])
         self.store.replace(f"benchmark_step_{method}", [])
@@ -513,7 +521,7 @@ class BenchmarkMonitor:
         current_episode = len(self.store.series(
             f"benchmark_{'train' if is_training else 'eval'}_{method}")) + 1
         if self.rviz is not None:
-            self.rviz.clear_trails(method=method)
+            self.rviz.clear_trails(method=method, pair_index=pair_index)
         try:
             from ..pipelines import get_pipeline
             pipeline = get_pipeline(method)
@@ -542,14 +550,15 @@ class BenchmarkMonitor:
             curriculum=float(curriculum), motion_scale=float(
                 curriculum if motion_scale is None else motion_scale),
             action_scale=float(action_scale), marker_visible=None,
-            success=None, landing_gate=None)
+            success=None, landing_gate=None, pair_index=pair_index)
 
     def step(self, *, index: int, dt: float, method: str, reward: float,
              reward_parts: dict[str, Any], estimate, truth, in_fov: bool,
              estimation_loss: float | None,
              state: dict[str, Any] | None = None, pipeline_spec=None,
              semantic_features=None, semantic_graph=None,
-             scenario: str = "", status: str = "running") -> None:
+             scenario: str = "", status: str = "running",
+             pair_index: int | None = None) -> None:
         parts = reward_parts or {}
         point = {
             "step": int(index), "t": float(index * dt), "method": str(method),
@@ -622,11 +631,12 @@ class BenchmarkMonitor:
             ugv_speed_m_s=point["ugv_speed_m_s"],
             battery_reserve=point["battery_reserve"],
             relative_xyz=(relative.tolist() if relative.shape == (3,) else None),
-            reward=float(reward))
+            reward=float(reward), pair_index=pair_index)
         if self.rviz is not None and state is not None:
             self.rviz.publish_benchmark_step(
                 state=state, method=method, scenario=scenario, step=index,
-                dt=dt, in_fov=in_fov, status=status)
+                dt=dt, in_fov=in_fov, status=status,
+                pair_index=pair_index)
 
     def restore_training(self, method: str, history: Sequence[dict[str, Any]]) -> None:
         rows = [self._plain(dict(row)) for row in history]
@@ -634,7 +644,8 @@ class BenchmarkMonitor:
         if rows:
             self.store.set(**{f"benchmark_{method}_episode": rows[-1]["episode"]})
 
-    def training_update(self, method: str, metric: dict[str, Any]) -> None:
+    def training_update(self, method: str, metric: dict[str, Any], *,
+                        pair_index: int | None = None) -> None:
         point = self._plain(dict(metric))
         self.store.append(f"benchmark_train_{method}", point)
         self.store.set(**{
@@ -668,7 +679,7 @@ class BenchmarkMonitor:
                     "landing_gate_relative_horizontal_speed"),
                 "attitude": point.get("landing_gate_attitude"),
                 "angular_rate": point.get("landing_gate_angular_rate"),
-            })
+            }, pair_index=pair_index)
 
     def restore_evaluation(self, rows: Sequence[dict[str, Any]]) -> None:
         completed = 0
@@ -681,16 +692,20 @@ class BenchmarkMonitor:
                     selected.append(point)
             self.store.replace(f"benchmark_eval_{method}", selected)
             completed += len(selected)
-            if selected and method in self.pair_status:
+            if selected and self.pair_status:
+                physical_pair = selected[-1].get("physical_pair_index")
                 self._update_pair(
                     method, phase="evaluation", episode=len(selected),
                     episode_kind="평가", completed_episode=len(selected),
                     step=0, status="complete",
                     scenario=str(selected[-1].get("scenario", "")),
-                    success=float(selected[-1].get("paper_success", 0.0)))
+                    success=float(selected[-1].get("paper_success", 0.0)),
+                    pair_index=(None if physical_pair in (None, "") else
+                                int(float(physical_pair))))
         self.store.set(evaluation_completed=completed)
 
-    def evaluation_update(self, method: str, metric: dict[str, Any]) -> None:
+    def evaluation_update(self, method: str, metric: dict[str, Any], *,
+                          pair_index: int | None = None) -> None:
         point = self._plain(dict(metric))
         point["evaluation_index"] = len(
             self.store.series(f"benchmark_eval_{method}")) + 1
@@ -724,7 +739,7 @@ class BenchmarkMonitor:
                     "landing_gate_relative_horizontal_speed"),
                 "attitude": point.get("landing_gate_attitude"),
                 "angular_rate": point.get("landing_gate_angular_rate"),
-            })
+            }, pair_index=pair_index)
 
 
 class EpisodeMonitor:

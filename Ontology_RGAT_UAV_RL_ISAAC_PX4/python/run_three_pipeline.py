@@ -97,6 +97,10 @@ class _LockedMonitor:
 
         def synchronized(*args, **kwargs):
             with self._lock:
+                if name in {
+                        "reset_episode", "step", "training_update",
+                        "evaluation_update"}:
+                    kwargs.setdefault("pair_index", self._pair_index)
                 return value(*args, **kwargs)
         return synchronized
 
@@ -1520,21 +1524,6 @@ def main():
                         "empirical_dataset"),
                 })
             _write_json(manifest_path, manifest)
-            demonstrations = _prepare_fast_demonstrations(
-                cfg=cfg, camera=camera, config=config,
-                config_hash=config_hash,
-                keypoint_pretraining=keypoint_pretraining,
-                results_dir=args.results_dir, device=args.device,
-                model_seed=model_seed, monitor=monitor)
-            cloning_metrics = {}
-            if demonstrations is not None:
-                manifest["behavior_cloning_demonstrations"] = {
-                    key: demonstrations[key] for key in (
-                        "teacher", "successful_episodes", "attempted_seeds",
-                        "environment_steps", "transitions")}
-                _write_json(manifest_path, manifest)
-            models = {}
-            histories = {}
             monitor_lock = threading.RLock()
             gpu_update_lock = threading.RLock() if args.parallel_pairs > 1 else None
             worker_monitors = [
@@ -1544,6 +1533,23 @@ def main():
                             if args.parallel_pairs > 1 else ""),
                     pair_index=index, pair_count=args.parallel_pairs)
                 for index in range(args.parallel_pairs)]
+            demonstrations = _prepare_fast_demonstrations(
+                cfg=cfg, camera=camera, config=config,
+                config_hash=config_hash,
+                keypoint_pretraining=keypoint_pretraining,
+                results_dir=args.results_dir, device=args.device,
+                model_seed=model_seed,
+                monitor=(worker_monitors[0]
+                         if args.parallel_pairs > 1 else monitor))
+            cloning_metrics = {}
+            if demonstrations is not None:
+                manifest["behavior_cloning_demonstrations"] = {
+                    key: demonstrations[key] for key in (
+                        "teacher", "successful_episodes", "attempted_seeds",
+                        "environment_steps", "transitions")}
+                _write_json(manifest_path, manifest)
+            models = {}
+            histories = {}
 
             def initialize_pipeline_model(name):
                 torch.manual_seed(model_seed)
@@ -1732,7 +1738,9 @@ def main():
                         cfg=cfg, camera=camera, model=adaptive_source_model,
                         source_pipeline=source_name, config=config,
                         config_hash=config_hash, results_dir=args.results_dir,
-                        mode=args.mode, monitor=monitor,
+                        mode=args.mode, monitor=(
+                            worker_monitors[0]
+                            if args.parallel_pairs > 1 else monitor),
                         episodes_override=args.rgat_data_episodes,
                         max_episodes_override=args.rgat_max_data_episodes,
                         minimum_unsafe_failures_override=(
@@ -1786,7 +1794,9 @@ def main():
                                 source_pipeline=source_name, config=config,
                                 config_hash=config_hash,
                                 results_dir=args.results_dir,
-                                mode=args.mode, monitor=monitor,
+                                mode=args.mode, monitor=(
+                                    worker_monitors[0]
+                                    if args.parallel_pairs > 1 else monitor),
                                 episodes_override=next_minimum,
                                 max_episodes_override=adaptive_maximum,
                                 minimum_unsafe_failures_override=(

@@ -1,193 +1,138 @@
 # 시스템 개요
 
-[문서 안내](README.md) · [3개 파이프라인 통제 비교](THREE_PIPELINE_COMPARISON.md) ·
-[운영](OPERATIONS.md) · [아키텍처](ARCHITECTURE.md)
+[문서 안내](README.md) · [제안 알고리즘](ONTOLOGY_RGAT_ADAPTIVE_REWARD_WEIGHTING.md) ·
+[비교 설계](THREE_PIPELINE_COMPARISON.md) · [운영](OPERATIONS.md)
 
-이 문서는 기본 `shin_se / no_se / onto_no_se` 실험의 source map이다. 정확한
-설정값은 `config/`, 실행 동작은 `python/ontology_rgat/`, `isaac_sim/`, ROS
-gateway와 `scripts/`에 있다.
+## 목적
 
-## 종단 간 시스템
+한 개의 공통 Isaac/PX4 비행 환경에서 다음 질문을 검증한다.
+
+> 명시적으로 상대 위치·속도를 회귀하지 않아도, 영상 기반 ontology와 관계형 attention으로
+> 학습한 reward가 이동 패드의 관측성을 유지하며 안전 착륙 정책을 학습시킬 수 있는가?
+
+## 강화학습 계약
+
+![강화학습 계약](images/rl_contract.svg)
+
+- Environment: Isaac Sim/Pegasus, PX4 SITL, 도로 주행 UGV와 접촉·센서·배터리
+- Agent: 동결 keypoint encoder, LSTM, PPO actor와 학습 전용 critic
+- State: simulator 내부의 완전한 동역학 상태
+- Observation: $o_t=[I_t,u_t]$, 영상과 UAV 자체 속도·자세만 actor에 제공
+- Action: $a_t=[v_x,v_y,v_z,\omega_z]$
+- Reward: 고정 Shin shaping 또는 제안 hybrid R-GAT shaping
+
+## 종단 간 구성
 
 ```mermaid
 flowchart LR
   subgraph SIM[Isaac Sim + Pegasus]
     MAP[Meta-Sejong S5]
-    UGV[RANGER MINI + 이동 deck]
-    CAM[흑백 착륙 camera]
-    CONTACT[접촉 + 실제값 scoring]
+    UGV[도로 waypoint UGV + landing deck]
+    UAV[PX4 multicopter]
+    CAM[512×320 grayscale camera]
+    CONTACT[pad contact]
+    BAT[3S 3500 mAh model]
   end
-  subgraph PX[PX4 SITL]
-    EKF[상태 추정기]
-    CTRL[속도 controller]
+  subgraph IO[ROS 2 / UDP gateway]
+    ODOM[PX4 odometry·attitude]
+    IMG[camera/keypoint]
+    CMD[velocity + yaw-rate command]
   end
-  subgraph GW[ROS 2 gateway]
-    STATE[Versioned sensor state]
-    CMD[Offboard setpoint]
-    SAFE[Heartbeat + failsafe 상태]
+  subgraph LEARN[Python learning]
+    ENC[동결 6-keypoint encoder]
+    LSTM[공통 LSTM actor]
+    CRITIC[학습 전용 asymmetric critic]
+    GRAPH[23-node semantic ontology]
+    RGAT[동결 hybrid R-GAT reward]
+    PPO[Recurrent PPO]
   end
-  subgraph LEARN[Python learner]
-    KP[동결 6-keypoint encoder]
-    REC[Recurrent actor-critic]
-    SEM[18-node history-aware semantic graph]
-    RGAT[동결 direct R-GAT Phi]
+  subgraph VIZ[관측·결과]
+    RVIZ[RViz 2]
+    DASH[Web dashboard]
+    OUT[CSV · JSON · checkpoint · figure]
   end
-  CAM --> KP --> REC --> CMD --> CTRL
-  EKF --> STATE --> REC
-  KP --> SEM --> RGAT
-  STATE --> SEM
-  CONTACT -. critic / label / 평가 전용 .-> REC
-  MAP --> UGV
-  SAFE --> LEARN
+  CAM --> IMG --> ENC --> LSTM --> PPO --> CMD --> UAV
+  ODOM --> LSTM
+  ODOM --> CRITIC
+  ENC --> GRAPH --> RGAT --> PPO
+  BAT --> GRAPH
+  CONTACT --> PPO
+  SIM --> IO
+  IO --> RVIZ
+  PPO --> DASH
+  PPO --> OUT
 ```
 
-Isaac은 배경, physics, 이동 carrier, camera, contact, seeded environment state와
-scoring truth를 담당한다. Pegasus는 Isaac rotor dynamics를 PX4에 연결한다. PX4는
-상태 추정과 비행 제어를 담당한다. ROS 2가 telemetry와 setpoint를 운반한다. Python
-learner는 대체 rigid-body model을 적분하지 않는다.
+## 공통 actor와 critic
 
-## 정보 경계
+세 arm은 동일한 actor를 사용한다.
 
-배포 actor 입력은 다음뿐이다.
+$$
+I_t \xrightarrow{\text{keypoint encoder}} l_t,
+\qquad
+(l_t,u_t,h_{t-1})\xrightarrow{\mathrm{LSTM}}y_t\in\mathbb{R}^{256}.
+$$
 
-```text
-image: 512 x 320 grayscale
-proprioception: body velocity [3] + attitude quaternion [4]
+Actor는 $[y_{t,6:256},u_t]$를 받아 tanh-squashed Gaussian action을 출력한다.
+`shin_se_fixed`만 $y_{t,0:6}$에 상대상태 보조손실을 적용한다. 이 6개 값은 세 arm의
+actor 입력에서 동일하게 제외된다.
+
+Critic은 학습 중 value variance를 줄이기 위해
+
+$$
+o_t^{\mathrm{priv}}=[u_t,s_t^{\mathrm{rel}}]\in\mathbb{R}^{13}
+$$
+
+을 사용한다. 실제 상대상태는 actor, ontology, R-GAT 입력에 연결되지 않는다.
+
+## 제안 reward 흐름
+
+![제안 hybrid R-GAT](images/adaptive_rgat_hybrid.svg)
+
+1. Keypoint/heatmap과 최근 visual history에서 12-D semantic feature를 계산한다.
+2. 18개 의미/목표 node와 5개 reward concept node로 graph를 구성한다.
+3. 4개 relation type을 구분하는 R-GAT이 node embedding을 만든다.
+4. Weight head가 양수이고 합이 5.5인 5개 상태 적응 coefficient를 출력한다.
+5. Potential head가 FOV loss/reacquisition과 안전 접근을 나타내는 $\Phi(G_t)$를 출력한다.
+6. R-GAT을 동결한 상태에서 PPO reward를 계산한다.
+
+## 실행 단계
+
+```mermaid
+flowchart TD
+  A[설정·dependency·provenance 검사] --> B[Isaac/PX4/ROS/RViz/dashboard]
+  B --> C[Keypoint encoder 준비·검증]
+  C --> D[공통 BC warm start]
+  D --> E[shin_se_fixed PPO]
+  E --> F[no_se_fixed PPO]
+  F --> G[실제 성공·실패·위험 실패 trajectory 수집]
+  G --> H[Hybrid R-GAT train/validation/quality gate]
+  H --> I[R-GAT 동결]
+  I --> J[제안 모델 PPO]
+  J --> K[Paired scenario/seed evaluation]
+  K --> L[표·그래프·manifest]
 ```
 
-공통 encoder는 keypoint 6개와 512-D embedding을 만들고 512-unit LSTM은 256-D
-latent를 만든다. Actor는 `y[6:256] + proprioception`을 받아 제한된 heading-frame
-command 4개를 출력한다. `shin_se`만 `y[0:6]`으로 auxiliary six-state estimate를
-학습하지만 이 예측값 6개는 actor 입력이 아니다.
+세미나 profile의 BC와 감쇠형 imitation anchor는 세 arm에 동일하게 적용하므로 비교
+요인이 아니다. Reward-design 비행과 PPO 비행 수는 결과표에서 분리해서 보고한다.
 
-Asymmetric critic은 학습 중 `[proprioception(7), relative_truth(6)]`을 사용할 수
-있다. 그 밖의 simulator truth 사용은 reset acknowledgement, terminal outcome
-label과 reward-independent evaluation으로 제한된다. Actor 입력이나 기본 semantic
-graph에는 직렬화되지 않는다.
+## 안전 착륙
 
-## 통제된 세 파이프라인
+![엄격한 착륙 gate](images/landing_success_gate.svg)
 
-| Pipeline | 의도한 실험 요인 |
-|---|---|
-| `shin_se` | auxiliary state estimation과 estimation-error active-perception reward |
-| `no_se` | estimator, auxiliary loss와 active term을 제거한 동일 temporal policy |
-| `onto_no_se` | sparse task reward와 동결 direct R-GAT PBRS를 쓰는 동일 estimator-free policy |
+성공은 pad contact 하나가 아니라 위치, 수직속도, 상대수평속도, tilt, 각속도를 모두
+만족한 접촉이다. 접촉 후 반동을 제외하기 위해 kinematic gate는 직전 비접촉 샘플을
+사용한다.
 
-Model capacity, 초기 weight, PPO 설정, camera, controller, curriculum, action limit,
-training seed와 evaluation seed는 공통이다. `python/ontology_rgat/pipelines/spec.py`의
-pipeline spec은 불변이며 학습 전에
-`config/experiments/three_pipeline_comparison.yaml`과 일치하는지 검사한다.
+## 결과 선택
 
-## 직접 semantic R-GAT
+`<pipeline>.pt`는 정확한 재개를 위한 최신 optimizer/model 상태다.
+`<pipeline>.best.pt`는 reward 값과 독립된 다음 안전성 score로 선택한 배포 후보다.
 
-기본 graph 구성은 다음과 같다.
+- 안전 착륙과 정상 접촉
+- unsafe contact와 crash
+- touchdown lateral error와 relative speed
+- FOV loss와 low-visibility descent
 
-- Observation node 12개: confidence, visible-keypoint fraction, alignment, scale,
-  image motion, scale rate, visibility memory, reacquisition trend,
-  vertical-motion safety, attitude stability, battery risk, visual-loss risk
-- Intermediate node 5개: perception quality, approach state, approach stability,
-  recovery state, descent safety
-- Readout node 1개: `SafeLanding`
-- Semantic directed edge 17개 + self-loop 18개
-- Relation 4종: `indicates`, `supports`, `constrains`, `self`
-- Node당 channel 24개: value, complement, role flag, 18-D node identity
-
-Reward-design behavior source는 학습된 `no_se` actor에 결정론적 image-plane servo
-보정, 명시적 climb/hold recovery와 제한된 탐색을 결합한다. 각 sample에는 실제
-terminal contact outcome을 label로 붙이고 episode 안에서 역방향 discount한다.
-Success, failure와 성공한 loss→reacquisition→landing example이 생길 때까지 수집하며,
-label을 조작하는 대신 명시적 hard cap에서 중단한다.
-
-폭 24 R-GAT layer 2개가 target을 회귀한다. Direct bounded output은
-`onto_no_se` PPO 전에 동결한다.
-
-```text
-Phi(G) in [-1, 1]
-r = r_sparse + lambda * (gamma * Phi(G_next) - Phi(G))
-gamma_design = gamma_PBRS = gamma_PPO = 0.99
-Phi(absorbing_terminal) = 0
-```
-
-Attention과 counterfactual response는 해석용 진단값이지 인과관계 주장 근거가 아니다.
-
-불리한 counterfactual family 3종도 학습을 제약한다. Perception 저하, recovery
-evidence 저하, battery margin 고갈이 `Phi`를 증가시키면 안 된다. Compliance를
-artifact에 저장하고 PPO 전에 gate한다. 유한 visual history가 observation aliasing을
-줄이지만 완전한 POMDP belief state라고 주장하지 않는다.
-
-## 실행 순서
-
-| 단계 | 작업 | 영구 checkpoint |
-|---:|---|---|
-| 1 | config, 정보 경계, budget, paired seed plan 검증 | `manifest.json`, `evaluation/paired_plan.csv` |
-| 2 | 6-keypoint encoder 합성 초기화 | `models/shared/keypoint_encoder.pt` |
-| 3 | DDS, Isaac/Pegasus/PX4, gateway, dashboard, RViz 시작 또는 인수 | `/tmp/ontology_rgat_stack/`의 log |
-| 4 | label이 있는 실제 Isaac frame으로 encoder fine-tuning/validation 후 동결 | `models/shared/keypoint_isaac_calibration.npz` |
-| 5 | `shin_se`, `no_se` 학습/재개 | `models/<id>/<id>.pt`와 history CSV |
-| 6 | estimator-free semantic 비행 수집 | `rgat/semantic_rollouts.npz` 및 manifest/CSV |
-| 7 | direct R-GAT 학습 및 동결 | `rgat/rgat_model.pt` |
-| 8 | `onto_no_se` 학습/재개 | recurrent PPO checkpoint/history |
-| 9 | scenario 7종의 paired physical evaluation | `evaluation/per_episode.csv` |
-| 10 | confidence interval, learning curve, table, decision output 생성 | report와 figure 파일 |
-
-완료된 episode/optimizer update마다 atomic write한다. 재시작 시 호환 checkpoint와
-완료 evaluation pair를 재개한다. 호환되지 않는 설정은 조용히 불러오지 않고 이전
-hash와 함께 보관한다.
-
-## 기본 환경
-
-기본 system profile은 Meta-Sejong S5(`gwanggaeto`)다. RANGER MINI는
-`S5_CarRoad_002` 표면에서 뽑은 37-point, 99.70 m 폐곡선을 따른다. 속도는
-0.25–0.60 m/s에서 추출하고 carrier 상한은 1.0 m/s다. Route 감사 결과는 보수적
-deck clearance 1.00 m, 최대 높이 오차 0.001 m다.
-
-![Isaac Sim의 실제 기본 비행](images/isaac_sim_s5_live.png)
-
-![감사된 Meta-Sejong S5 route](images/metasejong_gwanggaeto_ugv_route.png)
-
-Landing board는 0.32 m, 0.12 m, 0.04 m ArUco tag를 결합해 원거리 접근부터 근접
-touchdown까지 최소 한 개의 완전한 tag가 보이게 설계했다. 실험 battery는 실제 용량
-3S 3500 mAh model이며 seeded 9–55 hover-second reserve로 초기화한다. PX4 SITL의
-별도 internal battery는 관련 없는 commander failsafe를 막기 위해서만 full로 유지한다.
-
-## 모니터링과 복구
-
-<http://127.0.0.1:8770/> dashboard는 stage, phase, pipeline, committed episode,
-active episode, live step, visibility, motion, energy, curriculum, success와 진단용
-return을 표시한다. RViz 2는 `/landing_rl` vehicle, route, camera, outcome topic과
-함께 열린다.
-
-![실시간 dashboard 상태](images/live_dashboard_status.png)
-
-순수 infrastructure interruption만 제한적으로 재시도한다. Gateway timeout,
-simulated-clock stall 또는 gateway가 분류한 Offboard heartbeat loss에서는 partial
-trajectory를 버리고 이 launcher가 소유한 stack만 재시작해 같은 seed를 다시 쓴다.
-Estimator validity, entry geometry, marker visibility, policy health와 terminal failure는
-그대로 노출하며 infrastructure retry로 바꾸지 않는다.
-
-## 평가지표와 주장 범위
-
-Pipeline마다 최적화 reward가 다르므로 reward return은 진단에만 쓴다. 비교에는
-landing/strict success, crash, touchdown lateral error, relative/vertical velocity,
-tilt, angular rate, FOV loss, longest visual loss, landing time이라는 물리 metric을
-사용한다. Report에는 paired bootstrap interval, learning-curve AUC, threshold
-crossing과 분리된 PPO/warm-up/reward-design interaction cost를 포함한다.
-
-설정된 acceptance gate는 다음과 같다.
-
-| Gate | 기준 |
-|---|---|
-| Reward 효과 | nominal landing success `>= 0.60` |
-| R-GAT 일관성 | condition 간 success 표준편차 `<= 0.15`, worst case `>= 0.35`, validation MSE `<= 0.35` |
-
-`overall_pass`는 둘 다 만족해야 한다. 기본 800-flight seminar run도 같은 report
-schema를 채울 수 있지만 preview 규모로 표시해야 하며 publication-scale 결과로
-제시하면 안 된다.
-
-## 기본 실험과 이전 호환 실험
-
-Legacy cooperative urban profile은 23-channel actor observation, 14-node/38-edge
-ontology와 R-GAT에서 증류한 고정 coefficient 8개를 쓴다.
-`scripts/run_metasejong_pipeline.sh`로 실행한다. Model, figure, result path는 기본
-18-node direct R-GAT 비교와 의도적으로 호환되지 않는다. Legacy figure 목록은
-[문서 안내](README.md)를 참고한다.
+Arm 간 최종 비교는 paired physical metric으로 수행하며, 서로 정의가 다른 episode
+return을 직접 순위로 사용하지 않는다.

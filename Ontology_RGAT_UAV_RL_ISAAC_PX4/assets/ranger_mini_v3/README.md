@@ -1,7 +1,7 @@
-# AGILEX RANGER MINI 3.0 model
+# AGILEX RANGER MINI 3.0 모델
 
 [기본 프로젝트 README](../../README.md) ·
-[S5 기본 route 감사 그림](../../docs/images/metasejong_gwanggaeto_ugv_route.png)
+[S5 활성 UGV 경로](../../docs/images/metasejong_gwanggaeto_ugv_route.png)
 
 `source/` 아래 파일은 AGILEX Robotics 공개
 [`ugv_gazebo_sim`](https://github.com/agilexrobotics/ugv_gazebo_sim) 저장소의

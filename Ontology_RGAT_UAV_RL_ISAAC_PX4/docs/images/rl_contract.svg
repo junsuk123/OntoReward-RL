@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="760" viewBox="0 0 1500 760">
+  <defs>
+    <style>
+      .title{font:700 38px 'Noto Sans KR',sans-serif;fill:#102a43}.sub{font:20px 'Noto Sans KR',sans-serif;fill:#486581}
+      .h{font:700 25px 'Noto Sans KR',sans-serif;fill:#fff}.b{font:19px 'Noto Sans KR',sans-serif;fill:#243b53}.s{font:16px 'Noto Sans KR',sans-serif;fill:#486581}
+      .box{stroke-width:2;rx:18}.arrow{stroke:#1677c8;stroke-width:4;fill:none;marker-end:url(#a)}
+    </style>
+    <marker id="a" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="#1677c8"/></marker>
+  </defs>
+  <rect width="1500" height="760" fill="#f7fafc"/>
+  <text x="750" y="56" text-anchor="middle" class="title">이동식 착륙 문제의 강화학습 계약</text>
+  <text x="750" y="88" text-anchor="middle" class="sub">정책은 영상과 UAV 자체 상태만 관측하고, PX4가 저수준 자세 제어를 담당한다</text>
+
+  <g transform="translate(35 125)">
+    <rect class="box" width="270" height="205" fill="#e8f3ff" stroke="#1677c8"/>
+    <path d="M0 18Q0 0 18 0H252Q270 0 270 18V55H0Z" fill="#1677c8"/>
+    <text x="135" y="37" text-anchor="middle" class="h">Environment</text>
+    <text x="22" y="88" class="b">Isaac Sim + Pegasus</text><text x="22" y="119" class="b">PX4 SITL + 이동 UGV</text>
+    <text x="22" y="153" class="s">도로 waypoint · 접촉 물리</text><text x="22" y="180" class="s">카메라 · 배터리 · 외란</text>
+  </g>
+  <g transform="translate(325 125)">
+    <rect class="box" width="270" height="205" fill="#eefbea" stroke="#2f855a"/>
+    <path d="M0 18Q0 0 18 0H252Q270 0 270 18V55H0Z" fill="#2f855a"/>
+    <text x="135" y="37" text-anchor="middle" class="h">Agent</text>
+    <text x="22" y="88" class="b">Keypoint Encoder</text><text x="22" y="119" class="b">LSTM + PPO Actor</text>
+    <text x="22" y="153" class="s">Critic은 학습 때만</text><text x="22" y="180" class="s">실제 상대상태를 사용</text>
+  </g>
+  <g transform="translate(615 125)">
+    <rect class="box" width="270" height="205" fill="#fff8e6" stroke="#d97706"/>
+    <path d="M0 18Q0 0 18 0H252Q270 0 270 18V55H0Z" fill="#d97706"/>
+    <text x="135" y="37" text-anchor="middle" class="h">State / Observation</text>
+    <text x="22" y="88" class="b">관측 oₜ = [Iₜ, uₜ]</text><text x="22" y="119" class="b">Iₜ: 512×320 흑백 영상</text>
+    <text x="22" y="153" class="s">uₜ: body 속도 3축 +</text><text x="22" y="180" class="s">자세 quaternion 4개</text>
+  </g>
+  <g transform="translate(905 125)">
+    <rect class="box" width="270" height="205" fill="#f3e8ff" stroke="#805ad5"/>
+    <path d="M0 18Q0 0 18 0H252Q270 0 270 18V55H0Z" fill="#805ad5"/>
+    <text x="135" y="37" text-anchor="middle" class="h">Action</text>
+    <text x="22" y="90" class="b">aₜ = [vₓ, vᵧ, v_z, ω_z]</text><text x="22" y="124" class="b">body-frame 속도</text>
+    <text x="22" y="157" class="s">포화·가속도 제한 후</text><text x="22" y="184" class="s">PX4 OFFBOARD 명령</text>
+  </g>
+  <g transform="translate(1195 125)">
+    <rect class="box" width="270" height="205" fill="#ffecec" stroke="#c53030"/>
+    <path d="M0 18Q0 0 18 0H252Q270 0 270 18V55H0Z" fill="#c53030"/>
+    <text x="135" y="37" text-anchor="middle" class="h">Reward</text>
+    <text x="22" y="88" class="b">진행도·하강 안전·yaw</text><text x="22" y="119" class="b">+10 안전 착륙</text>
+    <text x="22" y="153" class="s">−10 충돌·이탈·고갈</text><text x="22" y="180" class="s">제안법: R-GAT 적응 보상</text>
+  </g>
+
+  <rect x="85" y="405" width="1330" height="265" rx="26" fill="#fff" stroke="#bcccdc" stroke-width="2"/>
+  <text x="750" y="448" text-anchor="middle" class="title" style="font-size:29px">상호작용 루프</text>
+  <rect x="135" y="500" width="230" height="90" rx="16" fill="#e8f3ff" stroke="#1677c8" stroke-width="2"/>
+  <text x="250" y="538" text-anchor="middle" class="b">환경 상태 sₜ</text><text x="250" y="567" text-anchor="middle" class="s">카메라·동역학·UGV</text>
+  <rect x="465" y="500" width="230" height="90" rx="16" fill="#fff8e6" stroke="#d97706" stroke-width="2"/>
+  <text x="580" y="538" text-anchor="middle" class="b">관측 oₜ</text><text x="580" y="567" text-anchor="middle" class="s">영상 + UAV proprioception</text>
+  <rect x="795" y="500" width="230" height="90" rx="16" fill="#eefbea" stroke="#2f855a" stroke-width="2"/>
+  <text x="910" y="538" text-anchor="middle" class="b">정책 πθ(aₜ|o≤t)</text><text x="910" y="567" text-anchor="middle" class="s">LSTM 기반 recurrent actor</text>
+  <rect x="1125" y="500" width="230" height="90" rx="16" fill="#f3e8ff" stroke="#805ad5" stroke-width="2"/>
+  <text x="1240" y="538" text-anchor="middle" class="b">명령 aₜ</text><text x="1240" y="567" text-anchor="middle" class="s">속도 3축 + yaw rate</text>
+  <path class="arrow" d="M365 545H455"/><path class="arrow" d="M695 545H785"/><path class="arrow" d="M1025 545H1115"/>
+  <path class="arrow" d="M1240 600V628H250V600"/>
+  <text x="750" y="653" text-anchor="middle" class="s">환경 전이 sₜ₊₁과 보상 rₜ → PPO가 θ를 갱신</text>
+</svg>

@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="940" viewBox="0 0 1600 940">
+  <defs><style>
+    .t{font:700 38px 'Noto Sans KR',sans-serif;fill:#102a43}.st{font:20px 'Noto Sans KR',sans-serif;fill:#486581}.h{font:700 25px 'Noto Sans KR',sans-serif}.b{font:18px 'Noto Sans KR',sans-serif;fill:#243b53}.s{font:16px 'Noto Sans KR',sans-serif;fill:#486581}.eq{font:20px 'STIX Two Math','Noto Sans KR',serif;fill:#102a43}.a{stroke:#d97706;stroke-width:4;fill:none;marker-end:url(#arr)}
+  </style><marker id="arr" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto"><path d="M0,0L0,6L9,3Z" fill="#d97706"/></marker></defs>
+  <rect width="1600" height="940" fill="#fffaf2"/><text x="800" y="52" text-anchor="middle" class="t">제안 알고리즘: 동결 Hybrid Ontology R-GAT Reward</text>
+  <text x="800" y="85" text-anchor="middle" class="st">metric 상대상태 추정 없이 시각·시간·기체·배터리 의미 상태로 보상 구조를 적응</text>
+
+  <rect x="55" y="135" width="320" height="645" rx="24" fill="#eef6ff" stroke="#1677c8" stroke-width="3"/>
+  <text x="215" y="178" text-anchor="middle" class="h" fill="#125a92">1. 관측 의미화</text>
+  <text x="85" y="225" class="b">영상·시간 기반 8개</text><text x="100" y="260" class="s">keypoint confidence / visibility</text><text x="100" y="290" class="s">image alignment / apparent scale</text><text x="100" y="320" class="s">image·scale motion safety</text><text x="100" y="350" class="s">visibility memory / reacquisition</text>
+  <text x="85" y="405" class="b">비행·자원·위험 4개</text><text x="100" y="440" class="s">vertical motion safety</text><text x="100" y="470" class="s">attitude stability</text><text x="100" y="500" class="s">battery risk</text><text x="100" y="530" class="s">visual loss risk</text>
+  <rect x="85" y="585" width="260" height="130" rx="16" fill="#fff" stroke="#9fb3c8"/>
+  <text x="215" y="622" text-anchor="middle" class="b">12-D semantic feature</text><text x="215" y="656" text-anchor="middle" class="eq">fₜ ∈ [0,1]¹²</text><text x="215" y="688" text-anchor="middle" class="s">ground truth 입력 없음</text>
+
+  <path class="a" d="M375 455H445"/>
+  <rect x="455" y="135" width="330" height="645" rx="24" fill="#fff5e8" stroke="#d97706" stroke-width="3"/>
+  <text x="620" y="178" text-anchor="middle" class="h" fill="#b45309">2. 23-node Ontology</text>
+  <text x="485" y="225" class="b">18개 semantic/goal node</text><text x="500" y="260" class="s">PerceptionQuality</text><text x="500" y="290" class="s">ApproachState / Stability</text><text x="500" y="320" class="s">RecoveryState / DescentSafety</text><text x="500" y="350" class="s">SafeLanding</text>
+  <text x="485" y="405" class="b">5개 reward concept node</text><text x="500" y="440" class="s">LateralProgress</text><text x="500" y="470" class="s">VerticalProgress</text><text x="500" y="500" class="s">VerticalSpeedSafety</text><text x="500" y="530" class="s">UndershootRisk / YawStability</text>
+  <rect x="485" y="585" width="270" height="130" rx="16" fill="#fff" stroke="#f0b36b"/>
+  <text x="620" y="622" text-anchor="middle" class="b">관계 4종</text><text x="620" y="654" text-anchor="middle" class="s">indicates · supports</text><text x="620" y="682" text-anchor="middle" class="s">constrains · self</text>
+
+  <path class="a" d="M785 455H855"/>
+  <rect x="865" y="135" width="300" height="645" rx="24" fill="#f6efff" stroke="#805ad5" stroke-width="3"/>
+  <text x="1015" y="178" text-anchor="middle" class="h" fill="#6b46c1">3. Shared R-GAT</text>
+  <rect x="905" y="225" width="220" height="95" rx="15" fill="#fff" stroke="#b794f4"/>
+  <text x="1015" y="263" text-anchor="middle" class="b">Relation-aware</text><text x="1015" y="294" text-anchor="middle" class="s">message + attention</text>
+  <path class="a" d="M1015 320V375"/>
+  <rect x="905" y="385" width="220" height="95" rx="15" fill="#fff" stroke="#b794f4"/>
+  <text x="1015" y="423" text-anchor="middle" class="b">Node embedding</text><text x="1015" y="454" text-anchor="middle" class="eq">Hₜ ∈ ℝ²³×²⁴</text>
+  <path d="M1015 480V535M940 535H1090M940 535V580M1090 535V580" stroke="#805ad5" stroke-width="4" fill="none"/>
+  <rect x="885" y="590" width="120" height="105" rx="14" fill="#fff" stroke="#b794f4"/><text x="945" y="625" text-anchor="middle" class="b">Weight</text><text x="945" y="655" text-anchor="middle" class="s">head</text><text x="945" y="682" text-anchor="middle" class="eq">wₜ∈ℝ⁵</text>
+  <rect x="1025" y="590" width="120" height="105" rx="14" fill="#fff" stroke="#b794f4"/><text x="1085" y="625" text-anchor="middle" class="b">Potential</text><text x="1085" y="655" text-anchor="middle" class="s">head</text><text x="1085" y="682" text-anchor="middle" class="eq">Φ(Gₜ)</text>
+
+  <path class="a" d="M1165 455H1235"/>
+  <rect x="1245" y="135" width="300" height="645" rx="24" fill="#eefbea" stroke="#2f855a" stroke-width="3"/>
+  <text x="1395" y="178" text-anchor="middle" class="h" fill="#276749">4. PPO 보상</text>
+  <text x="1275" y="240" class="b">상태 적응 가중합</text><text x="1395" y="280" text-anchor="middle" class="eq">Σᵢ wᵢ(Gₜ) ρ̄ᵢ</text>
+  <text x="1275" y="345" class="b">관측성 PBRS</text><text x="1395" y="385" text-anchor="middle" class="eq">0.75[γΦ(Gₜ₊₁)−Φ(Gₜ)]</text>
+  <line x1="1275" y1="430" x2="1515" y2="430" stroke="#9fb3c8"/>
+  <text x="1395" y="475" text-anchor="middle" class="b">최종 dense reward</text><text x="1395" y="520" text-anchor="middle" class="eq">rₜ = Σᵢwᵢρ̄ᵢ + rₜᴾᴮᴿˢ</text>
+  <rect x="1280" y="585" width="230" height="130" rx="16" fill="#fff" stroke="#68d391"/>
+  <text x="1395" y="622" text-anchor="middle" class="b">PPO 전에 학습</text><text x="1395" y="655" text-anchor="middle" class="b">PPO 동안 동결</text><text x="1395" y="688" text-anchor="middle" class="s">reward drift 방지</text>
+
+  <rect x="190" y="830" width="1220" height="68" rx="18" fill="#fff" stroke="#d97706" stroke-width="2"/>
+  <text x="800" y="872" text-anchor="middle" class="b">핵심: “어디로 움직일까”의 5개 중요도와 “관측 가능한 안전 상태인가”의 potential을 하나의 관계형 encoder가 함께 학습한다</text>
+</svg>

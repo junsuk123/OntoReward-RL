@@ -1,176 +1,240 @@
-# Ontology–R-GAT–RL 자율 착륙
+# Ontology–R-GAT–RL 이동식 드론 착륙
 
-NVIDIA Isaac Sim에서 도로를 따라 움직이는 UGV 위에 PX4 multicopter를 착륙시키는
-vision-only recurrent PPO 시스템이다. 명시적 estimator를 사용하지 않는
-ontology/R-GAT reward 방식을 포함한다.
+NVIDIA Isaac Sim·Pegasus·PX4 SITL에서 도로를 주행하는 UGV의 패드에 드론을
+착륙시키는 vision-based recurrent PPO 시스템이다. 핵심 제안은 명시적 상대상태
+추정기 없이 영상 의미를 ontology graph로 구성하고, 동결된 R-GAT이 상태별 보상
+가중치와 관측성 potential을 함께 생성하는 것이다.
 
-![Meta-Sejong S5 도로 위 실제 Isaac Sim 비행](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/images/isaac_sim_s5_live.png)
+![Isaac Sim의 Meta-Sejong S5 이동식 착륙 환경](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/images/isaac_sim_s5_live.png)
 
-![MATLAB 스타일 3개 파이프라인 실시간 dashboard](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/images/live_dashboard_status.png)
+## 1. 강화학습 문제 정의
 
-> 두 screenshot은 2026-09-12 full pipeline의 실제 runtime capture다. Simulator와
-> monitoring 경로를 보여 주며 완료된 benchmark 결과는 아니다.
+비교군과 제안 모델은 아래 강화학습 계약을 공유한다.
 
-## 전체 pipeline 실행
+| 요소 | 이 프로젝트에서의 정의 |
+|---|---|
+| **Environment** | Isaac Sim/Pegasus의 multicopter·UGV·접촉 물리, PX4 SITL 저수준 비행제어, 카메라·배터리·외란 모델 |
+| **Agent** | 동결 6-keypoint encoder, LSTM memory, PPO actor와 asymmetric critic |
+| **State** $s_t$ | 환경 내부의 UAV·패드 상대 동역학, 접촉, 배터리 등을 포함한 Markov state. 전체 state는 actor에 직접 제공하지 않는다. |
+| **Observation** $o_t$ | Actor 입력 $o_t=[I_t,u_t]$. $I_t$는 $512\times320$ 흑백 영상, $u_t\in\mathbb{R}^7$은 body-frame 속도 3축과 자세 quaternion 4개다. |
+| **Action** $a_t$ | $a_t=[v_x,v_y,v_z,\omega_z]$: body/heading frame 속도 3축과 yaw rate. PX4가 자세와 motor thrust를 제어한다. |
+| **Reward** $r_t$ | 안전 착륙/실패 terminal reward와 접근·하강·yaw shaping. 제안법은 ontology R-GAT으로 shaping weight와 semantic potential을 적응시킨다. |
 
-저장소 루트에서 사용하는 최종 entry point는 다음 하나다.
+Actor는 현재 영상 한 장만 쓰지 않고 LSTM hidden state를 통해 관측 이력
+$o_{0:t}$를 사용한다.
+
+$$
+a_t \sim \pi_\theta(a_t\mid o_{0:t}),
+\qquad
+\theta^*=\arg\max_\theta
+\mathbb{E}_{\pi_\theta}\!\left[\sum_{t=0}^{T}\gamma^t r_t\right].
+$$
+
+![강화학습의 state, observation, action, reward, agent, environment 관계](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/images/rl_contract.svg)
+
+## 2. 최종 비교군과 제안 모델
+
+최종 핵심 비교는 세 파이프라인이다. 카메라, keypoint encoder, LSTM/actor 크기,
+critic, controller, PPO 설정, 초기조건과 seed는 동일하다.
+
+| 파이프라인 | 상태추정 보조손실 | Active-perception reward | Ontology/R-GAT | 보상 |
+|---|---:|---:|---:|---|
+| `shin_se_fixed` | 있음 | 있음 | 없음 | Shin et al. 기반 고정 5성분 + 추정오차 penalty |
+| `no_se_fixed` | 없음 | 없음 | 없음 | 동일한 고정 5성분 |
+| **`onto_rgat_adaptive_weight_no_se`** | **없음** | **없음** | **23-node hybrid R-GAT** | **상태 적응 5성분 + semantic PBRS** |
+
+![동일한 actor와 PPO 위에서 보상 학습 신호만 비교하는 세 파이프라인](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/images/pipeline_comparison.svg)
+
+### A. `shin_se_fixed`
+
+Shin et al. (2026)의 구조를 Isaac/PX4 환경에 맞춘 비교군이다. LSTM latent의 처음
+6개 성분을 body-frame 패드 상대 위치·속도로 보조학습한다.
+
+$$
+\tilde{s}^{\mathrm{rel}}_t=
+[\Delta\tilde{x}^{b}_t,\Delta\tilde{v}^{b}_t]\in\mathbb{R}^{6},
+\qquad
+L^{\mathrm{est}}_t=\frac{1}{6}
+\left\|s^{\mathrm{rel}}_t-\tilde{s}^{\mathrm{rel}}_t\right\|_2^2.
+$$
+
+다음 시점의 추정오차가 커지는 행동에는 active-perception penalty를 준다.
+
+$$
+r^{\mathrm{active}}_t
+=-\alpha\,\operatorname{clip}
+\!\left(\beta(L^{\mathrm{est}}_{t+1}-\tau),0,1\right),
+\quad (\alpha,\beta,\tau)=(0.1,1,0.01).
+$$
+
+### B. `no_se_fixed`
+
+명시적 상태추정 head, $L^{\mathrm{est}}$, active-perception reward를 모두 제거한
+estimator-free 비교군이다. LSTM actor와 고정 Table-III shaping만 남기므로,
+ontology가 제공하는 효과를 분리해서 측정하는 기준점이다.
+
+### C. `onto_rgat_adaptive_weight_no_se` — 제안 방법
+
+Actor observation은 `no_se_fixed`와 동일하다. keypoint 출력, UAV proprioception,
+배터리에서 12개의 bounded semantic feature를 만들고, 이를 18개 의미/목표 노드와
+5개 보상개념 노드로 구성한다.
+
+- 영상·시간 의미: confidence, visible fraction, alignment, apparent scale,
+  image/scale motion safety, visibility memory, reacquisition, visual-loss risk
+- 기체·에너지 의미: vertical-motion safety, attitude stability, battery risk
+- 관계: `indicates`, `supports`, `constrains`, `self`
+- 출력: 상태 적응 보상 가중치 $w(G_t)\in\mathbb{R}^5$와 scalar potential
+  $\Phi(G_t)$
+
+![23-node ontology와 두 R-GAT head를 사용하는 제안 보상](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/images/adaptive_rgat_hybrid.svg)
+
+R-GAT은 실제 Isaac/PX4 trajectory로 PPO 전에 학습한다. 데이터는 성공, 일반 실패,
+위험 접촉 실패를 episode/scenario 단위로 층화하고, validation-best model만 품질
+gate를 통과한 뒤 PPO 동안 완전히 동결한다.
+
+## 3. 보상함수
+
+### 공통 terminal reward
+
+$$
+r^{\mathrm{task}}_t=
+\begin{cases}
++10, & \text{안전 착륙},\\
+-10, & \text{충돌, 과도한 이탈, 배터리 고갈 또는 timeout},\\
+0, & \text{그 외}.
+\end{cases}
+$$
+
+### 공통 5개 shaping 성분
+
+$d^{xy}_t=\|\Delta x^{b}_{t,xy}\|_2$라 두고, 코드와 데이터 설계가 함께 사용하는
+무가중 성분 $\rho_t\in\mathbb{R}^5$는 다음과 같다.
+
+$$
+\begin{aligned}
+\rho_{1,t}&=\operatorname{clip}(d^{xy}_t-d^{xy}_{t+1},-1,1),\\
+\rho_{2,t}&=\frac{\operatorname{clip}(|\Delta z_t|-|\Delta z_{t+1}|,-1,1)}
+{\max(d^{xy}_{t+1},1)},\\
+\rho_{3,t}&=-\max(v^{\mathrm{uav}}_{z,t+1}+0.5,0),\\
+\rho_{4,t}&=-\max(\Delta z_{t+1},0),\\
+\rho_{5,t}&=-|\omega^{\mathrm{cmd}}_{z,t}|.
+\end{aligned}
+$$
+
+서로 다른 단위를 직접 합산하지 않도록
+
+$$
+\bar\rho_{i,t}=\operatorname{clip}\!\left(\frac{\rho_{i,t}}{c_i},-1,1\right),
+\qquad
+c=\left(1,1,1.5,3,\frac{\pi}{2}\right)
+$$
+
+로 정규화한다. 고정 비교군의 weight는
+$w^0=(1,1,0.5,1,2)$이고 $\sum_i w_i^0=5.5$다.
+
+### 제안 모델의 상태 적응 weight
+
+R-GAT weight head의 logit을 $z_i(G_t)$라 하고 $p_i^0=w_i^0/5.5$라 두면,
+
+$$
+\tilde p_i(G_t)=
+\frac{p_i^0\exp\{\kappa\tanh z_i(G_t)\}}
+{\sum_j p_j^0\exp\{\kappa\tanh z_j(G_t)\}},
+$$
+
+$$
+p_i(G_t)=\varepsilon p_i^0+(1-\varepsilon)\tilde p_i(G_t),
+\qquad
+w_i(G_t)=5.5\,p_i(G_t),
+$$
+
+이며 $\kappa=\ln2$, $\varepsilon=0.2$다. 따라서 모든 weight는 양수이고 합은 항상
+5.5이며, 초기 수동 설계에서 무제한으로 이탈하지 않는다.
+
+5개 성분에 직접 존재하지 않는 FOV 유지·재포착 신호는 같은 R-GAT encoder의
+potential head로 보완한다.
+
+$$
+r^{\mathrm{sem}}_t
+=\lambda_\Phi\left[\gamma\Phi(G_{t+1})-\Phi(G_t)\right],
+\qquad
+(\lambda_\Phi,\gamma)=(0.75,0.99).
+$$
+
+Terminal 다음 상태는 absorbing state로 두어 $\Phi(G_{t+1})=0$으로 처리한다. 최종
+제안 보상은
+
+$$
+r^{\mathrm{proposed}}_t=
+\begin{cases}
+r^{\mathrm{task}}_t+r^{\mathrm{sem}}_t,
+& \text{terminal},\\[2mm]
+\displaystyle\sum_{i=1}^{5}w_i(G_t)\bar\rho_{i,t}+r^{\mathrm{sem}}_t,
+& \text{그 외}
+\end{cases}
+$$
+
+이다.
+
+## 4. 안전 착륙 판정
+
+단순 접촉은 성공이 아니다. 아래 여섯 조건을 모두 만족해야 `paper_success=1`이다.
+
+![접촉, 위치, 수직속도, 상대수평속도, 자세와 각속도를 모두 평가하는 착륙 성공 gate](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/images/landing_success_gate.svg)
+
+접촉 위치는 실제 접촉 순간 값을 쓰고, 충격 반동이 섞이지 않도록 속도·자세·각속도는
+직전 비접촉 샘플을 사용한다.
+
+## 5. 전체 파이프라인 실행
+
+저장소 루트에서 최종 실행 명령은 하나다.
 
 ```bash
-./run.sh
+./run.sh --mode full
 ```
 
-세미나용 결과를 몇 시간 안에 우선 확보해야 하면 별도 preview를 사용한다.
-
-```bash
-./run.sh --seminar-fast
-```
-
-완료된 결과와 checkpoint는 그대로 두고 Isaac/PX4, RViz와 대시보드를 계속 띄워
-상태를 확인하려면 다음처럼 실행한다. 종료는 `Ctrl-C`로 안전하게 수행한다.
+세미나용 축소 비교는 다음과 같다.
 
 ```bash
 ./run.sh --seminar-fast --stay-open
 ```
 
-이 명령은 기존 full/이전 예비 결과를 건드리지 않고
-`results/seminar_fast/core3_hybrid_v3`에 저장한다. 짧은 실험에서는 모든 arm에 동일한
-저분산 탐색과 감쇠형 행동복제 앵커를 적용해, PPO가 첫 성공을 보기 전에 성공 시연을
-잊는 현상을 줄인다.
-실제 Isaac/PX4에서 성공한 training-only PD 교사 착륙 4회를 먼저 수집하고, 압축된
-공통 camera embedding/action으로 세 actor를 behavior-cloning 초기화한다. 교사는
-움직이는 UGV의 속도를 feed-forward하며 시연 action label 생성에만 simulator 상대
-상태를 쓴다. 학습·평가 actor 입력은 계속 camera와 UAV proprioception뿐이다. 이후
-`shin_se_fixed`, `no_se_fixed`, `onto_rgat_adaptive_weight_no_se`를 각각 PPO 32회
-학습한다. Adaptive 설계 자료는 성공/실패/위험 실패를 층화해 최소 12회, 부족하면
-24회까지 수집하고 R-GAT을 40 epoch 학습한다. 쉬운 scenario 3종을 paired seed
-3개씩 평가한다. 실제 배터리 방전 모델은
-유지하지만 시작 잔량을 35--55 hover-second로 제한한다. 이는 쉬운 조건의 예비 비교이며
-논문 재현 또는 통계적으로 충분한 성능 주장이 아니다.
+실행 순서:
 
-인수 없는 명령은 마감/seminar budget의 `--mode full`을 실행한다.
+1. 환경·의존성·설정 provenance 검사
+2. Isaac Sim, Pegasus, PX4 SITL, DDS/ROS gateway, RViz, dashboard 기동
+3. 공통 keypoint encoder 준비 및 검증
+4. 각 고정 비교군 PPO 학습과 안전성 기준 best checkpoint 저장
+5. 실제 trajectory 수집과 hybrid R-GAT 학습·검증·동결
+6. 제안 모델 PPO 학습
+7. 동일 scenario/seed의 paired evaluation
+8. 표·그래프·manifest 생성
 
-- `shin_se` estimator warm-up 8회
-- `shin_se`, `no_se`, `onto_no_se` 각각 PPO 비행 264회
-- Estimator-free reward-design 실제 비행 최소 40회. 두 terminal class와 성공한
-  loss→reacquisition→landing example이 부족하면 최대 120회까지 자동 연장
-- Scenario 7종과 pipeline별 paired evaluation seed 5개, 총 평가 비행 105회
+중단된 실행은 같은 명령으로 checkpoint와 완료 row부터 재개한다. 동시에 두 개의
+flight pipeline을 시작하지 않도록 실행 lock을 사용한다.
 
-별도 reward-design/evaluation 비행 전 학습 비행은 정확히 800회다. Preview-scale
-실험이며 publication-scale 근거가 아니다. 다른 실행 예시는 다음과 같다.
+## 6. 모니터링과 결과
 
-```bash
-./run.sh --mode quick --headless
-./run.sh --mode full --pipelines shin_se no_se onto_no_se
-./run.sh --mode quick \
-  --config Ontology_RGAT_UAV_RL_ISAAC_PX4/config/experiments/adaptive_reward_weight_comparison.yaml
-./run.sh --mode full --training-replicate 1 \
-  --train-episodes 40960 --rgat-data-episodes 400
-./run.sh --help
-```
+- Dashboard: `http://127.0.0.1:8770/`
+- ROS/RViz namespace: `/landing_rl`
+- 세미나 결과: `Ontology_RGAT_UAV_RL_ISAAC_PX4/results/seminar_fast/core3_hybrid_v3/`
+- 모델: `models/<pipeline>/<pipeline>.pt`, `<pipeline>.best.pt`
+- 학습 이력: `training/*.csv`, `models/*/*_training.csv`
+- 평가: `evaluation/`
+- 표·그림: `tables/`, `figures/`
+- 재현 정보: `manifest.json`
 
-Flight stack은 launcher 하나만 소유할 수 있다. 두 번째 `run.sh`는 vehicle을 reset하거나
-result를 수정하기 전에 종료된다. 호환 checkpoint와 완료 CSV row는 자동 재개한다.
-기본 실행은 보고서 생성까지 끝나면 정상 종료하며, `--stay-open`은 완료 후에도 전체
-시각화 stack을 유지하고 죽은 owned process가 있으면 자동 재시작한다.
+![MATLAB 스타일 실시간 대시보드](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/images/live_dashboard_status.png)
 
-## 비교 대상
+## 7. 문서
 
-| Pipeline | State-estimation supervision | Active-perception reward | Ontology reward |
-|---|---:|---:|---:|
-| `shin_se` | 있음, six-state auxiliary MSE | 있음 | 없음 |
-| `no_se` | 없음 | 없음 | 없음 |
-| `onto_no_se` | 없음 | 없음 | 동결 direct R-GAT PBRS |
-
-새 제안 실험은 기존 3개 arm을 삭제하지 않고 별도 설정으로 실행한다.
-
-| 명시적 모드 | 보상 함수 | Active perception |
-|---|---|---:|
-| `shin_se_fixed` | 고정 Shin 5성분 | 있음 |
-| `shin_se_rgat_weight` | 동결 R-GAT 상태 적응 5성분 + semantic PBRS | 있음 |
-| `no_se_fixed` | 고정 Shin 5성분 | 없음 |
-| `onto_rgat_adaptive_weight_no_se` | 동결 R-GAT 상태 적응 5성분 + semantic PBRS | 없음 |
-| `onto_rgat_potential_pbrs_no_se` | 보존된 scalar `Phi(G)` PBRS | 없음 |
-
-세 pipeline은 512×320 mono camera, 동결 6-keypoint encoder, 512-unit LSTM,
-256-D latent, `y[6:256]` actor slice, 7-D UAV proprioception, 4-D velocity/yaw-rate
-action, PX4 controller, PPO 설정, curriculum과 paired seed를 공유한다. Simulator
-truth는 asymmetric critic, reset, terminal label과 physical evaluation에만 허용한다.
-
-### 보상함수
-
-| Reward 항 | `shin_se` baseline | `no_se` 대조군 | `onto_no_se` 제안 방식 |
-|---|---|---|---|
-| Terminal | 안전 착륙 `+10`, 충돌/이탈/배터리 실패 `-10`; shaping을 대체 | `shin_se`와 동일 | Sparse terminal `+10/-10`, next potential 0 |
-| Physical shaping | Lateral/vertical progress, vertical-speed/undershoot/yaw-rate penalty | Active term을 제외하고 동일 | 명시적 physical shaping 없음 |
-| Active perception | `-0.1 clip(L_est,t+1-0.01,0,1)` | 없음 | 없음 |
-| Ontology shaping | 없음 | 없음 | `lambda [gamma Phi(G_t+1)-Phi(G_t)]` |
-| 상수 | `alpha=0.1`, `beta=1`, `tau=0.01` | 해당 없음 | `lambda=1`, `gamma=0.99` |
-| Reward 정보 경계 | 실제 상대 상태와 privileged estimator loss | 실제 상대 상태 | Estimator-free semantic graph와 terminal event |
-
-적응 가중치 arm의 무가중 성분은 동일한 Table-III 순수 함수를 공유한다. Baseline
-가중치 `[1,1,0.5,1,2]`와 합 5.5를 보존하면서 `w(G_t)`가 상태에 따라 바뀐다.
-기존 5성분에는 시야상실/재포착 항이 없으므로 같은 동결 R-GAT encoder의 두 번째
-head가 `Phi(G)`를 출력하며 `0.75[gamma Phi(G_t+1)-Phi(G_t)]`를 더한다. Terminal에서는
-5성분 shaping만 대체하고 absorbing-state potential correction은 유지한다. 제안 no-SE
-arm에는 estimator loss나 active-perception 항이 없다. 자세한 수식과 누출/동결 계약은
-[상태 적응형 보상 가중치 문서](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/ONTOLOGY_RGAT_ADAPTIVE_REWARD_WEIGHTING.md)를 참고한다.
-
-착륙 성공은 접촉 신호 하나로 판정하지 않는다. 패드 접촉과 함께 중심 수평 오차
-`<= 0.35 m`, 수직속도 `<= 0.55 m/s`, 패드 상대 수평속도 `<= 0.45 m/s`, roll/pitch
-합성 tilt `<= 10 deg`, 기체 각속도 `<= 45 deg/s`를 모두 만족해야 한다. 하나라도
-위반한 접촉은 `unsafe_pad_contact` 실패이고 terminal reward는 `-10`이다.
-
-자세한 항별 수식은
-[프로젝트 guide의 보상함수 비교표](Ontology_RGAT_UAV_RL_ISAAC_PX4/README.md)를 참고한다.
-
-기본 ontology는 **18 node, directed edge 35개, relation 4종, node당 feature 24개**다.
-Keypoint/heatmap semantic, UAV motion/attitude와 onboard battery reserve를 사용한다.
-Relative-state estimate, UGV state, GNSS, simulator truth를 허용하지 않는다. 학습한
-R-GAT output을 `Phi(G)`로 직접 동결한다.
-
-```text
-r_t = r_sparse + lambda * (gamma * Phi(G_t+1) - Phi(G_t))
-```
-
-이전 14-node/38-edge, 23-channel cooperative urban 실험과 증류한 고정 reward
-weight는 명시된 legacy path로만 제공한다.
-
-## 실행 및 모니터링
-
-`run.sh`는 DDS(UDP 8888), Isaac Sim/Pegasus/PX4, ROS 2 gateway(UDP 14650),
-RViz 2와 <http://127.0.0.1:8770/> dashboard를 시작하거나 인수한다. Dashboard는
-committed episode와 active episode/per-step telemetry를 분리해 rendered flight가
-오래 걸려도 정지처럼 보이지 않게 한다.
-
-Recoverable SITL transport, simulated-clock, 순수 Offboard-heartbeat 중단은 partial
-trajectory만 버리고 launcher 소유 stack을 재시작해 같은 seed를 재시도한다. Geometry,
-perception, estimator, policy failure는 hard failure로 남기고 retry로 숨기지 않는다.
-
-## Meta-Sejong S5 환경
-
-기본 benchmark는 Gwanggaeto/S5 campus asset과 37-point 폐곡선 도로 route를 쓴다.
-길이는 99.70 m다. Offline mesh audit에서 1.5×1.5 m deck footprint를 제외한 보수적
-clearance 1.00 m, waypoint 최대 elevation error 0.001 m를 측정했다.
-
-![감사된 Meta-Sejong S5 UGV route](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/images/metasejong_gwanggaeto_ugv_route.png)
-
-## 문서
-
-구현은 [`Ontology_RGAT_UAV_RL_ISAAC_PX4/`](Ontology_RGAT_UAV_RL_ISAAC_PX4/)에 있다.
-
-- [전체 프로젝트 guide](Ontology_RGAT_UAV_RL_ISAAC_PX4/README.md)
-- [문서 안내](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/README.md)
 - [시스템 개요](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/SYSTEM_OVERVIEW.md)
-- [3개 파이프라인 통제 비교](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/THREE_PIPELINE_COMPARISON.md)
-- [상태 적응형 보상 가중치](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/ONTOLOGY_RGAT_ADAPTIVE_REWARD_WEIGHTING.md)
-- [운영 및 fault 진단](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/OPERATIONS.md)
-- [아키텍처와 interface](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/ARCHITECTURE.md)
-- [논문-코드 baseline](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/SHIN2026_BASELINE.md)
-- [실제 기체 안전 gate](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/HARDWARE_SAFETY.md)
+- [제안 Hybrid R-GAT 알고리즘](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/ONTOLOGY_RGAT_ADAPTIVE_REWARD_WEIGHTING.md)
+- [3개 파이프라인 비교 설계](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/THREE_PIPELINE_COMPARISON.md)
+- [Shin et al. 논문 대응](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/SHIN2026_BASELINE.md)
+- [아키텍처와 데이터 경계](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/ARCHITECTURE.md)
+- [실행·재개·진단](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/OPERATIONS.md)
+- [실제 기체 안전](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/HARDWARE_SAFETY.md)
+- [참고문헌](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/REFERENCES.md)
 
-활성 프로젝트 디렉터리에서 저장소 검사를 실행한다.
-
-```bash
-cd Ontology_RGAT_UAV_RL_ISAAC_PX4
-./scripts/check_workspace.sh
-```
+구현 본체와 설치 정보는 [프로젝트 디렉터리 README](Ontology_RGAT_UAV_RL_ISAAC_PX4/README.md)에 있다.

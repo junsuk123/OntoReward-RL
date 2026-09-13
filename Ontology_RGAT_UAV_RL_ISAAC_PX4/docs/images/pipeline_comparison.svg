@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900">
+  <defs><style>
+    .t{font:700 38px 'Noto Sans KR',sans-serif;fill:#102a43}.st{font:20px 'Noto Sans KR',sans-serif;fill:#486581}.h{font:700 25px 'Noto Sans KR',sans-serif}.b{font:18px 'Noto Sans KR',sans-serif;fill:#243b53}.s{font:16px 'Noto Sans KR',sans-serif;fill:#486581}.m{font:18px monospace;fill:#102a43}.line{stroke:#486581;stroke-width:3;fill:none;marker-end:url(#a)}
+  </style><marker id="a" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto"><path d="M0,0L0,6L9,3Z" fill="#486581"/></marker></defs>
+  <rect width="1600" height="900" fill="#f7fafc"/><text x="800" y="52" text-anchor="middle" class="t">최종 3개 파이프라인 통제 비교</text>
+  <text x="800" y="85" text-anchor="middle" class="st">동일한 영상·UAV 관측, actor, critic, PPO, controller, seed — 학습 신호만 비교</text>
+  <rect x="120" y="120" width="1360" height="125" rx="22" fill="#e8f3ff" stroke="#1677c8" stroke-width="2"/>
+  <text x="800" y="160" text-anchor="middle" class="h" fill="#125a92">공통 실행 경로</text>
+  <text x="800" y="198" text-anchor="middle" class="b">512×320 Gray → 동결 6-Keypoint Encoder → LSTM(512) → Latent(256) → MLP Actor → [vₓ,vᵧ,v_z,ω_z]</text>
+  <text x="800" y="226" text-anchor="middle" class="s">Asymmetric critic: 학습 때만 UAV proprioception + 실제 6-D 상대상태 사용</text>
+  <path d="M800 245V300M280 300H1320" stroke="#486581" stroke-width="3" fill="none"/><path class="line" d="M280 300V330"/><path class="line" d="M800 300V330"/><path class="line" d="M1320 300V330"/>
+
+  <rect x="70" y="340" width="430" height="420" rx="24" fill="#eef6ff" stroke="#1677c8" stroke-width="3"/>
+  <text x="285" y="386" text-anchor="middle" class="h" fill="#125a92">A. shin_se_fixed</text>
+  <text x="285" y="418" text-anchor="middle" class="s">논문 기반 명시적 상태추정 비교군</text>
+  <text x="100" y="468" class="b">• 6-D 상대상태 보조 회귀 손실 사용</text><text x="100" y="504" class="b">• 다음 추정오차 기반 active reward</text>
+  <rect x="100" y="540" width="370" height="105" rx="14" fill="#fff" stroke="#9fb3c8"/>
+  <text x="285" y="578" text-anchor="middle" class="m">r = Σ w⁰ᵢ ρ̄ᵢ + r_active</text><text x="285" y="612" text-anchor="middle" class="m">w⁰=(1,1,0.5,1,2)</text>
+  <text x="100" y="690" class="s">Ontology: 없음</text><text x="100" y="720" class="s">SE supervision: 있음</text>
+
+  <rect x="585" y="340" width="430" height="420" rx="24" fill="#f5f7fa" stroke="#627d98" stroke-width="3"/>
+  <text x="800" y="386" text-anchor="middle" class="h" fill="#334e68">B. no_se_fixed</text>
+  <text x="800" y="418" text-anchor="middle" class="s">estimator-free 고정 보상 비교군</text>
+  <text x="615" y="468" class="b">• 명시적 상태추정 및 보조손실 없음</text><text x="615" y="504" class="b">• active-perception reward 없음</text>
+  <rect x="615" y="540" width="370" height="105" rx="14" fill="#fff" stroke="#9fb3c8"/>
+  <text x="800" y="578" text-anchor="middle" class="m">r = Σ w⁰ᵢ ρ̄ᵢ</text><text x="800" y="612" text-anchor="middle" class="m">w⁰=(1,1,0.5,1,2)</text>
+  <text x="615" y="690" class="s">Ontology: 없음</text><text x="615" y="720" class="s">SE supervision: 없음</text>
+
+  <rect x="1100" y="340" width="430" height="420" rx="24" fill="#fff5e8" stroke="#d97706" stroke-width="4"/>
+  <text x="1315" y="386" text-anchor="middle" class="h" fill="#b45309">C. 제안 방법</text>
+  <text x="1315" y="418" text-anchor="middle" class="s">onto_rgat_adaptive_weight_no_se</text>
+  <text x="1130" y="468" class="b">• 23-node 관계형 semantic graph</text><text x="1130" y="504" class="b">• 상태 적응 5-weight + semantic PBRS</text>
+  <rect x="1130" y="540" width="370" height="105" rx="14" fill="#fff" stroke="#f0b36b"/>
+  <text x="1315" y="575" text-anchor="middle" class="m">r = Σ wᵢ(Gₜ)ρ̄ᵢ</text><text x="1315" y="610" text-anchor="middle" class="m">+ 0.75(γΦₜ₊₁−Φₜ)</text>
+  <text x="1130" y="690" class="s">Ontology/R-GAT: 있음</text><text x="1130" y="720" class="s">SE supervision: 없음</text>
+
+  <rect x="210" y="805" width="1180" height="55" rx="16" fill="#eefbea" stroke="#2f855a" stroke-width="2"/>
+  <text x="800" y="840" text-anchor="middle" class="b">공통 성공 조건: 패드 접촉 ∧ 중심 오차 ∧ 수직속도 ∧ 상대수평속도 ∧ tilt ∧ 각속도</text>
+</svg>

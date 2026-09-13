@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="600" viewBox="0 0 1500 600">
+  <defs><style>.t{font:700 36px 'Noto Sans KR',sans-serif;fill:#102a43}.h{font:700 22px 'Noto Sans KR',sans-serif;fill:#fff}.b{font:18px 'Noto Sans KR',sans-serif;fill:#243b53}.v{font:700 21px 'Noto Sans KR',sans-serif;fill:#276749}</style></defs>
+  <rect width="1500" height="600" fill="#f7fafc"/><text x="750" y="55" text-anchor="middle" class="t">엄격한 안전 착륙 성공 판정</text>
+  <g transform="translate(40 125)"><rect width="205" height="155" rx="18" fill="#e8f3ff" stroke="#1677c8" stroke-width="2"/><rect width="205" height="48" rx="18" fill="#1677c8"/><text x="102" y="32" text-anchor="middle" class="h">접촉</text><text x="102" y="98" text-anchor="middle" class="b">pad_contact = true</text><text x="102" y="130" text-anchor="middle" class="v">필수</text></g>
+  <text x="262" y="215" class="t" style="font-size:27px">∧</text>
+  <g transform="translate(285 125)"><rect width="205" height="155" rx="18" fill="#eefbea" stroke="#2f855a" stroke-width="2"/><rect width="205" height="48" rx="18" fill="#2f855a"/><text x="102" y="32" text-anchor="middle" class="h">중심 위치</text><text x="102" y="98" text-anchor="middle" class="b">‖Δx_xy‖</text><text x="102" y="132" text-anchor="middle" class="v">≤ 0.35 m</text></g>
+  <text x="507" y="215" class="t" style="font-size:27px">∧</text>
+  <g transform="translate(530 125)"><rect width="205" height="155" rx="18" fill="#fff5e8" stroke="#d97706" stroke-width="2"/><rect width="205" height="48" rx="18" fill="#d97706"/><text x="102" y="32" text-anchor="middle" class="h">수직속도</text><text x="102" y="98" text-anchor="middle" class="b">|v_z|</text><text x="102" y="132" text-anchor="middle" class="v">≤ 0.55 m/s</text></g>
+  <text x="752" y="215" class="t" style="font-size:27px">∧</text>
+  <g transform="translate(775 125)"><rect width="205" height="155" rx="18" fill="#f3e8ff" stroke="#805ad5" stroke-width="2"/><rect width="205" height="48" rx="18" fill="#805ad5"/><text x="102" y="32" text-anchor="middle" class="h">상대 수평속도</text><text x="102" y="98" text-anchor="middle" class="b">‖Δv_xy‖</text><text x="102" y="132" text-anchor="middle" class="v">≤ 0.45 m/s</text></g>
+  <text x="997" y="215" class="t" style="font-size:27px">∧</text>
+  <g transform="translate(1020 125)"><rect width="205" height="155" rx="18" fill="#ffecec" stroke="#c53030" stroke-width="2"/><rect width="205" height="48" rx="18" fill="#c53030"/><text x="102" y="32" text-anchor="middle" class="h">기울기</text><text x="102" y="98" text-anchor="middle" class="b">‖[roll,pitch]‖</text><text x="102" y="132" text-anchor="middle" class="v">≤ 10°</text></g>
+  <text x="1242" y="215" class="t" style="font-size:27px">∧</text>
+  <g transform="translate(1265 125)"><rect width="205" height="155" rx="18" fill="#edf2f7" stroke="#486581" stroke-width="2"/><rect width="205" height="48" rx="18" fill="#486581"/><text x="102" y="32" text-anchor="middle" class="h">각속도</text><text x="102" y="98" text-anchor="middle" class="b">‖ω‖</text><text x="102" y="132" text-anchor="middle" class="v">≤ 45°/s</text></g>
+  <path d="M750 310V375" stroke="#2f855a" stroke-width="5"/><path d="M735 360L750 380L765 360" fill="#2f855a"/>
+  <rect x="430" y="390" width="640" height="115" rx="24" fill="#eefbea" stroke="#2f855a" stroke-width="4"/><text x="750" y="438" text-anchor="middle" class="t" style="font-size:29px;fill:#276749">모든 조건을 만족할 때만 success = 1</text><text x="750" y="478" text-anchor="middle" class="b">접촉 위치는 접촉 순간, 속도·자세·각속도는 접촉 직전 샘플로 평가</text>
+  <text x="750" y="555" text-anchor="middle" class="b">패드 충돌 또는 비정상 접촉은 unsafe_pad_contact이며 성공으로 계산하지 않는다</text>
+</svg>

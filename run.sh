@@ -52,6 +52,14 @@ expect_mode_value=false
 expect_config_value=false
 adaptive_config=false
 seminar_fast=false
+# The repository's zero-argument contract is the currently supported seminar
+# experiment: three isolated UAV/UGV pairs in one Isaac stage, one core method
+# per pair, with both operator views kept alive after the saved result.  Any
+# explicit command line keeps the former opt-in behaviour and can override the
+# profile below.
+if [[ $# -eq 0 ]]; then
+  seminar_fast=true
+fi
 for argument in "$@"; do
   if [[ "$expect_config_value" == true ]]; then
     [[ "$argument" == *adaptive_reward_weight_comparison.yaml ]] && adaptive_config=true
@@ -98,6 +106,8 @@ if [[ "$seminar_fast" == true ]]; then
     --experiment adaptive_reward_weight_comparison
     --results-dir "$project_root/results/seminar_fast/core3_hybrid_v3"
     --pipelines shin_se_fixed no_se_fixed onto_rgat_adaptive_weight_no_se
+    --parallel-pairs 3
+    --stay-open
     --rgat-max-data-episodes 24
     --rgat-epochs 40
   )

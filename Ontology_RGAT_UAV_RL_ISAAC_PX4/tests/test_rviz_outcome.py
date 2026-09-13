@@ -4,7 +4,7 @@ from pathlib import Path
 import numpy as np
 
 from ontology_rgat.viz.rviz import _outcome_style
-from ontology_rgat.viz.rviz import RvizPublisher
+from ontology_rgat.viz.rviz import RvizPublisher, RvizPublisherGroup
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -32,6 +32,47 @@ def test_rviz_keeps_map_fixed_and_follows_the_landing_pad():
     assert "Name: Deck track (pad-relative)" in profile
     assert profile.count("Depth: 1") == 7
     assert profile.count("Reliability Policy: Best Effort") == 7
+
+
+def test_parallel_rviz_layout_has_three_isolated_pairs_and_cameras():
+    profile = (ROOT / "rviz" / "ontology_rgat_parallel.rviz").read_text(
+        encoding="utf-8")
+    assert "Fixed Frame: map" in profile
+    for index in range(3):
+        assert f"/landing_rl/pair_{index}/scene" in profile
+        assert f"/landing_rl/pair_{index}/uav_path" in profile
+        assert f"/landing_rl/pair_{index}/pad_path" in profile
+        assert (f"/landing_pair_{index}/uav/perception/landing_camera/annotated"
+                in profile)
+        assert f"Target Frame: landing_pad_{index}" in profile
+    assert "/landing_rl/pair_2/ontology" in profile
+
+
+def test_rviz_group_routes_reset_and_step_by_method():
+    class Fake:
+        def __init__(self):
+            self.cleared = 0
+            self.steps = []
+            self.potential = None
+
+        def clear_trails(self):
+            self.cleared += 1
+
+        def publish_benchmark_step(self, **kwargs):
+            self.steps.append(kwargs)
+
+        def close(self):
+            pass
+
+    first, second = Fake(), Fake()
+    group = RvizPublisherGroup({"a": first, "b": second})
+    group.clear_trails(method="b")
+    group.publish_benchmark_step(method="a", state={}, scenario="x", step=1,
+                                 dt=.1, in_fov=True, status="running")
+    group.potential = "frozen"
+    assert first.cleared == 0 and second.cleared == 1
+    assert first.steps[0]["method"] == "a" and not second.steps
+    assert first.potential == second.potential == "frozen"
 
 
 class _Message:

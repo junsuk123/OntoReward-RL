@@ -11,7 +11,14 @@ def test_benchmark_monitor_publishes_refactored_contract_and_progress():
         methods=["shin2026", "ontoreward"], mode="quick",
         config_hash="1234567890abcdef", training_total=16,
         evaluation_total=12, reward_design_id="rgat-7",
-        reward_design_sha256="abc")
+        reward_design_sha256="abc", pair_layout=[{
+            "index": 0, "method": "ontoreward",
+            "route_phase_fraction": 0.0, "px4_namespace": "/fmu",
+            "topic_root": "/landing_pair_0",
+            "camera_topic": "/landing_pair_0/uav/perception/landing_camera/annotated",
+            "rviz_namespace": "/landing_rl/pair_0",
+            "gateway_port": 14650, "learner_port": 14651,
+        }])
     monitor.reset_episode(
         method="ontoreward", phase="training", seed=42,
         scenario="training_random_walk", curriculum=0.25,
@@ -23,6 +30,7 @@ def test_benchmark_monitor_publishes_refactored_contract_and_progress():
         estimate=np.array([1, 0, -2, 0.5, 0, 0]),
         truth=np.array([0, 0, -2, 0, 0, 0]), in_fov=False,
         estimation_loss=0.2, state={
+            "position": [0.0, 0.0, -2.0],
             "world": {"velocity": [0.3, 0.4, 0.0]},
             "pad": {"velocity": [0.12, 0.0, 0.0]},
             "battery": {
@@ -57,6 +65,11 @@ def test_benchmark_monitor_publishes_refactored_contract_and_progress():
     assert state["scalars"]["current_action_envelope_scale"] == 0.5125
     assert state["scalars"]["current_pad_motion_scale"] == 0.5125
     assert state["scalars"]["current_training_episode"] == 1
+    pair = state["scalars"]["parallel_pair_status"][0]
+    assert pair["method"] == "ontoreward"
+    assert pair["step"] == 1
+    assert pair["marker_visible"] is False
+    assert pair["relative_xyz"] == [0.0, 0.0, -2.0]
 
 
 def test_benchmark_monitor_restores_csv_rows_and_pairs_evaluation_series():
@@ -95,6 +108,8 @@ def test_dashboard_has_self_contained_matlab_style_benchmark_view():
     assert "training_total||0)/" not in PAGE
     assert "active episode" in PAGE
     assert "live episode step" in PAGE
+    assert "parallel-pair-grid" in PAGE
+    assert "3쌍 병렬 비전 착륙" in PAGE
     assert "debug only" not in PAGE
     assert "prefers-color-scheme:dark" not in PAGE
     for color in MATLAB_COLORS:

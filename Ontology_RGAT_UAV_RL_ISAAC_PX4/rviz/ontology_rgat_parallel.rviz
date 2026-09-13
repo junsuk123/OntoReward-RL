@@ -1,0 +1,337 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+    Property Tree Widget:
+      Expanded:
+        - /Global Options1
+        - /Pair 1 · Shin SE1
+        - /Pair 2 · No SE1
+        - /Pair 3 · Onto R-GAT1
+      Splitter Ratio: 0.5
+    Tree Height: 430
+  - Class: rviz_common/Views
+    Name: Views
+    Splitter Ratio: 0.5
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Alpha: 0.35
+      Cell Size: 1
+      Class: rviz_default_plugins/Grid
+      Color: 130; 130; 130
+      Enabled: true
+      Name: Campus ENU reference
+      Plane: XY
+      Plane Cell Count: 80
+      Reference Frame: map
+      Value: true
+    - Class: rviz_default_plugins/TF
+      Enabled: true
+      Frame Timeout: 15
+      Frames:
+        All Enabled: true
+        landing_pad_0: {Value: true}
+        landing_pad_1: {Value: true}
+        landing_pad_2: {Value: true}
+        uav_body_0: {Value: true}
+        uav_body_1: {Value: true}
+        uav_body_2: {Value: true}
+        map: {Value: true}
+      Marker Scale: 0.45
+      Name: Pair-isolated TF
+      Show Arrows: false
+      Show Axes: true
+      Show Names: true
+      Update Interval: 0
+      Value: true
+    - Class: rviz_common/Group
+      Displays:
+        - Class: rviz_default_plugins/MarkerArray
+          Enabled: true
+          Name: Scene and landing gate
+          Namespaces:
+            campus_road_route: true
+            landing_outcome: true
+            scene: true
+          Topic:
+            Depth: 1
+            Durability Policy: Volatile
+            History Policy: Keep Last
+            Reliability Policy: Best Effort
+            Value: /landing_rl/pair_0/scene
+          Value: true
+        - Alpha: 1
+          Buffer Length: 1
+          Class: rviz_default_plugins/Path
+          Color: 0; 114; 189
+          Enabled: true
+          Line Style: Lines
+          Line Width: 0.025
+          Name: UAV trail
+          Pose Style: None
+          Topic:
+            Depth: 1
+            Durability Policy: Volatile
+            Filter size: 10
+            History Policy: Keep Last
+            Reliability Policy: Best Effort
+            Value: /landing_rl/pair_0/uav_path
+          Value: true
+        - Alpha: 1
+          Buffer Length: 1
+          Class: rviz_default_plugins/Path
+          Color: 217; 83; 25
+          Enabled: true
+          Line Style: Lines
+          Line Width: 0.02
+          Name: UGV trail
+          Pose Style: None
+          Topic:
+            Depth: 1
+            Durability Policy: Volatile
+            Filter size: 10
+            History Policy: Keep Last
+            Reliability Policy: Best Effort
+            Value: /landing_rl/pair_0/pad_path
+          Value: true
+        - Class: rviz_default_plugins/Image
+          Enabled: true
+          Max Value: 1
+          Median window: 5
+          Min Value: 0
+          Name: Pair 1 camera · Shin SE
+          Normalize Range: false
+          Topic:
+            Depth: 1
+            Durability Policy: Volatile
+            History Policy: Keep Last
+            Reliability Policy: Best Effort
+            Value: /landing_pair_0/uav/perception/landing_camera/annotated
+          Value: true
+      Enabled: true
+      Name: Pair 1 · Shin SE
+    - Class: rviz_common/Group
+      Displays:
+        - Class: rviz_default_plugins/MarkerArray
+          Enabled: true
+          Name: Scene and landing gate
+          Namespaces:
+            campus_road_route: true
+            landing_outcome: true
+            scene: true
+          Topic:
+            Depth: 1
+            Durability Policy: Volatile
+            History Policy: Keep Last
+            Reliability Policy: Best Effort
+            Value: /landing_rl/pair_1/scene
+          Value: true
+        - Alpha: 1
+          Buffer Length: 1
+          Class: rviz_default_plugins/Path
+          Color: 126; 47; 142
+          Enabled: true
+          Line Style: Lines
+          Line Width: 0.025
+          Name: UAV trail
+          Pose Style: None
+          Topic:
+            Depth: 1
+            Durability Policy: Volatile
+            Filter size: 10
+            History Policy: Keep Last
+            Reliability Policy: Best Effort
+            Value: /landing_rl/pair_1/uav_path
+          Value: true
+        - Alpha: 1
+          Buffer Length: 1
+          Class: rviz_default_plugins/Path
+          Color: 119; 172; 48
+          Enabled: true
+          Line Style: Lines
+          Line Width: 0.02
+          Name: UGV trail
+          Pose Style: None
+          Topic:
+            Depth: 1
+            Durability Policy: Volatile
+            Filter size: 10
+            History Policy: Keep Last
+            Reliability Policy: Best Effort
+            Value: /landing_rl/pair_1/pad_path
+          Value: true
+        - Class: rviz_default_plugins/Image
+          Enabled: true
+          Max Value: 1
+          Median window: 5
+          Min Value: 0
+          Name: Pair 2 camera · No SE
+          Normalize Range: false
+          Topic:
+            Depth: 1
+            Durability Policy: Volatile
+            History Policy: Keep Last
+            Reliability Policy: Best Effort
+            Value: /landing_pair_1/uav/perception/landing_camera/annotated
+          Value: true
+      Enabled: true
+      Name: Pair 2 · No SE
+    - Class: rviz_common/Group
+      Displays:
+        - Class: rviz_default_plugins/MarkerArray
+          Enabled: true
+          Name: Scene and landing gate
+          Namespaces:
+            campus_road_route: true
+            landing_outcome: true
+            scene: true
+          Topic:
+            Depth: 1
+            Durability Policy: Volatile
+            History Policy: Keep Last
+            Reliability Policy: Best Effort
+            Value: /landing_rl/pair_2/scene
+          Value: true
+        - Class: rviz_default_plugins/MarkerArray
+          Enabled: true
+          Name: R-GAT ontology attention
+          Namespaces:
+            ontology_edge: true
+            ontology_label: true
+            ontology_node: true
+          Topic:
+            Depth: 1
+            Durability Policy: Volatile
+            History Policy: Keep Last
+            Reliability Policy: Best Effort
+            Value: /landing_rl/pair_2/ontology
+          Value: true
+        - Alpha: 1
+          Buffer Length: 1
+          Class: rviz_default_plugins/Path
+          Color: 237; 177; 32
+          Enabled: true
+          Line Style: Lines
+          Line Width: 0.025
+          Name: UAV trail
+          Pose Style: None
+          Topic:
+            Depth: 1
+            Durability Policy: Volatile
+            Filter size: 10
+            History Policy: Keep Last
+            Reliability Policy: Best Effort
+            Value: /landing_rl/pair_2/uav_path
+          Value: true
+        - Alpha: 1
+          Buffer Length: 1
+          Class: rviz_default_plugins/Path
+          Color: 77; 190; 238
+          Enabled: true
+          Line Style: Lines
+          Line Width: 0.02
+          Name: UGV trail
+          Pose Style: None
+          Topic:
+            Depth: 1
+            Durability Policy: Volatile
+            Filter size: 10
+            History Policy: Keep Last
+            Reliability Policy: Best Effort
+            Value: /landing_rl/pair_2/pad_path
+          Value: true
+        - Class: rviz_default_plugins/Image
+          Enabled: true
+          Max Value: 1
+          Median window: 5
+          Min Value: 0
+          Name: Pair 3 camera · Onto R-GAT
+          Normalize Range: false
+          Topic:
+            Depth: 1
+            Durability Policy: Volatile
+            History Policy: Keep Last
+            Reliability Policy: Best Effort
+            Value: /landing_pair_2/uav/perception/landing_camera/annotated
+          Value: true
+      Enabled: true
+      Name: Pair 3 · Onto R-GAT
+  Enabled: true
+  Global Options:
+    Background Color: 48; 48; 48
+    Fixed Frame: map
+    Frame Rate: 20
+  Name: root
+  Tools:
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/FocusCamera
+    - Class: rviz_default_plugins/Measure
+      Line color: 128; 128; 0
+  Transformation:
+    Current:
+      Class: rviz_default_plugins/TF
+  Value: true
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Distance: 34
+      Enable Stereo Rendering:
+        Stereo Eye Separation: 0.06
+        Stereo Focal Distance: 1
+        Swap Stereo Eyes: false
+        Value: false
+      Focal Point:
+        X: -51
+        Y: -76
+        Z: 22
+      Focal Shape Fixed Size: true
+      Focal Shape Size: 0.05
+      Invert Z Axis: false
+      Name: Fleet overview
+      Near Clip Distance: 0.01
+      Pitch: 0.65
+      Target Frame: map
+      Value: Orbit (rviz_default_plugins)
+      Yaw: 2.35
+    Saved:
+      - Class: rviz_default_plugins/Orbit
+        Distance: 8
+        Focal Point: {X: 0, Y: 0, Z: 1}
+        Name: Pair 1 close-up
+        Pitch: 0.42
+        Target Frame: landing_pad_0
+        Value: Orbit (rviz_default_plugins)
+        Yaw: 2.35
+      - Class: rviz_default_plugins/Orbit
+        Distance: 8
+        Focal Point: {X: 0, Y: 0, Z: 1}
+        Name: Pair 2 close-up
+        Pitch: 0.42
+        Target Frame: landing_pad_1
+        Value: Orbit (rviz_default_plugins)
+        Yaw: 2.35
+      - Class: rviz_default_plugins/Orbit
+        Distance: 8
+        Focal Point: {X: 0, Y: 0, Z: 1}
+        Name: Pair 3 close-up
+        Pitch: 0.42
+        Target Frame: landing_pad_2
+        Value: Orbit (rviz_default_plugins)
+        Yaw: 2.35
+Window Geometry:
+  Displays:
+    collapsed: false
+  Height: 1016
+  Hide Left Dock: false
+  Hide Right Dock: false
+  Pair 1 camera · Shin SE:
+    collapsed: false
+  Pair 2 camera · No SE:
+    collapsed: false
+  Pair 3 camera · Onto R-GAT:
+    collapsed: false
+  Views:
+    collapsed: false
+  Width: 1500
+  X: 30
+  Y: 25

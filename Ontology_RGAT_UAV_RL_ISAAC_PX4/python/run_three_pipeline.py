@@ -1169,17 +1169,40 @@ def main():
             "max_fov_loss_fraction", 0.50)),
     }
 
-    rviz = RvizPublisher.create(cfg) if not args.no_rviz else None
+    rviz = (RvizPublisher.create(
+        cfg, pair_methods=(args.pipelines if args.parallel_pairs > 1 else None))
+        if not args.no_rviz else None)
     monitor = BenchmarkMonitor(STORE, rviz=rviz)
     monitor.configure(
         methods=args.pipelines, mode=args.mode, config_hash=config_hash,
         training_total=(train_count * len(args.pipelines) + selected_warmup),
         evaluation_total=len(plan),
         reward_design_id=getattr(potential, "design_id", None),
-        reward_design_sha256=getattr(potential, "sha256", None))
+        reward_design_sha256=getattr(potential, "sha256", None),
+        pair_layout=[{
+            "index": index,
+            "method": name,
+            "route_phase_fraction": float(
+                ((system.get("parallel") or {}).get(
+                    "route_phase_fractions", [0.0, 0.08, 0.16]))[index]),
+            "px4_namespace": ("/fmu" if index == 0 else f"/px4_{index}/fmu"),
+            "topic_root": (f"/landing_pair_{index}"
+                           if args.parallel_pairs > 1 else ""),
+            "camera_topic": (
+                f"/landing_pair_{index}/uav/perception/landing_camera/annotated"
+                if args.parallel_pairs > 1 else
+                "/landing_uav0/perception/landing_camera/annotated"),
+            "rviz_namespace": (
+                f"{str(cfg.viz.rviz.namespace).rstrip('/')}/pair_{index}"
+                if args.parallel_pairs > 1 else str(cfg.viz.rviz.namespace)),
+            "gateway_port": int(pair_cfgs[index].external.gateway_port),
+            "learner_port": int(pair_cfgs[index].external.local_port),
+        } for index, name in enumerate(
+            args.pipelines if args.parallel_pairs > 1 else args.pipelines[:1])])
     dashboard = Dashboard(cfg, STORE).start()
     rviz_process, rviz_log = _start_rviz(
-        cfg.viz.rviz.enabled and not args.no_rviz and not args.headless)
+        cfg.viz.rviz.enabled and not args.no_rviz and not args.headless,
+        parallel_pairs=args.parallel_pairs)
     owned = None
     stack_module.current(None)
     design_episodes = 0

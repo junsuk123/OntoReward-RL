@@ -50,8 +50,12 @@ from isaacsim import SimulationApp
 
 app_config = {"headless": ARGS.headless}
 if not ARGS.headless:
-    app_config.update({"width": RUNTIME.viewport_resolution[0],
-                       "height": RUNTIME.viewport_resolution[1]})
+    resolution = RUNTIME.viewport_resolution
+    if ARGS.parallel_pairs > 1:
+        resolution = tuple(int(value) for value in (
+            ((CONFIG.get("parallel") or {}).get("operator_view") or {}).get(
+                "viewport_resolution", resolution)))
+    app_config.update({"width": resolution[0], "height": resolution[1]})
 simulation_app = SimulationApp(app_config)
 
 import carb
@@ -904,8 +908,9 @@ class ViewportFollower:
             view.get("offset_m", view.get("offset_enu_m", [-14.0, 0.0, 7.0])), dtype=float)
         self.look_at_offset = np.asarray(view.get("look_at_offset_enu_m", [0.0, 0.0, 0.0]), dtype=float)
         self.focus = str(view.get("focus", "uav")).lower()
-        if self.focus not in ("uav", "pair"):
-            raise ValueError("isaac.viewport_follow.focus must be 'uav' or 'pair'")
+        if self.focus not in ("uav", "pair", "group"):
+            raise ValueError(
+                "isaac.viewport_follow.focus must be 'uav', 'pair' or 'group'")
         self.pair_span_m = float(view.get("pair_span_m", 7.0))
         if self.pair_span_m <= 0.0:
             raise ValueError("isaac.viewport_follow.pair_span_m must be positive")
@@ -947,6 +952,49 @@ class ViewportFollower:
         if self.frame == "world":
             return self.offset
         return street_offset_enu(self.offset, street_heading_rad)
+
+    def update_group(self, vehicle_positions, deck_positions, headings,
+                     layout=None) -> None:
+        """Frame every live pair while retaining the street-relative camera."""
+        if not self.enabled:
+            return
+        vehicles = np.asarray(vehicle_positions, dtype=float).reshape(-1, 3)
+        decks = np.asarray(deck_positions, dtype=float).reshape(-1, 3)
+        if not len(vehicles) or len(vehicles) != len(decks):
+            return
+        angles = np.asarray(headings, dtype=float).reshape(-1)
+        heading = (math.atan2(float(np.mean(np.sin(angles))),
+                              float(np.mean(np.cos(angles))))
+                   if angles.size else 0.0)
+        vehicle_center = np.mean(vehicles, axis=0)
+        deck_center = np.mean(decks, axis=0)
+        target = 0.5 * (vehicle_center + deck_center)
+        all_positions = np.vstack((vehicles, decks))
+        fleet_span = max(
+            self.pair_span_m,
+            2.0 * float(np.max(np.linalg.norm(
+                all_positions[:, :2] - target[None, :2], axis=1))))
+        offset = self._offset_enu(heading).copy()
+        horizontal = max(float(np.linalg.norm(offset[:2])), 1.0)
+        scale = max(1.0, 1.20 * fleet_span / horizontal)
+        offset[:2] *= scale
+        offset[2] = max(float(offset[2]), 0.55 * fleet_span)
+        desired_eye, target, _ = paired_view_pose(
+            vehicle_center, deck_center, offset, fleet_span)
+        target = target + self.look_at_offset
+        if self.eye is None:
+            self.eye = desired_eye
+        else:
+            self.eye += self.smoothing * (desired_eye - self.eye)
+        eye = (self.eye if layout is None
+               else layout.clear_of_buildings(self.eye, target))
+        try:
+            set_camera_view(eye=eye.tolist(), target=target.tolist())
+        except Exception as exc:  # pragma: no cover - Isaac GUI/runtime dependent
+            if not self._warned:
+                print(f"Isaac group viewport disabled: {exc}", file=sys.stderr, flush=True)
+                self._warned = True
+            self.enabled = False
 
 
 class LandingWorld:
@@ -1234,11 +1282,19 @@ class LandingWorld:
         # A live 3D view of the episode inside the simulator window: the two
         # trails, the vector still to be closed and the success tolerance. Off
         # in a headless run, where nothing would read it.
-        self.overlay = LiveOverlay(
-            node, enabled=not ARGS.headless and self.pair_index == 0,
-            success_radius_m=float(CONFIG["landing"]["success_xy_m"]))
+        self.overlay = (shared.overlay if shared is not None else LiveOverlay(
+            node, enabled=not ARGS.headless,
+            telemetry_topics=(
+                [f"/landing_rl/pair_{index}/telemetry"
+                 for index in range(self.pair_count)] if self.parallel else None),
+            success_radius_m=float(CONFIG["landing"]["success_xy_m"])))
         viewport_cfg = CONFIG["isaac"]
-        if self.pair_index != 0:
+        if self.parallel and self.pair_index == 0:
+            viewport_cfg = deepcopy(viewport_cfg)
+            operator_view = dict(parallel_cfg.get("operator_view") or {})
+            operator_view.pop("viewport_resolution", None)
+            viewport_cfg.setdefault("viewport_follow", {}).update(operator_view)
+        elif self.pair_index != 0:
             viewport_cfg = deepcopy(viewport_cfg)
             viewport_cfg.setdefault("viewport_follow", {})["enabled"] = False
         self.viewport_follower = ViewportFollower(viewport_cfg)
@@ -1455,7 +1511,7 @@ class LandingWorld:
                                "pad": deck,
                                "reseated_on_deck": bool(reseated)})
         self.reset_ack_pub.publish(ack)
-        self.overlay.reset()
+        self.overlay.reset(self.pair_index if self.parallel else None)
         carb.log_info(f"Landing episode reset: seq={req['seq']} seed={req['seed']} "
                       f"entry_offset={offset.tolist()} pad={deck['mode']}@"
                       f"{deck['speed_m_s']:.2f} m/s battery={hover_seconds:.1f} s "
@@ -1978,13 +2034,18 @@ class LandingWorld:
                         pair._publish_environment()
                     if render:
                         primary = pairs[0]
-                        primary.overlay.update(
-                            primary.vehicle.state.position,
-                            primary.deck.world_from_pad(np.zeros(3)))
-                        primary.viewport_follower.update(
-                            primary.vehicle.state.position, primary.deck.yaw,
-                            primary.urban,
-                            deck_position=primary.deck.world_from_pad(np.zeros(3)))
+                        vehicles = [pair.vehicle.state.position for pair in pairs]
+                        decks = [pair.deck.world_from_pad(np.zeros(3))
+                                 for pair in pairs]
+                        primary.overlay.update_many(tuple(zip(vehicles, decks)))
+                        if len(pairs) > 1:
+                            primary.viewport_follower.update_group(
+                                vehicles, decks,
+                                [pair.deck.yaw for pair in pairs], primary.urban)
+                        else:
+                            primary.viewport_follower.update(
+                                vehicles[0], primary.deck.yaw, primary.urban,
+                                deck_position=decks[0])
         except Exception as exc:
             # Isaac's ROS bridge invalidates its context as soon as the process
             # receives the stack's shutdown signal. A publisher can race that

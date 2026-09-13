@@ -141,7 +141,8 @@ def _sha256_file(path):
     return digest.hexdigest()
 
 
-def _start_rviz(enabled: bool) -> tuple[subprocess.Popen | None, object | None]:
+def _start_rviz(enabled: bool, parallel_pairs: int = 1
+                ) -> tuple[subprocess.Popen | None, object | None]:
     """Open the repository RViz layout and retain its diagnostic log."""
     if not enabled:
         return None, None
@@ -155,8 +156,11 @@ def _start_rviz(enabled: bool) -> tuple[subprocess.Popen | None, object | None]:
     log_path = Path("/tmp/ontology_rgat_stack/rviz.log")
     log_path.parent.mkdir(parents=True, exist_ok=True)
     stream = log_path.open("wb")
+    command = [str(script)]
+    if int(parallel_pairs) > 1:
+        command.extend(["--parallel-pairs", str(int(parallel_pairs))])
     process = subprocess.Popen(
-        [str(script)], cwd=str(ROOT), stdout=stream, stderr=subprocess.STDOUT)
+        command, cwd=str(ROOT), stdout=stream, stderr=subprocess.STDOUT)
     # Environment/Qt loader errors surface immediately. Do not let a broken
     # optional window abort a publication-scale flight run.
     time.sleep(2.0)
@@ -164,7 +168,9 @@ def _start_rviz(enabled: bool) -> tuple[subprocess.Popen | None, object | None]:
         stream.close()
         print(f"WARNING: RViz 2 exited immediately; see {log_path}.")
         return None, None
-    print("RViz 2 opened with the landing camera and flight layout.")
+    layout = (f"{int(parallel_pairs)} landing cameras and isolated pair frames"
+              if int(parallel_pairs) > 1 else "the landing camera and flight layout")
+    print(f"RViz 2 opened with {layout}.")
     return process, stream
 
 

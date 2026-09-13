@@ -16,8 +16,8 @@ network:
   matlab_port: 14651
 
 # Optional one-stage multi-pair execution. The single-pair path ignores this
-# block. Each route is an exact translation of the controlled route, preserving
-# relative initial conditions and disturbances while preventing cross-contact.
+# block. All pairs use the surveyed campus centreline at staggered route phases;
+# independent prims, marker IDs and episode resets prevent cross-contact/state.
 parallel:
   pair_offsets_enu_m:
     - [0.0, 0.0, 0.0]
@@ -29,6 +29,15 @@ parallel:
   route_phase_fractions: [0.0, 0.08, 0.16]
   marker_dictionary: DICT_5X5_250
   marker_id_stride: 60
+  # Operator-only settings for the shared three-pair stage. This block is
+  # excluded from the scientific config hash and cannot invalidate a policy.
+  operator_view:
+    viewport_resolution: [1280, 720]
+    frame: street
+    offset_m: [-14.0, 4.5, 12.0]
+    focus: group
+    pair_span_m: 22.0
+    smoothing: 0.18
 
 px4:
   namespace: /fmu

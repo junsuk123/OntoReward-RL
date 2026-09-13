@@ -4,6 +4,23 @@
 set -euo pipefail
 workspace_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 ascii_ws=${ASCII_ROS2_WS:-$HOME/.local/share/ontology_rgat_uav_rl/ros2_ws}
+layout="$workspace_root/rviz/ontology_rgat.rviz"
+rviz_arguments=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --parallel-pairs)
+      [[ $# -ge 2 ]] || { echo "ERROR: --parallel-pairs needs a value" >&2; exit 2; }
+      [[ "$2" =~ ^[1-3]$ ]] || {
+        echo "ERROR: --parallel-pairs must be between 1 and 3" >&2; exit 2;
+      }
+      if (( $2 > 1 )); then
+        layout="$workspace_root/rviz/ontology_rgat_parallel.rviz"
+      fi
+      shift 2
+      ;;
+    *) rviz_arguments+=("$1"); shift ;;
+  esac
+done
 
 # Everything that touches /fmu/* must speak Fast DDS, because that is what the
 # XRCE-DDS agent speaks. A shell with a different default sees the topics but
@@ -39,4 +56,4 @@ if [ -f "$ascii_ws/install/setup.bash" ]; then
   set -u
 fi
 
-exec rviz2 -d "$workspace_root/rviz/ontology_rgat.rviz" "$@"
+exec rviz2 -d "$layout" "${rviz_arguments[@]}"

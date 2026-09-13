@@ -190,16 +190,12 @@ $$
 저장소 루트에서 최종 실행 명령은 하나다.
 
 ```bash
-./run.sh --mode full
+./run.sh
 ```
 
-세미나용 축소 비교는 다음과 같다.
-
-```bash
-./run.sh --seminar-fast --stay-open
-```
-
-한 Isaac Sim stage에서 핵심 세 방법을 동시에 학습·평가하려면 다음을 사용한다.
+인자 없는 기본 실행은 세미나용 핵심 3-arm 프로필을 선택하고, 한 Isaac stage의
+UAV/UGV 3쌍에서 세 방법을 병렬 학습·평가하며, 완료 후 시각화 stack을 유지한다.
+즉 다음 명시적 명령과 같다.
 
 ```bash
 ./run.sh --seminar-fast --parallel-pairs 3 --stay-open
@@ -230,13 +226,18 @@ flight pipeline을 시작하지 않도록 실행 lock을 사용한다.
 ## 6. 모니터링과 결과
 
 - Dashboard: `http://127.0.0.1:8770/`
-- ROS/RViz namespace: `/landing_rl`
+- ROS/RViz namespace: `/landing_rl/pair_0`, `/landing_rl/pair_1`, `/landing_rl/pair_2`
 - 세미나 결과: `Ontology_RGAT_UAV_RL_ISAAC_PX4/results/seminar_fast/core3_hybrid_v3/`
 - 모델: `models/<pipeline>/<pipeline>.pt`, `<pipeline>.best.pt`
 - 학습 이력: `training/*.csv`, `models/*/*_training.csv`
 - 평가: `evaluation/`
 - 표·그림: `tables/`, `figures/`
 - 재현 정보: `manifest.json`
+
+Dashboard는 MATLAB 기본 색상 순서로 세 pair의 에피소드/step, marker, 상대 위치,
+UAV·UGV 속도, 배터리와 독립 PX4/UDP/topic 상태를 동시에 표시한다. RViz는 세 landing
+camera dock과 `landing_pad_0..2` 독립 TF/trajectory를 사용하며 Isaac GUI는 전체 편대를
+자동으로 한 화면에 맞춘다.
 
 ![MATLAB 스타일 실시간 대시보드](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/images/live_dashboard_status.png)
 

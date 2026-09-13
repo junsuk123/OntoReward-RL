@@ -8,13 +8,13 @@
 저장소 루트에서 전체 파이프라인을 실행한다.
 
 ```bash
-./run.sh --mode full
+./run.sh
 ```
 
-짧은 세미나 비교:
+이 기본값은 다음 명시적 명령과 같다.
 
 ```bash
-./run.sh --seminar-fast --stay-open
+./run.sh --seminar-fast --parallel-pairs 3 --stay-open
 ```
 
 `--stay-open`은 학습과 평가가 끝난 뒤에도 Isaac/PX4, RViz와 dashboard를 유지한다.
@@ -24,7 +24,7 @@
 
 | 명령 | 용도 |
 |---|---|
-| `./run.sh` | 기본 full pipeline |
+| `./run.sh` | 핵심 3-arm, UAV/UGV 3쌍, 한 Isaac stage, RViz/dashboard, 완료 후 유지 |
 | `./run.sh --mode full` | full mode 명시 |
 | `./run.sh --mode quick` | 구성·연결·짧은 경로 검사 |
 | `./run.sh --seminar-fast` | 핵심 3-arm 축소 실제 비교 |
@@ -92,7 +92,9 @@ http://127.0.0.1:8770/
 RViz topic namespace:
 
 ```text
-/landing_rl
+/landing_rl/pair_0
+/landing_rl/pair_1
+/landing_rl/pair_2
 ```
 
 상태 확인:
@@ -104,14 +106,17 @@ curl -fsS http://127.0.0.1:8770/api/state
 
 Dashboard 항목:
 
-- 현재 stage와 pipeline
-- committed episode와 live step
+- 현재 stage와 세 pair별 pipeline
+- 세 pair별 committed episode와 live step
 - episode return과 엄격 성공률
-- FOV/keypoint/semantic 상태
-- UAV/UGV 속도와 command
-- battery reserve
+- pair별 FOV/keypoint, 상대 XYZ, UAV/UGV 속도와 battery reserve
+- pair별 PX4 namespace, UDP endpoint, camera/RViz topic
 - adaptive weight, potential, relation attention
 - landing gate별 통과 여부
+
+RViz는 세 annotated landing camera, 세 독립 TF(`landing_pad_0..2`, `uav_body_0..2`),
+pair별 UAV/UGV trail과 landing gate를 동시에 표시한다. Isaac GUI는 1280×720에서 세
+pair의 중심과 실제 점유 폭으로 camera 거리·높이를 조절한다.
 
 Committed episode는 checkpoint/history 기록이 끝난 episode다. 현재 비행의 step과 구분한다.
 

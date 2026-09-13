@@ -26,16 +26,10 @@
 저장소 루트에서 실행한다.
 
 ```bash
-./run.sh --mode full
+./run.sh
 ```
 
-짧은 실제 시뮬레이션 비교:
-
-```bash
-./run.sh --seminar-fast --stay-open
-```
-
-핵심 세 방법을 하나의 Isaac stage에 있는 UAV/UGV 세 쌍으로 병렬 실행:
+인자 없는 기본값은 아래의 핵심 3-arm 병렬 비교와 동일하다.
 
 ```bash
 ./run.sh --seminar-fast --parallel-pairs 3 --stay-open
@@ -143,7 +137,7 @@ PPO optimizer는 동결 R-GAT parameter를 소유하지 않는다.
 ## 모니터링
 
 - Dashboard: <http://127.0.0.1:8770/>
-- RViz namespace: `/landing_rl`
+- RViz namespace: `/landing_rl/pair_0..2`
 - Runtime log: `/tmp/ontology_rgat_stack/`
 
 ```bash
@@ -152,7 +146,10 @@ curl -fsS http://127.0.0.1:8770/api/state
 ```
 
 Dashboard의 episode 수는 checkpoint/history에 commit된 episode를 나타낸다. 현재
-비행의 live step은 별도로 표시한다.
+비행의 live step은 별도로 표시한다. 세 pair 카드에서 marker, 상대 XYZ, UAV/UGV 속도,
+battery, PX4 namespace, UDP endpoint와 camera topic을 동시에 확인할 수 있다. RViz는
+세 camera dock 및 독립 `landing_pad_0..2` TF를 표시하고, Isaac viewport는 전체 편대를
+자동 framing한다.
 
 ## 결과 구조
 

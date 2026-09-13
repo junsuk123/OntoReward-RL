@@ -101,6 +101,18 @@ border-radius:1px;padding:7px 9px}
 .method-chip{border:1px solid #a8a8a8;border-left:4px solid var(--accent);padding:5px 8px;
 background:white;font-variant-numeric:tabular-nums}.method-chip b,.method-chip small{display:block}
 .method-chip small{color:var(--muted)}
+.pair-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(285px,1fr));gap:9px}
+.pair-card{border:1px solid #a8a8a8;border-top:4px solid var(--accent);background:#fafafa;
+padding:9px 10px;min-height:150px}.pair-head{display:flex;justify-content:space-between;
+gap:8px;align-items:baseline;margin-bottom:6px}.pair-head b{font-size:13px}.pair-head span{
+color:var(--muted);font-size:10px}.pair-metrics{display:grid;grid-template-columns:repeat(3,1fr);
+gap:5px}.pair-metrics div{background:#fff;border:1px solid #d0d0d0;padding:4px 5px}
+.pair-metrics b,.pair-metrics small{display:block}.pair-metrics b{font-size:13px;
+font-variant-numeric:tabular-nums}.pair-metrics small{font-size:9px;color:var(--muted)}
+.pair-links{margin-top:6px;color:var(--muted);font:9px/1.45 "Courier New",monospace;
+overflow-wrap:anywhere}.pair-state{font-weight:600}.pair-state.running{color:var(--accent)}
+.pair-state.success{color:var(--good)}.pair-state.failure,.pair-state.unsafe_touchdown{
+color:var(--bad)}
 .benchmark-formula{margin-top:9px;padding:6px 9px;border:1px solid #b8b8b8;background:#f7f7f7;
 font:12px/1.5 "Courier New",monospace;text-align:center}
 .g3d{position:relative}
@@ -160,6 +172,8 @@ const BENCHMARK_EVAL=BENCHMARK_METHODS.map(x=>'benchmark_eval_'+x);
 const BENCHMARK_STEP=BENCHMARK_METHODS.map(x=>'benchmark_step_'+x);
 const CARDS=[
  {id:'tiles',title:null},
+ {id:'parallel_pairs',view:'benchmark',kind:'pairs',
+  title:'동시 비행쌍 · 한 Isaac Sim 월드 / 독립 PX4·PPO'},
  {id:'benchmark_contract',view:'benchmark',kind:'contract',
   title:'Shin 2026 controlled benchmark · information boundary'},
  {id:'benchmark_success',view:'benchmark',title:'Training moving success rate',
@@ -313,12 +327,14 @@ const LABELS={ppo_manual:'Manual',ppo_proposed:'Ontology-RGAT',rgat:'R-GAT',
 const root=document.getElementById('root');
 for(const c of CARDS){
   const el=document.createElement('section');
-  el.className='card'+((c.id==='tiles'||['graph','reward','contract','evalbars'].includes(c.kind))?' wide':'')
+  el.className='card'+((c.id==='tiles'||['graph','reward','contract','evalbars','pairs'].includes(c.kind))?' wide':'')
     +(c.kind==='graph'?' g3d':'');
   el.id='card-'+c.id;
   el.dataset.view=c.view||'common';
   el.hidden=c.view==='benchmark';
   if(c.id==='tiles'){el.innerHTML='<div class="tiles" id="tiles"></div>';}
+  else if(c.kind==='pairs'){el.innerHTML=`<h2>${c.title}</h2>
+    <div class="pair-grid" id="parallel-pair-grid"></div>`;}
   else if(c.kind==='contract'){el.innerHTML=`<h2>${c.title}</h2>
     <div class="contract-grid" id="benchmark-contract"></div>
     <div class="method-strip" id="benchmark-methods"></div>
@@ -440,18 +456,23 @@ function tiles(state){
   add('stage',state.stage.name);
   if(s.dashboard_profile==='shin2026'){
     const methods=s.benchmark_methods||[];
+    const pairCount=Number(s.parallel_pair_count||1);
     const trained=methods.reduce((n,m)=>n+(state.series['benchmark_train_'+m]||[]).length,0);
     add('phase',s.benchmark_phase||'initializing');
-    if(s.current_pipeline||s.current_method)add('pipeline',s.current_pipeline||s.current_method);
-    if(s.state_estimation_status)add('state estimation',s.state_estimation_status);
+    add('UAV / UGV pairs',pairCount);
+    if(pairCount===1&&(s.current_pipeline||s.current_method))
+      add('pipeline',s.current_pipeline||s.current_method);
+    if(pairCount===1&&s.state_estimation_status)
+      add('state estimation',s.state_estimation_status);
     add('run mode',s.benchmark_mode||'--');
     add('completed episodes',`${trained} / ${s.training_total||0}`);
-    if(s.current_training_episode!==undefined)
+    if(pairCount===1&&s.current_training_episode!==undefined)
       add('active episode',`${s.current_training_episode}`);
     add('paired evaluation',`${s.evaluation_completed||0} / ${s.evaluation_total||0}`);
-    if(s.current_scenario)add('scenario',s.current_scenario.replaceAll('_',' '));
+    if(pairCount===1&&s.current_scenario)
+      add('scenario',s.current_scenario.replaceAll('_',' '));
     const step=state.series.benchmark_step||[],latest=step.length?step[step.length-1]:null;
-    if(latest){add('live episode step',latest.step);
+    if(pairCount===1&&latest){add('live episode step',latest.step);
       add('target visible',latest.in_fov?'yes':'no');
       if(latest.state_estimation_enabled&&Number.isFinite(Number(latest.position_error)))
         add('estimator error',Number(latest.position_error).toFixed(3)+' m');
@@ -461,12 +482,13 @@ function tiles(state){
       add('battery energy',Number(latest.battery_remaining_j||0).toFixed(0)+' J');}
     const current=s.current_method?(state.series['benchmark_train_'+s.current_method]||[]):[];
     const trainedLast=current.length?current[current.length-1]:null;
-    if(trainedLast){add('optimizer phase',trainedLast.optimization_phase||'--');
+    if(pairCount===1&&trainedLast){add('optimizer phase',trainedLast.optimization_phase||'--');
       add('effective LR',Number(trainedLast.effective_learning_rate||0).toExponential(2));}
-    if(s.current_curriculum!==undefined)add('curriculum c',Number(s.current_curriculum).toFixed(3));
-    if(s.current_pad_motion_scale!==undefined)
+    if(pairCount===1&&s.current_curriculum!==undefined)
+      add('curriculum c',Number(s.current_curriculum).toFixed(3));
+    if(pairCount===1&&s.current_pad_motion_scale!==undefined)
       add('UGV speed scale',Number(s.current_pad_motion_scale).toFixed(3));
-    if(s.current_action_envelope_scale!==undefined)
+    if(pairCount===1&&s.current_action_envelope_scale!==undefined)
       add('UAV envelope',Number(s.current_action_envelope_scale).toFixed(3));
     if(s.rgat_dataset_episodes!==undefined){
       add('R-GAT flight data',`${s.rgat_dataset_episodes} ep / ${s.rgat_dataset_samples||0} samples`);
@@ -492,6 +514,33 @@ function tiles(state){
 }
 function escapeHTML(value){return String(value??'--').replace(/[&<>"']/g,c=>
   ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function pairPanel(state){
+  const box=document.getElementById('parallel-pair-grid');if(!box)return;
+  const s=state.scalars||{},pairs=s.parallel_pair_status||s.parallel_pair_layout||[];
+  if(!pairs.length){box.innerHTML='<div class="note">비행쌍 초기화 대기 중</div>';return;}
+  box.innerHTML=pairs.map((pair,index)=>{
+    const method=pair.method||'--',rows=state.series['benchmark_step_'+method]||[];
+    const live=rows.length?rows[rows.length-1]:{},xyz=pair.relative_xyz||null;
+    const step=pair.step??live.step??0,status=String(pair.status||live.status||'waiting');
+    const marker=pair.marker_visible===null||pair.marker_visible===undefined
+      ?'대기':(pair.marker_visible?'관측':'소실');
+    const reserve=Number(pair.battery_reserve??live.battery_reserve);
+    const pos=xyz&&xyz.length===3
+      ?`${Number(xyz[0]).toFixed(2)}, ${Number(xyz[1]).toFixed(2)}, ${Number(xyz[2]).toFixed(2)}`:'--';
+    return `<div class="pair-card" style="border-top-color:${PALETTE[index%PALETTE.length]}">`
+      +`<div class="pair-head"><b>Pair ${Number(pair.index||0)+1} · ${escapeHTML(LABELS['benchmark_train_'+method]||method)}</b>`
+      +`<span class="pair-state ${escapeHTML(status)}">${escapeHTML(status.toUpperCase())}</span></div>`
+      +`<div class="pair-metrics"><div><b>${escapeHTML(pair.episode??0)} / ${escapeHTML(step)}</b><small>에피소드 / 스텝</small></div>`
+      +`<div><b>${escapeHTML(marker)}</b><small>마커</small></div>`
+      +`<div><b>${Number(pair.ugv_speed_m_s??live.ugv_speed_m_s??0).toFixed(2)} m/s</b><small>UGV 속도</small></div>`
+      +`<div><b>${Number(pair.uav_speed_m_s??live.uav_speed_m_s??0).toFixed(2)} m/s</b><small>UAV 속도</small></div>`
+      +`<div><b>${Number.isFinite(reserve)?(100*reserve).toFixed(1)+'%':'--'}</b><small>배터리 잔량</small></div>`
+      +`<div><b>${escapeHTML(pos)}</b><small>패드 상대 XYZ (m)</small></div></div>`
+      +`<div class="pair-links">${escapeHTML(pair.phase||'waiting')} · ${escapeHTML(String(pair.scenario||'--').replaceAll('_',' '))}<br>`
+      +`route ${Number(pair.route_phase_fraction||0).toFixed(2)} · PX4 ${escapeHTML(pair.px4_namespace)} · UDP ${escapeHTML(pair.gateway_port)}/${escapeHTML(pair.learner_port)}<br>`
+      +`${escapeHTML(pair.rviz_namespace)} · ${escapeHTML(pair.camera_topic)}</div></div>`;
+  }).join('');
+}
 function benchmarkPanel(state){
   const s=state.scalars||{},contract=s.actor_contract||{};
   const labels={camera:'Actor image',proprioception:'Actor proprioception',
@@ -872,7 +921,7 @@ function applyProfile(state){
   const profile=state.scalars.dashboard_profile==='shin2026'?'benchmark':'urban';
   document.body.dataset.profile=profile;
   document.getElementById('page-title').textContent=profile==='benchmark'
-    ?'Three-pipeline · recurrent vision landing benchmark'
+    ?'3쌍 병렬 비전 착륙 · Isaac Sim + PX4 + PPO'
     :'Ontology-RGAT · Isaac Sim + PX4';
   for(const c of CARDS){
     const el=document.getElementById('card-'+c.id);
@@ -880,7 +929,9 @@ function applyProfile(state){
   }
   if(profile==='benchmark'){
     const pipeline=state.scalars.current_pipeline||state.scalars.current_method||'';
-    const estimator=pipeline.startsWith('shin_se')||pipeline==='shin2026';
+    const active=Number(state.scalars.parallel_pair_count||1)>1
+      ?(state.scalars.benchmark_methods||[]):[pipeline];
+    const estimator=active.some(x=>x.startsWith('shin_se')||x==='shin2026');
     for(const id of ['benchmark_position_rmse','benchmark_velocity_rmse','benchmark_aux',
                      'benchmark_active_saturation',
                      'benchmark_live_state','benchmark_live_error',
@@ -888,11 +939,11 @@ function applyProfile(state){
                      'benchmark_eval_visual_loss']){
       const el=document.getElementById('card-'+id);if(el)el.hidden=!estimator;
     }
-    const ontology=pipeline==='onto_no_se'||pipeline.includes('rgat')||pipeline.includes('pbrs');
+    const ontology=active.some(x=>x==='onto_no_se'||x.includes('rgat')||x.includes('pbrs'));
     for(const id of ['benchmark_live_semantic','benchmark_live_phi']){
       const el=document.getElementById('card-'+id);if(el)el.hidden=!ontology;
     }
-    const adaptive=pipeline.includes('adaptive_weight')||pipeline==='shin_se_rgat_weight';
+    const adaptive=active.some(x=>x.includes('adaptive_weight')||x==='shin_se_rgat_weight');
     for(const id of ['benchmark_adaptive_weights','benchmark_adaptive_latency']){
       const el=document.getElementById('card-'+id);if(el)el.hidden=!adaptive;
     }
@@ -910,8 +961,9 @@ async function tick(){
       lastRevision=state.revision;lastAt=Date.now();
       const profile=applyProfile(state);
       tiles(state);
+      if(profile==='benchmark')pairPanel(state);
       for(const c of CARDS){
-        if(c.id==='tiles'||c.kind==='graph'||c.kind==='contract'||
+        if(c.id==='tiles'||c.kind==='graph'||c.kind==='contract'||c.kind==='pairs'||
            (c.view&&c.view!=='common'&&c.view!==profile))continue;
         c.kind==='evalbars'?drawEvaluationBars(c,state):draw(c,state);
       }

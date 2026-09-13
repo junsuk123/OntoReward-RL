@@ -37,7 +37,7 @@ from typing import Any, Sequence
 
 import numpy as np
 
-__all__ = ["RvizPublisher"]
+__all__ = ["RvizPublisher", "RvizPublisherGroup"]
 
 # relation id -> RGB. Matches the ontology relation order:
 # 0 degrades, 1 supports, 2 contributes, 3 self.
@@ -122,8 +122,30 @@ class RvizPublisher:
 
     # ------------------------------------------------------------ lifecycle
     @classmethod
-    def create(cls, cfg, potential=None, node_name: str = "ontology_rgat_viz"):
+    def create(cls, cfg, potential=None, node_name: str = "ontology_rgat_viz",
+               pair_methods: Sequence[str] | None = None):
         """Return a publisher, or ``None`` if ROS 2 is unavailable or refused."""
+        methods = tuple(str(method) for method in (pair_methods or ()))
+        if len(methods) > 1:
+            publishers = {}
+            for index, method in enumerate(methods):
+                pair_cfg = cfg.derive(**{
+                    "viz.rviz.namespace": f"{str(cfg.viz.rviz.namespace).rstrip('/')}/pair_{index}",
+                    "viz.rviz.pad_frame": f"landing_pad_{index}",
+                    "viz.rviz.body_frame": f"uav_body_{index}",
+                })
+                publisher = cls.create(
+                    pair_cfg, potential=potential,
+                    node_name=f"{node_name}_pair_{index}")
+                if publisher is None:
+                    for created in publishers.values():
+                        created.close()
+                    return None
+                publishers[method] = publisher
+            print(
+                f"RViz 2 parallel view configured for {len(publishers)} pairs "
+                f"under {cfg.viz.rviz.namespace}/pair_N.")
+            return RvizPublisherGroup(publishers)
         if not cfg.viz.rviz.enabled:
             return None
         try:
@@ -166,7 +188,7 @@ class RvizPublisher:
         except Exception:                              # pragma: no cover
             pass
 
-    def clear_trails(self) -> None:
+    def clear_trails(self, method: str | None = None) -> None:
         self._uav_trail.clear()
         self._pad_trail.clear()
         self._delete_all(self.scene_pub)
@@ -594,3 +616,50 @@ class RvizPublisher:
             "marker_visible": bool(in_fov),
         })
         self.telemetry_pub.publish(message)
+
+
+class RvizPublisherGroup:
+    """Route each concurrent method to its own RViz topics and TF frames.
+
+    The three learners share one process and one Isaac stage, but visual state
+    is not a shared control resource. Keeping an independent publisher and
+    trail per method prevents one episode reset from erasing the other two and
+    prevents three ``map -> landing_pad`` transforms from overwriting each
+    other.
+    """
+
+    def __init__(self, publishers: dict[str, RvizPublisher]):
+        if not publishers:
+            raise ValueError("an RViz publisher group needs at least one pair")
+        self.publishers = dict(publishers)
+
+    @property
+    def potential(self):
+        return next(iter(self.publishers.values())).potential
+
+    @potential.setter
+    def potential(self, value) -> None:
+        for publisher in self.publishers.values():
+            publisher.potential = value
+
+    def _for(self, method: str | None) -> RvizPublisher:
+        if method in self.publishers:
+            return self.publishers[str(method)]
+        return next(iter(self.publishers.values()))
+
+    def clear_trails(self, method: str | None = None) -> None:
+        if method is None:
+            for publisher in self.publishers.values():
+                publisher.clear_trails()
+            return
+        self._for(method).clear_trails()
+
+    def publish_benchmark_step(self, *, method: str, **kwargs) -> None:
+        self._for(method).publish_benchmark_step(method=method, **kwargs)
+
+    def publish_step(self, log, cur, info: dict[str, Any]) -> None:
+        self._for(None).publish_step(log, cur, info)
+
+    def close(self) -> None:
+        for publisher in self.publishers.values():
+            publisher.close()

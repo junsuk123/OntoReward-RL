@@ -63,3 +63,11 @@ def test_parallel_route_phases_and_marker_ids_fit_declared_dictionary():
     }
     assert len(expanded) == 3 * len(marker_ids)
     assert min(expanded) >= 0 and max(expanded) < 250
+
+
+def test_bare_repository_launcher_selects_three_pair_operator_profile():
+    launcher = (ROOT.parent / "run.sh").read_text(encoding="utf-8")
+    assert "if [[ $# -eq 0 ]]" in launcher
+    assert "seminar_fast=true" in launcher
+    assert "--parallel-pairs 3" in launcher
+    assert "--stay-open" in launcher

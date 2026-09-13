@@ -53,6 +53,13 @@ def test_incomplete_run_uses_current_training_and_never_stale_evaluation(tmp_pat
     assert by_method["onto_rgat_adaptive_weight_no_se"]["episodes"] == 0
     assert (tmp_path / "presentation/slide13_safe_landing_performance.png").is_file()
     assert (tmp_path / "presentation/slide14_rgat_reward_validation.png").is_file()
+    for name in (
+            "page14_success_rate_ci.png",
+            "page14_touchdown_lateral_error.png",
+            "page15_reward_weights_comparison.png",
+            "page15_reward_model_validation.png",
+            "page16_training_safe_landing_progress.png"):
+        assert (tmp_path / "presentation" / name).is_file()
     text = (tmp_path / "presentation/presentation_results_summary.json").read_text()
     assert "NaN" not in text
 

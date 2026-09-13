@@ -216,7 +216,8 @@ def _load_performance_source(results_dir: Path, manifest: Mapping[str, Any]):
 
 
 def _save_performance_figures(output_dir: Path, summaries, distributions,
-                              grouped, title_prefix: str, status: str):
+                              grouped, title_prefix: str, status: str,
+                              training_grouped=None):
     plt = _configure_matplotlib()
     labels = [METHOD_LABELS[name] for name in METHODS]
     colors = [METHOD_COLORS[name] for name in METHODS]
@@ -324,6 +325,8 @@ def _save_performance_figures(output_dir: Path, summaries, distributions,
     fig.tight_layout()
     success_path = output_dir / "slide13_success_rate_ci.png"
     fig.savefig(success_path, dpi=220)
+    page14_success_path = output_dir / "page14_success_rate_ci.png"
+    fig.savefig(page14_success_path, dpi=220)
     plt.close(fig)
 
     fig, ax = plt.subplots(figsize=(7.2, 4.15))
@@ -331,11 +334,14 @@ def _save_performance_figures(output_dir: Path, summaries, distributions,
     fig.tight_layout()
     lateral_path = output_dir / "slide13_touchdown_lateral_error.png"
     fig.savefig(lateral_path, dpi=220)
+    page14_lateral_path = output_dir / "page14_touchdown_lateral_error.png"
+    fig.savefig(page14_lateral_path, dpi=220)
     plt.close(fig)
 
     fig, ax = plt.subplots(figsize=(8.8, 4.2))
+    progress_grouped = grouped if training_grouped is None else training_grouped
     for method in METHODS:
-        rows = list(grouped.get(method, ()))
+        rows = list(progress_grouped.get(method, ()))
         values = [_number(row, "strict_success", _number(row, "paper_success", 0.0))
                   for row in rows]
         if not values:
@@ -345,13 +351,19 @@ def _save_performance_figures(output_dir: Path, summaries, distributions,
         ax.plot(np.arange(1, len(values) + 1), rolling, linewidth=2,
                 color=METHOD_COLORS[method], label=f"{METHOD_LABELS[method]} (N={len(values)})")
     ax.set(xlabel="PPO 에피소드", ylabel="최근 5회 안전 착륙률",
-           ylim=(-.03, 1.03), title=f"학습 진행률 — {title_prefix}")
+           ylim=(-.03, 1.03), title="학습 진행률 — PPO checkpoint 기록")
     ax.legend(fontsize=8, loc="best")
     fig.tight_layout()
     progress_path = output_dir / "training_safe_landing_progress.png"
     fig.savefig(progress_path, dpi=220)
+    page16_progress_path = output_dir / "page16_training_safe_landing_progress.png"
+    fig.savefig(page16_progress_path, dpi=220)
     plt.close(fig)
-    return [composite, success_path, lateral_path, progress_path]
+    return [
+        composite, success_path, page14_success_path,
+        lateral_path, page14_lateral_path,
+        progress_path, page16_progress_path,
+    ]
 
 
 def _artifact_diagnostics(results_dir: Path, dataset_manifest: Mapping[str, Any]):
@@ -509,7 +521,54 @@ def _save_reward_diagnostics(output_dir: Path, results_dir: Path,
     path = output_dir / "slide14_rgat_reward_validation.png"
     fig.savefig(path, dpi=220)
     plt.close(fig)
-    return path, validation_rows, artifact_status, exact
+
+    # The current seminar deck uses two independent image placeholders on
+    # page 15.  Keep the composite diagnostic for documentation, and also save
+    # slide-ready charts that can be inserted without cropping or rescaling a
+    # four-panel figure.
+    fig, ax = plt.subplots(figsize=(7.2, 4.15))
+    x = np.arange(5)
+    ax.bar(x - .18, baseline, width=.36, color="#A6A6A6", label="고정 기준")
+    if np.isfinite(valid_means).any():
+        ax.bar(x + .18, valid_means, width=.36, color=COMPONENT_COLORS,
+               edgecolor="white", label="R-GAT 평균")
+    ax.set_xticks(x, COMPONENT_LABELS, rotation=10, ha="right")
+    ax.set_ylabel("보상 가중치")
+    ax.set_title("5개 보상 성분의 평균 가중치", fontweight="bold")
+    ax.legend(fontsize=8)
+    fig.tight_layout()
+    weights_path = output_dir / "page15_reward_weights_comparison.png"
+    fig.savefig(weights_path, dpi=220)
+    plt.close(fig)
+
+    # Page 15 explicitly reports the weight-model gate only.  The semantic
+    # potential observability check remains in the composite diagnostic above,
+    # but is intentionally excluded from this slide-specific chart.
+    weight_validation_rows = validation_rows[:3]
+    fig, ax = plt.subplots(figsize=(7.2, 4.15))
+    y = np.arange(len(weight_validation_rows))
+    finite_values = []
+    for index, row in enumerate(weight_validation_rows):
+        value, threshold = row["value"], row["threshold"]
+        if math.isfinite(value):
+            finite_values.append(value)
+            ax.barh(index, value, color="#77AC30" if row["passed"] else "#A2142F",
+                    height=.52)
+            ax.text(value, index, f" {value:.3f}", va="center", fontsize=9)
+        else:
+            ax.text(.02, index, "산출 대기", va="center", color="#777777", fontsize=9)
+        ax.plot([threshold, threshold], [index - .34, index + .34],
+                color="#000000", linewidth=2)
+    ax.set_yticks(y, [row["metric"] for row in weight_validation_rows])
+    ax.invert_yaxis()
+    ax.set_xlim(0, max(1.02, max(finite_values + [1.0]) * 1.13))
+    ax.set_xlabel("측정값 (검은 선 = 통과 기준)")
+    ax.set_title("보상 가중치 모델 검증 지표", fontweight="bold")
+    fig.tight_layout()
+    validation_path = output_dir / "page15_reward_model_validation.png"
+    fig.savefig(validation_path, dpi=220)
+    plt.close(fig)
+    return [path, weights_path, validation_path], validation_rows, artifact_status, exact
 
 
 def write_presentation_results(results_dir, output_dir=None) -> dict[str, Any]:
@@ -522,30 +581,33 @@ def write_presentation_results(results_dir, output_dir=None) -> dict[str, Any]:
     summaries, distributions = _metric_rows(grouped, status)
     _write_csv(output_dir / "slide13_safe_landing_metrics.csv", summaries)
     figures = _save_performance_figures(
-        output_dir, summaries, distributions, grouped, title, status)
+        output_dir, summaries, distributions, grouped, title, status,
+        training_grouped=_current_training_rows(results_dir, manifest))
 
     dataset_manifest = _read_json(
         results_dir / "rgat" / "adaptive_reward_rollouts.manifest.json")
-    reward_figure, validation, artifact_status, exact = _save_reward_diagnostics(
+    reward_figures, validation, artifact_status, exact = _save_reward_diagnostics(
         output_dir, results_dir, dataset_manifest)
-    figures.append(reward_figure)
+    figures.extend(reward_figures)
     catalog = (
-        {"slide": 13, "metric": "안전 착륙률", "definition":
+        {"slide": 14, "metric": "안전 착륙률", "definition":
          "strict_success 평균; 접촉·수평오차·수직속도·상대수평속도·자세·각속도 동시 통과", "uncertainty": "Wilson 95% CI"},
-        {"slide": 13, "metric": "접촉 수평 오차", "definition":
+        {"slide": 14, "metric": "접촉 수평 오차", "definition":
          "pad_contact가 참인 episode의 touchdown_lateral_error", "uncertainty": "box plot"},
-        {"slide": 13, "metric": "위험 접촉률", "definition":
+        {"slide": 14, "metric": "위험 접촉률", "definition":
          "unsafe_pad_contact 평균", "uncertainty": "표본 수 N 병기"},
-        {"slide": 13, "metric": "시야 상실률", "definition":
+        {"slide": 14, "metric": "시야 상실률", "definition":
          "episode별 fov_loss_fraction 평균", "uncertainty": "표본 수 N 병기"},
-        {"slide": 14, "metric": "검증 정확도", "definition":
+        {"slide": 15, "metric": "검증 정확도", "definition":
          "held-out episode terminal outcome 분류 정확도", "uncertainty": "episode 분할"},
-        {"slide": 14, "metric": "순위 일치율", "definition":
+        {"slide": 15, "metric": "순위 일치율", "definition":
          "성공 trajectory 점수가 실패 trajectory보다 큰 pair 비율", "uncertainty": "선택 pair 수 병기"},
-        {"slide": 14, "metric": "평균 가중치 CV", "definition":
+        {"slide": 15, "metric": "평균 가중치 CV", "definition":
          "상태별 adaptive weight 변동계수의 5성분 평균", "uncertainty": "품질 게이트 기준 비교"},
-        {"slide": 14, "metric": "관측 방향 일치율", "definition":
+        {"slide": 15, "metric": "관측 방향 일치율", "definition":
          "관측 품질 변화와 semantic potential 변화의 방향 일치 비율", "uncertainty": "시간 인접 pair"},
+        {"slide": 16, "metric": "최근 5회 학습 안전 착륙률", "definition":
+         "방법별 PPO training checkpoint에 기록된 strict_success의 5-episode 이동평균", "uncertainty": "학습 추세 진단"},
     )
     _write_csv(output_dir / "presentation_metric_catalog.csv", catalog)
     summary = {
@@ -568,10 +630,12 @@ def write_presentation_results(results_dir, output_dir=None) -> dict[str, Any]:
         f"- 성능 자료 상태: **{title}**\n"
         f"- R-GAT 보상 모델 상태: **{artifact_status}**\n"
         "- `slide13_safe_landing_performance.png`: 13쪽 전체 패널\n"
-        "- `slide13_success_rate_ci.png`: 안전 착륙률과 95% 신뢰구간\n"
-        "- `slide13_touchdown_lateral_error.png`: 접촉 수평 오차 분포\n"
-        "- `training_safe_landing_progress.png`: 현재 학습 진행 추세\n"
-        "- `slide14_rgat_reward_validation.png`: 14쪽 보상 모델 진단\n\n"
+        "- `page14_success_rate_ci.png`: 14쪽 안전 착륙률과 95% 신뢰구간\n"
+        "- `page14_touchdown_lateral_error.png`: 14쪽 접촉 수평 오차 분포\n"
+        "- `page15_reward_weights_comparison.png`: 15쪽 고정/R-GAT 평균 가중치\n"
+        "- `page15_reward_model_validation.png`: 15쪽 보상 모델 검증 지표\n"
+        "- `page16_training_safe_landing_progress.png`: 16쪽 PPO 학습 진행 추세\n"
+        "- `slide13_safe_landing_performance.png`, `slide14_rgat_reward_validation.png`: 복합 진단용\n\n"
         "> 완료 전 수치는 예비 학습 결과입니다. 최종 평가와 혼용하지 마십시오. "
         "동일 명령을 다시 실행하면 최신 산출물로 갱신됩니다.\n",
         encoding="utf-8")

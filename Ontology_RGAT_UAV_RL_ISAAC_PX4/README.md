@@ -41,7 +41,8 @@ checkpoint/history와 각 pair의 live telemetry에서 갱신된다.
 ```
 
 인자 없는 기본값은 아래의 핵심 3-arm 병렬 비교에 robust adaptive
-R-GAT 품질 게이트와 완료 후 시각화 유지를 더한 프로필이다.
+R-GAT 품질 게이트와 완료 후 시각화 유지를 더한 프로필이다. 기본 야간 예산은
+방법별 PPO 144회와 시나리오별 평가 5회이며, 실측 기준 약 8.5~9.5시간이다.
 
 ```bash
 ./run.sh --seminar-fast --parallel-pairs 3 --stay-open
@@ -193,7 +194,7 @@ XYZ, UAV/UGV 속도, battery, 착륙 gate, PX4 namespace, UDP endpoint와 camera
 | `evaluation/crossover_plan.csv` | method·scenario·seed의 물리 pair 교차 배정 |
 | `evaluation/per_episode.csv` | paired seed와 교차 pair의 물리 성능 metric |
 | `tables/`, `figures/` | 비교표와 MATLAB 스타일 그래프 |
-| `presentation/` | 13·14쪽용 16:9 PNG, 원자료 CSV, 지표 정의와 상태 JSON |
+| `presentation/` | 14~16쪽용 PNG, 원자료 CSV, 지표 정의와 상태 JSON |
 
 Reward 정의가 서로 다르므로 arm 간 순위는 episode return이 아니라 안전 착륙률,
 접촉 품질, FOV loss, 상대오차와 paired evaluation으로 결정한다.
@@ -202,7 +203,7 @@ Reward 정의가 서로 다르므로 arm 간 순위는 episode return이 아니�
 
 ```bash
 PYTHONPATH=python python python/generate_presentation_results.py \
-  --results-dir results/seminar_fast/core3_hybrid_v3 \
+  --results-dir results/seminar_10h/core3_parallel_144 \
   --output-dir /원하는/발표자료/폴더
 ```
 

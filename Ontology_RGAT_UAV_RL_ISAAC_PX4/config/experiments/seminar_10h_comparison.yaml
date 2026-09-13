@@ -1,0 +1,17 @@
+extends: seminar_fast_comparison.yaml
+
+# 한 번의 야간 실행에서 세 방법의 학습, checkpoint 선택, paired evaluation,
+# 표·그림 저장까지 10시간 안에 완료하도록 잡은 실측 기반 예산이다.
+seminar_fast:
+  label: 10-hour three-pair preliminary comparison
+
+training:
+  episodes_full: 144
+
+ppo:
+  # 32 episode 실험에서는 마지막 12회가 모두 실패해도 전체 비교 결과를
+  # 저장할 수 있었다. 장시간 실행도 희소 성공 자체를 인프라 고장으로
+  # 오인하지 않도록 요청된 PPO 예산 직후까지 성능 gate를 유예한다.
+  # 배터리 고갈과 simulator/PX4 오류 검사는 계속 활성화된다.
+  health_grace_episodes: 145
+

@@ -213,7 +213,9 @@ $$
 인자 없는 기본 실행은 세미나용 핵심 3-arm 프로필을 선택하고, 한 Isaac stage의
 UAV/UGV 3쌍에서 세 방법을 병렬 학습·평가하며, 완료 후 시각화 stack을 유지한다.
 이 기본 프로필은 `--parallel-pairs 3`, `--stay-open` 및 robust adaptive R-GAT
-품질 게이트를 함께 적용한다. 개발용 명시적 호출은 다음과 같다.
+품질 게이트를 함께 적용한다. 방법별 PPO 144회와 시나리오별 평가 5회로 구성되어
+최근 32회 실측 기준 전체 결과 저장까지 약 8.5~9.5시간을 목표로 한다. 개발용
+명시적 호출은 다음과 같다.
 
 ```bash
 ./run.sh --seminar-fast --parallel-pairs 3 --stay-open
@@ -246,13 +248,13 @@ flight pipeline을 시작하지 않도록 실행 lock을 사용한다.
 
 - Dashboard: `http://127.0.0.1:8770/`
 - ROS/RViz namespace: `/landing_rl/pair_0`, `/landing_rl/pair_1`, `/landing_rl/pair_2`
-- 세미나 결과: `Ontology_RGAT_UAV_RL_ISAAC_PX4/results/seminar_fast/core3_hybrid_v3/`
+- 10시간 실행 결과: `Ontology_RGAT_UAV_RL_ISAAC_PX4/results/seminar_10h/core3_parallel_144/`
 - 모델: `models/<pipeline>/<pipeline>.pt`, `<pipeline>.best.pt`,
   `<pipeline>.selected.pt`
 - 학습 이력: `training/*.csv`, `models/*/*_training.csv`
 - 평가: `evaluation/`
 - 표·그림: `tables/`, `figures/`
-- 발표용 13·14쪽 그래프와 지표 원자료: `presentation/`
+- 발표용 14~16쪽 그래프와 지표 원자료: `presentation/`
 - 재현 정보: `manifest.json`
 
 발표용 그림은 파이프라인 진행 단계마다 자동 갱신되며, 완료 전에는 반드시
@@ -261,7 +263,7 @@ flight pipeline을 시작하지 않도록 실행 lock을 사용한다.
 ```bash
 cd Ontology_RGAT_UAV_RL_ISAAC_PX4
 PYTHONPATH=python python python/generate_presentation_results.py \
-  --results-dir results/seminar_fast/core3_hybrid_v3 \
+  --results-dir results/seminar_10h/core3_parallel_144 \
   --output-dir /원하는/발표자료/폴더
 ```
 

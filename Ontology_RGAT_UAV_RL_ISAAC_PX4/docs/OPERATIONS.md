@@ -12,7 +12,8 @@
 ```
 
 이 기본값은 핵심 3-arm, 3-pair, `--stay-open`, robust adaptive R-GAT
-품질 프로필을 모두 포함한다. 병렬 구성을 명시하는 개발용 명령은 다음과 같다.
+품질 프로필을 모두 포함한다. 방법별 PPO 144회, 시나리오별 평가 5회로 전체 결과
+저장까지 약 8.5~9.5시간을 목표로 한다. 병렬 구성을 명시하는 개발용 명령은 다음과 같다.
 
 ```bash
 ./run.sh --seminar-fast --parallel-pairs 3 --stay-open
@@ -184,11 +185,11 @@ Policy/geometry/착륙 실패는 실제 학습 결과이므로 실패 class로 �
 세미나 profile:
 
 ```text
-Ontology_RGAT_UAV_RL_ISAAC_PX4/results/seminar_fast/core3_hybrid_v3/
+Ontology_RGAT_UAV_RL_ISAAC_PX4/results/seminar_10h/core3_parallel_144/
 ```
 
 ```bash
-find Ontology_RGAT_UAV_RL_ISAAC_PX4/results/seminar_fast/core3_hybrid_v3 \
+find Ontology_RGAT_UAV_RL_ISAAC_PX4/results/seminar_10h/core3_parallel_144 \
   -maxdepth 3 -type f | sort
 ```
 

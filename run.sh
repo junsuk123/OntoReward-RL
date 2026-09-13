@@ -101,10 +101,10 @@ if [[ "$seminar_fast" == true ]]; then
   # 같은 CLI 옵션을 주면 argparse의 마지막 값이 이 preview 기본값을 덮는다.
   profile_arguments=(
     --mode full
-    --config "$project_root/config/experiments/seminar_fast_comparison.yaml"
+    --config "$project_root/config/experiments/seminar_10h_comparison.yaml"
     --system-config "$project_root/config/seminar-fast-system.yaml"
     --experiment adaptive_reward_weight_comparison
-    --results-dir "$project_root/results/seminar_fast/core3_hybrid_v3"
+    --results-dir "$project_root/results/seminar_10h/core3_parallel_144"
     --pipelines shin_se_fixed no_se_fixed onto_rgat_adaptive_weight_no_se
     --parallel-pairs 3
     --stay-open
@@ -113,15 +113,18 @@ if [[ "$seminar_fast" == true ]]; then
     --rgat-epochs 80
   )
   if [[ "$training_budget_supplied" == false ]]; then
-    profile_arguments+=(--train-episodes 32)
+    # 32회 실측(전체 4시간 19분)을 단계별로 환산한 야간 예산이다.
+    # 방법별 144회와 시나리오별 평가 5회는 장애 재시도 여유를 포함해
+    # 전체 결과 저장까지 약 8.5~9.5시간을 목표로 한다.
+    profile_arguments+=(--train-episodes 144)
     training_budget_supplied=true
   fi
   if [[ "$evaluation_budget_supplied" == false ]]; then
-    profile_arguments+=(--eval-episodes 3)
+    profile_arguments+=(--eval-episodes 5)
     evaluation_budget_supplied=true
   fi
   if [[ "$rgat_budget_supplied" == false ]]; then
-    profile_arguments+=(--rgat-data-episodes 24)
+    profile_arguments+=(--rgat-data-episodes 40)
     rgat_budget_supplied=true
   fi
   arguments=("${profile_arguments[@]}" "${arguments[@]}")

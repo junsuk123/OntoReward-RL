@@ -1193,12 +1193,22 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                 self.sample.extra["pad_contact"] = True
                 self.sample.extra["touchdown_source"] = "pad_contact"
                 if cfg.target == "sitl":
-                    self.goto_target_enu = None
-                    self.offboard_enabled = False
-                    self.offboard_requested = False
-                    self.prestream = 0
-                    self.last_action_ns = 0
-                    self.last_action_px4_time_us = 0
+                    # Keep an OFFBOARD position heartbeat until PX4 confirms
+                    # the forced disarm. On a moving deck the land detector can
+                    # reject the first request; stopping the heartbeat first
+                    # guarantees an avoidable OFFBOARD-loss failsafe.
+                    if self.px4_world_position is not None:
+                        self.goto_target_enu = self.px4_world_position.copy()
+                        self.goto_pad_relative = False
+                        self.goto_yaw_enu = yaw_from_quat_wxyz(
+                            self.sample.quaternion_enu_flu_wxyz)
+                        self.goto_deadline_ns = now_ns() + int(30.0e9)
+                        self.last_action_ns = 0
+                        self.last_action_px4_time_us = 0
+                        self.velocity_position_target_enu = None
+                        self.velocity_position_time_us = 0
+                    else:
+                        self.velocity_action = (0.0, 0.0, 0.0, 0.0)
                     self._vehicle_command(
                         VehicleCommand.VEHICLE_CMD_COMPONENT_ARM_DISARM,
                         0.0, 21196.0)
@@ -1206,8 +1216,9 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                     where = ("unknown" if relative is None else
                              ",".join(f"{float(value):.2f}" for value in relative))
                     self.get_logger().info(
-                        "physical pad touchdown: offboard stopped and SITL "
-                        f"force-disarm requested (truth pad xyz={where})")
+                        "physical pad touchdown: OFFBOARD hold retained until "
+                        "SITL force-disarm confirmation "
+                        f"(truth pad xyz={where})")
 
         def _on_thrust_setpoint(self, msg) -> None:
             # PX4's own normalised body thrust. While its position controller

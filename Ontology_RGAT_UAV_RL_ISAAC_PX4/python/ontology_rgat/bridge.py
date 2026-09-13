@@ -17,7 +17,8 @@ from .config import Config
 from .mathx import quat_to_euler_zyx
 
 __all__ = ["PX4Bridge", "BridgeError", "EntryResetError", "GatewayRejected",
-           "GatewayTimeout", "PX4Failsafe", "pacing_anchor_us"]
+           "GatewayTimeout", "PX4Failsafe", "PX4EstimatorInvalid",
+           "pacing_anchor_us"]
 
 
 def pacing_anchor_us(deadline_us: int, observed_us: int) -> int:
@@ -63,6 +64,10 @@ class PX4Failsafe(BridgeError):
         super().__init__(
             "PX4 reports an active failsafe "
             f"({detail}); refusing to record this as an RL step.")
+
+
+class PX4EstimatorInvalid(BridgeError):
+    """PX4 temporarily stopped publishing a control-valid local estimate."""
 
 
 REQUIRED_STATE_FIELDS = (
@@ -406,7 +411,8 @@ class PX4Bridge:
         if a.size != 4 or not np.isfinite(a).all() or np.any(np.abs(a) > 1.0):
             raise BridgeError("Action must contain four finite values in [-1,1].")
         reply = self.transact("action", {"action": a.tolist()}, ("state",))
-        state = self.pace_to_control_period(self.validate_state(reply))
+        state = self.pace_to_control_period(
+            self.validate_state_with_estimator_grace(reply))
         self.last_state = state
         return state
 
@@ -419,7 +425,8 @@ class PX4Bridge:
             raise BridgeError("Velocity command is malformed or outside safety bounds.")
         reply = self.transact(
             "velocity_action", {"command": value.tolist()}, ("state",))
-        state = self.pace_to_control_period(self.validate_state(reply))
+        state = self.pace_to_control_period(
+            self.validate_state_with_estimator_grace(reply))
         self.last_state = state
         return state
 
@@ -455,7 +462,8 @@ class PX4Bridge:
                     f"PX4 simulated time advanced only {advanced:.1f} ms in "
                     f"{float(self.cfg.timeout):.2f} s of wall time; the simulator "
                     "has stalled.")
-            state = self.validate_state(self.transact("state", {}, ("state",)))
+            state = self.validate_state_with_estimator_grace(
+                self.transact("state", {}, ("state",)))
             observed = int(state["px4_time_us"])
             if observed < self.last_px4_time_us:
                 self.last_px4_time_us = observed
@@ -473,6 +481,31 @@ class PX4Bridge:
         state = self.validate_state(self.transact("state", {}, ("state",)))
         self.last_state = state
         return state
+
+    def validate_state_with_estimator_grace(
+            self, state: dict[str, Any], timeout: float | None = None
+            ) -> dict[str, Any]:
+        """Wait out a short EKF-validity flap without recording stale state.
+
+        A three-camera rendered frame advances simulated time much more slowly
+        than wall time. PX4 may publish one invalid local-position sample
+        during estimator handover even though the next simulated sample is
+        valid. The gateway continues streaming the current setpoint while this
+        method waits; persistent invalidity still raises after the configured
+        estimator warm-up window.
+        """
+        deadline = time.monotonic() + float(
+            (getattr(self.cfg, "estimator_warmup", self.cfg.timeout)
+             if timeout is None else timeout))
+        current = state
+        while True:
+            try:
+                return self.validate_state(current)
+            except PX4EstimatorInvalid:
+                if time.monotonic() >= deadline:
+                    raise
+                time.sleep(0.05)
+                current = self.transact("state", {}, ("state",))
 
     def disarm(self) -> None:
         self.transact("disarm", {}, ("ack",))
@@ -528,13 +561,33 @@ class PX4Bridge:
             (self.last_state or {}).get("landed", False)
             and extra.get("pad_contact", False)
             and extra.get("land_detector_authoritative", False))
+        if contact_confirmed:
+            # Keep OFFBOARD position streaming until PX4 acknowledges the
+            # forced SITL disarm. Cutting it first creates an OFFBOARD-loss
+            # failsafe whenever PX4 temporarily rejects the first disarm
+            # request on a moving deck.
+            deadline = time.monotonic() + float(
+                timeout if timeout is not None else self.cfg.outcome_settle_timeout)
+            while time.monotonic() < deadline:
+                self.disarm()
+                try:
+                    state = self.get_state()
+                except PX4EstimatorInvalid:
+                    time.sleep(0.10)
+                    continue
+                if not bool(state.get("armed", False)):
+                    try:
+                        self.disable_offboard()
+                    except BridgeError:
+                        pass
+                    return True
+                time.sleep(0.20)
+            return False
         try:
             self.disable_offboard()
         except BridgeError:
             pass
         self.disarm()
-        if contact_confirmed:
-            return True
         deadline = time.monotonic() + float(
             timeout if timeout is not None else self.cfg.outcome_settle_timeout)
         while time.monotonic() < deadline:
@@ -591,8 +644,6 @@ class PX4Bridge:
             value = np.asarray(state[field], dtype=float).reshape(-1)
             if not np.isfinite(value).all():
                 raise BridgeError(f"Gateway state contains non-finite {field}.")
-        if not state["estimator_valid"]:
-            raise BridgeError("PX4 estimator state is not valid yet.")
         extra = state.get("extra") if isinstance(state.get("extra"), dict) else {}
         if bool(extra.get("px4_failsafe", False)):
             detail = (extra.get("px4_failsafe_detail")
@@ -604,6 +655,8 @@ class PX4Bridge:
             raise PX4Failsafe(
                 reasons,
                 recoverable=bool(detail.get("recoverable_infrastructure", False)))
+        if not state["estimator_valid"]:
+            raise PX4EstimatorInvalid("PX4 estimator state is not valid yet.")
         if int(extra.get("offboard_mode_rejections", 0)) >= 6:
             raise BridgeError(
                 "PX4 repeatedly rejected OFFBOARD mode; refusing a corrupted episode.")

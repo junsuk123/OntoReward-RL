@@ -7,7 +7,8 @@ import pytest
 
 import ontology_rgat.bridge as bridge_module
 from ontology_rgat.bridge import (BridgeError, EntryResetError, PX4Bridge,
-                                  PX4Failsafe, pacing_anchor_us)
+                                  PX4EstimatorInvalid, PX4Failsafe,
+                                  pacing_anchor_us)
 from ontology_rgat_px4.protocol import (
     ProtocolError,
     VehicleSample,
@@ -271,7 +272,7 @@ def test_entry_gate_propagates_px4_failsafe(monkeypatch):
         bridge.wait_at_entry(np.zeros(3))
 
 
-def test_physical_pad_contact_confirms_stop_when_lockstep_has_no_new_sample():
+def test_physical_pad_contact_disarms_before_stopping_offboard():
     bridge = object.__new__(PX4Bridge)
     bridge.cfg = SimpleNamespace(outcome_settle_timeout=0.01)
     bridge.last_state = {
@@ -282,10 +283,29 @@ def test_physical_pad_contact_confirms_stop_when_lockstep_has_no_new_sample():
     calls = []
     bridge.disable_offboard = lambda: calls.append("offboard")
     bridge.disarm = lambda: calls.append("disarm")
-    bridge.get_state = lambda: pytest.fail("contact should not need another sample")
+    bridge.get_state = lambda: {"armed": False}
 
     assert bridge.stop_after_outcome()
-    assert calls == ["offboard", "disarm"]
+    assert calls == ["disarm", "offboard"]
+
+
+def test_bridge_waits_out_one_transient_estimator_invalid_sample(monkeypatch):
+    monkeypatch.setattr(bridge_module.time, "sleep", lambda _seconds: None)
+    bridge = object.__new__(PX4Bridge)
+    bridge.cfg = SimpleNamespace(timeout=.1, estimator_warmup=.1)
+    validations = iter([PX4EstimatorInvalid("temporary"), {"valid": True}])
+
+    def validate(_state):
+        result = next(validations)
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+    bridge.validate_state = validate
+    bridge.transact = lambda *_args, **_kwargs: {"sample": 2}
+
+    assert bridge.validate_state_with_estimator_grace(
+        {"sample": 1}) == {"valid": True}
 
 
 def test_airborne_reset_hold_is_bounded_and_keeps_offboard_alive():

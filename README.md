@@ -235,7 +235,18 @@ flight pipeline을 시작하지 않도록 실행 lock을 사용한다.
 - 학습 이력: `training/*.csv`, `models/*/*_training.csv`
 - 평가: `evaluation/`
 - 표·그림: `tables/`, `figures/`
+- 발표용 13·14쪽 그래프와 지표 원자료: `presentation/`
 - 재현 정보: `manifest.json`
+
+발표용 그림은 파이프라인 진행 단계마다 자동 갱신되며, 완료 전에는 반드시
+`진행 중 학습(예비 결과)`로 표시된다. 별도 폴더로 다시 생성하려면 다음을 실행한다.
+
+```bash
+cd Ontology_RGAT_UAV_RL_ISAAC_PX4
+PYTHONPATH=python python python/generate_presentation_results.py \
+  --results-dir results/seminar_fast/core3_hybrid_v3 \
+  --output-dir /원하는/발표자료/폴더
+```
 
 Dashboard는 단일 pipeline용 레거시 화면 없이 항상 3-pair 전용으로 구성된다. 상단의
 세 카드에서 committed episode와 live step, marker, 상대 위치, UAV·UGV 속도, 배터리,

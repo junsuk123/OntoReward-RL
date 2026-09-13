@@ -182,9 +182,22 @@ XYZ, UAV/UGV 속도, battery, 착륙 gate, PX4 namespace, UDP endpoint와 camera
 | `evaluation/crossover_plan.csv` | method·scenario·seed의 물리 pair 교차 배정 |
 | `evaluation/per_episode.csv` | paired seed와 교차 pair의 물리 성능 metric |
 | `tables/`, `figures/` | 비교표와 MATLAB 스타일 그래프 |
+| `presentation/` | 13·14쪽용 16:9 PNG, 원자료 CSV, 지표 정의와 상태 JSON |
 
 Reward 정의가 서로 다르므로 arm 간 순위는 episode return이 아니라 안전 착륙률,
 접촉 품질, FOV loss, 상대오차와 paired evaluation으로 결정한다.
+발표 그림은 실행 시작·각 arm 학습 완료·전체 평가 완료 시 자동 갱신된다. 다른 폴더로
+즉시 내보낼 때는 다음 명령을 사용한다.
+
+```bash
+PYTHONPATH=python python python/generate_presentation_results.py \
+  --results-dir results/seminar_fast/core3_hybrid_v3 \
+  --output-dir /원하는/발표자료/폴더
+```
+
+`manifest.json`의 실행 완료 상태와 모든 selected-checkpoint 평가 표본이 확인되기
+전에는 그래프에 `진행 중 학습(예비 결과)`라고 표시한다. 이전 평가 CSV나 미완료
+R-GAT artifact를 최종 성능으로 혼합하지 않는다.
 
 ## 검증
 

@@ -30,6 +30,7 @@ from ontology_rgat.benchmarks.live_env import LiveShinEnvironment
 from ontology_rgat.bridge import BridgeError
 from ontology_rgat.cli import ensure_fastdds
 from ontology_rgat.evaluation import (write_adaptive_reward_figures,
+                                      write_presentation_results,
                                       write_three_pipeline_outputs)
 from ontology_rgat.perception import (RosGrayscaleSource,
                                       calibrate_keypoint_encoder,
@@ -1464,6 +1465,18 @@ def main():
             parser.error("existing results use a different experiment configuration")
     _write_json(manifest_path, manifest)
     _write_csv(args.results_dir / "evaluation/paired_plan.csv", plan)
+    presentation_lock = threading.RLock()
+
+    def refresh_presentation_results():
+        """결과 그림 실패가 비행/학습을 중단시키지 않게 별도로 갱신한다."""
+        with presentation_lock:
+            try:
+                return write_presentation_results(args.results_dir)
+            except Exception as exc:  # pragma: no cover - plotting backend dependent
+                print(f"WARNING: presentation result refresh failed: {exc}")
+                return None
+
+    refresh_presentation_results()
 
     ensure_fastdds()
     cfg = _live_config(args.mode, args.results_dir, args.system_config)
@@ -1731,6 +1744,7 @@ def main():
                         models[name] = model
                         histories[name] = history
                     _write_csv(args.results_dir / f"training/{name}.csv", history)
+                    refresh_presentation_results()
                 best_path = target_dir / f"{name}.best.pt"
                 return (model, history, best_path if best_path.is_file() else
                         target_dir / f"{name}.pt")
@@ -1793,6 +1807,7 @@ def main():
                     "reward_design_pair_indices": reward_design_pair_indices,
                 })
                 _write_json(manifest_path, manifest)
+                refresh_presentation_results()
             else:
                 reward_design_pair_indices = [0]
                 for name in args.pipelines:
@@ -2395,6 +2410,13 @@ def main():
                 "reports": reports,
             })
             _write_json(manifest_path, manifest)
+            presentation_summary = refresh_presentation_results()
+            if presentation_summary is not None:
+                manifest["reports"]["presentation"] = {
+                    "status": presentation_summary["performance_status"],
+                    "figures": presentation_summary["figures"],
+                }
+                _write_json(manifest_path, manifest)
             if args.stay_open:
                 _hold_after_complete(owned, monitor)
     finally:

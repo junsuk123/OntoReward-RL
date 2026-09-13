@@ -500,6 +500,82 @@ def test_pad_contact_is_success_only_when_position_and_attitude_are_safe():
         assert flags.crash
 
 
+def test_contact_gate_uses_pre_contact_kinematics_not_rebound_velocity():
+    """A gentle approach must not fail on the deck's upward contact impulse."""
+    env = LiveShinEnvironment.__new__(LiveShinEnvironment)
+    env.steps = 9
+    env.cfg = SimpleNamespace(
+        sim=SimpleNamespace(
+            world_xy_limit=30.0, ground_z=0.08,
+            crash_tilt=math.radians(75.0)),
+        criteria=SimpleNamespace(
+            xy=0.35, vz=0.55, tilt=math.radians(10.0),
+            rate=math.radians(45.0), rel_speed_xy=0.45))
+    quaternion = np.array([1.0, 0.0, 0.0, 0.0])
+
+    def sample(*, contact, vertical_speed):
+        actor = ActorObservation(
+            image=np.zeros((32, 32), dtype=np.uint8),
+            body_velocity=np.array([0.0, 0.0, vertical_speed]),
+            attitude_quaternion=quaternion)
+        state = {
+            "truth": {
+                "valid": True, "position": [-0.05, 0.0, 0.2],
+                "velocity": [-0.10, 0.0, 0.0]},
+            "quaternion_wxyz": quaternion,
+            "angular_velocity": np.zeros(3),
+            "extra": {"pad_contact": contact},
+            "battery": {"enabled": False},
+            "landed": False,
+        }
+        return actor, state
+
+    actor, state = sample(contact=False, vertical_speed=-0.18)
+    env.last_step = env._classify(actor, state, np.zeros(4))
+    actor, state = sample(contact=True, vertical_speed=1.05)
+    contact = env._classify(actor, state, np.zeros(4))
+
+    assert contact.strict_success
+    assert contact.landing_metrics["vertical_velocity"] == pytest.approx(-0.18)
+    assert contact.landing_metrics["kinematic_sample"] == "pre_contact"
+
+
+def test_contact_gate_retains_hard_pre_contact_descent():
+    """A rebound must not hide an unsafe impact velocity."""
+    env = LiveShinEnvironment.__new__(LiveShinEnvironment)
+    env.steps = 9
+    env.cfg = SimpleNamespace(
+        sim=SimpleNamespace(
+            world_xy_limit=30.0, ground_z=0.08,
+            crash_tilt=math.radians(75.0)),
+        criteria=SimpleNamespace(
+            xy=0.35, vz=0.55, tilt=math.radians(10.0),
+            rate=math.radians(45.0), rel_speed_xy=0.45))
+    quaternion = np.array([1.0, 0.0, 0.0, 0.0])
+
+    def classify(*, contact, vertical_speed):
+        actor = ActorObservation(
+            image=np.zeros((32, 32), dtype=np.uint8),
+            body_velocity=np.array([0.0, 0.0, vertical_speed]),
+            attitude_quaternion=quaternion)
+        state = {
+            "truth": {"valid": True, "position": [-0.05, 0.0, 0.2],
+                      "velocity": [-0.10, 0.0, 0.0]},
+            "quaternion_wxyz": quaternion,
+            "angular_velocity": np.zeros(3),
+            "extra": {"pad_contact": contact},
+            "battery": {"enabled": False}, "landed": False,
+        }
+        return env._classify(actor, state, np.zeros(4))
+
+    env.last_step = classify(contact=False, vertical_speed=-0.72)
+    contact = classify(contact=True, vertical_speed=1.05)
+
+    assert not contact.strict_success
+    assert contact.unsafe_pad_contact
+    assert contact.landing_metrics["vertical_velocity"] == pytest.approx(-0.72)
+
+
 def test_live_benchmark_restarts_owned_stack_after_reset_failure(monkeypatch):
     from ontology_rgat import stack as stack_module
 

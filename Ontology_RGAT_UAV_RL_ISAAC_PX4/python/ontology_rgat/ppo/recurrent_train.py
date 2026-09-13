@@ -14,7 +14,6 @@ import torch
 
 from ..bridge import BridgeError, EntryResetError, GatewayTimeout, PX4Failsafe
 from ..curriculum import PlatformMotionCurriculum
-from ..mathx import quat_to_euler_zyx
 from ..perception import (SEMANTIC_FEATURE_NAMES, grayscale_image_tensor,
                           semantic_graph, semantic_observation)
 from ..pipelines import (available_pipeline_ids, get_pipeline,
@@ -467,12 +466,13 @@ def collect_episode(env, model: PipelineActorCritic, method: str, seed: int,
     truth_final = step.critic.true_relative_state
     state = step.state
     final_battery = _battery_sample(state)
-    rpy = quat_to_euler_zyx(np.asarray(state["quaternion_wxyz"], dtype=float))
-    lateral_error = float(np.linalg.norm(truth_final[:2]))
-    vertical_speed = abs(float(step.actor.body_velocity[2]))
-    relative_horizontal_speed = float(np.linalg.norm(truth_final[3:5]))
-    tilt = float(np.linalg.norm(rpy[:2]))
-    angular_rate = float(np.linalg.norm(state["angular_velocity"]))
+    landing = step.landing_metrics
+    lateral_error = float(landing["lateral_error"])
+    vertical_velocity = float(landing["vertical_velocity"])
+    vertical_speed = abs(vertical_velocity)
+    relative_horizontal_speed = float(landing["relative_horizontal_speed"])
+    tilt = float(landing["tilt"])
+    angular_rate = float(landing["angular_rate"])
     metric = {
         "seed": int(seed), "episode_return": float(sum(row["reward"] for row in rows)),
         # Retain the established report column name, but define it as the
@@ -486,12 +486,13 @@ def collect_episode(env, model: PipelineActorCritic, method: str, seed: int,
         "excessive_drift_rate": float(step.excessive_drift),
         "failure": float(not step.strict_success),
         "touchdown_lateral_error": lateral_error,
-        "touchdown_vertical_velocity": float(step.actor.body_velocity[2]),
+        "touchdown_vertical_velocity": vertical_velocity,
         "touchdown_relative_horizontal_velocity": relative_horizontal_speed,
         "touchdown_tilt": tilt,
-        "touchdown_roll": float(rpy[0]),
-        "touchdown_pitch": float(rpy[1]),
+        "touchdown_roll": float(landing["roll"]),
+        "touchdown_pitch": float(landing["pitch"]),
         "touchdown_angular_rate": angular_rate,
+        "touchdown_kinematic_sample": str(landing["kinematic_sample"]),
         "landing_gate_contact": float(step.physical_contact),
         "landing_gate_position": float(
             lateral_error <= float(env.cfg.criteria.xy)),

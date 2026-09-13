@@ -29,6 +29,7 @@ class LiveStep:
     timeout: bool
     strict_success: bool
     pad_in_fov: bool
+    landing_metrics: dict
 
 
 class LiveShinEnvironment:
@@ -54,8 +55,24 @@ class LiveShinEnvironment:
         critic = critic_observation_from_state(actor, state)
         extra = state.get("extra") or {}
         contact = bool(extra.get("pad_contact", False))
-        rpy = quat_to_euler_zyx(np.asarray(state["quaternion_wxyz"], dtype=float))
-        tilt = float(np.linalg.norm(rpy[:2]))
+        # The contact topic and vehicle odometry are asynchronous.  The first
+        # state carrying pad_contact may therefore already contain the upward
+        # rebound caused by the deck impulse.  Judging that post-impact sample
+        # as the touchdown velocity rejected gentle, centred landings.  Keep
+        # the contact-position sample, but judge touchdown kinematics from the
+        # latest known airborne sample.  This also remains conservative for a
+        # genuinely hard approach because its pre-impact descent is retained.
+        touchdown_step = None
+        previous_step = getattr(self, "last_step", None)
+        if (contact and previous_step is not None
+                and not previous_step.physical_contact):
+            touchdown_step = previous_step
+        touchdown_actor = touchdown_step.actor if touchdown_step else actor
+        touchdown_critic = touchdown_step.critic if touchdown_step else critic
+        touchdown_state = touchdown_step.state if touchdown_step else state
+        touchdown_rpy = quat_to_euler_zyx(np.asarray(
+            touchdown_state["quaternion_wxyz"], dtype=float))
+        touchdown_tilt = float(np.linalg.norm(touchdown_rpy[:2]))
         raw_truth = state.get("truth") or {}
         truth_position = np.asarray(raw_truth.get("position", (math.inf,) * 3), dtype=float)
         drift = bool(np.linalg.norm(truth_position[:2]) > float(self.cfg.sim.world_xy_limit))
@@ -70,18 +87,36 @@ class LiveShinEnvironment:
         battery_depleted = bool(battery.get("enabled", False)
                                 and battery.get("depleted", False))
         rel = critic.true_relative_state
-        angular_rate = float(np.linalg.norm(np.asarray(state["angular_velocity"], dtype=float)))
+        touchdown_rel = touchdown_critic.true_relative_state
+        touchdown_vertical_velocity = float(touchdown_actor.body_velocity[2])
+        touchdown_relative_horizontal_speed = float(
+            np.linalg.norm(touchdown_rel[3:5]))
+        touchdown_angular_rate = float(np.linalg.norm(np.asarray(
+            touchdown_state["angular_velocity"], dtype=float)))
         strict = bool(contact
                       and np.linalg.norm(rel[:2]) <= float(self.cfg.criteria.xy)
-                      and abs(actor.body_velocity[2]) <= float(self.cfg.criteria.vz)
-                      and np.linalg.norm(rel[3:5]) <= float(self.cfg.criteria.rel_speed_xy)
-                      and tilt <= float(self.cfg.criteria.tilt)
-                      and angular_rate <= float(self.cfg.criteria.rate))
+                      and abs(touchdown_vertical_velocity) <= float(
+                          self.cfg.criteria.vz)
+                      and touchdown_relative_horizontal_speed <= float(
+                          self.cfg.criteria.rel_speed_xy)
+                      and touchdown_tilt <= float(self.cfg.criteria.tilt)
+                      and touchdown_angular_rate <= float(self.cfg.criteria.rate))
         unsafe_contact = bool(contact and not strict)
         crash = bool(off_pad_ground
-                     or tilt > float(self.cfg.sim.crash_tilt)
+                     or touchdown_tilt > float(self.cfg.sim.crash_tilt)
                      or unsafe_contact)
         terminal = bool(contact or crash or drift or battery_depleted or timeout)
+        landing_metrics = {
+            "lateral_error": float(np.linalg.norm(rel[:2])),
+            "vertical_velocity": touchdown_vertical_velocity,
+            "relative_horizontal_speed": touchdown_relative_horizontal_speed,
+            "tilt": touchdown_tilt,
+            "roll": float(touchdown_rpy[0]),
+            "pitch": float(touchdown_rpy[1]),
+            "angular_rate": touchdown_angular_rate,
+            "kinematic_sample": (
+                "pre_contact" if touchdown_step is not None else "current"),
+        }
         return LiveStep(
             actor=actor, critic=critic, state=state,
             command=np.asarray(command, dtype=float), physical_contact=contact,
@@ -89,11 +124,15 @@ class LiveShinEnvironment:
             crash=crash, excessive_drift=drift,
             battery_depleted=battery_depleted, terminal=terminal,
             timeout=bool(timeout), strict_success=strict,
-            pad_in_fov=float(state.get("marker_quality", 0.0)) > 0.0)
+            pad_in_fov=float(state.get("marker_quality", 0.0)) > 0.0,
+            landing_metrics=landing_metrics)
 
     def reset(self, seed: int, curriculum: float = 1.0,
               scenario: str = "training_random_walk") -> LiveStep:
         self.steps = 0
+        # Never let the previous episode become the pre-contact sample for a
+        # reset that starts with a stale latched contact bit.
+        self.last_step = None
         # Initial pose and action difficulty still start at c=0, but a separate
         # floor keeps the UGV visibly and observably moving from episode one.
         # A replacement adapter after recovery receives the same two scales.

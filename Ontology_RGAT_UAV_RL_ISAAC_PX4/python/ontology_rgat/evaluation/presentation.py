@@ -101,6 +101,7 @@ def _wilson(successes: int, count: int, z=1.959963984540054) -> tuple[float, flo
 
 
 def _configure_matplotlib():
+    import warnings
     import matplotlib as mpl
     from matplotlib import font_manager
 
@@ -124,7 +125,10 @@ def _configure_matplotlib():
         "axes.facecolor": "white",
         "savefig.facecolor": "white",
     })
-    import matplotlib.pyplot as plt
+    with warnings.catch_warnings():
+        # 설치된 system/user Matplotlib의 3D 선택 모듈 충돌은 본 2D 그림과 무관하다.
+        warnings.filterwarnings("ignore", message="Unable to import Axes3D.*")
+        import matplotlib.pyplot as plt
     return plt
 
 

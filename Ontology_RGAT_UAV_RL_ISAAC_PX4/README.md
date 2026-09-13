@@ -35,6 +35,18 @@
 ./run.sh --seminar-fast --stay-open
 ```
 
+핵심 세 방법을 하나의 Isaac stage에 있는 UAV/UGV 세 쌍으로 병렬 실행:
+
+```bash
+./run.sh --seminar-fast --parallel-pairs 3 --stay-open
+```
+
+R-GAT이 필요한 경우 실제 reward-design trajectory와 동결 artifact를 먼저 준비하고,
+그 다음 `shin_se_fixed`, `no_se_fixed`, `onto_rgat_adaptive_weight_no_se`의 독립 PPO
+optimizer가 동시에 진행된다. 단일 쌍 실행의 기존 port/topic 계약은 그대로 유지된다.
+세 UGV는 도로를 평행 이동한 복제 경로가 아니라, 동일한 campus waypoint 폐곡선의
+0%, 8%, 16% 지점에서 앞뒤 간격을 두고 출발해 열차처럼 같은 경로를 따른다.
+
 `run.sh`는 설정 검증, simulator/PX4/ROS/RViz/dashboard 기동, keypoint 준비, PPO,
 실제 R-GAT 자료 수집, R-GAT 학습·동결, 제안법 PPO, paired evaluation과 보고서 생성을
 순서대로 수행한다. 동일 명령을 다시 실행하면 호환되는 checkpoint와 완료 episode부터

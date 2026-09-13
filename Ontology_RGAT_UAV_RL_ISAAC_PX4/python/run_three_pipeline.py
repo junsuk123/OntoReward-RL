@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import ExitStack
+from copy import deepcopy
 import csv
 import json
 import os
 from pathlib import Path
 import sys
+import threading
 import time
 
 import numpy as np
@@ -60,6 +64,64 @@ def _write_json(path: Path, value) -> None:
     temporary.write_text(json.dumps(value, indent=2, allow_nan=False),
                          encoding="utf-8")
     os.replace(temporary, path)
+
+
+class _LockedMonitor:
+    """Serialize RViz/dashboard calls made by concurrent pair workers."""
+
+    def __init__(self, monitor, lock):
+        self._monitor = monitor
+        self._lock = lock
+
+    def __getattr__(self, name):
+        value = getattr(self._monitor, name)
+        if not callable(value):
+            return value
+
+        def synchronized(*args, **kwargs):
+            with self._lock:
+                return value(*args, **kwargs)
+        return synchronized
+
+
+def _abort_parallel_workers(executor, futures, owned) -> None:
+    """Stop shared infrastructure before joining interrupted pair workers.
+
+    ``ThreadPoolExecutor.__exit__`` waits before the pipeline's outer cleanup.
+    A worker whose UDP request is interrupted by Ctrl-C would therefore see the
+    still-registered stack and start it again while the main thread was trying
+    to exit. Unregister and stop first; the resulting bridge errors terminate
+    all workers, after which their threads can be joined normally.
+    """
+    stack_module.current(None)
+    if owned is not None:
+        if hasattr(owned, "shutdown"):
+            owned.shutdown()
+        else:
+            owned.stop()
+    for future in futures:
+        future.cancel()
+    executor.shutdown(wait=True, cancel_futures=True)
+
+
+def _pair_live_config(cfg, pair_index: int, pair_count: int):
+    """Give one learner an exclusive UDP endpoint in the shared Isaac world."""
+    if pair_count == 1:
+        return cfg
+    index = int(pair_index)
+    # Entry convergence is governed by simulated PX4 time, while its safety
+    # deadline is intentionally wall time. Three rendered landing cameras make
+    # the shared stage slower than real time, so retain roughly the same amount
+    # of simulated settling time without changing the measured episode horizon.
+    entry_timeout_scale = 1.25 if int(pair_count) == 3 else 1.10
+    return cfg.derive(**{
+        "external.gateway_port": int(cfg.external.gateway_port) + 2 * index,
+        "external.local_port": int(cfg.external.local_port) + 2 * index,
+        "external.pair_index": index,
+        "external.pair_count": int(pair_count),
+        "external.entry_timeout": (
+            float(cfg.external.entry_timeout) * entry_timeout_scale),
+    })
 
 
 def _hold_after_complete(owned, monitor, *, sleep=time.sleep) -> None:
@@ -798,6 +860,9 @@ def main():
     parser.add_argument("--no-dashboard", action="store_true")
     parser.add_argument("--no-rviz", action="store_true")
     parser.add_argument("--dashboard-port", type=int)
+    parser.add_argument(
+        "--parallel-pairs", type=int, default=1,
+        help="run one selected pipeline per isolated UAV/UGV pair in one Isaac stage")
     args = parser.parse_args()
     if args.train_episodes is not None and args.total_train_episodes is not None:
         parser.error("use either --train-episodes or --total-train-episodes")
@@ -812,6 +877,8 @@ def main():
         parser.error("--rgat-max-data-episodes must be at least two")
     if args.training_replicate < 0:
         parser.error("--training-replicate must be non-negative")
+    if not 1 <= args.parallel_pairs <= 3:
+        parser.error("--parallel-pairs must be between 1 and 3")
 
     config = load_experiment(args.config)
     seminar_fast = dict(config.get("seminar_fast") or {})
@@ -825,6 +892,9 @@ def main():
         parser.error("selected pipeline is absent from experiment configuration")
     for name in args.pipelines:
         get_pipeline(name)
+    if args.parallel_pairs > 1 and args.parallel_pairs != len(args.pipelines):
+        parser.error(
+            "parallel mode requires exactly one selected pipeline per UAV/UGV pair")
     if args.results_dir is None:
         experiment_dir = ("adaptive_reward_weight" if
                           config.get("experiment") == "adaptive_reward_weight_comparison"
@@ -862,8 +932,15 @@ def main():
             f"{args.mode} mode (configured replicates: {len(independent_model_seeds)})")
     model_seed = int(independent_model_seeds[args.training_replicate])
     training_seed0 = int(independent_training_starts[args.training_replicate])
+    # Parallel placement, namespaces and ports change orchestration, not the
+    # relative landing task or reward/actor contract. Keeping them outside the
+    # scientific hash lets a completed single-pair checkpoint be evaluated in
+    # the equivalent translated multi-pair world. They remain explicit in the
+    # manifest, and the live camera encoder is still empirically revalidated.
+    scientific_system = deepcopy(system)
+    scientific_system.pop("parallel", None)
     config_hash = configuration_hash({
-        "experiment": config, "system": system,
+        "experiment": config, "system": scientific_system,
         "training_replicate": args.training_replicate,
         "model_seed": model_seed, "training_seed_start": training_seed0,
         "outcome_contract": (
@@ -1024,6 +1101,14 @@ def main():
         "adaptive_reward": config.get("adaptive_reward"),
         "seminar_fast": seminar_fast or None,
         "execution_status": "configured; real Isaac/Pegasus/PX4 results pending",
+        "parallel_execution": {
+            "pair_count": args.parallel_pairs,
+            "one_pipeline_per_pair": args.parallel_pairs > 1,
+            "shared_isaac_stage": args.parallel_pairs > 1,
+            "shared_dds_agent": args.parallel_pairs > 1,
+            "independent_udp_ros_reset_and_optimizer": args.parallel_pairs > 1,
+            "layout": system.get("parallel"),
+        },
     }
     manifest_path = args.results_dir / "manifest.json"
     existing_eval = args.results_dir / "evaluation/per_episode.csv"
@@ -1045,6 +1130,8 @@ def main():
     cfg.viz.dashboard.enabled = not args.no_dashboard
     if args.dashboard_port is not None:
         cfg.viz.dashboard.port = int(args.dashboard_port)
+    pair_cfgs = [_pair_live_config(cfg, index, args.parallel_pairs)
+                 for index in range(args.parallel_pairs)]
     ppo = dict(config.get("ppo") or {})
     runtime_reward_normalizer = None
     adaptive_runtime = dict(config.get("adaptive_reward") or {})
@@ -1106,10 +1193,18 @@ def main():
                 cfg, isaac_sim_path=args.isaac_sim_path,
                 headless=args.headless, config_path=args.system_config,
                 isaac_timeout=(args.isaac_timeout if args.isaac_timeout is not None
-                               else (600.0 if args.headless else 1200.0)))
+                               else (600.0 if args.headless else 1200.0)),
+                parallel_pairs=args.parallel_pairs)
             owned.start()
             stack_module.current(owned)
-        with RosGrayscaleSource() as camera:
+        with ExitStack() as camera_stack:
+            cameras = [camera_stack.enter_context(RosGrayscaleSource(
+                topic=("/landing_uav0/perception/landing_camera/image_raw"
+                       if args.parallel_pairs == 1 else
+                       f"/landing_pair_{index}/uav/perception/landing_camera/image_raw"),
+                node_name=f"shin2026_actor_camera_{index}"))
+                for index in range(args.parallel_pairs)]
+            camera = cameras[0]
             monitor.stage("keypoint validation", "live Isaac camera · held-out labels")
             keypoint_pretraining = calibrate_keypoint_encoder(
                 args.results_dir / "models/shared/keypoint_encoder.pt",
@@ -1143,14 +1238,15 @@ def main():
                 _write_json(manifest_path, manifest)
             models = {}
             histories = {}
+            monitor_lock = threading.RLock()
+            gpu_update_lock = threading.RLock() if args.parallel_pairs > 1 else None
+            worker_monitors = [_LockedMonitor(monitor, monitor_lock)
+                               for _ in range(args.parallel_pairs)]
 
-            def train_pipeline(name, *, primary=True):
-                monitor.stage("training", f"recurrent PPO · {name}")
+            def initialize_pipeline_model(name):
                 torch.manual_seed(model_seed)
                 model = _build_model(
                     config, args.device, keypoint_pretraining, pipeline=name)
-                target_dir = (args.results_dir / f"models/{name}" if primary else
-                              args.results_dir / "models/reward_design_source")
                 if demonstrations is not None:
                     cloning = dict((seminar_fast.get("behavior_cloning") or {}))
                     monitor.stage("behavior cloning", f"shared training teacher · {name}")
@@ -1169,6 +1265,18 @@ def main():
                         f"{cloning_metrics[name]['action_loss_before']:.4f} -> "
                         f"{cloning_metrics[name]['action_loss_after']:.4f}, "
                         f"std={cloning_metrics[name]['post_action_std']:.3f}")
+                return model
+
+            def train_pipeline(name, *, primary=True, pair_index=0, model=None):
+                local_monitor = worker_monitors[pair_index]
+                local_monitor.stage(
+                    "parallel training" if args.parallel_pairs > 1 else "training",
+                    f"pair {pair_index} · recurrent PPO · {name}")
+                if model is None:
+                    model = initialize_pipeline_model(name)
+                target_dir = (args.results_dir / f"models/{name}" if primary else
+                              args.results_dir / "models/reward_design_source")
+                cloning = dict((seminar_fast.get("behavior_cloning") or {}))
                 warmup_count = (int(ppo["perception_warmup_episodes"])
                                 if get_pipeline(name).state_estimation_enabled else 0)
                 training_seeds = controlled_training_seeds(
@@ -1189,24 +1297,28 @@ def main():
                             f"weights, artifact is {artifact_architecture}")
                 history = train_live(
                     lambda: LiveShinEnvironment(
-                        cfg, camera, horizon_steps=int(cfg.sim.max_steps)),
+                        pair_cfgs[pair_index], cameras[pair_index],
+                        horizon_steps=int(pair_cfgs[pair_index].sim.max_steps)),
                     model, name,
                     training_seeds,
                     target_dir, config_hash=config_hash,
                     potential=reward_design,
-                    ppo=ppo, curriculum_config=curriculum, monitor=monitor if primary else None,
+                    ppo=ppo, curriculum_config=curriculum,
+                    monitor=local_monitor if primary else None,
                     restart_incompatible=True,
                     demonstration_dataset=(
                         None if demonstrations is None else
                         demonstrations["dataset"]),
                     demonstration_anchor=(
                         {} if demonstrations is None else
-                        dict(cloning.get("ppo_anchor") or {})))
+                        dict(cloning.get("ppo_anchor") or {})),
+                    optimizer_lock=gpu_update_lock)
                 if primary:
                     for row in history:
                         row["training_replicate"] = args.training_replicate
-                    models[name] = model
-                    histories[name] = history
+                    with monitor_lock:
+                        models[name] = model
+                        histories[name] = history
                     _write_csv(args.results_dir / f"training/{name}.csv", history)
                 best_path = target_dir / f"{name}.best.pt"
                 return (model, history, best_path if best_path.is_file() else
@@ -1214,11 +1326,12 @@ def main():
 
             # 먼저 고정 보상 arm을 학습한다. 두 reward-design dataset 모두
             # 이 실제 정책/visual-servo/noise 혼합 rollout을 출발점으로 쓴다.
-            for name in args.pipelines:
-                spec = get_pipeline(name)
-                if not (spec.use_direct_rgat_potential
-                        or spec.use_adaptive_reward_weights):
-                    train_pipeline(name)
+            if args.parallel_pairs == 1:
+                for name in args.pipelines:
+                    spec = get_pipeline(name)
+                    if not (spec.use_direct_rgat_potential
+                            or spec.use_adaptive_reward_weights):
+                        train_pipeline(name)
 
             if needs_potential and potential is None:
                 preferred_source = str((config.get("rgat_design") or {}).get(
@@ -1350,10 +1463,38 @@ def main():
 
             # 이제 모든 동결 보상 설계가 준비됐다. PBRS/adaptive PPO에서는
             # 이 모델들이 optimizer에 포함되지 않으며 매 update 뒤 hash를 검사한다.
-            for name in args.pipelines:
-                spec = get_pipeline(name)
-                if spec.use_direct_rgat_potential or spec.use_adaptive_reward_weights:
-                    train_pipeline(name)
+            if args.parallel_pairs > 1:
+                monitor.stage(
+                    "parallel training preparation",
+                    "R-GAT frozen · constructing three independent PPO optimizers")
+                # torch.manual_seed is process-global. Build and clone the three
+                # actors serially so identical initialization remains exact;
+                # only environment interaction and PPO updates run concurrently.
+                prepared_models = {
+                    name: initialize_pipeline_model(name) for name in args.pipelines}
+                executor = ThreadPoolExecutor(
+                    max_workers=args.parallel_pairs,
+                    thread_name_prefix="landing-pair")
+                futures = {}
+                try:
+                    futures = {
+                        executor.submit(
+                            train_pipeline, name, pair_index=index,
+                            model=prepared_models[name]): name
+                        for index, name in enumerate(args.pipelines)}
+                    for future in as_completed(futures):
+                        future.result()
+                except BaseException:
+                    _abort_parallel_workers(executor, futures, owned)
+                    raise
+                else:
+                    executor.shutdown(wait=True)
+            else:
+                for name in args.pipelines:
+                    spec = get_pipeline(name)
+                    if (spec.use_direct_rgat_potential
+                            or spec.use_adaptive_reward_weights):
+                        train_pipeline(name)
 
             training_records = [row for name in args.pipelines
                                 for row in histories.get(name, [])]
@@ -1363,11 +1504,16 @@ def main():
             completed = {(row["pipeline"], row["scenario"], int(row["seed"]))
                          for row in evaluation_rows}
             monitor.restore_evaluation(evaluation_rows)
-            for name in args.pipelines:
+            def evaluate_pipeline(index, name):
                 model = models[name]
-                monitor.stage("paired evaluation", name)
+                local_monitor = worker_monitors[index]
+                local_monitor.stage(
+                    "parallel paired evaluation" if args.parallel_pairs > 1
+                    else "paired evaluation", f"pair {index} · {name}")
+                new_rows = []
                 with LiveShinEnvironment(
-                        cfg, camera, horizon_steps=int(cfg.sim.max_steps)) as environment:
+                        pair_cfgs[index], cameras[index],
+                        horizon_steps=int(pair_cfgs[index].sim.max_steps)) as environment:
                     for item in plan:
                         if item["method"] != name:
                             continue
@@ -1386,14 +1532,34 @@ def main():
                             deterministic=True, gamma=float(ppo.get("gamma", .99)),
                             shaping_lambda=float(ppo.get("shaping_lambda", 1.0)),
                             reward_normalizer=runtime_reward_normalizer,
-                            scenario=item["scenario"], monitor=monitor,
+                            scenario=item["scenario"], monitor=local_monitor,
                             phase="evaluation")
                         metric.update({"method": name, "pipeline": name,
                                        "training_replicate": args.training_replicate,
                                        "scenario": item["scenario"]})
-                        evaluation_rows.append(metric)
-                        _write_csv(existing_eval, evaluation_rows)
-                        monitor.evaluation_update(name, metric)
+                        new_rows.append(metric)
+                        local_monitor.evaluation_update(name, metric)
+                return new_rows
+
+            if args.parallel_pairs > 1:
+                executor = ThreadPoolExecutor(
+                    max_workers=args.parallel_pairs,
+                    thread_name_prefix="landing-eval")
+                futures = []
+                try:
+                    futures = [executor.submit(evaluate_pipeline, index, name)
+                               for index, name in enumerate(args.pipelines)]
+                    for future in as_completed(futures):
+                        evaluation_rows.extend(future.result())
+                except BaseException:
+                    _abort_parallel_workers(executor, futures, owned)
+                    raise
+                else:
+                    executor.shutdown(wait=True)
+            else:
+                for name in args.pipelines:
+                    evaluation_rows.extend(evaluate_pipeline(0, name))
+            _write_csv(existing_eval, evaluation_rows)
 
             semantic_cost = {
                 "episodes": design_episodes + source_training_episodes,

@@ -470,6 +470,7 @@ class BenchmarkMonitor:
                       action_scale: float = 1.0,
                       motion_scale: float | None = None) -> None:
         self.store.replace("benchmark_step", [])
+        self.store.replace(f"benchmark_step_{method}", [])
         # Completed histories only advance after optimizer/checkpoint commit.
         # Publish the in-flight episode separately so a 30 s simulated flight
         # cannot look frozen for one or two minutes on a rendered lockstep run.
@@ -560,6 +561,7 @@ class BenchmarkMonitor:
             "battery_power_kw": float(battery.get("power_w", 0.0)) / 1000.0,
         })
         self.store.append("benchmark_step", point)
+        self.store.append(f"benchmark_step_{method}", point)
         if self.rviz is not None and state is not None:
             self.rviz.publish_benchmark_step(
                 state=state, method=method, scenario=scenario, step=index,

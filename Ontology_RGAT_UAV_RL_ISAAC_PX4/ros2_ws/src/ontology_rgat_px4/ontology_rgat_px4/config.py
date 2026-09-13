@@ -27,6 +27,9 @@ class GatewayConfig:
     target_component: int
     source_system: int
     source_component: int
+    pair_index: int
+    pair_count: int
+    topic_root: str
     hover_thrust: float
     collective_span: float
     max_roll_pitch_rad: float
@@ -115,6 +118,9 @@ class GatewayConfig:
             target_component=int(px4["target_component"]),
             source_system=int(px4["source_system"]),
             source_component=int(px4["source_component"]),
+            pair_index=0,
+            pair_count=1,
+            topic_root="",
             hover_thrust=float(px4["hover_thrust"]),
             collective_span=float(px4["collective_span"]),
             max_roll_pitch_rad=math.radians(float(px4["max_roll_pitch_deg"])),

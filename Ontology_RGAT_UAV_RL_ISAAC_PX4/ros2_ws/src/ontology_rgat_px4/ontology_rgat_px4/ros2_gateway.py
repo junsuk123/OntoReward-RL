@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import replace
 import json
 import math
 from pathlib import Path
@@ -286,6 +287,36 @@ def _topic(cfg: GatewayConfig, direction: str, name: str) -> str:
     return f"{cfg.namespace}/{direction}/{name}"
 
 
+def _landing_topic(cfg: GatewayConfig, legacy: str, relative: str) -> str:
+    """Return a pair-local simulator topic without changing legacy runs."""
+    if not cfg.topic_root:
+        return legacy
+    return f"{cfg.topic_root}/{relative.lstrip('/')}"
+
+
+def parallel_gateway_config(cfg: GatewayConfig, pair_index: int,
+                            pair_count: int, gateway_port: int | None = None):
+    """Resolve one PX4/gateway/topic identity for a shared-world pair."""
+    index, count = int(pair_index), int(pair_count)
+    if count < 1 or index not in range(count):
+        raise ValueError("pair-index must be in [0, parallel-pairs)")
+    if count == 1:
+        return (cfg if gateway_port is None else
+                replace(cfg, gateway_port=int(gateway_port)))
+    return replace(
+        cfg,
+        pair_index=index,
+        pair_count=count,
+        topic_root=f"/landing_pair_{index}",
+        namespace=("/fmu" if index == 0 else f"/px4_{index}/fmu"),
+        target_system=index + 1,
+        source_system=int(cfg.source_system) + index,
+        gateway_port=(int(gateway_port) if gateway_port is not None
+                      else int(cfg.gateway_port) + 2 * index),
+        matlab_port=int(cfg.matlab_port) + 2 * index,
+    )
+
+
 class Px4GatewayNode:
     """Composition wrapper so importing this module does not require ROS."""
 
@@ -313,7 +344,7 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
 
     class NodeImpl(Node):
         def __init__(self):
-            super().__init__("ontology_rgat_px4_gateway")
+            super().__init__(f"ontology_rgat_px4_gateway_{cfg.pair_index}")
             # Sensor topics can arrive hundreds of times per second.  Keep the
             # OFFBOARD heartbeat in its own callback group so those callbacks
             # cannot starve it past PX4's 500 ms loss threshold.  The lock
@@ -439,11 +470,14 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                 TrajectorySetpoint, _topic(cfg, "in", "trajectory_setpoint"), 10)
             self.command_pub = self.create_publisher(
                 VehicleCommand, _topic(cfg, "in", "vehicle_command"), 10)
-            self.reset_pub = self.create_publisher(String, "/landing_sim/reset", 10)
+            self.reset_pub = self.create_publisher(
+                String, _landing_topic(cfg, "/landing_sim/reset", "sim/reset"), 10)
             # Isaac holds the vehicle at its hover start until the autopilot is
             # actually flying it; this is how it learns that. Latched depth so a
             # simulator that comes up late still gets the current answer.
-            self.flight_pub = self.create_publisher(String, "/landing_sim/flight_state", 10)
+            self.flight_pub = self.create_publisher(
+                String, _landing_topic(
+                    cfg, "/landing_sim/flight_state", "sim/flight_state"), 10)
             self.published_flight_state: tuple[bool, bool, bool, int] | None = None
 
             self.create_subscription(VehicleOdometry, _topic(cfg, "out", "vehicle_odometry"),
@@ -472,32 +506,43 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             sensor_qos = rclpy.qos.qos_profile_sensor_data
             # Policy-safe measurement. /environment/wind is simulator truth
             # and deliberately has no subscriber on the control path.
-            self.create_subscription(Vector3Stamped, "/landing_uav0/sensors/wind",
+            self.create_subscription(Vector3Stamped, _landing_topic(
+                                     cfg, "/landing_uav0/sensors/wind", "uav/sensors/wind"),
                                      self._on_wind, sensor_qos)
-            self.create_subscription(Vector3Stamped, "/landing_uav0/environment/aero_force",
+            self.create_subscription(Vector3Stamped, _landing_topic(
+                                     cfg, "/landing_uav0/environment/aero_force", "uav/environment/aero_force"),
                                      self._on_aero_force, sensor_qos)
-            self.create_subscription(Float32, "/landing_uav0/perception/marker_quality",
+            self.create_subscription(Float32, _landing_topic(
+                                     cfg, "/landing_uav0/perception/marker_quality", "uav/perception/marker_quality"),
                                      self._on_marker_quality, sensor_qos)
-            self.create_subscription(Bool, "/landing_uav0/perception/pad_contact",
+            self.create_subscription(Bool, _landing_topic(
+                                     cfg, "/landing_uav0/perception/pad_contact", "uav/perception/pad_contact"),
                                      self._on_pad_contact, sensor_qos)
-            self.create_subscription(PoseStamped, "/landing_uav0/perception/uav_pose_in_pad",
+            self.create_subscription(PoseStamped, _landing_topic(
+                                     cfg, "/landing_uav0/perception/uav_pose_in_pad", "uav/perception/uav_pose_in_pad"),
                                      self._on_pad_pose, sensor_qos)
             # The deck broadcasts its own state, the way a cooperative ground
             # vehicle would over a V2V link. The drone's own estimate of where
             # the pad is still comes from the camera.
-            self.create_subscription(Odometry, "/landing_pad/state/odom",
+            self.create_subscription(Odometry, _landing_topic(
+                                     cfg, "/landing_pad/state/odom", "pad/state/odom"),
                                      self._on_deck_odom, sensor_qos)
-            self.create_subscription(Odometry, "/landing_pad/state/odom_truth",
+            self.create_subscription(Odometry, _landing_topic(
+                                     cfg, "/landing_pad/state/odom_truth", "pad/state/odom_truth"),
                                      self._on_deck_truth, sensor_qos)
-            self.create_subscription(Odometry, "/landing_uav0/state/odom_truth",
+            self.create_subscription(Odometry, _landing_topic(
+                                     cfg, "/landing_uav0/state/odom_truth", "uav/state/odom_truth"),
                                      self._on_uav_truth, sensor_qos)
             # Receiver observables plus simulator-only truth used for scoring.
             # The navigation error itself has already crossed HIL_GPS.
-            self.create_subscription(String, "/landing_uav0/gnss/status",
+            self.create_subscription(String, _landing_topic(
+                                     cfg, "/landing_uav0/gnss/status", "uav/gnss/status"),
                                      self._on_gnss_status, sensor_qos)
             self.create_subscription(BatteryStatus, _topic(cfg, "out", "battery_status"),
                                      self._on_battery_status, qos)
-            self.create_subscription(String, "/landing_sim/reset_ack", self._on_reset_ack, 10)
+            self.create_subscription(String, _landing_topic(
+                                     cfg, "/landing_sim/reset_ack", "sim/reset_ack"),
+                                     self._on_reset_ack, 10)
 
             self.udp = DatagramServer(
                 cfg.bind_host, cfg.gateway_port, cfg.protocol_version,
@@ -1462,7 +1507,12 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                         or not attitude_consistent
                         or innovation > innovation_limit):
                     self.marker_pose_rejections += 1
-                    self.sample.marker_quality = 0.0
+                    # Detection confidence and PnP pose validity are different
+                    # observables. A planar board can be clearly visible while
+                    # solvePnP chooses a mirrored/remote branch. Keep the visual
+                    # quality for the actor, entry-FOV gate and ontology, while
+                    # rejecting only this pose from position fusion.
+                    self.sample.extra["marker_pose_valid"] = False
                     self.sample.extra["marker_pose_rejected"] = True
                     self.sample.extra["marker_pose_innovation_m"] = innovation
                     self.sample.extra["marker_attitude_innovation_deg"] = (
@@ -1470,6 +1520,7 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                     return
                 self.pad_position_enu = position
                 self.pad_pose_time_ns = stamp
+                self.sample.extra["marker_pose_valid"] = True
                 self.sample.extra["marker_pose_rejected"] = False
                 self.sample.extra["marker_pose_rejections"] = self.marker_pose_rejections
                 self.sample.extra["marker_attitude_innovation_deg"] = (
@@ -2002,12 +2053,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--target", choices=("sitl", "hardware"))
     parser.add_argument("--allow-arm", action="store_true")
     parser.add_argument("--allow-offboard", action="store_true")
+    parser.add_argument("--pair-index", type=int, default=0)
+    parser.add_argument("--parallel-pairs", type=int, default=1)
+    parser.add_argument("--gateway-port", type=int)
     return parser
 
 
 def main(argv=None) -> None:
     args = build_parser().parse_args(argv)
     cfg = load_gateway_config(Path(args.config), args.target)
+    cfg = parallel_gateway_config(
+        cfg, args.pair_index, args.parallel_pairs, args.gateway_port)
     _load_ros_types()
     rclpy.init(args=None)
     node = Px4GatewayNode(cfg, allow_arm=args.allow_arm, allow_offboard=args.allow_offboard)

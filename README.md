@@ -199,14 +199,28 @@ $$
 ./run.sh --seminar-fast --stay-open
 ```
 
+한 Isaac Sim stage에서 핵심 세 방법을 동시에 학습·평가하려면 다음을 사용한다.
+
+```bash
+./run.sh --seminar-fast --parallel-pairs 3 --stay-open
+```
+
+병렬 모드는 UAV/UGV/PX4/Gateway/ROS topic/reset/trajectory/optimizer를 쌍별로 분리한다.
+공통 keypoint·BC와 실제 trajectory 기반 R-GAT 학습·동결을 먼저 끝낸 다음 세 PPO를
+동시에 시작한다. 세 UGV는 조사된 동일 폐곡선 waypoint의 0%, 8%, 16% 지점에
+열차처럼 간격을 두고 배치되어 모두 도로 위를 같은 방향으로 주행한다. seed·상대
+초기조건·외란 계약은 동일하지만 카메라 배경은 각 route 위치의 실제 campus 장면이다.
+카메라 렌더링과 PX4 부하 때문에 속도 향상은 정확히 3배가 아니며, 결과 manifest에
+병렬 실행 계약을 기록한다.
+
 실행 순서:
 
 1. 환경·의존성·설정 provenance 검사
 2. Isaac Sim, Pegasus, PX4 SITL, DDS/ROS gateway, RViz, dashboard 기동
 3. 공통 keypoint encoder 준비 및 검증
-4. 각 고정 비교군 PPO 학습과 안전성 기준 best checkpoint 저장
-5. 실제 trajectory 수집과 hybrid R-GAT 학습·검증·동결
-6. 제안 모델 PPO 학습
+4. 실제 trajectory 수집과 hybrid R-GAT 학습·검증·동결
+5. 비교군과 제안 모델 PPO 학습(병렬 모드에서는 세 쌍 동시 실행)
+6. 안전성 기준 best checkpoint 저장
 7. 동일 scenario/seed의 paired evaluation
 8. 표·그래프·manifest 생성
 

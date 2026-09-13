@@ -440,8 +440,12 @@ class WaypointRoute:
 class PadTrajectory:
     """Where the deck is, how fast, and which way it is pointing."""
 
-    def __init__(self, cfg: PadMotionConfig):
+    def __init__(self, cfg: PadMotionConfig, *, initial_route_fraction: float = 0.0):
         self.cfg = cfg
+        self.initial_route_fraction = float(initial_route_fraction)
+        if (not math.isfinite(self.initial_route_fraction)
+                or not 0.0 <= self.initial_route_fraction < 1.0):
+            raise ValueError("initial_route_fraction must be finite in [0,1)")
         self.start = np.asarray(cfg.start_position_enu_m, dtype=float)
         self.speed = 0.0
         self.heading0 = 0.0
@@ -455,6 +459,9 @@ class PadTrajectory:
             WaypointRoute(cfg.route_waypoints_enu_m)
             if cfg.route_waypoints_enu_m else None
         )
+        self.initial_waypoint_distance = (
+            self.initial_route_fraction * self.waypoint_route.length
+            if self.waypoint_route is not None else 0.0)
         # Seconds into the forward-and-reverse shuttle cycle.
         self.waypoint_phase = 0.0
         self._waypoint_tangent = np.array([1.0, 0.0, 0.0])
@@ -471,6 +478,22 @@ class PadTrajectory:
         self.random_walk_position = np.zeros((1, 3))
         self.random_walk_velocity = np.zeros((1, 3))
         self.benchmark_scenario = "training_random_walk"
+
+    def initial_pose(self) -> tuple[np.ndarray, np.ndarray]:
+        """Return the parked pose before the first seeded reset.
+
+        Parallel campus vehicles are staged at different arc-lengths of the
+        *same* surveyed route.  This keeps every UGV on asphalt and gives the
+        three UAVs independent airspace, unlike translating the entire route
+        sideways.  The first reset below starts from exactly this point, so the
+        deck never teleports out from under its airborne vehicle during boot.
+        """
+        if self.cfg.mode != "waypoints" or self.waypoint_route is None:
+            return self.pose(0.0)
+        point, tangent = self.waypoint_route.at(self.initial_waypoint_distance)
+        position = np.asarray(point, dtype=float).copy()
+        position[2] += self.cfg.deck_height_m
+        return position, np.zeros(3, dtype=float)
 
     def reset(self, seed: int, sim_time: float, speed_scale: float = 1.0,
               scenario: str = "training_random_walk") -> dict[str, Any]:
@@ -528,7 +551,9 @@ class PadTrajectory:
         if cfg.mode == "waypoints":
             self.waypoint_phase = (
                 self._waypoint_phase_for(*carried_waypoint)
-                if cfg.route_start == "continue" and self._driven else 0.0
+                if cfg.route_start == "continue" and self._driven
+                else self._waypoint_phase_for(
+                    self.initial_waypoint_distance, 1.0)
             )
         if cfg.route_start == "continue" and self._driven:
             # Advance the phase by the time that has passed, so the wander picks

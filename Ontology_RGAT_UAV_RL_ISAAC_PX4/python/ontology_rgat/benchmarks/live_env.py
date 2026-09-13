@@ -45,6 +45,9 @@ class LiveShinEnvironment:
 
     def _connect(self):
         self.bridge = PX4Bridge(self.cfg)
+        from .. import stack as stack_module
+        owned = stack_module.current()
+        self._stack_generation = int(getattr(owned, "generation", 0))
         self.control = getattr(self.cfg, "benchmark_control", {})
         self.adapter = ShinPX4Adapter(
             self.bridge, self.image_source,
@@ -163,9 +166,14 @@ class LiveShinEnvironment:
                 if attempt == attempts or owned is None:
                     raise
                 self.bridge.close()
-                print(f"WARNING: benchmark reset failed ({exc}). Restarting the "
+                pair_index = int(getattr(self.cfg.external, "pair_index", 0))
+                print(f"WARNING: [pair {pair_index}] benchmark reset failed "
+                      f"({exc}). Restarting the "
                       f"simulator and retrying ({attempt} of {attempts - 1}).")
-                owned.restart()
+                if hasattr(owned, "restart_if_generation"):
+                    owned.restart_if_generation(self._stack_generation)
+                else:
+                    owned.restart()
                 self._connect()
         self.last_step = self._classify(actor, state, np.zeros(4))
         return self.last_step
@@ -178,7 +186,7 @@ class LiveShinEnvironment:
             timeout=self.steps >= self.horizon_steps)
         return self.last_step
 
-    def recover_infrastructure(self) -> None:
+    def recover_infrastructure(self) -> bool:
         """Cycle an owned SITL stack after a mid-episode transport failure.
 
         A partially observed episode must never enter PPO. The caller discards
@@ -194,8 +202,13 @@ class LiveShinEnvironment:
                 "cannot recover the flight infrastructure because this run "
                 "does not own the simulator stack")
         self.bridge.close()
-        owned.restart()
+        if hasattr(owned, "restart_if_generation"):
+            restarted = bool(owned.restart_if_generation(self._stack_generation))
+        else:
+            owned.restart()
+            restarted = True
         self._connect()
+        return restarted
 
     def finish_episode(self):
         if self.bridge.last_state:

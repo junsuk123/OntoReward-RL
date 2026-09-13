@@ -258,6 +258,23 @@ def test_waypoint_route_is_continuous_across_episode_reset():
     assert after == pytest.approx(before, abs=1e-12)
 
 
+def test_waypoint_pair_phase_starts_and_first_reset_at_same_route_point():
+    cfg = _waypoint_config()
+    trajectory = PadTrajectory(cfg, initial_route_fraction=0.5)
+    staged, staged_velocity = trajectory.initial_pose()
+    expected, _ = trajectory.waypoint_route.at(
+        0.5 * trajectory.waypoint_route.length)
+    expected = np.asarray(expected, dtype=float)
+    expected[2] += cfg.deck_height_m
+
+    trajectory.reset(seed=11, sim_time=0.0)
+    reset_position, _ = trajectory.pose(0.0)
+
+    assert staged == pytest.approx(expected)
+    assert staged_velocity == pytest.approx(np.zeros(3), abs=1e-12)
+    assert reset_position == pytest.approx(staged, abs=1e-12)
+
+
 def test_closed_waypoint_route_keeps_driving_forward_through_seam():
     base = _waypoint_config()
     cfg = dataclasses.replace(

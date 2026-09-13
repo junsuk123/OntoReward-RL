@@ -49,7 +49,8 @@ def constrain_camera_visible_entry(
         raw_offset, yaw_enu_rad: float, *, image_size=(512, 320),
         horizontal_fov_deg: float = 90.0, pitch_down_deg: float = 60.0,
         mount_translation_flu_m=(0.0, 0.0, -0.16),
-        footprint_fraction: float = 0.65) -> np.ndarray:
+        footprint_fraction: float = 0.65,
+        target_radius_m: float = 0.0) -> np.ndarray:
     """Condition a seeded entry draw on the deck being inside the camera FOV.
 
     The paper starts every landing episode with the platform visible.  This
@@ -66,11 +67,13 @@ def constrain_camera_visible_entry(
     hfov = math.radians(float(horizontal_fov_deg))
     pitch = math.radians(float(pitch_down_deg))
     fraction = float(footprint_fraction)
+    target_radius = float(target_radius_m)
     if (offset.shape != (3,) or mount.shape != (3,)
             or not np.isfinite(offset).all() or not np.isfinite(mount).all()
             or not math.isfinite(yaw) or width < 2 or height < 2
             or not 0.0 < hfov < math.pi or not 0.0 < pitch < math.pi / 2.0
-            or not 0.0 < fraction <= 1.0):
+            or not 0.0 < fraction <= 1.0
+            or not math.isfinite(target_radius) or target_radius < 0.0):
         raise ValueError("camera-visible entry configuration is invalid")
     camera_height = float(offset[2] + mount[2])
     if camera_height <= 0.0:
@@ -83,10 +86,13 @@ def constrain_camera_visible_entry(
     far_distance = camera_height / math.tan(far_angle)
     slant = camera_height / math.sin(pitch)
     lateral_half = slant * math.tan(hfov / 2.0)
+    # Bounding only the target centre can legally crop every marker on a
+    # low-altitude 1.5 m board. Erode the admissible footprint by the board's
+    # enclosing radius so the platform itself begins in view.
     footprint_radius = fraction * min(
         lateral_half, abs(centre_distance - near_distance),
-        abs(far_distance - centre_distance))
-    footprint_radius = max(0.20, float(footprint_radius))
+        abs(far_distance - centre_distance)) - target_radius
+    footprint_radius = max(0.05, float(footprint_radius))
 
     centre_body = camera_centered_hover_offset(
         float(offset[2]), math.degrees(pitch), mount)

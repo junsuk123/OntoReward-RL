@@ -233,11 +233,21 @@ class PX4Bridge:
         if not self.cfg.auto_arm:
             return state
         entry = self.entry_pose(ack)
+        # ``wait_at_entry`` starts only after the OFFBOARD pre-stream below.
+        # Give the gateway's autonomous hold a little more time than that full
+        # client-side window; otherwise it enters AUTO.LAND first and the final
+        # diagnostic misleadingly reports the resulting descent as an unstable
+        # hover.  This matters in a shared three-camera world whose wall clock
+        # advances more slowly than a single-pair simulation.
+        prestream_s = (float(self.cfg.prestream_count)
+                       / float(self.cfg.control_hz))
+        hold_margin_s = max(2.0, prestream_s + float(self.cfg.reset_settle))
         self.transact("goto", {"position": list(entry["position"]),
                                "yaw": entry["yaw"], "frame": entry["frame"],
-                               "hold_s": float(self.cfg.entry_timeout)}, ("ack",))
+                               "hold_s": (float(self.cfg.entry_timeout)
+                                          + hold_margin_s)}, ("ack",))
         # Let the setpoint stream establish offboard before arming.
-        time.sleep(float(self.cfg.prestream_count) / float(self.cfg.control_hz))
+        time.sleep(prestream_s)
         state = self.wait_at_entry(np.asarray(entry["position"], dtype=float))
         # The episode clock starts at handover, not at the reset.
         self.last_px4_time_us = int(state["px4_time_us"])

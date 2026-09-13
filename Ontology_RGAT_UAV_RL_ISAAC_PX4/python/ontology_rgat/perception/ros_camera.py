@@ -51,14 +51,22 @@ class RosGrayscaleSource:
     """Own a ROS node/thread and return one fresh mono frame per control step."""
 
     def __init__(self, topic="/landing_uav0/perception/landing_camera/image_raw",
-                 expected_shape=(320, 512), timeout_s=2.0):
+                 expected_shape=(320, 512), timeout_s=2.0,
+                 node_name="shin2026_actor_camera"):
         import rclpy
+        from rclpy.executors import SingleThreadedExecutor
 
         self.rclpy = rclpy
         self._owns_context = not rclpy.ok()
         if self._owns_context:
             rclpy.init(args=None)
-        self.node = rclpy.create_node("shin2026_actor_camera")
+        self.node = rclpy.create_node(str(node_name))
+        # rclpy.spin_once(node) uses a shared global executor. Calling it from
+        # three camera threads races the executor's callback generator. Each
+        # pair owns a small executor instead, while all nodes still share the
+        # same ROS context and DDS participant.
+        self.executor = SingleThreadedExecutor(context=self.node.context)
+        self.executor.add_node(self.node)
         self.frames = LatestGrayscaleFrame(expected_shape).attach(self.node, topic)
         self.timeout_s = float(timeout_s)
         self.last_stamp_ns = None
@@ -71,7 +79,7 @@ class RosGrayscaleSource:
 
         while not self._stop.is_set() and self.rclpy.ok():
             try:
-                self.rclpy.spin_once(self.node, timeout_sec=0.05)
+                self.executor.spin_once(timeout_sec=0.05)
             except ExternalShutdownException:
                 # Another ROS owner (normally the gateway during Ctrl-C) may
                 # close the shared context before this camera source.  That is
@@ -87,6 +95,8 @@ class RosGrayscaleSource:
     def close(self):
         self._stop.set()
         self._thread.join(timeout=1.0)
+        self.executor.remove_node(self.node)
+        self.executor.shutdown(timeout_sec=1.0)
         self.node.destroy_node()
         if self._owns_context and self.rclpy.ok():
             self.rclpy.shutdown()

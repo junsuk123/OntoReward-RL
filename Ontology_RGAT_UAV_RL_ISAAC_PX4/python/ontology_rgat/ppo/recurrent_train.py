@@ -636,7 +636,8 @@ def collect_episode_resilient(env, model: PipelineActorCritic, method: str,
         recoveries = int(getattr(
             external, "episode_recoveries",
             getattr(external, "reset_recoveries", 0)))
-    for attempt in range(recoveries + 1):
+    attempt = 0
+    while attempt <= recoveries:
         try:
             return collect_episode(env, model, method, seed, **kwargs)
         except BridgeError as exc:
@@ -646,11 +647,18 @@ def collect_episode_resilient(env, model: PipelineActorCritic, method: str,
             recover = getattr(env, "recover_infrastructure", None)
             if not recoverable or attempt >= recoveries or not callable(recover):
                 raise
+            next_attempt = attempt + 1
             print(
-                f"WARNING: episode infrastructure failed ({exc}). Discarding "
+                f"WARNING: [{method}] episode infrastructure failed ({exc}). Discarding "
                 f"the partial trajectory, restarting the owned stack, and "
-                f"retrying seed {int(seed)} ({attempt + 1} of {recoveries}).")
-            recover()
+                f"retrying seed {int(seed)} ({next_attempt} of {recoveries}).")
+            restarted = recover()
+            # A peer may already have rebuilt the one shared Isaac world while
+            # this worker was in a UDP transaction.  Its interrupted trajectory
+            # is still discarded, but that collateral disconnect must not use
+            # up this method's own fault budget.
+            if restarted is not False:
+                attempt = next_attempt
     raise AssertionError("unreachable infrastructure-recovery state")
 
 
@@ -987,10 +995,18 @@ def _migrate_legacy_shin_state_dict(state_dict):
     return migrated
 
 
+def _call_with_optional_lock(lock, function, *args, **kwargs):
+    if lock is None:
+        return function(*args, **kwargs)
+    with lock:
+        return function(*args, **kwargs)
+
+
 def train_live(env_factory: Callable, model, method, seeds, output_dir,
                *, config_hash, potential=None, ppo=None, curriculum_config=None,
                monitor=None, restart_incompatible=False,
-               demonstration_dataset=None, demonstration_anchor=None):
+               demonstration_dataset=None, demonstration_anchor=None,
+               optimizer_lock=None):
     ppo = ppo or {}
     demonstration_anchor = dict(demonstration_anchor or {})
     anchor_enabled = bool(
@@ -1182,13 +1198,15 @@ def train_live(env_factory: Callable, model, method, seeds, output_dir,
                     perception_warmup and not ppo.get(
                         "perception_warmup_safe_exploration", True)))
             if perception_warmup:
-                loss = update_estimator_episode(
+                loss = _call_with_optional_lock(
+                    optimizer_lock, update_estimator_episode,
                     model, optimizer, rows,
                     epochs=int(ppo.get("perception_warmup_epochs", 2)),
                     grad_clip=float(ppo.get("grad_clip", 5.0)),
                     sequence_length=int(ppo.get("sequence_length", 32)))
             else:
-                loss = update_episode(
+                loss = _call_with_optional_lock(
+                    optimizer_lock, update_episode,
                     model, optimizer, rows, gamma=float(ppo.get("gamma", .99)),
                     gae_lambda=float(ppo.get("gae_lambda", .95)),
                     epochs=int(ppo.get("epochs", 5)), clip=float(ppo.get("clip", .2)),
@@ -1222,7 +1240,8 @@ def train_live(env_factory: Callable, model, method, seeds, output_dir,
                         "minimum_learning_rate", start_lr * .2))
                     progress = ((ppo_episode - 1) / max(1, anchor_until - 1))
                     anchor_lr = start_lr + (end_lr - start_lr) * progress
-                    anchor_metric = behavior_clone(
+                    anchor_metric = _call_with_optional_lock(
+                        optimizer_lock, behavior_clone,
                         model, demonstration_dataset,
                         epochs=max(1, int(demonstration_anchor.get("epochs", 1))),
                         learning_rate=anchor_lr,

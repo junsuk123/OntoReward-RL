@@ -21,6 +21,7 @@ import os
 import shlex
 import signal
 import subprocess
+import threading
 import time
 from pathlib import Path
 from typing import Any, Callable
@@ -92,13 +93,17 @@ class ExternalStack:
                  config_path: str | Path | None = None,
                  log_dir: str | Path | None = None,
                  agent_timeout: float = 30.0, isaac_timeout: float = 600.0,
-                 gateway_timeout: float = 60.0):
+                 gateway_timeout: float = 60.0,
+                 parallel_pairs: int = 1):
         self.root = Path(cfg.paths.root)
         if not (self.root / "scripts").is_dir():
             raise StackError(f"No scripts/ directory under {self.root}.")
         self.isaac_sim_path = isaac_sim_path or os.environ.get("ISAACSIM_PATH", "")
         self.headless = self._resolve_headless(headless)
         self.gateway_args = gateway_args
+        self.parallel_pairs = int(parallel_pairs)
+        if self.parallel_pairs < 1:
+            raise StackError("parallel_pairs must be positive")
         self.config_path = (Path(config_path).expanduser().resolve()
                             if config_path is not None
                             else (self.root / "config" / "system.yaml").resolve())
@@ -109,6 +114,9 @@ class ExternalStack:
         self.timeouts = {"agent": agent_timeout, "isaac": isaac_timeout,
                          "gateway": gateway_timeout}
         self.managed: list[dict[str, Any]] = []
+        self.generation = 0
+        self._restart_lock = threading.RLock()
+        self._shutdown_requested = False
 
     @staticmethod
     def _resolve_headless(value: bool | str) -> bool:
@@ -136,7 +144,12 @@ class ExternalStack:
         print(f"DDS agent listening on UDP {AGENT_PORT}.")
 
     def start_isaac(self) -> None:
+        parallel_marker = f"--parallel-pairs {self.parallel_pairs}"
         if _process_running("landing_world.py"):
+            if self.parallel_pairs > 1 and not _process_running(parallel_marker):
+                raise StackError(
+                    "A single-pair Isaac world is already active. Let that run finish "
+                    "before starting the requested multi-pair world.")
             if not self.headless and _process_running("landing_world.py --headless"):
                 raise StackError(
                     "Isaac Sim is already running in headless mode. Stop that process "
@@ -156,33 +169,50 @@ class ExternalStack:
                 raise StackError("Isaac Sim was asked for a window but DISPLAY is not "
                                  "set. Run from a graphical session, or pass --headless.")
             print(f"Isaac Sim will open a window on DISPLAY {display}.")
+        isaac_command = [str(self.root / "scripts" / "run_isaac.sh"),
+                         str(self.config_path)]
+        if self.parallel_pairs > 1:
+            isaac_command += ["--parallel-pairs", str(self.parallel_pairs)]
         log = self._launch(
             "isaac",
-            [str(self.root / "scripts" / "run_isaac.sh"), str(self.config_path)],
+            isaac_command,
             env)
         # PX4 is launched by Pegasus once the world is loaded, so its banner is
         # the only signal that the whole simulator is up.
         print("Waiting for Isaac Sim and PX4 (first boot can take minutes)...")
-        self._wait_for(lambda: _log_contains(log, "Ready for takeoff"),
+        ready_count = lambda: sum(
+            "Ready for takeoff" in line
+            for line in log.read_text(errors="replace").splitlines()
+        ) if log.is_file() else 0
+        self._wait_for(lambda: ready_count() >= self.parallel_pairs,
                        self.timeouts["isaac"], "Isaac Sim + PX4 SITL", log)
-        print("Isaac Sim up and PX4 reports Ready for takeoff.")
+        print(f"Isaac Sim up and {self.parallel_pairs} PX4 instance(s) report Ready for takeoff.")
 
     def start_gateway(self) -> None:
-        if _udp_port_bound(GATEWAY_PORT):
-            print(f"Gateway already listening on UDP {GATEWAY_PORT}; adopting it.")
-            return
-        command = [str(self.root / "scripts" / "run_gateway.sh"),
-                   "--config", str(self.config_path)] + shlex.split(self.gateway_args)
-        log = self._launch("gateway", command)
-        self._wait_for(lambda: _udp_port_bound(GATEWAY_PORT),
-                       self.timeouts["gateway"], "PX4 gateway", log)
+        for index in range(self.parallel_pairs):
+            port = GATEWAY_PORT + 2 * index
+            if _udp_port_bound(port):
+                print(f"Gateway {index} already listening on UDP {port}; adopting it.")
+                continue
+            command = [str(self.root / "scripts" / "run_gateway.sh"),
+                       "--config", str(self.config_path)] + shlex.split(
+                           self.gateway_args)
+            if self.parallel_pairs > 1:
+                command += ["--pair-index", str(index),
+                            "--parallel-pairs", str(self.parallel_pairs),
+                            "--gateway-port", str(port)]
+            log = self._launch(f"gateway_{index}", command)
+            self._wait_for(lambda port=port: _udp_port_bound(port),
+                           self.timeouts["gateway"], f"PX4 gateway {index}", log)
         # Binding UDP only proves that the node process is alive.  Its ROS 2
         # publishers can still be matching Isaac's subscriptions; a reset sent
         # in that short window is valid UDP but is dropped by DDS before any
         # subscriber exists.  One bounded discovery window avoids turning the
         # first episode of a long run into a full stack restart.
         time.sleep(1.0)
-        print(f"Gateway listening on UDP {GATEWAY_PORT}.")
+        ports = ", ".join(str(GATEWAY_PORT + 2 * i)
+                          for i in range(self.parallel_pairs))
+        print(f"Gateway(s) listening on UDP {ports}.")
 
     def restart(self) -> None:
         """Cycle the simulator.
@@ -191,9 +221,40 @@ class ExternalStack:
         under lockstep and arming is then refused -- so a long sweep may need a
         clean simulator rather than a lost run.
         """
-        self.stop()
-        time.sleep(3.0)
-        self.start()
+        with self._restart_lock:
+            if self._shutdown_requested:
+                return
+            self.stop()
+            time.sleep(3.0)
+            if self._shutdown_requested:
+                return
+            self.start()
+            self.generation += 1
+
+    def restart_if_generation(self, observed_generation: int) -> bool:
+        """Restart once when several pair workers observe the same stack fault.
+
+        Returns ``True`` only to the worker that performed the restart.  Other
+        pair workers reconnect to the new generation without spending one of
+        their own bounded recovery attempts on the same shared interruption.
+        """
+        with self._restart_lock:
+            if (self._shutdown_requested
+                    or self.generation != int(observed_generation)):
+                return False
+            self.stop()
+            time.sleep(3.0)
+            if self._shutdown_requested:
+                return False
+            self.start()
+            self.generation += 1
+            return True
+
+    def shutdown(self) -> None:
+        """Prevent recovery workers from relaunching while the pipeline exits."""
+        self._shutdown_requested = True
+        with self._restart_lock:
+            self.stop()
 
     def stop(self) -> None:
         """Terminate only the processes this object started."""
@@ -211,7 +272,9 @@ class ExternalStack:
                     handle.close()
 
     def is_ready(self) -> bool:
-        return (_udp_port_bound(AGENT_PORT) and _udp_port_bound(GATEWAY_PORT)
+        return (_udp_port_bound(AGENT_PORT)
+                and all(_udp_port_bound(GATEWAY_PORT + 2 * i)
+                        for i in range(self.parallel_pairs))
                 and _process_running("landing_world.py"))
 
     def __enter__(self) -> "ExternalStack":

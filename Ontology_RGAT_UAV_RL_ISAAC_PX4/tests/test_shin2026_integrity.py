@@ -284,6 +284,20 @@ def test_full_curriculum_entry_is_conditioned_on_camera_visibility():
         constrain_camera_visible_entry(centre, yaw), centre, atol=1e-12)
 
 
+def test_camera_visible_entry_erodes_footprint_by_marker_board_radius():
+    raw = np.array([3.0, -2.0, 2.0])
+    yaw = math.radians(35.0)
+    point_only = constrain_camera_visible_entry(
+        raw, yaw, target_radius_m=0.0)
+    full_board = constrain_camera_visible_entry(
+        raw, yaw, target_radius_m=0.75)
+    centre = yaw_aligned_hover_offset(
+        camera_centered_hover_offset(2.0), yaw)
+
+    assert np.linalg.norm(full_board[:2] - centre[:2]) < np.linalg.norm(
+        point_only[:2] - centre[:2])
+
+
 def test_keypoint_heatmaps_drive_the_descriptor_embedding():
     encoder = ShinKeypointEncoder(embedding_dim=32, keypoints=6)
     output = encoder(torch.rand(2, 1, 320, 512))

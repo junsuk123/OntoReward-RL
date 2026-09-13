@@ -29,8 +29,29 @@
 | `./run.sh --mode quick` | 구성·연결·짧은 경로 검사 |
 | `./run.sh --seminar-fast` | 핵심 3-arm 축소 실제 비교 |
 | `./run.sh --seminar-fast --stay-open` | 완료 후 시각화 stack 유지 |
+| `./run.sh --seminar-fast --parallel-pairs 3` | 한 Isaac stage에서 핵심 3-arm 병렬 학습·평가 |
 
 동시에 하나의 flight pipeline만 실행한다. 실행 lock이 중복 `run.sh`를 차단한다.
+
+## 세 쌍 병렬 모드
+
+```bash
+./run.sh --seminar-fast --parallel-pairs 3 --stay-open
+```
+
+| Pair | PX4 DDS namespace | Gateway/learner UDP | Simulator topic root |
+|---:|---|---|---|
+| 0 | `/fmu` | `14650` / `14651` | `/landing_pair_0` |
+| 1 | `/px4_1/fmu` | `14652` / `14653` | `/landing_pair_1` |
+| 2 | `/px4_2/fmu` | `14654` / `14655` | `/landing_pair_2` |
+
+각 pair는 독립 reset, 카메라, contact, trajectory와 PPO optimizer를 갖는다. DDS Agent와
+Isaac physics stage만 공유한다. R-GAT artifact가 없으면 pair 0에서 reward-design 단계를
+먼저 완료하며, 동결 이후 세 PPO가 함께 시작된다. 실행 중 공통 simulator가 멈추면 같은
+장애를 본 worker 중 하나만 stack을 재시작하고 모든 partial trajectory는 폐기한다.
+세 UGV는 `parallel.route_phase_fractions`의 0/8/16% 지점부터 동일 campus waypoint를
+따라가며, 도로 밖으로 평행 이동한 복제 경로를 사용하지 않는다. 공유 장애로 연결만
+끊긴 worker는 자신의 복구 횟수를 소모하지 않고 새 stack generation에 다시 연결한다.
 
 ## 단계
 

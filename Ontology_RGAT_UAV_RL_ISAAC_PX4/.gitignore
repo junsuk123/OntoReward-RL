@@ -10,3 +10,6 @@ results/*
 external/Micro-XRCE-DDS-Agent/
 external/PX4-Autopilot/
 external/metasejong/
+# Multi-pair runs allocate disjoint ArUco IDs and rasterize those marker
+# textures on demand. They are deterministic build/runtime cache, not sources.
+assets/markers/DICT_5X5_250_*.png

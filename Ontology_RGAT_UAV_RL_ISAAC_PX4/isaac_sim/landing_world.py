@@ -7,6 +7,7 @@ Launch this file with Pegasus' ``isaac_run`` helper, not system Python.
 from __future__ import annotations
 
 import argparse
+from copy import deepcopy
 import json
 import math
 import os
@@ -20,10 +21,13 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", required=True)
     parser.add_argument("--headless", action="store_true")
+    parser.add_argument("--parallel-pairs", type=int, default=1)
     return parser.parse_args()
 
 
 ARGS = parse_args()
+if ARGS.parallel_pairs < 1 or ARGS.parallel_pairs > 3:
+    raise SystemExit("--parallel-pairs must be between 1 and 3")
 CONFIG_PATH = Path(ARGS.config).expanduser().resolve()
 WORKSPACE = CONFIG_PATH.parent.parent
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -430,16 +434,29 @@ class LandingDeck:
     PRIM = "/World/landing_rover"
     BODY = "/World/landing_rover/deck"
 
-    def __init__(self, config: dict):
+    def __init__(self, config: dict, *, pair_index: int = 0,
+                 prim_path: str | None = None, world_offset=(0.0, 0.0, 0.0),
+                 vehicle_prim: str = "/World/quadrotor",
+                 route_phase_fraction: float = 0.0):
+        self.pair_index = int(pair_index)
+        self.PRIM = prim_path or type(self).PRIM
+        self.BODY = self.PRIM + "/deck"
+        self.vehicle_prim = str(vehicle_prim)
+        self.world_offset = np.asarray(world_offset, dtype=float)
+        if self.world_offset.shape != (3,) or not np.isfinite(self.world_offset).all():
+            raise ValueError("parallel pair world offset must be three finite values")
         self.cfg = PadMotionConfig.from_mapping(config)
-        self.trajectory = PadTrajectory(self.cfg)
+        self.route_phase_fraction = float(route_phase_fraction)
+        self.trajectory = PadTrajectory(
+            self.cfg, initial_route_fraction=self.route_phase_fraction)
         # Asking the trajectory where it starts, rather than assuming the
         # configured origin *is* the start. For the road profile they are not
         # the same point: the route is centred on the city block, so its origin
         # is the middle of the block -- inside a building. Anything placed
         # there, including the vehicle that spawns on this deck, is placed
         # inside the masonry.
-        self.position, self.velocity = self.trajectory.pose(0.0)
+        position, self.velocity = self.trajectory.initial_pose()
+        self.position = np.asarray(position, dtype=float) + self.world_offset
         self.yaw = 0.0
         self.yaw_rate = 0.0
         self.physics_ok = False
@@ -501,7 +518,7 @@ class LandingDeck:
             report.CreateThresholdAttr().Set(self.contact_min_force_n)
             self.contact_sensor = ContactSensor(
                 prim_path=self.BODY + "/pad_contact_sensor",
-                name="landing_pad_contact",
+                name=f"landing_pad_contact_{self.pair_index}",
                 dt=float(CONFIG["isaac"]["physics_dt"]),
                 min_threshold=self.contact_min_force_n,
                 max_threshold=1.0e6,
@@ -522,8 +539,8 @@ class LandingDeck:
     def _apply_grip_material(self, body_prim) -> None:
         """Give the painted roof rubber-like grip and no contact bounce."""
         material = PhysicsMaterial(
-            prim_path="/World/PhysicsMaterials/LandingDeckGrip",
-            name="landing_deck_grip",
+            prim_path=f"/World/PhysicsMaterials/LandingDeckGrip_{self.pair_index}",
+            name=f"landing_deck_grip_{self.pair_index}",
             static_friction=self.static_friction,
             dynamic_friction=self.dynamic_friction,
             restitution=self.restitution,
@@ -554,8 +571,8 @@ class LandingDeck:
             contacts = frame.get("contacts") or []
             if contacts:
                 in_contact = in_contact and any(
-                    "quadrotor" in str(contact.get("body0", ""))
-                    or "quadrotor" in str(contact.get("body1", ""))
+                    self.vehicle_prim in str(contact.get("body0", ""))
+                    or self.vehicle_prim in str(contact.get("body1", ""))
                     for contact in contacts)
         except Exception as exc:                         # pragma: no cover - Isaac runtime
             if not self._contact_warning:
@@ -656,7 +673,8 @@ class LandingDeck:
     def reset(self, seed: int, sim_time: float, speed_scale: float = 1.0,
               scenario: str = "training_random_walk") -> dict:
         info = self.trajectory.reset(seed, sim_time, speed_scale, scenario)
-        self.position, self.velocity = self.trajectory.pose(sim_time)
+        position, self.velocity = self.trajectory.pose(sim_time)
+        self.position = np.asarray(position, dtype=float) + self.world_offset
         self.yaw = float(info["yaw_rad"])
         self.yaw_rate = 0.0
         if self.held:
@@ -668,6 +686,11 @@ class LandingDeck:
             self.velocity = np.zeros(3)
             info["velocity_enu_m_s"] = self.velocity.tolist()
         self.apply_pose()
+        # ``PadTrajectory`` does not know the optional world translation used
+        # by an orchestration layout.  The reset acknowledgement must describe
+        # the pose that was actually authored into USD, not its unshifted
+        # trajectory coordinate.
+        info["position_enu_m"] = self.position.tolist()
         info["surface_z_m"] = self.surface_z
         info["held"] = bool(self.held)
         return info
@@ -680,12 +703,14 @@ class LandingDeck:
             # so this freezes the pose exactly rather than approximately, and
             # the lap resumes from where it stands the moment it is released.
             self.trajectory.t0 = float(sim_time)
-            self.position, _ = self.trajectory.pose(sim_time)
+            position, _ = self.trajectory.pose(sim_time)
+            self.position = np.asarray(position, dtype=float) + self.world_offset
             self.velocity = np.zeros(3)
             self.yaw_rate = 0.0
             self.apply_pose()
             return
-        self.position, self.velocity = self.trajectory.pose(sim_time)
+        position, self.velocity = self.trajectory.pose(sim_time)
+        self.position = np.asarray(position, dtype=float) + self.world_offset
         self.yaw, self.yaw_rate = self.trajectory.step_heading(self.velocity, dt)
         self.apply_pose()
 
@@ -756,7 +781,7 @@ class LandingDeck:
         msg = Odometry()
         msg.header.stamp = stamp
         msg.header.frame_id = "map"
-        msg.child_frame_id = "landing_pad"
+        msg.child_frame_id = f"landing_pad_{self.pair_index}"
         msg.pose.pose.position.x = float(position[0])
         msg.pose.pose.position.y = float(position[1])
         msg.pose.pose.position.z = float(position[2])
@@ -925,48 +950,72 @@ class ViewportFollower:
 
 
 class LandingWorld:
-    def __init__(self):
+    """One independently controlled UAV/UGV pair in a possibly shared stage."""
+
+    def __init__(self, *, pair_index: int = 0, pair_count: int = 1,
+                 shared=None, defer_world_reset: bool = False):
         isaac_cfg = CONFIG["isaac"]
+        self.pair_index = int(pair_index)
+        self.pair_count = int(pair_count)
+        self.parallel = self.pair_count > 1
+        parallel_cfg = CONFIG.get("parallel") or {}
+        configured_offsets = parallel_cfg.get("pair_offsets_enu_m") or (
+            (0.0, 0.0, 0.0), (4.0, 0.0, 0.0), (-4.0, 0.0, 0.0))
+        if len(configured_offsets) < self.pair_count:
+            raise ValueError("parallel.pair_offsets_enu_m has fewer entries than pairs")
+        self.world_offset = np.asarray(
+            configured_offsets[self.pair_index], dtype=float)
+        configured_phases = parallel_cfg.get("route_phase_fractions") or (
+            0.0, 0.08, 0.16)
+        if len(configured_phases) < self.pair_count:
+            raise ValueError("parallel.route_phase_fractions has fewer entries than pairs")
+        self.route_phase_fraction = float(configured_phases[self.pair_index])
+        if (not math.isfinite(self.route_phase_fraction)
+                or not 0.0 <= self.route_phase_fraction < 1.0):
+            raise ValueError("parallel route phases must be finite in [0,1)")
+        self.topic_root = (f"/landing_pair_{self.pair_index}"
+                           if self.parallel else "")
+        self.pair_root = (f"/World/landing_pairs/pair_{self.pair_index}"
+                          if self.parallel else "/World")
         self.runtime = RUNTIME
         self.startup_render_released = False
-        self.timeline = omni.timeline.get_timeline_interface()
-        self.pg = PegasusInterface()
-        self.pg.set_world_settings(
-            physics_dt=float(isaac_cfg["physics_dt"]),
-            rendering_dt=self.runtime.rendering_dt,
-        )
-        self.pg._world = World(**self.pg._world_settings)
-        self.world = self.pg.world
-        environment = isaac_cfg["environment"]
-        if environment not in SIMULATION_ENVIRONMENTS:
-            raise KeyError(f"unknown Pegasus environment: {environment}")
-        self.pg.load_environment(SIMULATION_ENVIRONMENTS[environment])
+        if shared is None:
+            self.timeline = omni.timeline.get_timeline_interface()
+            self.pg = PegasusInterface()
+            self.pg.set_world_settings(
+                physics_dt=float(isaac_cfg["physics_dt"]),
+                rendering_dt=self.runtime.rendering_dt,
+            )
+            self.pg._world = World(**self.pg._world_settings)
+            self.world = self.pg.world
+            environment = isaac_cfg["environment"]
+            if environment not in SIMULATION_ENVIRONMENTS:
+                raise KeyError(f"unknown Pegasus environment: {environment}")
+            self.pg.load_environment(SIMULATION_ENVIRONMENTS[environment])
 
-        self.metasejong = MetaSejongConfig.from_mapping(CONFIG, WORKSPACE)
-        MetaSejongScene(self.metasejong).spawn(self.world)
-
-        # The city, and the sky it hides. Both the stage and the GNSS model
-        # read the same layout object, so an outage always has a building in
-        # the viewport to blame it on.
-        self.urban = UrbanLayout(UrbanConfig.from_mapping(CONFIG))
-        # Put the world origin where it really is. The constellation's
-        # elevations depend on latitude, so "a real city" that sits at 0N 0E
-        # would still hand the receiver the wrong sky -- and PX4's home, and
-        # every lat/lon it reports, would be in the Gulf of Guinea.
-        if self.urban.cfg.latitude_deg or self.urban.cfg.longitude_deg:
-            self.pg.set_global_coordinates(
-                latitude=self.urban.cfg.latitude_deg,
-                longitude=self.urban.cfg.longitude_deg,
-                altitude=self.urban.cfg.altitude_m)
-            where = (f"{self.urban.cfg.latitude_deg:.5f}, "
-                     f"{self.urban.cfg.longitude_deg:.5f}")
-            if self.urban.extract_name:
-                carb.log_warn(f"City: {self.urban.extract_name} at {where} "
-                              f"({len(self.urban.buildings)} real footprints, "
-                              f"{self.urban.attribution})")
-            else:
-                carb.log_warn(f"World origin set to {where}.")
-        UrbanScene(self.urban).spawn(self.world)
+            self.metasejong = MetaSejongConfig.from_mapping(CONFIG, WORKSPACE)
+            MetaSejongScene(self.metasejong).spawn(self.world)
+            self.urban = UrbanLayout(UrbanConfig.from_mapping(CONFIG))
+            if self.urban.cfg.latitude_deg or self.urban.cfg.longitude_deg:
+                self.pg.set_global_coordinates(
+                    latitude=self.urban.cfg.latitude_deg,
+                    longitude=self.urban.cfg.longitude_deg,
+                    altitude=self.urban.cfg.altitude_m)
+                where = (f"{self.urban.cfg.latitude_deg:.5f}, "
+                         f"{self.urban.cfg.longitude_deg:.5f}")
+                if self.urban.extract_name:
+                    carb.log_warn(f"City: {self.urban.extract_name} at {where} "
+                                  f"({len(self.urban.buildings)} real footprints, "
+                                  f"{self.urban.attribution})")
+                else:
+                    carb.log_warn(f"World origin set to {where}.")
+            UrbanScene(self.urban).spawn(self.world)
+        else:
+            self.timeline = shared.timeline
+            self.pg = shared.pg
+            self.world = shared.world
+            self.metasejong = shared.metasejong
+            self.urban = shared.urban
         gnss_cfg = GnssConfig.from_mapping(CONFIG)
         self.gnss = UrbanGnss(gnss_cfg, self.urban if self.urban.cfg.enabled else None)
         self.gnss_enabled = bool(gnss_cfg.enabled)
@@ -977,8 +1026,9 @@ class LandingWorld:
         px4_dir = Path(isaac_cfg["px4_dir"])
         if not px4_dir.is_absolute():
             px4_dir = (WORKSPACE / px4_dir).resolve()
+        vehicle_id = int(isaac_cfg["vehicle_id"]) + self.pair_index
         mavlink_cfg = PX4MavlinkBackendConfig({
-            "vehicle_id": int(isaac_cfg["vehicle_id"]),
+            "vehicle_id": vehicle_id,
             "connection_type": isaac_cfg["mavlink_connection_type"],
             "connection_ip": isaac_cfg["mavlink_connection_ip"],
             "connection_baseport": int(isaac_cfg["mavlink_connection_baseport"]),
@@ -994,7 +1044,7 @@ class LandingWorld:
         self.px4_backend = ParameterizedPX4MavlinkBackend(
             mavlink_cfg, self.px4_sitl_parameters)
         self.ros_backend = ROS2Backend(
-            vehicle_id=int(isaac_cfg["vehicle_id"]),
+            vehicle_id=vehicle_id,
             config={
                 "namespace": isaac_cfg["namespace"],
                 "pub_graphical_sensors": False,
@@ -1006,7 +1056,14 @@ class LandingWorld:
         )
         # The pad rides on this, so it has to exist before the vehicle is
         # placed: the vehicle starts parked on the deck, not on the ground.
-        self.deck = LandingDeck(CONFIG)
+        vehicle_prim = (f"{self.pair_root}/quadrotor_{self.pair_index}"
+                        if self.parallel else "/World/quadrotor")
+        deck_prim = (f"{self.pair_root}/landing_rover"
+                     if self.parallel else LandingDeck.PRIM)
+        self.deck = LandingDeck(
+            CONFIG, pair_index=self.pair_index, prim_path=deck_prim,
+            world_offset=self.world_offset, vehicle_prim=vehicle_prim,
+            route_phase_fraction=self.route_phase_fraction)
         self.deck.spawn(self.world)
 
         vehicle_cfg = MultirotorConfig()
@@ -1073,9 +1130,9 @@ class LandingWorld:
                      else self.deck_clearance_pad_m)
         spawn = self.deck.world_from_pad(clearance).tolist()
         self.vehicle = Multirotor(
-            "/World/quadrotor",
+            vehicle_prim,
             ROBOTS[isaac_cfg["robot_asset"]],
-            int(isaac_cfg["vehicle_id"]),
+            vehicle_id,
             spawn,
             [0.0, 0.0, 0.0, 1.0],
             config=vehicle_cfg,
@@ -1087,10 +1144,19 @@ class LandingWorld:
         self.camera = None
         if self.vision_enabled:
             # Parented to the deck: the tags move with the rover for free.
-            self.pad = LandingPadMarkers(vision_cfg, WORKSPACE, LandingDeck.PRIM)
+            marker_cfg = vision_cfg
+            if self.parallel:
+                marker_cfg = deepcopy(vision_cfg)
+                marker_cfg["dictionary"] = str((CONFIG.get("parallel") or {}).get(
+                    "marker_dictionary", "DICT_5X5_250"))
+                marker_stride = int((CONFIG.get("parallel") or {}).get(
+                    "marker_id_stride", 60))
+                for marker in marker_cfg["board"]:
+                    marker["id"] = int(marker["id"]) + marker_stride * self.pair_index
+            self.pad = LandingPadMarkers(marker_cfg, WORKSPACE, self.deck.PRIM)
             self.pad.spawn(self.world)
             self.camera = DownwardCamera(
-                vision_cfg, self.pad.board, self.pad.dictionary,
+                marker_cfg, self.pad.board, self.pad.dictionary,
                 runtime_rate_hz=self.runtime.camera_rate_hz)
             self.camera.attach(self.vehicle.prim_path)
 
@@ -1099,7 +1165,10 @@ class LandingWorld:
         self.battery_hover_range = tuple(
             float(v) for v in battery_cfg.get("episode_hover_seconds_range", (6.0, 45.0)))
 
-        ns = f"/{isaac_cfg['namespace']}{int(isaac_cfg['vehicle_id'])}"
+        ns = (f"{self.topic_root}/uav" if self.parallel else
+              f"/{isaac_cfg['namespace']}{vehicle_id}")
+        landing_topic = lambda legacy, relative: (
+            f"{self.topic_root}/{relative}" if self.parallel else legacy)
         node = self.ros_backend.node
         # Physics consumes /environment/wind truth.  The learner consumes only
         # the separately modelled UAV anemometer measurement on /sensors/wind.
@@ -1119,7 +1188,8 @@ class LandingWorld:
             Image, ns + "/perception/landing_camera/annotated", 1)
         self.actor_image_pub = node.create_publisher(
             Image, ns + "/perception/landing_camera/image_raw", 1)
-        self.reset_ack_pub = node.create_publisher(String, "/landing_sim/reset_ack", 10)
+        self.reset_ack_pub = node.create_publisher(
+            String, landing_topic("/landing_sim/reset_ack", "sim/reset_ack"), 10)
         # The deck broadcasts its own state, the way a cooperative ground
         # vehicle would. The drone's own estimate of the pad still comes from
         # its camera; this is what lets the gateway fall back to the PX4
@@ -1127,16 +1197,23 @@ class LandingWorld:
         # What the lorry broadcasts: its own receiver's answer, canyon errors
         # and all. This is the only deck pose any consumer on the drone side is
         # allowed to read.
-        self.deck_pub = node.create_publisher(Odometry, "/landing_pad/state/odom", 10)
+        self.deck_pub = node.create_publisher(
+            Odometry, landing_topic("/landing_pad/state/odom", "pad/state/odom"), 10)
         # The simulator's truth, for scoring the episode afterwards. Nothing on
         # the control path subscribes to it; see docs/ARCHITECTURE.md, "GNSS".
         self.deck_truth_pub = node.create_publisher(
-            Odometry, "/landing_pad/state/odom_truth", 10)
+            Odometry, landing_topic(
+                "/landing_pad/state/odom_truth", "pad/state/odom_truth"), 10)
         self.uav_truth_pub = node.create_publisher(
-            Odometry, "/landing_uav0/state/odom_truth", 10)
-        self.gnss_pub = node.create_publisher(String, "/landing_uav0/gnss/status", 10)
-        node.create_subscription(String, "/landing_sim/reset", self._on_reset_request, 10)
-        node.create_subscription(String, "/landing_sim/flight_state",
+            Odometry, landing_topic(
+                "/landing_uav0/state/odom_truth", "uav/state/odom_truth"), 10)
+        self.gnss_pub = node.create_publisher(
+            String, landing_topic("/landing_uav0/gnss/status", "uav/gnss/status"), 10)
+        node.create_subscription(
+            String, landing_topic("/landing_sim/reset", "sim/reset"),
+            self._on_reset_request, 10)
+        node.create_subscription(String, landing_topic(
+                                 "/landing_sim/flight_state", "sim/flight_state"),
                                  self._on_flight_state, 10)
         # Held aloft until the autopilot is armed and flying it. Nothing else
         # can hold a disarmed multirotor in the air, and dropping it for the
@@ -1158,9 +1235,13 @@ class LandingWorld:
         # trails, the vector still to be closed and the success tolerance. Off
         # in a headless run, where nothing would read it.
         self.overlay = LiveOverlay(
-            node, enabled=not ARGS.headless,
+            node, enabled=not ARGS.headless and self.pair_index == 0,
             success_radius_m=float(CONFIG["landing"]["success_xy_m"]))
-        self.viewport_follower = ViewportFollower(CONFIG["isaac"])
+        viewport_cfg = CONFIG["isaac"]
+        if self.pair_index != 0:
+            viewport_cfg = deepcopy(viewport_cfg)
+            viewport_cfg.setdefault("viewport_follow", {})["enabled"] = False
+        self.viewport_follower = ViewportFollower(viewport_cfg)
 
         self.wind = WindField(CONFIG["wind"])
         self.wind_sensor = WindSensor(CONFIG["wind"].get("sensor", {}))
@@ -1168,11 +1249,13 @@ class LandingWorld:
         self.last_wind = np.zeros(3)
         self.last_wind_measurement = np.zeros(3)
         self.last_force = np.zeros(3)
-        self.world.add_physics_callback("/landing_wind", self._apply_wind)
+        self.world.add_physics_callback(
+            f"/landing_wind_{self.pair_index}", self._apply_wind)
         # Stepped with physics, not with rendering: PhysX derives the kinematic
         # deck's velocity from consecutive poses, so a pose written once per
         # rendered frame would give it a stale, chunky velocity.
-        self.world.add_physics_callback("/landing_deck", self._advance_deck)
+        self.world.add_physics_callback(
+            f"/landing_deck_{self.pair_index}", self._advance_deck)
         self.world.reset()
         if self.camera is not None:
             self.camera.start()
@@ -1297,6 +1380,7 @@ class LandingWorld:
                     "mount_translation_flu_m", (0.0, 0.0, -0.16)),
                 footprint_fraction=float(camera_cfg.get(
                     "entry_visible_footprint_fraction", 0.65)),
+                target_radius_m=0.5 * math.hypot(*self.deck.cfg.deck_size_m),
             )
         else:
             # Retained urban distribution, expressed as an offset from the
@@ -1684,7 +1768,7 @@ class LandingWorld:
         truth = Odometry()
         truth.header.stamp = stamp
         truth.header.frame_id = "map"
-        truth.child_frame_id = "landing_uav0/base_link"
+        truth.child_frame_id = f"landing_uav{self.pair_index}/base_link"
         truth.pose.pose.position.x = float(state.position[0])
         truth.pose.pose.position.y = float(state.position[1])
         truth.pose.pose.position.z = float(state.position[2])
@@ -1805,7 +1889,7 @@ class LandingWorld:
 
         pose = PoseStamped()
         pose.header.stamp = stamp
-        pose.header.frame_id = "landing_pad"
+        pose.header.frame_id = f"landing_pad_{self.pair_index}"
         pose.pose.position.x = float(position[0])
         pose.pose.position.y = float(position[1])
         pose.pose.position.z = float(position[2])
@@ -1823,7 +1907,7 @@ class LandingWorld:
         image = np.ascontiguousarray(image, dtype=np.uint8)
         msg = Image()
         msg.header.stamp = stamp
-        msg.header.frame_id = "landing_camera_optical"
+        msg.header.frame_id = f"landing_camera_{self.pair_index}_optical"
         msg.height = int(image.shape[0])
         msg.width = int(image.shape[1])
         msg.encoding = "rgb8"
@@ -1840,7 +1924,7 @@ class LandingWorld:
         image = np.ascontiguousarray(image, dtype=np.uint8)
         msg = Image()
         msg.header.stamp = stamp
-        msg.header.frame_id = "landing_camera_optical"
+        msg.header.frame_id = f"landing_camera_{self.pair_index}_optical"
         msg.height = int(image.shape[0])
         msg.width = int(image.shape[1])
         msg.encoding = "mono8"
@@ -1849,7 +1933,8 @@ class LandingWorld:
         msg.data = image.tobytes()
         self.actor_image_pub.publish(msg)
 
-    def run(self):
+    def run(self, pairs=None):
+        pairs = list(pairs or (self,))
         self.timeline.play()
         # Accumulate physical time instead of rounding to an integer divider.
         # ZED 2i's 60 Hz period is 4.1667 of the retained 250 Hz physics steps,
@@ -1861,11 +1946,13 @@ class LandingWorld:
         render_elapsed = 0.0
         previous_rendering_dt = None
         try:
-            while simulation_app.is_running() and not self.stop_sim:
-                if self.pending_reset is not None:
-                    self._perform_reset()
+            while (simulation_app.is_running()
+                   and not any(pair.stop_sim for pair in pairs)):
+                for pair in pairs:
+                    if pair.pending_reset is not None:
+                        pair._perform_reset()
                 startup_rendering = (
-                    not self.startup_render_released
+                    not all(pair.startup_render_released for pair in pairs)
                     and float(self.world.current_time) < self.runtime.startup_max_sim_s
                     and self.runtime.startup_rendering_dt > rendering_dt)
                 active_rendering_dt = (self.runtime.startup_rendering_dt
@@ -1883,16 +1970,21 @@ class LandingWorld:
                     render_elapsed -= active_rendering_dt
                 # The pad camera only produces an image on a rendered frame, so
                 # vision costs rendering even in a headless run.
-                render = frame_boundary and (self.vision_enabled or not ARGS.headless)
+                render = frame_boundary and (
+                    any(pair.vision_enabled for pair in pairs) or not ARGS.headless)
                 self.world.step(render=render)
                 if frame_boundary:
-                    self._publish_environment()
+                    for pair in pairs:
+                        pair._publish_environment()
                     if render:
-                        self.overlay.update(self.vehicle.state.position,
-                                            self.deck.world_from_pad(np.zeros(3)))
-                        self.viewport_follower.update(
-                            self.vehicle.state.position, self.deck.yaw, self.urban,
-                            deck_position=self.deck.world_from_pad(np.zeros(3)))
+                        primary = pairs[0]
+                        primary.overlay.update(
+                            primary.vehicle.state.position,
+                            primary.deck.world_from_pad(np.zeros(3)))
+                        primary.viewport_follower.update(
+                            primary.vehicle.state.position, primary.deck.yaw,
+                            primary.urban,
+                            deck_position=primary.deck.world_from_pad(np.zeros(3)))
         except Exception as exc:
             # Isaac's ROS bridge invalidates its context as soon as the process
             # receives the stack's shutdown signal. A publisher can race that
@@ -1905,11 +1997,23 @@ class LandingWorld:
 
 
 def main():
-    app = LandingWorld()
+    app = LandingWorld(pair_index=0, pair_count=ARGS.parallel_pairs)
+    pairs = [app]
+    for index in range(1, ARGS.parallel_pairs):
+        pairs.append(LandingWorld(
+            pair_index=index, pair_count=ARGS.parallel_pairs, shared=app))
+    if len(pairs) > 1:
+        offsets = ", ".join(
+            f"pair {pair.pair_index}=route {pair.route_phase_fraction:.0%}"
+            f" + {pair.world_offset.tolist()} m"
+            for pair in pairs)
+        carb.log_warn(
+            f"Parallel landing world ready with {len(pairs)} UAV/UGV pairs; {offsets}")
     try:
-        app.run()
+        app.run(pairs)
     except KeyboardInterrupt:
-        app.stop_sim = True
+        for pair in pairs:
+            pair.stop_sim = True
 
 
 if __name__ == "__main__":

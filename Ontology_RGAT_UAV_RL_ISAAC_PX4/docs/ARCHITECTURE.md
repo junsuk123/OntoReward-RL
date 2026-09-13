@@ -36,6 +36,23 @@ a_t=[v_x^b,v_y^b,v_z^b,\omega_z]
 \text{PX4 OFFBOARD setpoint}.
 $$
 
+### 단일 stage의 3쌍 병렬 실행
+
+```text
+Isaac Sim physics/render stage
+├─ pair 0: UAV 0 + UGV 0 + PX4 0 + gateway 0 → Shin SE
+├─ pair 1: UAV 1 + UGV 1 + PX4 1 + gateway 1 → No SE
+└─ pair 2: UAV 2 + UGV 2 + PX4 2 + gateway 2 → Onto R-GAT
+```
+
+세 쌍은 하나의 물리 clock에서 진행하지만 prim, camera, contact sensor, marker ID,
+ROS topic, UDP endpoint와 episode state는 공유하지 않는다. 동일 route를 서로 다른
+진행률(0%, 8%, 16%)에서 시작하므로 세 UGV가 조사된 도로 위를 열차처럼 같은 방향으로
+따른다. 0이 아닌 world offset은 선택적 보정용이며 기본값은 세 쌍 모두 0이다. 쌍별
+marker ID 집합과 충분한 경로 간격으로 다른 패드의 오검출과 기체 간 접촉을 방지한다.
+제안 방법의 R-GAT은 PPO 전에 학습·검증한 뒤
+동결하며, 병렬 구간에서는 각 방법의 PPO actor/critic/optimizer만 갱신된다.
+
 ## UGV와 landing deck
 
 UGV는 YAML에 저장된 폐곡선 road-center waypoint를 따라 주행한다. Ramp와 speed bound를

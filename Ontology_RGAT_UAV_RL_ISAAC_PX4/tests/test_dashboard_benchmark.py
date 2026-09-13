@@ -170,7 +170,13 @@ def test_dashboard_has_self_contained_matlab_style_benchmark_view():
     assert "실시간 비행 상태 · pair별 독립 sensor" in PAGE
     assert "배터리 고갈 종료율" in PAGE
     assert "학습 checkpoint" in PAGE
-    assert "학습 완료 · 현재 paired evaluation 갱신 중" in PAGE
+    assert "학습 완료 · 현재 crossover paired evaluation 갱신 중" in PAGE
+    assert "물리 Pair ${index+1} · 현재 정책:" in PAGE
+    assert "학습 배정:" in PAGE
+    assert "Crossover 평가에서는 정책이 물리 pair를 seed마다 순환" in PAGE
+    assert "“현재 정책”으로 표시된 방법에 귀속" in PAGE
+    assert "add(`${methodLabel(method)} 평가`" in PAGE
+    assert "border-top-color:${activeColor}" in PAGE
     assert "[현재 평가] 이동 성공률" in PAGE
     assert "[완료된 학습 기록] 이동 성공률" in PAGE
     assert "rows.length+' completed'" in PAGE

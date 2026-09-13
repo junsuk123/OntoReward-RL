@@ -111,6 +111,9 @@ gap:5px}.pair-metrics div{background:#fff;border:1px solid #d0d0d0;padding:4px 5
 font-variant-numeric:tabular-nums}.pair-metrics small{font-size:9px;color:var(--muted)}
 .pair-links{margin-top:6px;color:var(--muted);font:9px/1.45 "Courier New",monospace;
 overflow-wrap:anywhere}.pair-state{font-weight:600}.pair-state.running{color:var(--accent)}
+.pair-assignment{margin:-1px 0 7px;padding:3px 5px;border-left:3px solid var(--line);
+background:#f1f1f1;color:var(--muted);font-size:10px}.pair-assignment.rotated{
+border-left-color:var(--warn);color:var(--ink);font-weight:600}
 .pair-state.success{color:var(--good)}.pair-state.failure,.pair-state.unsafe_touchdown{
 color:var(--bad)}
 .pair-state.complete{color:var(--good)}
@@ -371,6 +374,7 @@ function draw(card,state){
 }
 function formatTick(v){const a=Math.abs(v);return a>=1000?v.toExponential(1):
   (a>=100?Number(v).toFixed(0):a>=10?Number(v).toFixed(1):Number(v).toFixed(2));}
+function methodLabel(method){return LABELS['benchmark_train_'+method]||method||'초기화 대기';}
 function drawPairPlots(card,state){
   const pairs=(state.scalars||{}).parallel_pair_status||[];
   for(let index=0;index<3;index++){
@@ -379,10 +383,9 @@ function drawPairPlots(card,state){
     const method=String(pair.active_method||assigned);
     const title=document.getElementById(`pair-title-${card.id}-${index}`);
     if(title){
-      const assignedLabel=LABELS['benchmark_train_'+assigned]||assigned||'초기화 대기';
-      const activeLabel=LABELS['benchmark_train_'+method]||method;
-      title.textContent=`Pair ${index+1} · ${assignedLabel}`+
-        (method&&method!==assigned?` · 현재 ${activeLabel}`:'');}
+      const assignedLabel=methodLabel(assigned),activeLabel=methodLabel(method);
+      title.textContent=`물리 Pair ${index+1} · 현재 ${activeLabel}`+
+        (method&&method!==assigned?` · 학습 배정 ${assignedLabel}`:'');}
     let spec;
     if(card.plot==='reward')spec={
       y:['reward','task','shape','active_perception'],
@@ -416,10 +419,10 @@ function tiles(state){
   const trainingDone=trained>=Number(s.training_total||0)&&Number(s.training_total||0)>0;
   add('학습 checkpoint',`${trained} / ${s.training_total||0}${trainingDone?' · 완료':' · 진행'}`);
   add('현재 평가 진행',`${s.evaluation_completed||0} / ${s.evaluation_total||0}`);
-  methods.forEach((method,index)=>{
+  methods.forEach(method=>{
     const rows=state.series['benchmark_eval_'+method]||[];
     const success=rows.length?rows.reduce((sum,row)=>sum+Number(row.paper_success||0),0)/rows.length:null;
-    add(`Pair ${index+1} 평가`,`${rows.length}회 · ${success===null?'대기':(100*success).toFixed(1)+'%'}`);
+    add(`${methodLabel(method)} 평가`,`${rows.length}회 · ${success===null?'대기':(100*success).toFixed(1)+'%'}`);
   });
   if(s.rgat_dataset_episodes!==undefined){
     add('R-GAT 실제 비행 데이터',`${s.rgat_dataset_episodes} ep / ${s.rgat_dataset_samples||0}`);
@@ -432,9 +435,10 @@ function phasePanel(state){
   const s=state.scalars||{},phase=String(s.benchmark_phase||'initializing');
   const box=document.getElementById('phase-status');if(!box)return;
   box.className='phase-status '+phase;
-  if(phase==='evaluation')box.innerHTML='<b>학습 완료 · 현재 paired evaluation 갱신 중</b>'+
-    '<span>아래의 “완료된 학습 기록” 그래프와 96/96 checkpoint 값은 더 변하지 않습니다. '+
-    '현재 변화는 pair별 live plot, 평가 진행 수와 “[현재 평가]” 그래프에서 확인하십시오.</span>';
+  if(phase==='evaluation')box.innerHTML='<b>학습 완료 · 현재 crossover paired evaluation 갱신 중</b>'+
+    '<span>Crossover 평가에서는 정책이 물리 pair를 seed마다 순환합니다. 착륙 결과는 '+
+    '“현재 정책”으로 표시된 방법에 귀속되며 “학습 배정” pair에 귀속되지 않습니다. '+
+    '현재 변화는 pair별 live plot, 방법별 평가 진행 수와 “[현재 평가]” 그래프에서 확인하십시오.</span>';
   else if(phase==='training')box.innerHTML='<b>PPO 학습 진행 중</b>'+
     '<span>episode가 종료되고 optimizer와 checkpoint 기록이 완료될 때 학습 그래프가 증가합니다.</span>';
   else if(phase.includes('reward-design')||String(state.stage.name||'').includes('reward'))
@@ -451,6 +455,9 @@ function pairPanel(state){
     const pair=pairs.find(item=>Number(item.index)===index)||pairs[index]||{index:index};
     const assigned=pair.assigned_method||pair.method||'--';
     const method=pair.active_method||assigned;
+    const assignedLabel=methodLabel(assigned),activeLabel=methodLabel(method);
+    const methodIndex=(s.benchmark_methods||[]).indexOf(method);
+    const activeColor=PALETTE[(methodIndex>=0?methodIndex:index)%PALETTE.length];
     const rows=state.series['benchmark_step_pair_'+index]||[];
     const live=rows.length?rows[rows.length-1]:{},xyz=pair.relative_xyz||null;
     const step=pair.step??live.step??0,status=String(pair.status||live.status||'waiting');
@@ -460,10 +467,12 @@ function pairPanel(state){
     const gate=pair.landing_gate||null;
     const pos=xyz&&xyz.length===3
       ?`${Number(xyz[0]).toFixed(2)}, ${Number(xyz[1]).toFixed(2)}, ${Number(xyz[2]).toFixed(2)}`:'--';
-    return `<div class="pair-card" style="border-top-color:${PALETTE[index%PALETTE.length]}">`
-      +`<div class="pair-head"><b>Pair ${index+1} · ${escapeHTML(LABELS['benchmark_train_'+assigned]||assigned)}</b>`
+    return `<div class="pair-card" style="border-top-color:${activeColor}">`
+      +`<div class="pair-head"><b>물리 Pair ${index+1} · 현재 정책: ${escapeHTML(activeLabel)}</b>`
       +`<span class="pair-state ${escapeHTML(status)}">${escapeHTML(status.toUpperCase())}</span></div>`
-      +(method!==assigned?`<div class="pair-links">현재 작업: ${escapeHTML(LABELS['benchmark_train_'+method]||method)} · ${escapeHTML(pair.phase||'')}</div>`:'')
+      +`<div class="pair-assignment ${method!==assigned?'rotated':''}">`
+      +`학습 배정: ${escapeHTML(assignedLabel)}`
+      +(String(pair.phase)==='evaluation'?' · crossover 평가로 정책 순환 중':'')+`</div>`
       +`<div class="pair-metrics"><div><b>${escapeHTML(pair.episode??0)} / ${escapeHTML(step)}</b><small>${escapeHTML(pair.episode_kind||'episode')} / 스텝</small></div>`
       +`<div><b>${escapeHTML(marker)}</b><small>마커</small></div>`
       +`<div><b>${Number(pair.ugv_speed_m_s??live.ugv_speed_m_s??0).toFixed(2)} m/s</b><small>UGV 속도</small></div>`

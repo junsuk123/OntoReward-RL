@@ -115,6 +115,7 @@ curl -fsS http://127.0.0.1:8770/api/state
 Dashboard 항목:
 
 - 공용 stage와 세 pair 각각의 독립 activity
+- 물리 pair별 `현재 정책`과 `학습 배정` 정책의 분리 표시
 - 세 pair별 committed episode와 live step
 - pair별 전체/task/PBRS/active-perception reward
 - pair별 FOV/keypoint, 상대 XYZ, UAV/UGV 속도와 battery reserve
@@ -125,6 +126,10 @@ Dashboard 항목:
 
 웹 dashboard는 단일 pipeline용 레거시 view로 전환하지 않는다. 좁은 모바일 화면을
 제외하면 pair 카드, pair별 실시간 plot과 전체 비교 plot 모두 세 열을 유지한다.
+학습 단계의 `학습 배정`은 해당 물리 pair의 기본 방법이다. 최종 crossover
+평가에서는 정책이 seed마다 세 물리 pair를 순환하므로, 카드 제목과 색은
+`current_method`/“현재 정책”을 따른다. 성공률과 `evaluation/per_episode.csv` 행도
+물리 pair의 학습 배정이 아니라 실제로 실행된 `method`에 귀속된다.
 
 RViz는 세 annotated landing camera, 세 독립 TF(`landing_pad_0..2`, `uav_body_0..2`),
 pair별 UAV/UGV trail과 landing gate를 동시에 표시한다. Isaac GUI는 1280×720에서 세

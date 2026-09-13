@@ -963,7 +963,7 @@ def training_health_issue(history, ppo, *, warmup_episodes=0,
 def save_recurrent_checkpoint(path, model, optimizer, *, method, episode,
                               config_hash, curriculum, potential=None,
                               selection_score=None, selection_metric=None,
-                              model_state=None):
+                              model_state=None, training_contract_id=None):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     model_spec = getattr(model, "pipeline_spec", None)
@@ -971,6 +971,7 @@ def save_recurrent_checkpoint(path, model, optimizer, *, method, episode,
         "format": "three-pipeline-recurrent-v3-scaled-estimator", "method": method,
         "pipeline_spec": (model_spec.to_manifest() if model_spec is not None else None),
         "episode": int(episode), "config_hash": config_hash,
+        "training_contract_id": training_contract_id,
         "model": (model.state_dict() if model_state is None else model_state),
         "optimizer": optimizer.state_dict(),
         "curriculum": curriculum.state_dict(),
@@ -1077,7 +1078,7 @@ def train_live(env_factory: Callable, model, method, seeds, output_dir,
                *, config_hash, potential=None, ppo=None, curriculum_config=None,
                monitor=None, restart_incompatible=False,
                demonstration_dataset=None, demonstration_anchor=None,
-               optimizer_lock=None):
+               optimizer_lock=None, training_contract_id=None):
     ppo = ppo or {}
     demonstration_anchor = dict(demonstration_anchor or {})
     anchor_enabled = bool(
@@ -1137,6 +1138,9 @@ def train_live(env_factory: Callable, model, method, seeds, output_dir,
             incompatibility = "unsupported checkpoint format"
         elif saved.get("method") != method or saved.get("config_hash") != config_hash:
             incompatibility = "checkpoint method/config mismatch"
+        elif (training_contract_id is not None
+              and saved.get("training_contract_id") != training_contract_id):
+            incompatibility = "checkpoint training-contract mismatch"
         elif (saved_format == "three-pipeline-recurrent-v3-scaled-estimator"
               and not legacy_test_model
               and saved.get("pipeline_spec") != model_spec.to_manifest()):
@@ -1207,6 +1211,9 @@ def train_live(env_factory: Callable, model, method, seeds, output_dir,
                 if (best_saved.get("format") == saved_format
                         and best_saved.get("method") == method
                         and best_saved.get("config_hash") == config_hash
+                        and (training_contract_id is None or
+                             best_saved.get("training_contract_id") ==
+                             training_contract_id)
                         and best_saved.get("reward_design_sha256") == expected_design):
                     best_score = float(best_saved.get("selection_score", -float("inf")))
                     best_episode = int(best_saved.get("episode", 0))
@@ -1388,7 +1395,8 @@ def train_live(env_factory: Callable, model, method, seeds, output_dir,
             save_recurrent_checkpoint(
                 checkpoint_path, model, optimizer, method=method,
                 episode=episode, config_hash=config_hash, curriculum=curriculum,
-                potential=potential)
+                potential=potential,
+                training_contract_id=training_contract_id)
             selection_score = deployment_checkpoint_score(metric)
             if selection_score > best_score:
                 best_score = selection_score
@@ -1404,7 +1412,8 @@ def train_live(env_factory: Callable, model, method, seeds, output_dir,
                             "crash_failure", "touchdown_lateral_error",
                             "fov_loss_fraction",
                             "unsafe_descent_low_visibility_fraction")},
-                    model_state=rollout_model_state)
+                    model_state=rollout_model_state,
+                    training_contract_id=training_contract_id)
             persist_history()
             issue = training_health_issue(
                 history, ppo, warmup_episodes=warmup_episodes,

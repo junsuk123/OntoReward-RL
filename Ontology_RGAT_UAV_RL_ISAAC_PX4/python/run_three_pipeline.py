@@ -335,6 +335,36 @@ def _checkpoint_candidates(results_dir: Path, method: str) -> list[dict]:
     return candidates
 
 
+def _load_reward_design_source_checkpoint(results_dir: Path, method: str, model,
+                                           *, config_hash: str):
+    """Load a compatible policy only as an empirical data-collection source.
+
+    A new PPO training contract must invalidate publication checkpoints, but
+    the old policy still supplies useful non-synthetic success/failure
+    trajectories for the offline reward model. This path never registers the
+    model as a completed comparison arm.
+    """
+    model_spec = getattr(model, "pipeline_spec", None)
+    model_dir = Path(results_dir) / "models" / str(method)
+    for path in (model_dir / f"{method}.best.pt", model_dir / f"{method}.pt"):
+        if not path.is_file():
+            continue
+        payload = torch.load(path, map_location=model.device, weights_only=False)
+        if (payload.get("format") !=
+                "three-pipeline-recurrent-v3-scaled-estimator"):
+            continue
+        if (payload.get("method") != method
+                or payload.get("config_hash") != config_hash):
+            continue
+        if (model_spec is not None
+                and payload.get("pipeline_spec") != model_spec.to_manifest()):
+            continue
+        model.load_state_dict(payload["model"])
+        model.eval()
+        return path
+    return None
+
+
 def _checkpoint_validation_plan(method: str, scenarios, *, seed0: int) -> list[dict]:
     """Use one held-out deterministic seed per scenario for deployment selection."""
     return [{"method": str(method), "scenario": str(scenario),
@@ -888,7 +918,8 @@ def _records_from_adaptive_dataset(dataset):
 def _collect_adaptive_data(*, cfg, camera, model, source_pipeline, config,
                            config_hash, results_dir, mode, monitor,
                            episodes_override=None, max_episodes_override=None,
-                           minimum_unsafe_failures_override=None):
+                           minimum_unsafe_failures_override=None,
+                           source_checkpoint_path=None):
     """실제 Isaac/PX4 전이로 5성분 adaptive reward dataset을 만든다."""
     design = dict(config.get("adaptive_reward_design") or {})
     reward_cfg = dict(config.get("adaptive_reward") or {})
@@ -979,6 +1010,11 @@ def _collect_adaptive_data(*, cfg, camera, model, source_pipeline, config,
             "behavior_policy",
             "mixed_random_fixed_success_collision_drift_near_miss")),
         "source_pipeline": str(source_pipeline),
+        "source_checkpoint": (None if source_checkpoint_path is None else
+                              str(Path(source_checkpoint_path).resolve())),
+        "source_checkpoint_sha256": (
+            None if source_checkpoint_path is None else
+            _sha256_file(Path(source_checkpoint_path))),
         "components": [
             "trained_fixed_policy",
             ("training_only_privileged_velocity_teacher"
@@ -1404,7 +1440,11 @@ def main():
             "learning_rate_recovery_kl_fraction": .50,
         }
         ppo.update(ppo_runtime_overrides)
+    training_contract_id = (
+        "robust_ppo_anchor_lr_recovery_v1"
+        if args.robust_adaptive_reward else None)
     manifest["ppo_runtime_overrides"] = ppo_runtime_overrides
+    manifest["ppo_training_contract_id"] = training_contract_id
     manifest["parallel_execution"]["training_pair_assignment"] = {
         name: int(index) for name, index in training_pair_for.items()}
     manifest["parallel_execution"]["assignment_rule"] = (
@@ -1627,7 +1667,8 @@ def main():
                     demonstration_anchor=(
                         {} if demonstrations is None else
                         anchor),
-                    optimizer_lock=gpu_update_lock)
+                    optimizer_lock=gpu_update_lock,
+                    training_contract_id=training_contract_id)
                 if primary:
                     for row in history:
                         row["training_replicate"] = args.training_replicate
@@ -1720,18 +1761,38 @@ def main():
                     args.adaptive_reward_design, adaptive_rejected_design_id)
                 source_name = str((config.get("adaptive_reward_design") or {}).get(
                     "source_pipeline", "no_se_fixed"))
+                adaptive_source_checkpoint = None
                 if source_name in models:
                     adaptive_source_model = models[source_name]
+                    source_dir = args.results_dir / "models" / source_name
+                    adaptive_source_checkpoint = (
+                        source_dir / f"{source_name}.best.pt"
+                        if (source_dir / f"{source_name}.best.pt").is_file()
+                        else source_dir / f"{source_name}.pt")
                 elif source_name in args.pipelines:
-                    # Reuse the primary fixed checkpoint. In parallel mode the
-                    # reward artifact is prepared before the three workers, so
-                    # it is not in ``models`` yet even when its completed
-                    # checkpoint is already on disk.
-                    adaptive_source_model, _, _ = train_pipeline(
-                        source_name, primary=True,
-                        pair_index=training_pair_for[source_name])
+                    # A legacy policy remains valid as a source of empirical
+                    # reward-design outcomes even when the new PPO training
+                    # contract requires all publication arms to be retrained.
+                    # Do not register it in ``models``: the parallel stage
+                    # below will independently rebuild the comparison arm.
+                    adaptive_source_model = initialize_pipeline_model(source_name)
+                    adaptive_source_checkpoint = (
+                        _load_reward_design_source_checkpoint(
+                            args.results_dir, source_name,
+                            adaptive_source_model, config_hash=config_hash))
+                    if adaptive_source_checkpoint is None:
+                        adaptive_source_model, _, adaptive_source_checkpoint = (
+                            train_pipeline(
+                                source_name, primary=True,
+                                pair_index=training_pair_for[source_name],
+                                model=adaptive_source_model))
+                    else:
+                        print(
+                            "Using the prior compatible fixed policy only as "
+                            "the empirical adaptive reward-data source: "
+                            f"{adaptive_source_checkpoint}")
                 else:
-                    adaptive_source_model, _, _ = train_pipeline(
+                    adaptive_source_model, _, adaptive_source_checkpoint = train_pipeline(
                         source_name, primary=False)
                 adaptive_dataset, adaptive_manifest, _, adaptive_design_steps = (
                     _collect_adaptive_data(
@@ -1743,6 +1804,7 @@ def main():
                             if args.parallel_pairs > 1 else monitor),
                         episodes_override=args.rgat_data_episodes,
                         max_episodes_override=args.rgat_max_data_episodes,
+                        source_checkpoint_path=adaptive_source_checkpoint,
                         minimum_unsafe_failures_override=(
                             (adaptive_settings.get("quality_gate") or {}).get(
                                 "minimum_unsafe_failure_episodes"))))
@@ -1799,6 +1861,8 @@ def main():
                                     if args.parallel_pairs > 1 else monitor),
                                 episodes_override=next_minimum,
                                 max_episodes_override=adaptive_maximum,
+                                source_checkpoint_path=(
+                                    adaptive_source_checkpoint),
                                 minimum_unsafe_failures_override=(
                                     (adaptive_settings.get("quality_gate") or {}).get(
                                         "minimum_unsafe_failure_episodes"))))

@@ -177,6 +177,34 @@ def test_one_command_run_archives_an_incompatible_policy(tmp_path):
         "shin2026.incompatible-old-control*_training.csv"))) == 1
 
 
+def test_new_training_contract_archives_an_old_completed_policy(tmp_path):
+    class TinyPolicy(torch.nn.Linear):
+        @property
+        def device(self):
+            return self.weight.device
+
+    model_dir = tmp_path / "models"
+    model_dir.mkdir()
+    checkpoint = model_dir / "shin2026.pt"
+    torch.save({
+        "format": "three-pipeline-recurrent-v3-scaled-estimator",
+        "method": "shin2026", "episode": 0,
+        "config_hash": "same-flight-contract",
+        "training_contract_id": None,
+    }, checkpoint)
+
+    history = train_live(
+        lambda: pytest.fail("zero-episode replacement must not open an environment"),
+        TinyPolicy(1, 1), "shin2026", [], model_dir,
+        config_hash="same-flight-contract", restart_incompatible=True,
+        training_contract_id="robust_ppo_anchor_lr_recovery_v1")
+
+    assert history == []
+    assert not checkpoint.exists()
+    assert len(list(model_dir.glob(
+        "shin2026.incompatible-same-flight*.pt"))) == 1
+
+
 def test_deadline_budget_rescales_a_compatible_curriculum_checkpoint(
         tmp_path, capsys):
     class TinyPolicy(torch.nn.Linear):

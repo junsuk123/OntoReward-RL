@@ -39,6 +39,9 @@ R-GAT 품질 게이트와 완료 후 시각화 유지를 더한 프로필이다.
 R-GAT이 필요한 경우 실제 reward-design trajectory와 동결 artifact를 먼저 준비하고,
 그 다음 `shin_se_fixed`, `no_se_fixed`, `onto_rgat_adaptive_weight_no_se`의 독립 PPO
 optimizer가 동시에 진행된다. 단일 쌍 실행의 기존 port/topic 계약은 그대로 유지된다.
+이전 PPO checkpoint는 정보경계·config가 호환될 때 reward-design용 실제 행동
+source로만 재사용할 수 있다. 최종 비교 arm은 `ppo_training_contract_id`가 다르거나
+없으면 기존 checkpoint를 보존 이름으로 이동하고 새 계약으로 다시 학습한다.
 세 UGV는 도로를 평행 이동한 복제 경로가 아니라, 동일한 campus waypoint 폐곡선의
 0%, 8%, 16% 지점에서 앞뒤 간격을 두고 출발해 열차처럼 같은 경로를 따른다.
 

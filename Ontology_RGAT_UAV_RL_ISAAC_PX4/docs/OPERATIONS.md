@@ -77,13 +77,17 @@ scenario/seed에서 각 방법을 세 물리 pair에 교차 배정한다.
 
 - 검증된 keypoint encoder
 - 완료된 teacher demonstration
-- 호환되는 최신 PPO checkpoint/history
+- config·pipeline·reward artifact·`ppo_training_contract_id`가 모두 호환되는
+  최신 PPO checkpoint/history
 - 완료된 R-GAT dataset episode
 - 품질 gate를 통과한 동결 R-GAT artifact
 - 완료된 paired evaluation row
 
 Config hash, pipeline contract, encoder hash, graph schema 또는 reward artifact가 다르면
 기존 checkpoint를 현재 run에 혼합하지 않고 별도 incompatible artifact로 보존한다.
+Robust PPO 알고리즘 버전이 달라진 경우도 동일하다. 단, 호환되는 이전 policy를
+R-GAT 실제 reward-design trajectory의 출발 행동으로 쓰는 것은 허용하며 이 모델을
+최종 비교 checkpoint로 등록하지 않는다.
 
 ## 모니터링
 

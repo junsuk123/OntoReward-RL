@@ -69,9 +69,12 @@ def test_benchmark_monitor_publishes_refactored_contract_and_progress():
     assert state["scalars"]["current_training_episode"] == 1
     pair = state["scalars"]["parallel_pair_status"][0]
     assert pair["method"] == "ontoreward"
+    assert pair["assigned_method"] == "ontoreward"
+    assert pair["active_method"] == "ontoreward"
     assert pair["step"] == 1
     assert pair["marker_visible"] is False
     assert pair["relative_xyz"] == [0.0, 0.0, -2.0]
+    assert state["series"]["benchmark_step_pair_0"][-1]["reward"] == .3
 
 
 def test_benchmark_monitor_restores_csv_rows_and_pairs_evaluation_series():
@@ -148,7 +151,9 @@ def test_pair_status_routes_by_physical_index_during_crossover():
 
     pairs = store.snapshot()["scalars"]["parallel_pair_status"]
     assert pairs[0]["index"] == 0
-    assert pairs[0]["method"] == "ontoreward"
+    assert pairs[0]["method"] == "shin2026"
+    assert pairs[0]["assigned_method"] == "shin2026"
+    assert pairs[0]["active_method"] == "ontoreward"
     assert pairs[0]["step"] == 3
     assert pairs[1]["index"] == 1
     assert pairs[1]["step"] == 0
@@ -160,7 +165,7 @@ def test_dashboard_has_self_contained_matlab_style_benchmark_view():
     assert "Hard information boundary" in PAGE
     assert "parallel_live_method" in PAGE
     assert "pair-plot-grid" in PAGE
-    assert "benchmark_step_${method}" in PAGE
+    assert "benchmark_step_pair_${index}" in PAGE
     assert "UAV action-envelope curriculum" in PAGE
     assert "실시간 비행 상태 · pair별 독립 sensor" in PAGE
     assert "배터리 고갈 종료율" in PAGE

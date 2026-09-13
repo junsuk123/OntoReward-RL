@@ -272,6 +272,41 @@ def test_entry_gate_propagates_px4_failsafe(monkeypatch):
         bridge.wait_at_entry(np.zeros(3))
 
 
+def _valid_bridge_state(*, armed, recoverable_failsafe):
+    return {
+        "position": [0.0, 0.0, 1.0], "velocity": [0.0, 0.0, 0.0],
+        "quaternion_wxyz": [1.0, 0.0, 0.0, 0.0],
+        "angular_velocity": [0.0, 0.0, 0.0],
+        "acceleration": [0.0, 0.0, 0.0], "wind": [0.0, 0.0, 0.0],
+        "aero_force": [0.0, 0.0, 0.0], "marker_quality": 1.0,
+        "estimator_valid": True, "position_frame": "pad", "frame": "ENU_FLU",
+        "pad": {}, "battery": {}, "gnss": {}, "armed": bool(armed),
+        "extra": {
+            "px4_failsafe": True,
+            "px4_failsafe_detail": {
+                "reasons": ["offboard_control_signal_lost"],
+                "recoverable_infrastructure": bool(recoverable_failsafe),
+            },
+        },
+    }
+
+
+def test_bridge_ignores_only_disarmed_recoverable_sitl_link_clear_race():
+    bridge = object.__new__(PX4Bridge)
+    bridge.expected = {}
+
+    state = bridge.validate_state(_valid_bridge_state(
+        armed=False, recoverable_failsafe=True))
+    assert state["extra"]["ignored_disarmed_link_failsafe"] is True
+
+    with pytest.raises(PX4Failsafe):
+        bridge.validate_state(_valid_bridge_state(
+            armed=True, recoverable_failsafe=True))
+    with pytest.raises(PX4Failsafe):
+        bridge.validate_state(_valid_bridge_state(
+            armed=False, recoverable_failsafe=False))
+
+
 def test_physical_pad_contact_disarms_before_stopping_offboard():
     bridge = object.__new__(PX4Bridge)
     bridge.cfg = SimpleNamespace(outcome_settle_timeout=0.01)

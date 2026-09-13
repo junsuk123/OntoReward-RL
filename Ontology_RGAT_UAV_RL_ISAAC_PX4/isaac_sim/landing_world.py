@@ -48,7 +48,19 @@ RUNTIME = isaac_runtime_profile(CONFIG, ARGS.headless)
 # SimulationApp must be constructed before importing Omniverse/Pegasus modules.
 from isaacsim import SimulationApp
 
-app_config = {"headless": ARGS.headless}
+isaac_launch = CONFIG.get("isaac") or {}
+app_config = {
+    "headless": ARGS.headless,
+    # Keep render-cost choices explicit and avoid Isaac's multi-GPU resource
+    # replication on this single-GPU workstation. Scientific image settings
+    # retain their configured/default values.
+    "renderer": str(isaac_launch.get("renderer", "RaytracedLighting")),
+    "anti_aliasing": int(isaac_launch.get("anti_aliasing", 3)),
+    "samples_per_pixel_per_frame": int(
+        isaac_launch.get("samples_per_pixel_per_frame", 1)),
+    "denoiser": bool(isaac_launch.get("denoiser", False)),
+    "multi_gpu": bool(isaac_launch.get("multi_gpu", False)),
+}
 if not ARGS.headless:
     resolution = RUNTIME.viewport_resolution
     if ARGS.parallel_pairs > 1:

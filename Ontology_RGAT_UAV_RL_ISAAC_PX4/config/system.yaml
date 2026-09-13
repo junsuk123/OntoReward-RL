@@ -32,7 +32,9 @@ parallel:
   # Operator-only settings for the shared three-pair stage. This block is
   # excluded from the scientific config hash and cannot invalidate a policy.
   operator_view:
-    viewport_resolution: [1280, 720]
+    # Operator-only overview. Actor cameras retain their scientific 512x320
+    # resolution; this window need not cost more pixels than all three.
+    viewport_resolution: [640, 360]
     frame: street
     offset_m: [-14.0, 4.5, 12.0]
     focus: group

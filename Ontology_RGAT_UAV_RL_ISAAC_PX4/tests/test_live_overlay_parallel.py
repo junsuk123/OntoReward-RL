@@ -1,4 +1,5 @@
 import sys
+from types import ModuleType
 from pathlib import Path
 
 
@@ -36,6 +37,12 @@ class _Node:
 
 
 def test_parallel_overlay_draws_all_pairs_and_resets_only_requested_pair(monkeypatch):
+    std_msgs = ModuleType("std_msgs")
+    std_msgs_msg = ModuleType("std_msgs.msg")
+    std_msgs_msg.String = type("String", (), {})
+    std_msgs.msg = std_msgs_msg
+    monkeypatch.setitem(sys.modules, "std_msgs", std_msgs)
+    monkeypatch.setitem(sys.modules, "std_msgs.msg", std_msgs_msg)
     draw = _Draw()
     monkeypatch.setattr(live_overlay, "_acquire", lambda: draw)
     node = _Node()

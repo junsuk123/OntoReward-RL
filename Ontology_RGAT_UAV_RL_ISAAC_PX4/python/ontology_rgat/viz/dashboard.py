@@ -375,9 +375,14 @@ function drawPairPlots(card,state){
   const pairs=(state.scalars||{}).parallel_pair_status||[];
   for(let index=0;index<3;index++){
     const pair=pairs.find(item=>Number(item.index)===index)||pairs[index]||{};
-    const method=String(pair.method||'');
+    const assigned=String(pair.assigned_method||pair.method||'');
+    const method=String(pair.active_method||assigned);
     const title=document.getElementById(`pair-title-${card.id}-${index}`);
-    if(title)title.textContent=`Pair ${index+1} · ${LABELS['benchmark_train_'+method]||method||'초기화 대기'}`;
+    if(title){
+      const assignedLabel=LABELS['benchmark_train_'+assigned]||assigned||'초기화 대기';
+      const activeLabel=LABELS['benchmark_train_'+method]||method;
+      title.textContent=`Pair ${index+1} · ${assignedLabel}`+
+        (method&&method!==assigned?` · 현재 ${activeLabel}`:'');}
     let spec;
     if(card.plot==='reward')spec={
       y:['reward','task','shape','active_perception'],
@@ -395,7 +400,7 @@ function drawPairPlots(card,state){
       y:['in_fov','lateral_progress','vertical_progress','vertical_speed_penalty'],
       labels:['표적 FOV','수평 progress','수직 progress','수직속도 penalty']};
     draw({...card,...spec,id:`${card.id}-${index}`,
-      series:method?[`benchmark_step_${method}`]:[],x:'step'},state);
+      series:[`benchmark_step_pair_${index}`],x:'step'},state);
   }
 }
 function tiles(state){
@@ -432,6 +437,9 @@ function phasePanel(state){
     '현재 변화는 pair별 live plot, 평가 진행 수와 “[현재 평가]” 그래프에서 확인하십시오.</span>';
   else if(phase==='training')box.innerHTML='<b>PPO 학습 진행 중</b>'+
     '<span>episode가 종료되고 optimizer와 checkpoint 기록이 완료될 때 학습 그래프가 증가합니다.</span>';
+  else if(phase.includes('reward-design')||String(state.stage.name||'').includes('reward'))
+    box.innerHTML='<b>R-GAT 보상 설계 데이터 수집/학습 중</b>'+
+      '<span>Onto R-GAT pair은 동결된 No SE 행동 정책으로 실제 전이를 수집한 뒤 제안 PPO로 전환됩니다. 고정 보상 baseline은 동시에 학습합니다.</span>';
   else box.innerHTML='<b>실험 초기화 중</b><span>pair 연결 및 artifact 준비 상태를 확인하고 있습니다.</span>';
 }
 function escapeHTML(value){return String(value??'--').replace(/[&<>"']/g,c=>
@@ -441,7 +449,9 @@ function pairPanel(state){
   const s=state.scalars||{},pairs=s.parallel_pair_status||s.parallel_pair_layout||[];
   box.innerHTML=[0,1,2].map(index=>{
     const pair=pairs.find(item=>Number(item.index)===index)||pairs[index]||{index:index};
-    const method=pair.method||'--',rows=state.series['benchmark_step_'+method]||[];
+    const assigned=pair.assigned_method||pair.method||'--';
+    const method=pair.active_method||assigned;
+    const rows=state.series['benchmark_step_pair_'+index]||[];
     const live=rows.length?rows[rows.length-1]:{},xyz=pair.relative_xyz||null;
     const step=pair.step??live.step??0,status=String(pair.status||live.status||'waiting');
     const marker=pair.marker_visible===null||pair.marker_visible===undefined
@@ -451,8 +461,9 @@ function pairPanel(state){
     const pos=xyz&&xyz.length===3
       ?`${Number(xyz[0]).toFixed(2)}, ${Number(xyz[1]).toFixed(2)}, ${Number(xyz[2]).toFixed(2)}`:'--';
     return `<div class="pair-card" style="border-top-color:${PALETTE[index%PALETTE.length]}">`
-      +`<div class="pair-head"><b>Pair ${index+1} · ${escapeHTML(LABELS['benchmark_train_'+method]||method)}</b>`
+      +`<div class="pair-head"><b>Pair ${index+1} · ${escapeHTML(LABELS['benchmark_train_'+assigned]||assigned)}</b>`
       +`<span class="pair-state ${escapeHTML(status)}">${escapeHTML(status.toUpperCase())}</span></div>`
+      +(method!==assigned?`<div class="pair-links">현재 작업: ${escapeHTML(LABELS['benchmark_train_'+method]||method)} · ${escapeHTML(pair.phase||'')}</div>`:'')
       +`<div class="pair-metrics"><div><b>${escapeHTML(pair.episode??0)} / ${escapeHTML(step)}</b><small>${escapeHTML(pair.episode_kind||'episode')} / 스텝</small></div>`
       +`<div><b>${escapeHTML(marker)}</b><small>마커</small></div>`
       +`<div><b>${Number(pair.ugv_speed_m_s??live.ugv_speed_m_s??0).toFixed(2)} m/s</b><small>UGV 속도</small></div>`

@@ -430,11 +430,23 @@ class BenchmarkMonitor:
         """Atomically publish one pair without overwriting another worker."""
         if pair_index is None:
             matching = [index for index, status in self.pair_status.items()
-                        if str(status.get("method")) == str(method)]
+                        if str(status.get("assigned_method",
+                                          status.get("method"))) == str(method)]
+            if not matching:
+                matching = [index for index, status in self.pair_status.items()
+                            if str(status.get("active_method")) == str(method)]
             pair_index = matching[0] if matching else 0
         key = int(pair_index)
         current = dict(self.pair_status.get(key) or {"index": key})
-        current["method"] = str(method)
+        # ``method`` in the layout is the experiment arm permanently assigned
+        # to this physical pair. Reward-design collection can temporarily run
+        # another behavior policy on that pair, so expose it separately rather
+        # than making the dashboard look as if the assignment changed.
+        assigned = str(current.get(
+            "assigned_method", current.get("method", method)))
+        current["method"] = assigned
+        current["assigned_method"] = assigned
+        current["active_method"] = str(method)
         current.update(values)
         current["index"] = key
         self.pair_status[key] = current
@@ -472,7 +484,10 @@ class BenchmarkMonitor:
         self.pair_layout = [dict(item) for item in (pair_layout or ())]
         self.pair_status = {
             int(item["index"]): {
-                **dict(item), "phase": "waiting", "episode": 0,
+                **dict(item),
+                "assigned_method": str(item.get("method", "")),
+                "active_method": None,
+                "phase": "waiting", "episode": 0,
                 "step": 0, "status": "waiting",
             }
             for item in self.pair_layout
@@ -514,6 +529,13 @@ class BenchmarkMonitor:
         if len(self.methods) <= 1:
             self.store.replace("benchmark_step", [])
         self.store.replace(f"benchmark_step_{method}", [])
+        resolved_pair_index = pair_index
+        if resolved_pair_index is None:
+            matching = [index for index, status in self.pair_status.items()
+                        if str(status.get("assigned_method",
+                                          status.get("method"))) == str(method)]
+            resolved_pair_index = matching[0] if matching else 0
+        self.store.replace(f"benchmark_step_pair_{int(resolved_pair_index)}", [])
         # Completed histories only advance after optimizer/checkpoint commit.
         # Publish the in-flight episode separately so a 30 s simulated flight
         # cannot look frozen for one or two minutes on a rendered lockstep run.
@@ -550,7 +572,7 @@ class BenchmarkMonitor:
             curriculum=float(curriculum), motion_scale=float(
                 curriculum if motion_scale is None else motion_scale),
             action_scale=float(action_scale), marker_visible=None,
-            success=None, landing_gate=None, pair_index=pair_index)
+            success=None, landing_gate=None, pair_index=resolved_pair_index)
 
     def step(self, *, index: int, dt: float, method: str, reward: float,
              reward_parts: dict[str, Any], estimate, truth, in_fov: bool,
@@ -618,6 +640,14 @@ class BenchmarkMonitor:
         if len(self.methods) <= 1:
             self.store.append("benchmark_step", point)
         self.store.append(f"benchmark_step_{method}", point)
+        resolved_pair_index = pair_index
+        if resolved_pair_index is None:
+            matching = [index for index, status in self.pair_status.items()
+                        if str(status.get("assigned_method",
+                                          status.get("method"))) == str(method)]
+            resolved_pair_index = matching[0] if matching else 0
+        self.store.append(
+            f"benchmark_step_pair_{int(resolved_pair_index)}", point)
         relative = np.asarray(
             ((state.get("truth") or {}).get("position")
              if isinstance(state, dict) and isinstance(state.get("truth"), dict)
@@ -631,7 +661,7 @@ class BenchmarkMonitor:
             ugv_speed_m_s=point["ugv_speed_m_s"],
             battery_reserve=point["battery_reserve"],
             relative_xyz=(relative.tolist() if relative.shape == (3,) else None),
-            reward=float(reward), pair_index=pair_index)
+            reward=float(reward), pair_index=resolved_pair_index)
         if self.rviz is not None and state is not None:
             self.rviz.publish_benchmark_step(
                 state=state, method=method, scenario=scenario, step=index,

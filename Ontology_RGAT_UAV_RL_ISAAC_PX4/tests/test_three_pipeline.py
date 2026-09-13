@@ -2,10 +2,14 @@ from __future__ import annotations
 
 from dataclasses import fields, replace
 from pathlib import Path
+from types import SimpleNamespace
+import threading
 
 import numpy as np
 import pytest
 import torch
+
+import run_three_pipeline as pipeline_runner
 
 from ontology_rgat.bridge import BridgeError, EntryResetError, GatewayTimeout, PX4Failsafe
 from ontology_rgat.benchmarks.experiment import (configuration_hash,
@@ -57,6 +61,89 @@ from run_three_pipeline import (_behavior_transform,
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_adaptive_reward_rollouts_use_every_live_pair_concurrently(
+        monkeypatch, tmp_path):
+    barrier = threading.Barrier(3)
+    active_pairs = set()
+
+    class Environment:
+        def __init__(self, cfg, _camera, horizon_steps):
+            self.cfg = cfg
+            assert horizon_steps == 8
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+    def collect(environment, _model, _method, seed, **_kwargs):
+        active_pairs.add(environment.cfg.pair)
+        if seed < 80003:
+            barrier.wait(timeout=2.0)
+        success = seed in {80000, 80001}
+        return [object()], {"paper_success": success}
+
+    def episode_records(_rows, metric, *, episode_id, **_kwargs):
+        success = int(metric["paper_success"])
+        return [{
+            "episode_id": episode_id,
+            "success": success,
+            "failure_type": "none" if success else "collision",
+            "touchdown_error": .1,
+            "touchdown_vertical_speed": .1,
+        }]
+
+    def build(records, **_kwargs):
+        return {
+            "episode_id": np.asarray([row["episode_id"] for row in records]),
+            "success": np.asarray([row["success"] for row in records]),
+            "failure_type": np.asarray(
+                [row["failure_type"] for row in records]),
+            "touchdown_error": np.asarray(
+                [row["touchdown_error"] for row in records]),
+            "touchdown_vertical_speed": np.asarray(
+                [row["touchdown_vertical_speed"] for row in records]),
+            "split": np.asarray(["validation"] * len(records)),
+        }
+
+    monkeypatch.setattr(pipeline_runner, "LiveShinEnvironment", Environment)
+    monkeypatch.setattr(pipeline_runner, "collect_episode_resilient", collect)
+    monkeypatch.setattr(
+        pipeline_runner, "adaptive_episode_records", episode_records)
+    monkeypatch.setattr(pipeline_runner, "build_adaptive_dataset", build)
+    monkeypatch.setattr(
+        pipeline_runner, "save_adaptive_dataset",
+        lambda dataset, *_args, **_kwargs: {
+            "episodes": len(np.unique(dataset["episode_id"]))})
+
+    class Monitor:
+        def stage(self, *_args):
+            pass
+
+    contexts = [{
+        "cfg": SimpleNamespace(pair=index, sim=SimpleNamespace(max_steps=8)),
+        "camera": object(), "monitor": Monitor(),
+    } for index in range(3)]
+    dataset, manifest, _path, steps = pipeline_runner._collect_adaptive_data(
+        cfg=contexts[0]["cfg"], camera=contexts[0]["camera"], model=object(),
+        source_pipeline="no_se_fixed", config={
+            "seed": 7,
+            "adaptive_reward_design": {
+                "episodes_quick": 4, "max_episodes_quick": 4,
+                "minimum_successful_episodes": 2,
+                "minimum_failed_episodes": 2,
+                "minimum_risky_failures": 1,
+            },
+        }, config_hash="test", results_dir=tmp_path, mode="quick",
+        monitor=contexts[0]["monitor"], parallel_contexts=contexts)
+
+    assert active_pairs == {0, 1, 2}
+    assert manifest["episodes"] == 4
+    assert steps == 4
+    assert dataset["episode_id"].tolist() == [1, 2, 3, 4]
 
 
 def test_completed_system_hold_restarts_a_dead_owned_stack():

@@ -645,6 +645,7 @@ class PX4Bridge:
             if not np.isfinite(value).all():
                 raise BridgeError(f"Gateway state contains non-finite {field}.")
         extra = state.get("extra") if isinstance(state.get("extra"), dict) else {}
+        ignored_disarmed_link_failsafe = False
         if bool(extra.get("px4_failsafe", False)):
             detail = (extra.get("px4_failsafe_detail")
                       if isinstance(extra.get("px4_failsafe_detail"), dict)
@@ -652,15 +653,28 @@ class PX4Bridge:
             reasons = detail.get("reasons", ())
             if not isinstance(reasons, (list, tuple)):
                 reasons = ()
-            raise PX4Failsafe(
-                reasons,
-                recoverable=bool(detail.get("recoverable_infrastructure", False)))
+            recoverable = bool(detail.get(
+                "recoverable_infrastructure", False))
+            # After a completed touchdown we intentionally disarm and stop
+            # OFFBOARD. PX4 can retain VehicleStatus.failsafe for one callback
+            # while its benign SITL link-loss flags clear. Rejecting that
+            # disarmed transition restarts the entire shared three-pair world
+            # and discards two unrelated trajectories. It is safe to accept
+            # only this gateway-classified case while explicitly disarmed;
+            # the same flag while armed still aborts the episode immediately.
+            ignored_disarmed_link_failsafe = bool(
+                recoverable and state.get("armed") is False)
+            if not ignored_disarmed_link_failsafe:
+                raise PX4Failsafe(reasons, recoverable=recoverable)
         if not state["estimator_valid"]:
             raise PX4EstimatorInvalid("PX4 estimator state is not valid yet.")
         if int(extra.get("offboard_mode_rejections", 0)) >= 6:
             raise BridgeError(
                 "PX4 repeatedly rejected OFFBOARD mode; refusing a corrupted episode.")
         out = dict(state)
+        if ignored_disarmed_link_failsafe:
+            out["extra"] = dict(extra)
+            out["extra"]["ignored_disarmed_link_failsafe"] = True
         for field in ("position", "velocity", "quaternion_wxyz",
                       "angular_velocity", "acceleration", "wind", "aero_force"):
             out[field] = np.asarray(state[field], dtype=float).reshape(-1)

@@ -84,7 +84,7 @@ def test_shin_profile_uses_campus_plaza_and_fitted_platform():
     assert config["isaac"]["viewport_follow"]["focus"] == "pair"
     operator_view = config["parallel"]["operator_view"]
     assert operator_view["focus"] == "group"
-    assert operator_view["viewport_resolution"] == [1280, 720]
+    assert operator_view["viewport_resolution"] == [640, 360]
     assert operator_view["pair_span_m"] == pytest.approx(22.0)
     assert config["px4"]["sitl_parameters"] == {
         "COM_RC_IN_MODE": 4,

@@ -919,7 +919,8 @@ def _collect_adaptive_data(*, cfg, camera, model, source_pipeline, config,
                            config_hash, results_dir, mode, monitor,
                            episodes_override=None, max_episodes_override=None,
                            minimum_unsafe_failures_override=None,
-                           source_checkpoint_path=None):
+                           source_checkpoint_path=None,
+                           parallel_contexts=None):
     """실제 Isaac/PX4 전이로 5성분 adaptive reward dataset을 만든다."""
     design = dict(config.get("adaptive_reward_design") or {})
     reward_cfg = dict(config.get("adaptive_reward") or {})
@@ -1005,6 +1006,15 @@ def _collect_adaptive_data(*, cfg, camera, model, source_pipeline, config,
             physical_scales=normalization.get("scales"),
             normalization_quantile=float(normalization.get("quantile", .99)),
             exact_paper_raw=bool(reward_cfg.get("exact_paper_raw", False)))
+    collection_contexts = list(parallel_contexts or ({
+        "cfg": cfg, "camera": camera, "monitor": monitor,
+    },))
+    if not collection_contexts:
+        raise ValueError("adaptive reward data needs at least one live pair")
+    for context in collection_contexts:
+        if not all(key in context for key in ("cfg", "camera", "monitor")):
+            raise ValueError("each adaptive collection context needs cfg/camera/monitor")
+
     behavior = {
         "name": str(design.get(
             "behavior_policy",
@@ -1026,18 +1036,38 @@ def _collect_adaptive_data(*, cfg, camera, model, source_pipeline, config,
             str(fast_settings.get("teacher"))
             if deadline_teacher_enabled else None),
         "scenario_cycle": list(scenarios),
+        "parallel_collection_pairs": len(collection_contexts),
         "synthetic_transitions_allowed": False,
     }
     pending = [(episode, seed0 + episode - 1)
                for episode in range(1, maximum + 1)
                if episode not in completed_episodes]
     if pending and not requirements_met(dataset):
-        monitor.stage("adaptive reward data", "real transition outcome mixture")
-        with LiveShinEnvironment(
-                cfg, camera, horizon_steps=int(cfg.sim.max_steps)) as environment:
-            for episode, seed in pending:
-                if requirements_met(dataset):
-                    break
+        for context in collection_contexts:
+            context["monitor"].stage(
+                "adaptive reward data",
+                f"real transition outcome mixture · {len(collection_contexts)} pairs")
+        with ExitStack() as environment_stack:
+            environments = [environment_stack.enter_context(
+                LiveShinEnvironment(
+                    context["cfg"], context["camera"],
+                    horizon_steps=int(context["cfg"].sim.max_steps)))
+                for context in collection_contexts]
+            # Actor inference is read-only, but separate modules avoid any
+            # accidental recurrent/module state sharing between worker threads.
+            worker_models = [model] + [deepcopy(model)
+                                       for _ in environments[1:]]
+            for worker_model in worker_models:
+                modules = getattr(worker_model, "modules", lambda: ())
+                for module in modules():
+                    flatten = getattr(module, "flatten_parameters", None)
+                    if callable(flatten):
+                        flatten()
+
+            def collect_one(worker_index, item):
+                episode, seed = item
+                environment = environments[worker_index]
+                local_monitor = collection_contexts[worker_index]["monitor"]
                 scenario = scenarios[(episode - 1) % len(scenarios)]
                 variant = (episode - 1) % (5 if deadline_teacher_enabled else 3)
                 if deadline_teacher_enabled and variant == 0:
@@ -1050,34 +1080,55 @@ def _collect_adaptive_data(*, cfg, camera, model, source_pipeline, config,
                     transform = _behavior_transform(
                         {1: 0, 2: 1, 4: 2}.get(variant, variant))
                 rows, metric = collect_episode_resilient(
-                    environment, model, source_pipeline, seed, curriculum=1.0,
-                    deterministic=False, scenario=scenario, monitor=monitor,
+                    environment, worker_models[worker_index], source_pipeline,
+                    seed, curriculum=1.0, deterministic=False,
+                    scenario=scenario, monitor=local_monitor,
                     phase="adaptive reward-design data",
                     action_transform=transform)
-                records.extend(adaptive_episode_records(
-                    rows, metric, episode_id=episode, seed=seed,
-                    scenario=scenario))
-                if len(set(int(row["episode_id"]) for row in records)) >= 2:
-                    normalization = dict(
-                        reward_cfg.get("component_normalization") or {})
-                    dataset = build_adaptive_dataset(
-                        records, seed=int(config.get("seed", 42)),
-                        validation_fraction=float(
-                            design.get("validation_fraction", .2)),
-                        test_fraction=float(design.get("test_fraction", 0.0)),
-                        physical_scales=normalization.get("scales"),
-                        normalization_quantile=float(
-                            normalization.get("quantile", .99)),
-                        exact_paper_raw=bool(
-                            reward_cfg.get("exact_paper_raw", False)))
-                    manifest = save_adaptive_dataset(
-                        dataset, path, config_hash=config_hash,
-                        source_behavior_policy=behavior)
-                quality = dataset_quality(dataset)
-                print(f"adaptive data episode {episode}/{count} minimum "
-                      f"success={int(metric['paper_success'])} steps={len(rows)} "
-                      f"strata=S{quality['success']}/F{quality['failure']}/"
-                      f"R{quality['risky_failure']}/U{quality['unsafe_failure']}")
+                return episode, seed, scenario, rows, metric
+
+            cursor = 0
+            while cursor < len(pending) and not requirements_met(dataset):
+                batch = pending[cursor:cursor + len(environments)]
+                cursor += len(batch)
+                if len(batch) == 1:
+                    completed_batch = [collect_one(0, batch[0])]
+                else:
+                    with ThreadPoolExecutor(
+                            max_workers=len(batch),
+                            thread_name_prefix="adaptive-data-pair") as executor:
+                        futures = [executor.submit(collect_one, index, item)
+                                   for index, item in enumerate(batch)]
+                        completed_batch = [future.result() for future in futures]
+                # Persist only on the main thread and in episode order. A crash
+                # can therefore resume from a complete, deterministic prefix.
+                for episode, seed, scenario, rows, metric in sorted(
+                        completed_batch, key=lambda result: result[0]):
+                    records.extend(adaptive_episode_records(
+                        rows, metric, episode_id=episode, seed=seed,
+                        scenario=scenario))
+                    if len(set(int(row["episode_id"]) for row in records)) >= 2:
+                        normalization = dict(
+                            reward_cfg.get("component_normalization") or {})
+                        dataset = build_adaptive_dataset(
+                            records, seed=int(config.get("seed", 42)),
+                            validation_fraction=float(
+                                design.get("validation_fraction", .2)),
+                            test_fraction=float(
+                                design.get("test_fraction", 0.0)),
+                            physical_scales=normalization.get("scales"),
+                            normalization_quantile=float(
+                                normalization.get("quantile", .99)),
+                            exact_paper_raw=bool(
+                                reward_cfg.get("exact_paper_raw", False)))
+                        manifest = save_adaptive_dataset(
+                            dataset, path, config_hash=config_hash,
+                            source_behavior_policy=behavior)
+                    quality = dataset_quality(dataset)
+                    print(f"adaptive data episode {episode}/{count} minimum "
+                          f"success={int(metric['paper_success'])} steps={len(rows)} "
+                          f"strata=S{quality['success']}/F{quality['failure']}/"
+                          f"R{quality['risky_failure']}/U{quality['unsafe_failure']}")
     if dataset is None:
         raise RuntimeError("adaptive reward-design dataset is unavailable")
     if not requirements_met(dataset):
@@ -1399,6 +1450,8 @@ def main():
             "one_pipeline_per_pair": args.parallel_pairs > 1,
             "shared_isaac_stage": args.parallel_pairs > 1,
             "shared_dds_agent": args.parallel_pairs > 1,
+            "dependency_aware_training": args.parallel_pairs > 1,
+            "reward_design_uses_dedicated_pair": args.parallel_pairs > 1,
             "independent_udp_ros_reset_and_optimizer": args.parallel_pairs > 1,
             "layout": system.get("parallel"),
         },
@@ -1522,6 +1575,8 @@ def main():
         cfg.viz.rviz.enabled and not args.no_rviz and not args.headless,
         parallel_pairs=args.parallel_pairs)
     owned = None
+    training_executor = None
+    training_futures = {}
     stack_module.current(None)
     design_episodes = 0
     design_steps = 0
@@ -1680,9 +1735,66 @@ def main():
                 return (model, history, best_path if best_path.is_file() else
                         target_dir / f"{name}.pt")
 
-            # 먼저 고정 보상 arm을 학습한다. 두 reward-design dataset 모두
-            # 이 실제 정책/visual-servo/noise 혼합 rollout을 출발점으로 쓴다.
-            if args.parallel_pairs == 1:
+            # 고정 보상 arm은 R-GAT artifact에 의존하지 않는다.
+            # 따라서 병렬 실험에서는 이 두 PPO를 즉시 시작하고,
+            # 남은 physical pair에서 reward-design rollout을 동시에 수집한다.
+            independent_pipelines = [
+                name for name in args.pipelines
+                if not (get_pipeline(name).use_direct_rgat_potential
+                        or get_pipeline(name).use_adaptive_reward_weights)]
+            if args.parallel_pairs > 1:
+                # Build every trainable actor and frozen behavior source before
+                # worker threads start. ``torch.manual_seed`` is process-global;
+                # model construction during live PPO would otherwise perturb a
+                # worker's exploration stream according to thread timing.
+                source_names = []
+                if needs_potential:
+                    preferred = str((config.get("rgat_design") or {}).get(
+                        "source_pipeline", "no_se"))
+                    source_names.append(
+                        preferred if preferred in available_pipeline_ids()
+                        else "no_se")
+                if needs_adaptive:
+                    source_names.append(str(
+                        (config.get("adaptive_reward_design") or {}).get(
+                            "source_pipeline", "no_se_fixed")))
+                prepared_names = list(dict.fromkeys(
+                    [*args.pipelines, *source_names]))
+                prepared_parallel_models = {
+                    name: initialize_pipeline_model(name)
+                    for name in prepared_names}
+                frozen_behavior_models = {
+                    name: deepcopy(prepared_parallel_models[name])
+                    for name in source_names}
+                for source_model in frozen_behavior_models.values():
+                    for module in source_model.modules():
+                        flatten = getattr(module, "flatten_parameters", None)
+                        if callable(flatten):
+                            flatten()
+                training_executor = ThreadPoolExecutor(
+                    max_workers=args.parallel_pairs,
+                    thread_name_prefix="landing-pair")
+                training_futures = {
+                    name: training_executor.submit(
+                        train_pipeline, name,
+                        pair_index=training_pair_for[name],
+                        model=prepared_parallel_models[name])
+                    for name in independent_pipelines}
+                occupied_training_pairs = {
+                    training_pair_for[name] for name in independent_pipelines}
+                reward_design_pair_indices = [
+                    index for index in range(args.parallel_pairs)
+                    if index not in occupied_training_pairs]
+                if not reward_design_pair_indices:
+                    raise RuntimeError(
+                        "parallel reward design needs one unoccupied physical pair")
+                manifest["parallel_execution"].update({
+                    "early_independent_pipelines": independent_pipelines,
+                    "reward_design_pair_indices": reward_design_pair_indices,
+                })
+                _write_json(manifest_path, manifest)
+            else:
+                reward_design_pair_indices = [0]
                 for name in args.pipelines:
                     spec = get_pipeline(name)
                     if not (spec.use_direct_rgat_potential
@@ -1701,6 +1813,24 @@ def main():
                     source_checkpoint = (best_source if best_source.is_file() else
                         args.results_dir / f"models/{source_name}/{source_name}.pt")
                     source_training_episodes = 0
+                elif source_name in training_futures:
+                    # Reuse a compatible completed checkpoint when available;
+                    # otherwise freeze this separately initialized/BC-warmed
+                    # source while the comparison PPO continues independently.
+                    # The reward-design rollout already mixes visual teachers,
+                    # noise and adverse contacts, so waiting for all PPO episodes
+                    # would add wall time without making the data more empirical.
+                    source_model = frozen_behavior_models[source_name]
+                    source_checkpoint = _load_reward_design_source_checkpoint(
+                        args.results_dir, source_name, source_model,
+                        config_hash=config_hash)
+                    if source_checkpoint is None:
+                        print(
+                            f"Using a separately frozen BC-warmed {source_name} "
+                            "policy for reward data while its PPO arm trains.")
+                        source_training_episodes = 0
+                    else:
+                        source_training_episodes = 0
                 else:
                     source_model, source_history, source_checkpoint = train_pipeline(
                         source_name, primary=False)
@@ -1710,10 +1840,13 @@ def main():
                         if row.get("optimization_phase", "ppo") == "ppo")
                 dataset, dataset_manifest, dataset_path, design_steps = (
                     _collect_semantic_data(
-                        cfg=cfg, camera=camera, model=source_model, config=config,
+                        cfg=pair_cfgs[reward_design_pair_indices[0]],
+                        camera=cameras[reward_design_pair_indices[0]],
+                        model=source_model, config=config,
                         config_hash=config_hash, checkpoint_path=source_checkpoint,
                         results_dir=args.results_dir, mode=args.mode,
-                        monitor=monitor, episodes_override=args.rgat_data_episodes,
+                        monitor=worker_monitors[reward_design_pair_indices[0]],
+                        episodes_override=args.rgat_data_episodes,
                         max_episodes_override=args.rgat_max_data_episodes,
                         source_pipeline=source_name,
                         source_training_episodes=source_training_episodes,
@@ -1775,17 +1908,26 @@ def main():
                     # contract requires all publication arms to be retrained.
                     # Do not register it in ``models``: the parallel stage
                     # below will independently rebuild the comparison arm.
-                    adaptive_source_model = initialize_pipeline_model(source_name)
+                    adaptive_source_model = (
+                        frozen_behavior_models[source_name]
+                        if args.parallel_pairs > 1 else
+                        initialize_pipeline_model(source_name))
                     adaptive_source_checkpoint = (
                         _load_reward_design_source_checkpoint(
                             args.results_dir, source_name,
                             adaptive_source_model, config_hash=config_hash))
                     if adaptive_source_checkpoint is None:
-                        adaptive_source_model, _, adaptive_source_checkpoint = (
-                            train_pipeline(
-                                source_name, primary=True,
-                                pair_index=training_pair_for[source_name],
-                                model=adaptive_source_model))
+                        if source_name in training_futures:
+                            print(
+                                f"Using a separately frozen BC-warmed "
+                                f"{source_name} policy for adaptive reward data "
+                                "while its PPO arm trains.")
+                        else:
+                            adaptive_source_model, _, adaptive_source_checkpoint = (
+                                train_pipeline(
+                                    source_name, primary=True,
+                                    pair_index=training_pair_for[source_name],
+                                    model=adaptive_source_model))
                     else:
                         print(
                             "Using the prior compatible fixed policy only as "
@@ -1805,6 +1947,12 @@ def main():
                         episodes_override=args.rgat_data_episodes,
                         max_episodes_override=args.rgat_max_data_episodes,
                         source_checkpoint_path=adaptive_source_checkpoint,
+                        parallel_contexts=([{
+                            "cfg": pair_cfgs[index],
+                            "camera": cameras[index],
+                            "monitor": worker_monitors[index],
+                        } for index in reward_design_pair_indices]
+                            if args.parallel_pairs > 1 else None),
                         minimum_unsafe_failures_override=(
                             (adaptive_settings.get("quality_gate") or {}).get(
                                 "minimum_unsafe_failure_episodes"))))
@@ -1863,6 +2011,12 @@ def main():
                                 max_episodes_override=adaptive_maximum,
                                 source_checkpoint_path=(
                                     adaptive_source_checkpoint),
+                                parallel_contexts=([{
+                                    "cfg": pair_cfgs[index],
+                                    "camera": cameras[index],
+                                    "monitor": worker_monitors[index],
+                                } for index in reward_design_pair_indices]
+                                    if args.parallel_pairs > 1 else None),
                                 minimum_unsafe_failures_override=(
                                     (adaptive_settings.get("quality_gate") or {}).get(
                                         "minimum_unsafe_failure_episodes"))))
@@ -1892,30 +2046,26 @@ def main():
             if args.parallel_pairs > 1:
                 monitor.stage(
                     "parallel training preparation",
-                    "R-GAT frozen · constructing three independent PPO optimizers")
-                # torch.manual_seed is process-global. Build and clone the three
-                # actors serially so identical initialization remains exact;
-                # only environment interaction and PPO updates run concurrently.
-                prepared_models = {
-                    name: initialize_pipeline_model(name) for name in args.pipelines}
-                executor = ThreadPoolExecutor(
-                    max_workers=args.parallel_pairs,
-                    thread_name_prefix="landing-pair")
-                futures = {}
+                    "R-GAT frozen · starting dependent PPO on its dedicated pair")
+                dependent_pipelines = [
+                    name for name in args.pipelines
+                    if name not in training_futures]
                 try:
-                    futures = {
-                        executor.submit(
+                    for name in dependent_pipelines:
+                        training_futures[name] = training_executor.submit(
                             train_pipeline, name,
                             pair_index=training_pair_for[name],
-                            model=prepared_models[name]): name
-                        for name in args.pipelines}
-                    for future in as_completed(futures):
+                            model=prepared_parallel_models[name])
+                    for future in as_completed(list(training_futures.values())):
                         future.result()
                 except BaseException:
-                    _abort_parallel_workers(executor, futures, owned)
+                    _abort_parallel_workers(
+                        training_executor, list(training_futures.values()), owned)
+                    training_executor = None
                     raise
                 else:
-                    executor.shutdown(wait=True)
+                    training_executor.shutdown(wait=True)
+                    training_executor = None
             else:
                 for name in args.pipelines:
                     spec = get_pipeline(name)
@@ -2248,6 +2398,10 @@ def main():
             if args.stay_open:
                 _hold_after_complete(owned, monitor)
     finally:
+        if training_executor is not None:
+            _abort_parallel_workers(
+                training_executor, list(training_futures.values()), owned)
+            training_executor = None
         stack_module.current(None)
         if owned is not None and not args.keep_stack:
             owned.stop()

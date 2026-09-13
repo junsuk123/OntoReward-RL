@@ -96,6 +96,32 @@ def test_benchmark_monitor_restores_csv_rows_and_pairs_evaluation_series():
     assert state["scalars"]["evaluation_completed"] == 2
 
 
+def test_evaluation_pair_uses_evaluation_index_not_finished_training_episode():
+    store = LiveStore()
+    monitor = BenchmarkMonitor(store)
+    monitor.configure(
+        methods=["shin2026"], mode="full", config_hash="h",
+        training_total=32, evaluation_total=3,
+        pair_layout=[{"index": 0, "method": "shin2026"}])
+    monitor.restore_training("shin2026", [
+        {"episode": str(index), "paper_success": "0.0"}
+        for index in range(1, 33)])
+    monitor.restore_evaluation([{
+        "method": "shin2026", "scenario": "circle", "seed": "5",
+        "paper_success": "1.0"}])
+
+    monitor.reset_episode(
+        method="shin2026", phase="evaluation", seed=6,
+        scenario="zigzag", curriculum=1.0)
+
+    state = store.snapshot()
+    pair = state["scalars"]["parallel_pair_status"][0]
+    assert pair["episode"] == 2
+    assert pair["episode_kind"] == "평가"
+    assert state["scalars"]["current_evaluation_episode"] == 2
+    assert state["scalars"]["current_training_episode"] is None
+
+
 def test_dashboard_has_self_contained_matlab_style_benchmark_view():
     assert "세 방법론 공통 RL 계약과 정보 경계" in PAGE
     assert "benchmark_eval_scenario" in PAGE
@@ -106,7 +132,10 @@ def test_dashboard_has_self_contained_matlab_style_benchmark_view():
     assert "UAV action-envelope curriculum" in PAGE
     assert "실시간 비행 상태 · pair별 독립 sensor" in PAGE
     assert "배터리 고갈 종료율" in PAGE
-    assert "완료 학습 episode" in PAGE
+    assert "학습 checkpoint" in PAGE
+    assert "학습 완료 · 현재 paired evaluation 갱신 중" in PAGE
+    assert "[현재 평가] 이동 성공률" in PAGE
+    assert "[완료된 학습 기록] 이동 성공률" in PAGE
     assert "rows.length+' completed'" in PAGE
     assert "training_total||0)/" not in PAGE
     assert "parallel-pair-grid" in PAGE

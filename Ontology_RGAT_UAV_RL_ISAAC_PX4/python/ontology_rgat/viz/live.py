@@ -509,8 +509,9 @@ class BenchmarkMonitor:
         # Completed histories only advance after optimizer/checkpoint commit.
         # Publish the in-flight episode separately so a 30 s simulated flight
         # cannot look frozen for one or two minutes on a rendered lockstep run.
-        current_training_episode = (
-            len(self.store.series(f"benchmark_train_{method}")) + 1)
+        is_training = str(phase) == "training"
+        current_episode = len(self.store.series(
+            f"benchmark_{'train' if is_training else 'eval'}_{method}")) + 1
         if self.rviz is not None:
             self.rviz.clear_trails(method=method)
         try:
@@ -527,14 +528,16 @@ class BenchmarkMonitor:
             current_pipeline=pipeline_name,
             state_estimation_status=estimation_status,
             current_seed=int(seed), current_scenario=str(scenario),
-            current_training_episode=int(current_training_episode),
+            current_training_episode=(int(current_episode) if is_training else None),
+            current_evaluation_episode=(None if is_training else int(current_episode)),
             current_curriculum=float(curriculum),
             current_pad_motion_scale=float(
                 curriculum if motion_scale is None else motion_scale),
             current_action_envelope_scale=float(action_scale))
         self._update_pair(
             method, phase=str(phase), seed=int(seed), scenario=str(scenario),
-            episode=int(current_training_episode), step=0, status="running",
+            episode=int(current_episode), episode_kind=("학습" if is_training else "평가"),
+            step=0, status="running",
             pipeline=pipeline_name, state_estimation=estimation_status,
             curriculum=float(curriculum), motion_scale=float(
                 curriculum if motion_scale is None else motion_scale),

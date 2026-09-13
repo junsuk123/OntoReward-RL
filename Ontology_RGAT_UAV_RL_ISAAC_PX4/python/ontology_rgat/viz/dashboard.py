@@ -119,6 +119,9 @@ color:var(--bad)}
 .pair-gates i{font-style:normal;font-size:9px;padding:1px 4px;border:1px solid #bbb;
 background:#fff}.pair-gates i.pass{border-color:var(--good);color:#4a7620}
 .pair-gates i.fail{border-color:var(--bad);color:var(--bad)}
+.phase-status{display:flex;align-items:center;gap:10px;padding:8px 10px;border-left:5px solid var(--accent);
+background:#f6f9fb}.phase-status b{font-size:13px}.phase-status span{color:var(--muted)}
+.phase-status.training{border-left-color:var(--warn)}.phase-status.evaluation{border-left-color:var(--good)}
 .benchmark-formula{margin-top:9px;padding:6px 9px;border:1px solid #b8b8b8;background:#f7f7f7;
 font:12px/1.5 "Courier New",monospace;text-align:center}
 .g3d{position:relative}
@@ -159,6 +162,7 @@ const BENCHMARK_EVAL=BENCHMARK_METHODS.map(x=>'benchmark_eval_'+x);
 const BENCHMARK_STEP=BENCHMARK_METHODS.map(x=>'benchmark_step_'+x);
 const CARDS=[
  {id:'tiles',title:null},
+ {id:'phase_status',view:'benchmark',kind:'phase'},
  {id:'parallel_pairs',view:'benchmark',kind:'pairs',
   title:'동시 비행쌍 · 한 Isaac Sim 월드 / 독립 PX4·PPO'},
  {id:'parallel_live_reward',view:'benchmark',kind:'pairplots',plot:'reward',
@@ -169,10 +173,23 @@ const CARDS=[
   title:'방법론 고유 신호 · SE 오차 / 시각 관측 / R-GAT 의미 상태'},
  {id:'benchmark_contract',view:'benchmark',kind:'contract',
   title:'세 방법론 공통 RL 계약과 정보 경계'},
- {id:'benchmark_success',view:'benchmark',title:'학습 이동 성공률',
+ {id:'benchmark_eval_success',view:'benchmark',title:'[현재 평가] 이동 성공률',
+  series:BENCHMARK_EVAL,x:'evaluation_index',y:'paper_success',smooth:5,ymin:0,ymax:1},
+ {id:'benchmark_eval_return',view:'benchmark',title:'[현재 평가] episode 누적 보상',
+  series:BENCHMARK_EVAL,x:'evaluation_index',y:'episode_return',smooth:5},
+ {id:'benchmark_eval_position',view:'benchmark',title:'[현재 평가] SE 위치 RMSE',
+  series:BENCHMARK_EVAL,x:'evaluation_index',y:'position_rmse',smooth:5},
+ {id:'benchmark_eval_scenario',view:'benchmark',kind:'evalbars',
+  title:'[현재 평가] Scenario별 성공률'},
+ {id:'benchmark_eval_velocity',view:'benchmark',title:'[현재 평가] SE 속도 RMSE',
+  series:BENCHMARK_EVAL,x:'evaluation_index',y:'velocity_rmse',smooth:5},
+ {id:'benchmark_eval_visual_loss',view:'benchmark',
+  title:'[현재 평가] 표적 FOV 소실 구간의 추정 오차',
+  series:BENCHMARK_EVAL,x:'evaluation_index',y:'visual_loss_estimation_error',smooth:5},
+ {id:'benchmark_success',view:'benchmark',title:'[완료된 학습 기록] 이동 성공률',
   series:BENCHMARK_TRAIN,x:'episode',y:'paper_success',smooth:40,ymin:0,ymax:1},
  {id:'benchmark_return',view:'benchmark',
-  title:'학습 누적 보상 (진단값, 성공 판정과 별도)',
+  title:'[완료된 학습 기록] 누적 보상 (진단값)',
   series:BENCHMARK_TRAIN,x:'episode',y:'episode_return',smooth:20},
  {id:'benchmark_curriculum',view:'benchmark',title:'UGV 운동 curriculum c',
   series:BENCHMARK_TRAIN,x:'episode',y:'curriculum',ymin:0,ymax:1},
@@ -219,15 +236,6 @@ const CARDS=[
  {id:'benchmark_unsafe_blind_descent',view:'benchmark',title:'저시인성 상태의 위험 하강률',
   series:BENCHMARK_TRAIN,x:'episode',y:'unsafe_descent_low_visibility_fraction',
   smooth:12,ymin:0,ymax:1},
- {id:'benchmark_eval_scenario',view:'benchmark',kind:'evalbars',
-  title:'Scenario별 paired evaluation 성공률'},
- {id:'benchmark_eval_position',view:'benchmark',title:'평가 위치 RMSE',
-  series:BENCHMARK_EVAL,x:'evaluation_index',y:'position_rmse',smooth:8},
- {id:'benchmark_eval_velocity',view:'benchmark',title:'평가 속도 RMSE',
-  series:BENCHMARK_EVAL,x:'evaluation_index',y:'velocity_rmse',smooth:8},
- {id:'benchmark_eval_visual_loss',view:'benchmark',
-  title:'표적 FOV 소실 구간의 추정 오차',
-  series:BENCHMARK_EVAL,x:'evaluation_index',y:'visual_loss_estimation_error',smooth:8},
  {id:'graph3d',view:'benchmark',kind:'graph',
   title:'Pair 3 · 학습된 ontology graph와 R-GAT attention'},
 ];
@@ -255,12 +263,13 @@ const LABELS={benchmark_step:'current episode',
 const root=document.getElementById('root');
 for(const c of CARDS){
   const el=document.createElement('section');
-  el.className='card'+((c.id==='tiles'||['graph','contract','evalbars','pairs','pairplots'].includes(c.kind))?' wide':'')
+  el.className='card'+((c.id==='tiles'||['graph','contract','evalbars','pairs','pairplots','phase'].includes(c.kind))?' wide':'')
     +(c.kind==='graph'?' g3d':'');
   el.id='card-'+c.id;
   el.dataset.view=c.view||'common';
   el.hidden=c.view==='benchmark';
   if(c.id==='tiles'){el.innerHTML='<div class="tiles" id="tiles"></div>';}
+  else if(c.kind==='phase'){el.innerHTML='<div class="phase-status" id="phase-status"></div>';}
   else if(c.kind==='pairs'){el.innerHTML=`<h2>${c.title}</h2>
     <div class="pair-grid" id="parallel-pair-grid"></div>`;}
   else if(c.kind==='pairplots'){el.innerHTML=`<h2>${c.title}</h2><div class="pair-plot-grid">`
@@ -398,14 +407,31 @@ function tiles(state){
   add('실험 phase',s.benchmark_phase||'initializing');
   add('UAV / UGV pair',Number(s.parallel_pair_count||3));
   add('실행 모드',s.benchmark_mode||'--');
-  add('완료 학습 episode',`${trained} / ${s.training_total||0}`);
-  add('paired evaluation',`${s.evaluation_completed||0} / ${s.evaluation_total||0}`);
+  const trainingDone=trained>=Number(s.training_total||0)&&Number(s.training_total||0)>0;
+  add('학습 checkpoint',`${trained} / ${s.training_total||0}${trainingDone?' · 완료':' · 진행'}`);
+  add('현재 평가 진행',`${s.evaluation_completed||0} / ${s.evaluation_total||0}`);
+  methods.forEach((method,index)=>{
+    const rows=state.series['benchmark_eval_'+method]||[];
+    const success=rows.length?rows.reduce((sum,row)=>sum+Number(row.paper_success||0),0)/rows.length:null;
+    add(`Pair ${index+1} 평가`,`${rows.length}회 · ${success===null?'대기':(100*success).toFixed(1)+'%'}`);
+  });
   if(s.rgat_dataset_episodes!==undefined){
     add('R-GAT 실제 비행 데이터',`${s.rgat_dataset_episodes} ep / ${s.rgat_dataset_samples||0}`);
     add('R-GAT 안전 접촉',`${s.rgat_dataset_successes||0} / ${s.rgat_dataset_episodes}`);}
   if(s.config_hash)add('설정 hash',String(s.config_hash).slice(0,10));
   if(s.reward_design_id)add('보상 설계',String(s.reward_design_id).slice(0,16));
   document.getElementById('tiles').innerHTML=out.join('');
+}
+function phasePanel(state){
+  const s=state.scalars||{},phase=String(s.benchmark_phase||'initializing');
+  const box=document.getElementById('phase-status');if(!box)return;
+  box.className='phase-status '+phase;
+  if(phase==='evaluation')box.innerHTML='<b>학습 완료 · 현재 paired evaluation 갱신 중</b>'+
+    '<span>아래의 “완료된 학습 기록” 그래프와 96/96 checkpoint 값은 더 변하지 않습니다. '+
+    '현재 변화는 pair별 live plot, 평가 진행 수와 “[현재 평가]” 그래프에서 확인하십시오.</span>';
+  else if(phase==='training')box.innerHTML='<b>PPO 학습 진행 중</b>'+
+    '<span>episode가 종료되고 optimizer와 checkpoint 기록이 완료될 때 학습 그래프가 증가합니다.</span>';
+  else box.innerHTML='<b>실험 초기화 중</b><span>pair 연결 및 artifact 준비 상태를 확인하고 있습니다.</span>';
 }
 function escapeHTML(value){return String(value??'--').replace(/[&<>"']/g,c=>
   ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
@@ -426,7 +452,7 @@ function pairPanel(state){
     return `<div class="pair-card" style="border-top-color:${PALETTE[index%PALETTE.length]}">`
       +`<div class="pair-head"><b>Pair ${index+1} · ${escapeHTML(LABELS['benchmark_train_'+method]||method)}</b>`
       +`<span class="pair-state ${escapeHTML(status)}">${escapeHTML(status.toUpperCase())}</span></div>`
-      +`<div class="pair-metrics"><div><b>${escapeHTML(pair.episode??0)} / ${escapeHTML(step)}</b><small>에피소드 / 스텝</small></div>`
+      +`<div class="pair-metrics"><div><b>${escapeHTML(pair.episode??0)} / ${escapeHTML(step)}</b><small>${escapeHTML(pair.episode_kind||'episode')} / 스텝</small></div>`
       +`<div><b>${escapeHTML(marker)}</b><small>마커</small></div>`
       +`<div><b>${Number(pair.ugv_speed_m_s??live.ugv_speed_m_s??0).toFixed(2)} m/s</b><small>UGV 속도</small></div>`
       +`<div><b>${Number(pair.uav_speed_m_s??live.uav_speed_m_s??0).toFixed(2)} m/s</b><small>UAV 속도</small></div>`
@@ -769,9 +795,11 @@ async function tick(){
       lastRevision=state.revision;lastAt=Date.now();
       const profile=applyProfile(state);
       tiles(state);
+      phasePanel(state);
       if(profile==='benchmark')pairPanel(state);
       for(const c of CARDS){
         if(c.id==='tiles'||c.kind==='graph'||c.kind==='contract'||c.kind==='pairs'||
+           c.kind==='phase'||
            c.kind==='pairplots'||
            (c.view&&c.view!=='common'&&c.view!==profile))continue;
         c.kind==='evalbars'?drawEvaluationBars(c,state):draw(c,state);

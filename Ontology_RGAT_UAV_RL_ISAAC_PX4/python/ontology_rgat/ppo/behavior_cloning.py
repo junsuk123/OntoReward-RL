@@ -163,7 +163,7 @@ def _cloning_pass(model, dataset, *, optimizer, sequence_length: int,
 def behavior_clone(model, dataset, *, epochs: int = 12,
                    learning_rate: float = 3e-4, sequence_length: int = 48,
                    auxiliary_coefficient: float = .20,
-                   post_log_std: float = -1.8) -> dict[str, float]:
+                   post_log_std: float | None = -1.8) -> dict[str, float]:
     """Warm-start one arm from a shared encoded observation/action dataset."""
     transitions = validate_encoded_demonstrations(dataset)
     epochs = int(epochs)
@@ -190,7 +190,12 @@ def behavior_clone(model, dataset, *, epochs: int = 12,
         after, after_aux = _cloning_pass(
             model, dataset, optimizer=optimizer, sequence_length=sequence_length,
             auxiliary_coefficient=auxiliary_coefficient, train=False)
-        model.log_std.fill_(float(post_log_std))
+        # Initial BC deliberately chooses a low exploration variance. During
+        # PPO anchoring, None preserves the variance learned by the policy and
+        # only regularizes the recurrent actor/optional estimator.
+        if post_log_std is not None:
+            model.log_std.fill_(float(post_log_std))
+        action_std = float(model.log_std.exp().mean())
     return {
         "transitions": transitions,
         "successful_demonstration_episodes": int(torch.unique(
@@ -201,5 +206,5 @@ def behavior_clone(model, dataset, *, epochs: int = 12,
         "action_loss_after": float(np.mean(after)),
         "auxiliary_loss_before": (float(np.mean(before_aux)) if before_aux else 0.0),
         "auxiliary_loss_after": (float(np.mean(after_aux)) if after_aux else 0.0),
-        "post_action_std": float(math.exp(float(post_log_std))),
+        "post_action_std": action_std,
     }

@@ -96,7 +96,7 @@ if [[ "$seminar_fast" == true ]]; then
     --config "$project_root/config/experiments/seminar_fast_comparison.yaml"
     --system-config "$project_root/config/seminar-fast-system.yaml"
     --experiment adaptive_reward_weight_comparison
-    --results-dir "$project_root/results/seminar_fast/core3_hybrid_v2"
+    --results-dir "$project_root/results/seminar_fast/core3_hybrid_v3"
     --pipelines shin_se_fixed no_se_fixed onto_rgat_adaptive_weight_no_se
     --rgat-max-data-episodes 24
     --rgat-epochs 40

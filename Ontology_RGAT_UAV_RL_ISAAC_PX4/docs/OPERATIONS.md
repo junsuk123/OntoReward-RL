@@ -27,18 +27,23 @@ training-only simulator 상대상태를 사용하지만, 저장되는 actor 입�
 camera embedding과 UAV proprioception만 남는다. 이 추가 supervision은 세 arm이
 동일하게 공유하며 preliminary 결과에만 사용한다. SE arm의 auxiliary head
 supervision과 평가/terminal 판정에도 training-only truth가 남는다.
+초기 Gaussian 탐색은 `sigma=exp(-2.5)=0.082`이고, PPO 1~16회에는 학습률이
+`5e-5`에서 `1e-5`로 감소하는 1-epoch BC 앵커를 적용한다. 이는 세 arm에 공통이며
+critic/return을 시연으로 대체하지 않는다.
 시연, reward-design, PPO, paired evaluation interaction 수는 manifest와
 `tables/sample_efficiency.csv`에 각각 기록된다. 중단 후 같은 명령을 실행하면 시연
 artifact, pipeline checkpoint와 완료 평가 row를 재개한다.
 
 현재 preview v2는 pipeline별 PPO 32회, adaptive 설계 실제 비행 최소 12회(성공/실패/
 위험 실패 층화가 부족하면 최대 24회), R-GAT 40 epoch, scenario 3종 × paired seed
-3개를 사용하며 `results/seminar_fast/core3_hybrid_v2`에 저장한다. 이전 `core3` 결과는
+3개를 사용하며 `results/seminar_fast/core3_hybrid_v3`에 저장한다. 이전 `core3` 결과는
 덮어쓰지 않는다.
 
 착륙 성공은 raw `pad_contact`가 아니다. 접촉, 패드 중심 위치, 수직속도, 패드 상대
 수평속도, roll/pitch tilt, 각속도의 여섯 gate를 모두 통과해야 한다. 접촉했지만 gate를
 위반하면 `status=unsafe_pad_contact`, `paper_success=0`, terminal reward `-10`이다.
+접촉 위치는 최초 접촉 sample을, 충격에 의한 반동과 혼동하기 쉬운 속도·자세·각속도는
+직전 비접촉 sample을 사용하고 `touchdown_kinematic_sample=pre_contact`로 기록한다.
 Dashboard의 최근 착륙 판정과 training/evaluation CSV에서 gate별 결과를 확인할 수 있다.
 
 루트 wrapper가 기준 launcher다. 인수가 없으면 다음을 추가한다.

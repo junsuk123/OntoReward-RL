@@ -30,8 +30,10 @@ ppo:
   learning_rate: 0.00015
   minimum_learning_rate: 0.00002
   epochs: 5
-  entropy_coef: 0.001
-  init_log_std: -1.8
+  # 성공 시연 주변에서 먼저 탐색한다. 기존 sigma=0.165는 수평 명령에서
+  # 약 0.33 m/s 잡음이 되어 35 cm 패드를 벗어나는 비율이 너무 높았다.
+  entropy_coef: 0.0002
+  init_log_std: -2.5
   actor_output_gain: 0.05
   target_kl: 0.02
   # 한 epoch 안에서 KL이 급증하면 해당 epoch를 되돌리고 LR을 낮춘다.
@@ -97,4 +99,16 @@ seminar_fast:
     learning_rate: 0.0003
     sequence_length: 48
     auxiliary_coefficient: 0.20
-    post_log_std: -1.8
+    post_log_std: -2.5
+    # PPO가 첫 sparse success를 얻기 전에 성공 시연을 잊지 않도록 모든
+    # 비교군에 같은 감쇠형 imitation anchor를 적용한다. critic과 보상은
+    # 계속 각 arm의 on-policy rollout으로만 학습한다.
+    ppo_anchor:
+      enabled: true
+      until_policy_episode: 16
+      interval_episodes: 1
+      epochs: 1
+      learning_rate: 0.00005
+      minimum_learning_rate: 0.00001
+      sequence_length: 48
+      auxiliary_coefficient: 0.10

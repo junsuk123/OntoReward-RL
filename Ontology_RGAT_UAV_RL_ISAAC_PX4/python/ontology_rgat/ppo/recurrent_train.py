@@ -27,6 +27,7 @@ from ..reward_modes import (AdaptiveRewardConfig, AdaptiveWeightReward,
                             active_perception_reward, sparse_terminal_reward)
 from ..reward_modes.adaptive_weight import shin_reward_components
 from ..reward_modes.adaptive_weight import RewardComponentNormalizer
+from .behavior_cloning import behavior_clone
 from .recurrent import PipelineActorCritic, recurrent_ppo_loss
 
 
@@ -988,8 +989,13 @@ def _migrate_legacy_shin_state_dict(state_dict):
 
 def train_live(env_factory: Callable, model, method, seeds, output_dir,
                *, config_hash, potential=None, ppo=None, curriculum_config=None,
-               monitor=None, restart_incompatible=False):
+               monitor=None, restart_incompatible=False,
+               demonstration_dataset=None, demonstration_anchor=None):
     ppo = ppo or {}
+    demonstration_anchor = dict(demonstration_anchor or {})
+    anchor_enabled = bool(
+        demonstration_dataset is not None
+        and demonstration_anchor.get("enabled", False))
     curriculum = PlatformMotionCurriculum(**(curriculum_config or {}))
     if hasattr(potential, "assert_frozen"):
         potential.assert_frozen()
@@ -1199,6 +1205,42 @@ def train_live(env_factory: Callable, model, method, seeds, output_dir,
                         "rollback_on_excessive_kl", True)),
                     log_std_bounds=tuple(ppo.get(
                         "log_std_bounds", (-3.0, -0.8))))
+                # Short live runs can forget a small set of successful
+                # demonstrations before PPO observes its first sparse terminal
+                # success. A decaying auxiliary BC pass provides demonstration
+                # replay to every arm equally; value and reward learning remain
+                # on-policy and the learned exploration variance is untouched.
+                anchor_until = max(0, int(demonstration_anchor.get(
+                    "until_policy_episode", 0)))
+                anchor_interval = max(1, int(demonstration_anchor.get(
+                    "interval_episodes", 1)))
+                if (anchor_enabled and ppo_episode <= anchor_until
+                        and (ppo_episode - 1) % anchor_interval == 0):
+                    start_lr = float(demonstration_anchor.get(
+                        "learning_rate", 5e-5))
+                    end_lr = float(demonstration_anchor.get(
+                        "minimum_learning_rate", start_lr * .2))
+                    progress = ((ppo_episode - 1) / max(1, anchor_until - 1))
+                    anchor_lr = start_lr + (end_lr - start_lr) * progress
+                    anchor_metric = behavior_clone(
+                        model, demonstration_dataset,
+                        epochs=max(1, int(demonstration_anchor.get("epochs", 1))),
+                        learning_rate=anchor_lr,
+                        sequence_length=max(1, int(demonstration_anchor.get(
+                            "sequence_length", 48))),
+                        auxiliary_coefficient=float(demonstration_anchor.get(
+                            "auxiliary_coefficient", .10)),
+                        post_log_std=None)
+                    loss.update({
+                        "imitation_anchor_applied": 1.0,
+                        "imitation_anchor_learning_rate": anchor_lr,
+                        "imitation_anchor_action_loss_before": anchor_metric[
+                            "action_loss_before"],
+                        "imitation_anchor_action_loss_after": anchor_metric[
+                            "action_loss_after"],
+                    })
+                else:
+                    loss["imitation_anchor_applied"] = 0.0
             if hasattr(potential, "assert_frozen"):
                 # Reward design is not a PPO module/optimizer parameter. This
                 # hash+mode assertion catches accidental mutation immediately.

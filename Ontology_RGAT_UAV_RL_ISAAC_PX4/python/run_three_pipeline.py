@@ -1195,7 +1195,13 @@ def main():
                     target_dir, config_hash=config_hash,
                     potential=reward_design,
                     ppo=ppo, curriculum_config=curriculum, monitor=monitor if primary else None,
-                    restart_incompatible=True)
+                    restart_incompatible=True,
+                    demonstration_dataset=(
+                        None if demonstrations is None else
+                        demonstrations["dataset"]),
+                    demonstration_anchor=(
+                        {} if demonstrations is None else
+                        dict(cloning.get("ppo_anchor") or {})))
                 if primary:
                     for row in history:
                         row["training_replicate"] = args.training_replicate

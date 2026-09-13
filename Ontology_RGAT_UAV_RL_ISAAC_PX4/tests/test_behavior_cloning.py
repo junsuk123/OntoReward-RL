@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pytest
 import torch
 
 from ontology_rgat.ppo.behavior_cloning import (
@@ -43,6 +44,18 @@ def test_behavior_cloning_also_pretrains_the_shin_auxiliary_head():
         auxiliary_coefficient=.2)
     assert metrics["action_loss_after"] < metrics["action_loss_before"]
     assert metrics["auxiliary_loss_after"] < metrics["auxiliary_loss_before"]
+
+
+def test_behavior_cloning_anchor_preserves_ppo_exploration_variance():
+    model = _model("no_se_fixed")
+    with torch.no_grad():
+        model.log_std.fill_(-2.35)
+    metrics = behavior_clone(
+        model, _dataset(), epochs=1, learning_rate=1e-4,
+        sequence_length=12, post_log_std=None)
+    assert torch.allclose(model.log_std, torch.full_like(model.log_std, -2.35))
+    assert metrics["post_action_std"] == pytest.approx(
+        torch.exp(torch.tensor(-2.35)).item())
 
 
 def test_encoded_demonstrations_are_hash_bound_and_restartable(tmp_path):

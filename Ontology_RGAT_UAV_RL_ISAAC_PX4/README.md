@@ -42,11 +42,14 @@ estimator-free baseline, estimator-free ontology/R-GAT reward 방식을 비교�
 완료 결과와 checkpoint를 다시 만들지 않고 로드하며, `Ctrl-C`에서 전체 stack을
 안전하게 종료한다.
 
-별도 `results/seminar_fast/core3_hybrid_v2` 폴더에서 실제 training-only PD 교사 성공 착륙
+별도 `results/seminar_fast/core3_hybrid_v3` 폴더에서 실제 training-only PD 교사 성공 착륙
 4회를 공통 behavior-cloning 자료로 만든 뒤 `shin_se_fixed`, `no_se_fixed`,
 `onto_rgat_adaptive_weight_no_se`를 PPO 32회씩 학습한다. 교사는 움직이는 UGV 속도
 feed-forward와 simulator 상대상태를 action label 생성에만 사용한다. 저장되는 BC
-actor 입력은 camera와 UAV proprioception뿐이며, 최종 평가는 교사 없이
+actor 입력은 camera와 UAV proprioception뿐이다. 초기 탐색 표준편차는 0.082로 제한하고
+PPO 1~16회에는 모든 arm에 동일한 감쇠형 BC 앵커를 적용한다. 이 앵커는 actor/LSTM의
+성공 행동 망각만 억제하며 critic과 reward update는 각 arm의 on-policy 자료를 쓴다.
+최종 평가는 교사 없이
 쉬운 조건의 scenario 3종 × paired seed 3개로 수행한다. Adaptive reward 자료는
 성공/실패/위험 실패를 층화해 최소 12회(최대 24회) 수집하고 40 epoch 학습한다.
 기존 full checkpoint는

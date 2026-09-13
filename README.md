@@ -33,7 +33,9 @@ ontology/R-GAT reward 방식을 포함한다.
 ```
 
 이 명령은 기존 full/이전 예비 결과를 건드리지 않고
-`results/seminar_fast/core3_hybrid_v2`에 저장한다.
+`results/seminar_fast/core3_hybrid_v3`에 저장한다. 짧은 실험에서는 모든 arm에 동일한
+저분산 탐색과 감쇠형 행동복제 앵커를 적용해, PPO가 첫 성공을 보기 전에 성공 시연을
+잊는 현상을 줄인다.
 실제 Isaac/PX4에서 성공한 training-only PD 교사 착륙 4회를 먼저 수집하고, 압축된
 공통 camera embedding/action으로 세 actor를 behavior-cloning 초기화한다. 교사는
 움직이는 UGV의 속도를 feed-forward하며 시연 action label 생성에만 simulator 상대

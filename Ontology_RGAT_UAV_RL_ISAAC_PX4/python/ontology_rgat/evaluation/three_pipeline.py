@@ -214,7 +214,8 @@ def learning_efficiency(training_records, *, reward_design_episodes=0,
                         reward_design_steps=0, estimator_warmup_episodes=0,
                         estimator_warmup_steps=0,
                         behavior_cloning_episodes=0,
-                        behavior_cloning_steps=0):
+                        behavior_cloning_steps=0,
+                        reward_design_costs=None):
     output = []
     pipelines = list(dict.fromkeys(
         row.get("pipeline") for row in training_records if row.get("pipeline")))
@@ -229,9 +230,11 @@ def learning_efficiency(training_records, *, reward_design_episodes=0,
         uses_reward_design = (pipeline == "onto_no_se"
                               or "rgat" in pipeline or "pbrs" in pipeline)
         uses_estimator_warmup = pipeline.startswith("shin_se")
-        reward_extra_episodes = (int(reward_design_episodes)
-                                 if uses_reward_design else 0)
-        reward_extra_steps = int(reward_design_steps) if uses_reward_design else 0
+        explicit_cost = dict((reward_design_costs or {}).get(pipeline) or {})
+        reward_extra_episodes = (int(explicit_cost.get(
+            "episodes", reward_design_episodes)) if uses_reward_design else 0)
+        reward_extra_steps = (int(explicit_cost.get(
+            "steps", reward_design_steps)) if uses_reward_design else 0)
         estimator_extra_episodes = (int(estimator_warmup_episodes)
                                     if uses_estimator_warmup else 0)
         estimator_extra_steps = (int(estimator_warmup_steps)
@@ -276,12 +279,16 @@ def _publication_table(summary, efficiency):
         row = {
             "pipeline": pipeline,
             "state_estimation_supervision": pipeline.startswith("shin_se"),
-            "direct_semantic_rgat": (pipeline == "onto_no_se"
-                                      or "rgat" in pipeline),
+            "direct_semantic_rgat_potential": (
+                pipeline == "onto_no_se" or "potential_pbrs" in pipeline),
+            "adaptive_rgat_weighting": (
+                "adaptive_weight" in pipeline or "rgat_weight" in pipeline),
             "success_rate": average("paper_success_mean"),
             "strict_success_rate": average("strict_success_mean"),
             "crash_rate": average("crash_failure_mean"),
-            "touchdown_lateral_error_m": average("touchdown_lateral_error_mean"),
+            # This is the final endpoint error for timeouts and touchdown error
+            # only when contact occurred.  The old label overstated precision.
+            "final_lateral_error_m": average("touchdown_lateral_error_mean"),
             "touchdown_vertical_velocity_m_s": average(
                 "touchdown_vertical_velocity_mean"),
             "fov_loss_fraction": average("fov_loss_fraction_mean"),
@@ -314,7 +321,8 @@ def _write_markdown(path: Path, rows):
 def _write_figures(records, training_records, figures_dir: Path,
                    reward_design_episodes=0, reward_design_steps=0,
                    estimator_warmup_episodes=0, estimator_warmup_steps=0,
-                   behavior_cloning_episodes=0, behavior_cloning_steps=0):
+                   behavior_cloning_episodes=0, behavior_cloning_steps=0,
+                   reward_design_costs=None):
     try:
         import matplotlib.pyplot as plt
     except ImportError:
@@ -371,7 +379,8 @@ def _write_figures(records, training_records, figures_dir: Path,
             else:
                 shift = int(behavior_cloning_steps)
                 if pipeline == "onto_no_se" or "rgat" in pipeline or "pbrs" in pipeline:
-                    shift += int(reward_design_steps)
+                    shift += int(dict((reward_design_costs or {}).get(
+                        pipeline) or {}).get("steps", reward_design_steps))
                 if pipeline.startswith("shin_se"):
                     shift += int(estimator_warmup_steps)
                 x = steps + shift
@@ -417,7 +426,8 @@ def write_three_pipeline_outputs(records, training_records, output_dir, *,
                                  estimator_warmup_episodes=0,
                                  estimator_warmup_steps=0,
                                  behavior_cloning_episodes=0,
-                                 behavior_cloning_steps=0):
+                                 behavior_cloning_steps=0,
+                                 reward_design_costs=None):
     output_dir = Path(output_dir)
     evaluation_dir = output_dir / "evaluation"
     tables_dir = output_dir / "tables"
@@ -431,7 +441,8 @@ def write_three_pipeline_outputs(records, training_records, output_dir, *,
         estimator_warmup_episodes=estimator_warmup_episodes,
         estimator_warmup_steps=estimator_warmup_steps,
         behavior_cloning_episodes=behavior_cloning_episodes,
-        behavior_cloning_steps=behavior_cloning_steps)
+        behavior_cloning_steps=behavior_cloning_steps,
+        reward_design_costs=reward_design_costs)
     table = _publication_table(summary, efficiency)
     _write_csv(evaluation_dir / "paired_summary.csv", summary)
     nominal = {(row["pipeline"]): row for row in summary
@@ -467,7 +478,8 @@ def write_three_pipeline_outputs(records, training_records, output_dir, *,
         estimator_warmup_episodes=estimator_warmup_episodes,
         estimator_warmup_steps=estimator_warmup_steps,
         behavior_cloning_episodes=behavior_cloning_episodes,
-        behavior_cloning_steps=behavior_cloning_steps)
+        behavior_cloning_steps=behavior_cloning_steps,
+        reward_design_costs=reward_design_costs)
     return {"summary": summary, "paired": paired,
             "disturbance_degradation": degradation,
             "sample_efficiency": efficiency, "figures": figures}

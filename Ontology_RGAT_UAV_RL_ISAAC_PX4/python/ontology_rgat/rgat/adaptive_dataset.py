@@ -15,7 +15,7 @@ from .adaptive_model import (
     ADAPTIVE_RELATION_NAMES, empty_adaptive_reward_graph)
 
 
-ADAPTIVE_DATASET_FORMAT = "ontology_rgat.adaptive_reward_rollouts/1-episode-scenario"
+ADAPTIVE_DATASET_FORMAT = "ontology_rgat.adaptive_reward_rollouts/2-stratified-episode"
 TRANSITION_FIELDS = frozenset({
     "graph_X", "rho_raw", "episode_id", "time_index", "success",
     "failure_type", "touchdown_error", "touchdown_vertical_speed",
@@ -145,16 +145,53 @@ def _episode_split(records: Sequence[Mapping[str, Any]], *, seed: int,
         raise ValueError("split fractions must be in [0,1)")
     if validation_fraction + test_fraction >= 1.0:
         raise ValueError("validation and test fractions leave no training data")
+    # Split complete episodes and stratify by terminal class.  The old random
+    # split could put the sole validation episode in one class (the six-flight
+    # seminar run did exactly that), making 0/1 validation accuracy meaningless.
+    # We keep at least one item of every sufficiently represented class in both
+    # training and validation.
+    outcome = {}
+    for group in groups:
+        values = {bool(row["success"]) for row in records
+                  if (int(row["episode_id"]), str(row["scenario"])) == group}
+        if len(values) != 1:
+            raise ValueError(f"terminal class changes within episode group {group}")
+        outcome[group] = int(values.pop())
     rng = np.random.default_rng(int(seed))
-    order = list(np.asarray(groups, dtype=object)[rng.permutation(len(groups))])
+    strata = {}
+    for group in groups:
+        strata.setdefault(outcome[group], []).append(group)
+    for label, values in strata.items():
+        strata[label] = [values[index] for index in rng.permutation(len(values))]
+
     n_test = int(round(test_fraction * len(groups)))
+    test = set()
+    if n_test:
+        candidates = [group for label in sorted(strata) for group in strata[label]
+                      if len(strata[label]) >= 3]
+        for group in candidates[:n_test]:
+            test.add(group)
+
+    available = [group for group in groups if group not in test]
     n_val = int(round(validation_fraction * len(groups)))
     if validation_fraction > 0.0:
         n_val = max(1, n_val)
-    if n_val + n_test >= len(groups):
-        n_val = max(0, len(groups) - n_test - 1)
-    test = {tuple(value) for value in order[:n_test]}
-    validation = {tuple(value) for value in order[n_test:n_test + n_val]}
+    represented = [label for label, values in strata.items()
+                   if sum(group not in test for group in values) >= 2]
+    if validation_fraction > 0.0 and len(represented) > 1:
+        n_val = max(n_val, len(represented))
+    n_val = min(n_val, max(0, len(available) - 1))
+    validation = set()
+    for label in sorted(represented):
+        candidate = next((group for group in strata[label]
+                          if group not in test), None)
+        if candidate is not None and len(validation) < n_val:
+            validation.add(candidate)
+    remainder = [group for label in sorted(strata) for group in strata[label]
+                 if group not in test and group not in validation
+                 and sum(item not in test and item not in validation
+                         for item in strata[label]) > 1]
+    validation.update(remainder[:max(0, n_val - len(validation))])
     return {group: ("test" if group in test else
                     "validation" if group in validation else "train")
             for group in groups}

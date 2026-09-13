@@ -205,6 +205,27 @@ def _privileged_velocity_teacher(environment, *, settings):
     return transform
 
 
+def _adverse_landing_teacher(environment, *, settings):
+    """Generate real near-miss/unsafe-contact examples for reward design only."""
+    stable = _privileged_velocity_teacher(environment, settings=settings)
+
+    def transform(step, policy_action, semantic, rng):
+        action = np.asarray(stable(step, policy_action, semantic, rng),
+                            dtype=np.float64)
+        # Follow the pad until the marker is large, then introduce a bounded
+        # lateral/descent error.  This obtains informative terminal failures
+        # without synthetic transitions or motor-level unsafe commands.
+        if (semantic.apparent_target_scale > .30
+                and semantic.visible_keypoint_fraction >= .5):
+            direction = 1.0 if (step // 20) % 2 == 0 else -1.0
+            action[0] = np.clip(action[0] + .34 * direction, -.90, .90)
+            action[2] = min(float(action[2]), -.62)
+            action[3] = .12 * direction
+        return np.clip(action, -.90, .90)
+
+    return transform
+
+
 def _read_csv(path: Path):
     if not path.is_file():
         return []
@@ -602,18 +623,46 @@ def _collect_adaptive_data(*, cfg, camera, model, source_pipeline, config,
             records = []
 
     scenarios = tuple(design.get("scenarios") or (
-        "training_random_walk", "zigzag", "vertical_heave_boat"))
+        "training_random_walk", "circle", "zigzag", "vertical_heave_boat"))
     fast_settings = dict(
         ((config.get("seminar_fast") or {}).get("behavior_cloning") or {}))
     deadline_teacher_enabled = bool(fast_settings.get("enabled", False))
     completed_episodes = set(int(row["episode_id"]) for row in records)
 
-    def requirements_met(dataset):
+    minimum_successes = max(2, int(design.get("minimum_successful_episodes", 3)))
+    minimum_failures = max(2, int(design.get("minimum_failed_episodes", 3)))
+    minimum_risky = max(1, int(design.get("minimum_risky_failures", 2)))
+
+    def dataset_quality(dataset):
         if dataset is None:
-            return False
+            return {"ready": False, "episodes": 0, "success": 0,
+                    "failure": 0, "risky_failure": 0,
+                    "validation_classes": []}
         episodes = np.unique(dataset["episode_id"])
-        outcomes = set(np.asarray(dataset["success"], dtype=int).tolist())
-        return len(episodes) >= count and outcomes == {0, 1}
+        representative = [int(np.flatnonzero(dataset["episode_id"] == ep)[0])
+                          for ep in episodes]
+        success = np.asarray(dataset["success"], dtype=int)
+        failure_type = np.asarray(dataset["failure_type"]).astype(str)
+        risky = sum(
+            not int(success[index]) and (
+                failure_type[index] in {"collision", "unsafe_pad_contact"}
+                or (float(dataset["touchdown_error"][index]) <= .70
+                    and abs(float(dataset["touchdown_vertical_speed"][index])) <= 1.0))
+            for index in representative)
+        validation = np.asarray(dataset["split"]).astype(str) == "validation"
+        validation_classes = sorted(set(success[validation].tolist()))
+        successes = sum(int(success[index]) for index in representative)
+        failures = len(representative) - successes
+        ready = (len(episodes) >= count and successes >= minimum_successes
+                 and failures >= minimum_failures and risky >= minimum_risky
+                 and validation_classes == [0, 1])
+        return {"ready": bool(ready), "episodes": len(episodes),
+                "success": successes, "failure": failures,
+                "risky_failure": int(risky),
+                "validation_classes": validation_classes}
+
+    def requirements_met(dataset):
+        return bool(dataset_quality(dataset)["ready"])
 
     dataset = None
     manifest = None
@@ -635,7 +684,8 @@ def _collect_adaptive_data(*, cfg, camera, model, source_pipeline, config,
             "trained_fixed_policy",
             ("training_only_privileged_velocity_teacher"
              if deadline_teacher_enabled else "visual_servo_success_recovery"),
-            "moderate_noise_near_miss", "bounded_random_exploration",
+            "visual_servo_recovery", "moderate_noise_near_miss",
+            "bounded_adverse_landing_teacher", "bounded_random_exploration",
             "empirical_collision_or_drift_failures"],
         "deadline_teacher": (
             str(fast_settings.get("teacher"))
@@ -654,12 +704,16 @@ def _collect_adaptive_data(*, cfg, camera, model, source_pipeline, config,
                 if requirements_met(dataset):
                     break
                 scenario = scenarios[(episode - 1) % len(scenarios)]
-                variant = (episode - 1) % 3
-                transform = (
-                    _privileged_velocity_teacher(
+                variant = (episode - 1) % (5 if deadline_teacher_enabled else 3)
+                if deadline_teacher_enabled and variant == 0:
+                    transform = _privileged_velocity_teacher(
                         environment, settings=fast_settings)
-                    if deadline_teacher_enabled and variant == 0 else
-                    _behavior_transform(variant))
+                elif deadline_teacher_enabled and variant == 3:
+                    transform = _adverse_landing_teacher(
+                        environment, settings=fast_settings)
+                else:
+                    transform = _behavior_transform(
+                        {1: 0, 2: 1, 4: 2}.get(variant, variant))
                 rows, metric = collect_episode_resilient(
                     environment, model, source_pipeline, seed, curriculum=1.0,
                     deterministic=False, scenario=scenario, monitor=monitor,
@@ -684,13 +738,19 @@ def _collect_adaptive_data(*, cfg, camera, model, source_pipeline, config,
                     manifest = save_adaptive_dataset(
                         dataset, path, config_hash=config_hash,
                         source_behavior_policy=behavior)
+                quality = dataset_quality(dataset)
                 print(f"adaptive data episode {episode}/{count} minimum "
-                      f"success={int(metric['paper_success'])} steps={len(rows)}")
+                      f"success={int(metric['paper_success'])} steps={len(rows)} "
+                      f"strata=S{quality['success']}/F{quality['failure']}/"
+                      f"R{quality['risky_failure']}")
     if dataset is None:
         raise RuntimeError("adaptive reward-design dataset is unavailable")
     if not requirements_met(dataset):
+        quality = dataset_quality(dataset)
         raise RuntimeError(
-            "adaptive reward data lacks both success and failure outcomes at its hard cap")
+            "adaptive reward data failed its stratified quality contract at the hard "
+            f"cap: {quality}; require at least S{minimum_successes}/F{minimum_failures}/"
+            f"risky-F{minimum_risky} and both validation classes")
     if manifest is None:
         manifest = save_adaptive_dataset(
             dataset, path, config_hash=config_hash,
@@ -1142,7 +1202,9 @@ def main():
                     models[name] = model
                     histories[name] = history
                     _write_csv(args.results_dir / f"training/{name}.csv", history)
-                return model, history, target_dir / f"{name}.pt"
+                best_path = target_dir / f"{name}.best.pt"
+                return (model, history, best_path if best_path.is_file() else
+                        target_dir / f"{name}.pt")
 
             # 먼저 고정 보상 arm을 학습한다. 두 reward-design dataset 모두
             # 이 실제 정책/visual-servo/noise 혼합 rollout을 출발점으로 쓴다.
@@ -1159,8 +1221,10 @@ def main():
                                else "no_se")
                 if source_name in models:
                     source_model = models[source_name]
-                    source_checkpoint = (args.results_dir
-                                         / f"models/{source_name}/{source_name}.pt")
+                    best_source = (args.results_dir
+                                   / f"models/{source_name}/{source_name}.best.pt")
+                    source_checkpoint = (best_source if best_source.is_file() else
+                        args.results_dir / f"models/{source_name}/{source_name}.pt")
                     source_training_episodes = 0
                 else:
                     source_model, source_history, source_checkpoint = train_pipeline(
@@ -1240,7 +1304,9 @@ def main():
                         ("baseline_weights", "baseline_weights"),
                         ("total_weight", "total_weight"),
                         ("logit_scale_kappa", "logit_scale_kappa"),
-                        ("baseline_mixture_epsilon", "baseline_mixture_epsilon")):
+                        ("baseline_mixture_epsilon", "baseline_mixture_epsilon"),
+                        ("semantic_potential_shaping_lambda",
+                         "semantic_potential_shaping_lambda")):
                     if source_key in reward_constraints:
                         adaptive_settings[target_key] = reward_constraints[source_key]
                 adaptive_settings["epochs"] = int(
@@ -1323,10 +1389,31 @@ def main():
                         _write_csv(existing_eval, evaluation_rows)
                         monitor.evaluation_update(name, metric)
 
+            semantic_cost = {
+                "episodes": design_episodes + source_training_episodes,
+                "steps": design_steps + source_training_steps,
+            }
+            adaptive_cost = {
+                "episodes": adaptive_design_episodes,
+                "steps": adaptive_design_steps,
+            }
+            reward_design_costs = {}
+            for pipeline_name in args.pipelines:
+                pipeline_spec = get_pipeline(pipeline_name)
+                episodes_cost = steps_cost = 0
+                if pipeline_spec.use_direct_rgat_potential:
+                    episodes_cost += semantic_cost["episodes"]
+                    steps_cost += semantic_cost["steps"]
+                if pipeline_spec.use_adaptive_reward_weights:
+                    episodes_cost += adaptive_cost["episodes"]
+                    steps_cost += adaptive_cost["steps"]
+                if episodes_cost or steps_cost:
+                    reward_design_costs[pipeline_name] = {
+                        "episodes": episodes_cost, "steps": steps_cost}
             reports = write_three_pipeline_outputs(
                 evaluation_rows, training_records, args.results_dir,
-                reward_design_episodes=design_episodes + source_training_episodes,
-                reward_design_steps=design_steps + source_training_steps,
+                reward_design_episodes=0, reward_design_steps=0,
+                reward_design_costs=reward_design_costs,
                 behavior_cloning_episodes=(0 if demonstrations is None else
                     len(demonstrations.get("attempted_seeds", ()))),
                 behavior_cloning_steps=(0 if demonstrations is None else
@@ -1368,6 +1455,7 @@ def main():
                     train_count * len(args.pipelines) + total_design_episodes
                     + cloning_episodes + selected_warmup),
                 "reward_design_environment_steps": total_design_steps,
+                "reward_design_cost_by_pipeline": reward_design_costs,
                 "reports": reports,
             })
             _write_json(manifest_path, manifest)

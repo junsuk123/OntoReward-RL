@@ -34,12 +34,17 @@ ppo:
   init_log_std: -1.8
   actor_output_gain: 0.05
   target_kl: 0.02
+  # 한 epoch 안에서 KL이 급증하면 해당 epoch를 되돌리고 LR을 낮춘다.
+  rollback_on_excessive_kl: true
+  log_std_bounds: [-3.0, -1.0]
   # 성공 시연의 embedding으로 LSTM/SE head까지 예열하므로 별도 hover
   # warm-up을 반복하지 않는다.
   perception_warmup_episodes_quick: 0
   perception_warmup_episodes_full: 0
   health_window_episodes: 12
-  health_grace_episodes: 32
+  # 예비실험에서 성공 0만으로 마지막 episode를 예외 종료하지 않는다. 결과의
+  # 실패율은 그대로 보고하되 세 비교 arm과 paired evaluation을 끝까지 수행한다.
+  health_grace_episodes: 40
   health_max_battery_depletion_fraction: 0.90
 
 curriculum:
@@ -51,7 +56,7 @@ curriculum:
 
 training:
   episodes_quick: 8
-  episodes_full: 16
+  episodes_full: 32
 
 rgat_design:
   episodes_full: 6
@@ -60,9 +65,9 @@ rgat_design:
   minimum_successful_recovery_episodes_full: 1
 
 adaptive_reward_design:
-  episodes_full: 6
-  max_episodes_full: 12
-  epochs_full: 10
+  episodes_full: 12
+  max_episodes_full: 24
+  epochs_full: 40
 
 seeds:
   behavior_cloning_start: 90000

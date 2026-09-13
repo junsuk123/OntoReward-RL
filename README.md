@@ -32,13 +32,16 @@ ontology/R-GAT reward 방식을 포함한다.
 ./run.sh --seminar-fast --stay-open
 ```
 
-이 명령은 기존 full 결과를 건드리지 않고 `results/seminar_fast/core3`에 저장한다.
+이 명령은 기존 full/이전 예비 결과를 건드리지 않고
+`results/seminar_fast/core3_hybrid_v2`에 저장한다.
 실제 Isaac/PX4에서 성공한 training-only PD 교사 착륙 4회를 먼저 수집하고, 압축된
 공통 camera embedding/action으로 세 actor를 behavior-cloning 초기화한다. 교사는
 움직이는 UGV의 속도를 feed-forward하며 시연 action label 생성에만 simulator 상대
 상태를 쓴다. 학습·평가 actor 입력은 계속 camera와 UAV proprioception뿐이다. 이후
-`shin_se_fixed`, `no_se_fixed`, `onto_rgat_adaptive_weight_no_se`를 각각 PPO 16회
-학습하고 쉬운 scenario 3종을 paired seed 2개씩 평가한다. 실제 배터리 방전 모델은
+`shin_se_fixed`, `no_se_fixed`, `onto_rgat_adaptive_weight_no_se`를 각각 PPO 32회
+학습한다. Adaptive 설계 자료는 성공/실패/위험 실패를 층화해 최소 12회, 부족하면
+24회까지 수집하고 R-GAT을 40 epoch 학습한다. 쉬운 scenario 3종을 paired seed
+3개씩 평가한다. 실제 배터리 방전 모델은
 유지하지만 시작 잔량을 35--55 hover-second로 제한한다. 이는 쉬운 조건의 예비 비교이며
 논문 재현 또는 통계적으로 충분한 성능 주장이 아니다.
 
@@ -81,9 +84,9 @@ result를 수정하기 전에 종료된다. 호환 checkpoint와 완료 CSV row�
 | 명시적 모드 | 보상 함수 | Active perception |
 |---|---|---:|
 | `shin_se_fixed` | 고정 Shin 5성분 | 있음 |
-| `shin_se_rgat_weight` | 동결 R-GAT 상태 적응 5성분 | 있음 |
+| `shin_se_rgat_weight` | 동결 R-GAT 상태 적응 5성분 + semantic PBRS | 있음 |
 | `no_se_fixed` | 고정 Shin 5성분 | 없음 |
-| `onto_rgat_adaptive_weight_no_se` | 동결 R-GAT 상태 적응 5성분, PBRS 없음 | 없음 |
+| `onto_rgat_adaptive_weight_no_se` | 동결 R-GAT 상태 적응 5성분 + semantic PBRS | 없음 |
 | `onto_rgat_potential_pbrs_no_se` | 보존된 scalar `Phi(G)` PBRS | 없음 |
 
 세 pipeline은 512×320 mono camera, 동결 6-keypoint encoder, 512-unit LSTM,
@@ -103,9 +106,11 @@ truth는 asymmetric critic, reset, terminal label과 physical evaluation에만 �
 | Reward 정보 경계 | 실제 상대 상태와 privileged estimator loss | 실제 상대 상태 | Estimator-free semantic graph와 terminal event |
 
 적응 가중치 arm의 무가중 성분은 동일한 Table-III 순수 함수를 공유한다. Baseline
-가중치 `[1,1,0.5,1,2]`와 합 5.5를 보존하면서 `w(G_t)`만 상태에 따라 바뀐다.
-Terminal `+10/-10`은 shaping을 대체하며 제안 no-SE arm에는 active-perception이나
-PBRS가 없다. 자세한 수식과 누출/동결 계약은
+가중치 `[1,1,0.5,1,2]`와 합 5.5를 보존하면서 `w(G_t)`가 상태에 따라 바뀐다.
+기존 5성분에는 시야상실/재포착 항이 없으므로 같은 동결 R-GAT encoder의 두 번째
+head가 `Phi(G)`를 출력하며 `0.75[gamma Phi(G_t+1)-Phi(G_t)]`를 더한다. Terminal에서는
+5성분 shaping만 대체하고 absorbing-state potential correction은 유지한다. 제안 no-SE
+arm에는 estimator loss나 active-perception 항이 없다. 자세한 수식과 누출/동결 계약은
 [상태 적응형 보상 가중치 문서](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/ONTOLOGY_RGAT_ADAPTIVE_REWARD_WEIGHTING.md)를 참고한다.
 
 착륙 성공은 접촉 신호 하나로 판정하지 않는다. 패드 접촉과 함께 중심 수평 오차

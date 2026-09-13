@@ -27,6 +27,7 @@ device decision in :func:`select_device` reads the result.
 from __future__ import annotations
 
 import time
+import copy
 from contextlib import nullcontext
 from typing import Any, Callable
 
@@ -146,18 +147,31 @@ def train_potential(dataset: dict[str, Any], cfg: Config, *,
         episodes = torch.unique(episode_ids, sorted=True)
         if episodes.numel() < 2:
             raise ValueError("episode-level R-GAT split requires at least two rollouts")
-        episodes = episodes[torch.randperm(episodes.numel(), generator=generator)]
-        n_train_episodes = int(round(
-            (1.0 - cfg.rgat.val_fraction) * episodes.numel()))
-        n_train_episodes = min(max(1, n_train_episodes), episodes.numel() - 1)
-        train_mask = torch.isin(episode_ids, episodes[:n_train_episodes])
+        outcomes = {int(ep): int(meta[np.flatnonzero(meta[:, 0] == ep)[0], 2])
+                    for ep in episodes.tolist()}
+        strata = {}
+        for ep in episodes.tolist():
+            strata.setdefault(outcomes[int(ep)], []).append(int(ep))
+        for label, values in strata.items():
+            order = torch.randperm(len(values), generator=generator).tolist()
+            strata[label] = [values[index] for index in order]
+        n_validation = max(1, int(round(cfg.rgat.val_fraction * episodes.numel())))
+        represented = [label for label, values in strata.items() if len(values) >= 2]
+        if len(represented) > 1:
+            n_validation = max(n_validation, len(represented))
+        n_validation = min(n_validation, int(episodes.numel()) - 1)
+        validation_episode_ids = [strata[label][0] for label in sorted(represented)]
+        remainder = [ep for label in sorted(strata) for ep in strata[label]
+                     if ep not in validation_episode_ids]
+        validation_episode_ids.extend(
+            remainder[:max(0, n_validation - len(validation_episode_ids))])
+        train_episode_ids = [int(ep) for ep in episodes.tolist()
+                             if int(ep) not in validation_episode_ids]
+        train_mask = torch.isin(
+            episode_ids, torch.as_tensor(train_episode_ids, dtype=episode_ids.dtype))
         train_idx = torch.nonzero(train_mask, as_tuple=False).squeeze(1).to(device)
         val_idx = torch.nonzero(~train_mask, as_tuple=False).squeeze(1).to(device)
         split_unit = "episode"
-        train_episode_ids = [int(value) for value in
-                             episodes[:n_train_episodes].tolist()]
-        validation_episode_ids = [int(value) for value in
-                                  episodes[n_train_episodes:].tolist()]
     else:
         order = torch.randperm(n, generator=generator)
         n_train = max(1, int(round((1.0 - cfg.rgat.val_fraction) * n)))
@@ -190,6 +204,10 @@ def train_potential(dataset: dict[str, Any], cfg: Config, *,
     history["train_episode_ids"] = train_episode_ids
     history["validation_episode_ids"] = validation_episode_ids
     completed_epochs = len(history["train_loss"])
+    best_state = None
+    best_optimizer_state = None
+    best_validation_loss = float("inf")
+    best_epoch = 0
 
     for epoch in range(1, int(cfg.rgat.epochs) + 1):
         started = time.perf_counter()
@@ -257,6 +275,11 @@ def train_potential(dataset: dict[str, Any], cfg: Config, *,
         history["val_loss"].append(val_loss)
         history["monotonic_compliance"].append(compliance)
         history["epoch_seconds"].append(elapsed)
+        if val_loss < best_validation_loss:
+            best_validation_loss = val_loss
+            best_epoch = completed_epochs + epoch
+            best_state = copy.deepcopy(model.state_dict())
+            best_optimizer_state = copy.deepcopy(optimizer.state_dict())
         model._optimizer_state = optimizer.state_dict()
         cumulative_epoch = completed_epochs + epoch
         if on_epoch is not None:
@@ -270,4 +293,9 @@ def train_potential(dataset: dict[str, Any], cfg: Config, *,
                   f"train {train_loss:.4f} | val {val_loss:.4f} | "
                   f"mono {compliance:.1%} | {elapsed:.2f} s")
 
+    if best_state is not None:
+        model.load_state_dict(best_state)
+        model._optimizer_state = best_optimizer_state
+    history["best_validation_loss"] = float(best_validation_loss)
+    history["best_validation_epoch"] = int(best_epoch)
     return model.float().cpu(), history

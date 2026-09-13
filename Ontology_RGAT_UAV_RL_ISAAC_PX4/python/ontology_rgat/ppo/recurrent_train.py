@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import copy
 import csv
 import json
 import math
@@ -72,7 +73,7 @@ def _transition_result_vertical_velocity(previous, following) -> float:
 def _reward(method, previous, following, estimate, next_estimate, potential,
             *, gamma=0.99, shaping_lambda=1.0,
             current_semantic_graph=None, next_semantic_graph=None,
-            current_adaptive_graph=None,
+            current_adaptive_graph=None, next_adaptive_graph=None,
             reward_normalizer=None,
             estimation_loss_fn=None):
     """Dispatch reward through the selected pipeline's narrow data contract."""
@@ -148,20 +149,26 @@ def _reward(method, previous, following, estimate, next_estimate, potential,
                 **context.terminal.as_kwargs())
         return value, parts, next_loss
     if spec is not None and spec.reward_mode == "adaptive_weight":
-        if current_adaptive_graph is None:
-            raise ValueError("adaptive reward requires the current semantic ontology graph")
+        if current_adaptive_graph is None or next_adaptive_graph is None:
+            raise ValueError("adaptive reward requires current and next semantic ontology graphs")
         if potential is None or not hasattr(potential, "normalizer"):
             raise ValueError("adaptive reward requires a frozen weight artifact")
+        training_config = dict(getattr(potential, "metadata", {}).get(
+            "training_config") or {})
         reward = AdaptiveWeightReward(
             potential,
             config=AdaptiveRewardConfig(
-                active_enabled=spec.active_perception_enabled),
+                active_enabled=spec.active_perception_enabled,
+                gamma=float(gamma),
+                semantic_potential_scale=float(training_config.get(
+                    "semantic_potential_shaping_lambda", .75))),
             normalizer=potential.normalizer)
         value, parts = reward(
             current_adaptive_graph,
             previous.critic.true_relative_state,
             following.critic.true_relative_state,
             following.command,
+            next_graph=next_adaptive_graph,
             next_uav_vertical_velocity=_transition_result_vertical_velocity(
                 previous, following),
             next_estimation_loss=next_loss,
@@ -392,6 +399,7 @@ def collect_episode(env, model: PipelineActorCritic, method: str, seed: int,
                 gamma=gamma, shaping_lambda=shaping_lambda,
                 current_semantic_graph=graph, next_semantic_graph=next_graph,
                 current_adaptive_graph=adaptive_graph,
+                next_adaptive_graph=next_adaptive_graph,
                 reward_normalizer=reward_normalizer,
                 estimation_loss_fn=(
                     None if model.relative_state_head is None else
@@ -539,6 +547,10 @@ def collect_episode(env, model: PipelineActorCritic, method: str, seed: int,
         "domain_ground_texture_id": int(
             domain_randomization.get("ground_texture_id", 0)),
         "domain_brightness": float(domain_randomization.get("brightness", 1.0)),
+        "selected_checkpoint_episode": int(getattr(
+            model, "_selected_checkpoint_episode", 0)),
+        "selected_checkpoint_score": float(getattr(
+            model, "_selected_checkpoint_score", 0.0)),
     }
     metric.update(visual_recovery_metrics(
         rows, initial_in_fov=initial_in_fov,
@@ -705,15 +717,26 @@ def update_estimator_episode(model, optimizer, rows, *, epochs=2,
 def update_episode(model, optimizer, rows, *, gamma=.99, gae_lambda=.95,
                    epochs=5, clip=.2, value_coef=.5, entropy_coef=.003,
                    auxiliary_coef=1.0, grad_clip=5.0, sequence_length=32,
-                   target_kl=.03, minimum_learning_rate=5e-6):
+                   target_kl=.03, minimum_learning_rate=5e-6,
+                   rollback_on_excessive_kl=True,
+                   log_std_bounds=(-3.0, -0.8)):
     advantage, returns = _gae(rows, gamma, gae_lambda)
     advantage = (advantage - advantage.mean()) / (advantage.std() + 1e-8)
     device = model.device
     metrics = []
     early_stop = False
+    rollback_count = 0
     epochs_completed = 0
     target_kl = float(target_kl)
+    log_std_low, log_std_high = (float(value) for value in log_std_bounds)
+    if log_std_low > log_std_high:
+        raise ValueError("log_std_bounds must be ordered")
     for _ in range(int(epochs)):
+        epoch_model = (copy.deepcopy(model.state_dict())
+                       if rollback_on_excessive_kl else None)
+        epoch_optimizer = (copy.deepcopy(optimizer.state_dict())
+                           if rollback_on_excessive_kl else None)
+        rollback_epoch = False
         for start in range(0, len(rows), int(sequence_length)):
             stop = min(start + int(sequence_length), len(rows))
             chunk = rows[start:stop]
@@ -761,6 +784,8 @@ def update_episode(model, optimizer, rows, *, gamma=.99, gae_lambda=.95,
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), float(grad_clip))
             optimizer.step()
+            with torch.no_grad():
+                model.log_std.clamp_(log_std_low, log_std_high)
             # Measure the update rather than the pre-update batch. This catches
             # a representation shift caused by the auxiliary estimator before
             # another recurrent chunk can amplify it.
@@ -771,7 +796,12 @@ def update_episode(model, optimizer, rows, *, gamma=.99, gae_lambda=.95,
             metrics.append({key: float(value) for key, value in values.items()})
             if target_kl > 0.0 and float(values["kl_divergence"]) > target_kl:
                 early_stop = True
+                rollback_epoch = bool(rollback_on_excessive_kl)
                 current_lr = float(optimizer.param_groups[0]["lr"])
+                if rollback_epoch:
+                    model.load_state_dict(epoch_model)
+                    optimizer.load_state_dict(epoch_optimizer)
+                    rollback_count += 1
                 reduced_lr = max(float(minimum_learning_rate), 0.5 * current_lr)
                 for group in optimizer.param_groups:
                     group["lr"] = reduced_lr
@@ -785,6 +815,7 @@ def update_episode(model, optimizer, rows, *, gamma=.99, gae_lambda=.95,
     }
     summary.update({
         "ppo_early_stop": float(early_stop),
+        "ppo_kl_rollback_count": float(rollback_count),
         "ppo_epochs_completed": float(epochs_completed),
         "effective_learning_rate": float(optimizer.param_groups[0]["lr"]),
     })
@@ -894,7 +925,9 @@ def training_health_issue(history, ppo, *, warmup_episodes=0,
 
 
 def save_recurrent_checkpoint(path, model, optimizer, *, method, episode,
-                              config_hash, curriculum, potential=None):
+                              config_hash, curriculum, potential=None,
+                              selection_score=None, selection_metric=None,
+                              model_state=None):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     model_spec = getattr(model, "pipeline_spec", None)
@@ -902,14 +935,37 @@ def save_recurrent_checkpoint(path, model, optimizer, *, method, episode,
         "format": "three-pipeline-recurrent-v3-scaled-estimator", "method": method,
         "pipeline_spec": (model_spec.to_manifest() if model_spec is not None else None),
         "episode": int(episode), "config_hash": config_hash,
-        "model": model.state_dict(), "optimizer": optimizer.state_dict(),
+        "model": (model.state_dict() if model_state is None else model_state),
+        "optimizer": optimizer.state_dict(),
         "curriculum": curriculum.state_dict(),
         "reward_design_id": getattr(potential, "design_id", None),
         "reward_design_sha256": getattr(potential, "sha256", None),
+        "selection_score": (None if selection_score is None else
+                            float(selection_score)),
+        "selection_metric": selection_metric,
     }
     temporary = path.with_suffix(path.suffix + ".tmp")
     torch.save(payload, temporary)
     os.replace(temporary, path)
+
+
+def deployment_checkpoint_score(metric) -> float:
+    """Reward-independent safety score for choosing a deployable PPO snapshot."""
+    success = float(metric.get("paper_success", 0.0))
+    contact = float(metric.get("pad_contact", 0.0))
+    unsafe = float(metric.get("unsafe_pad_contact", 0.0))
+    crash = float(metric.get("crash_failure", 0.0))
+    lateral = min(max(float(metric.get("touchdown_lateral_error", 5.0)), 0.0), 5.0)
+    fov = np.clip(float(metric.get("fov_loss_fraction", 1.0)), 0.0, 1.0)
+    blind_descent = np.clip(float(metric.get(
+        "unsafe_descent_low_visibility_fraction", 0.0)), 0.0, 1.0)
+    relative_speed = min(max(float(metric.get(
+        "touchdown_relative_horizontal_velocity", 2.0)), 0.0), 2.0)
+    # Safe landing dominates. Unsafe contact can never beat a contact-free near
+    # miss merely through dense reward, and visibility resolves similar flights.
+    return float(100.0 * success + 10.0 * contact - 45.0 * unsafe
+                 - 35.0 * crash - 7.0 * lateral - 10.0 * fov
+                 - 8.0 * blind_descent - 3.0 * relative_speed)
 
 
 def _migrate_legacy_shin_state_dict(state_dict):
@@ -940,6 +996,7 @@ def train_live(env_factory: Callable, model, method, seeds, output_dir,
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     checkpoint_path = output_dir / f"{method}.pt"
+    best_checkpoint_path = output_dir / f"{method}.best.pt"
     history_path = output_dir / f"{method}_training.csv"
     reward_trace_path = output_dir / f"{method}_reward_steps.jsonl"
     logged_reward_episodes = set()
@@ -955,6 +1012,8 @@ def train_live(env_factory: Callable, model, method, seeds, output_dir,
                 continue
     history = []
     completed = 0
+    best_score = -float("inf")
+    best_episode = 0
     model_spec = getattr(model, "pipeline_spec", None)
     if model_spec is None:
         try:
@@ -1013,6 +1072,10 @@ def train_live(env_factory: Callable, model, method, seeds, output_dir,
                 history_archive = archive.with_name(
                     f"{archive.stem}_training{history_path.suffix}")
                 os.replace(history_path, history_archive)
+            if best_checkpoint_path.is_file():
+                best_archive = archive.with_name(
+                    f"{archive.stem}.best{best_checkpoint_path.suffix}")
+                os.replace(best_checkpoint_path, best_archive)
             print(f"Archived incompatible {method} checkpoint as {archive.name}; "
                   "starting with the current control configuration.")
         else:
@@ -1043,6 +1106,19 @@ def train_live(env_factory: Callable, model, method, seeds, output_dir,
                 with history_path.open(newline="", encoding="utf-8") as stream:
                     history = list(csv.DictReader(stream))
             print(f"Resuming {method} at episode {completed + 1} from {checkpoint_path}")
+            if best_checkpoint_path.is_file():
+                best_saved = torch.load(
+                    best_checkpoint_path, map_location=model.device,
+                    weights_only=False)
+                if (best_saved.get("format") == saved_format
+                        and best_saved.get("method") == method
+                        and best_saved.get("config_hash") == config_hash
+                        and best_saved.get("reward_design_sha256") == expected_design):
+                    best_score = float(best_saved.get("selection_score", -float("inf")))
+                    best_episode = int(best_saved.get("episode", 0))
+                else:
+                    print(f"Ignoring incompatible best-policy checkpoint: "
+                          f"{best_checkpoint_path}")
     seed_list = list(seeds)
     planned_policy_episodes = max(0, len(seed_list) - warmup_episodes)
     no_landing_grace = no_landing_abort_episode(
@@ -1065,6 +1141,14 @@ def train_live(env_factory: Callable, model, method, seeds, output_dir,
 
     if completed == len(seed_list):
         print(f"{method} training already complete ({completed} episodes).")
+        if best_checkpoint_path.is_file():
+            selected = torch.load(best_checkpoint_path, map_location=model.device,
+                                  weights_only=False)
+            model.load_state_dict(selected["model"])
+            model._selected_checkpoint_episode = int(selected["episode"])
+            model._selected_checkpoint_score = float(selected["selection_score"])
+            print(f"Selected {method} best deployment checkpoint from episode "
+                  f"{model._selected_checkpoint_episode}.")
         return history
 
     with env_factory() as env:
@@ -1073,6 +1157,10 @@ def train_live(env_factory: Callable, model, method, seeds, output_dir,
             ppo_episode = max(0, episode - warmup_episodes)
             c = (curriculum.update(0) if perception_warmup
                  else curriculum.update(ppo_episode - 1))
+            # The rollout metric describes this pre-update policy. Keep its
+            # exact weights so deployment selection never attributes a good
+            # flight to the subsequent PPO update.
+            rollout_model_state = copy.deepcopy(model.state_dict())
             rows, metric = collect_episode_resilient(
                 env, model, method, seed, curriculum=c, potential=potential,
                 gamma=float(ppo.get("gamma", .99)),
@@ -1105,7 +1193,11 @@ def train_live(env_factory: Callable, model, method, seeds, output_dir,
                     sequence_length=int(ppo.get("sequence_length", 32)),
                     target_kl=float(ppo.get("target_kl", .03)),
                     minimum_learning_rate=float(ppo.get(
-                        "minimum_learning_rate", 5e-6)))
+                        "minimum_learning_rate", 5e-6)),
+                    rollback_on_excessive_kl=bool(ppo.get(
+                        "rollback_on_excessive_kl", True)),
+                    log_std_bounds=tuple(ppo.get(
+                        "log_std_bounds", (-3.0, -0.8))))
             if hasattr(potential, "assert_frozen"):
                 # Reward design is not a PPO module/optimizer parameter. This
                 # hash+mode assertion catches accidental mutation immediately.
@@ -1158,6 +1250,22 @@ def train_live(env_factory: Callable, model, method, seeds, output_dir,
                 checkpoint_path, model, optimizer, method=method,
                 episode=episode, config_hash=config_hash, curriculum=curriculum,
                 potential=potential)
+            selection_score = deployment_checkpoint_score(metric)
+            if selection_score > best_score:
+                best_score = selection_score
+                best_episode = episode
+                save_recurrent_checkpoint(
+                    best_checkpoint_path, model, optimizer, method=method,
+                    episode=episode, config_hash=config_hash,
+                    curriculum=curriculum, potential=potential,
+                    selection_score=selection_score,
+                    selection_metric={
+                        key: metric.get(key) for key in (
+                            "paper_success", "pad_contact", "unsafe_pad_contact",
+                            "crash_failure", "touchdown_lateral_error",
+                            "fov_loss_fraction",
+                            "unsafe_descent_low_visibility_fraction")},
+                    model_state=rollout_model_state)
             persist_history()
             issue = training_health_issue(
                 history, ppo, warmup_episodes=warmup_episodes,
@@ -1185,4 +1293,12 @@ def train_live(env_factory: Callable, model, method, seeds, output_dir,
             print(f"{method} episode {episode}/{len(seed_list)} "
                   f"return={metric['episode_return']:+.3f} "
                   f"success={int(metric['paper_success'])} c={c:.3f}")
+    if best_checkpoint_path.is_file():
+        selected = torch.load(best_checkpoint_path, map_location=model.device,
+                              weights_only=False)
+        model.load_state_dict(selected["model"])
+        model._selected_checkpoint_episode = int(selected["episode"])
+        model._selected_checkpoint_score = float(selected["selection_score"])
+        print(f"Selected {method} best deployment checkpoint from episode "
+              f"{model._selected_checkpoint_episode} (score={best_score:.2f}).")
     return history

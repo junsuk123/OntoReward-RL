@@ -153,6 +153,8 @@ class AdaptiveRewardConfig:
     active_enabled: bool = False
     success_value: float = 10.0
     failure_value: float = -10.0
+    gamma: float = 0.99
+    semantic_potential_scale: float = 0.0
 
 
 class AdaptiveWeightReward:
@@ -167,6 +169,7 @@ class AdaptiveWeightReward:
 
     def __call__(self, graph, current_relative_state, next_relative_state, action,
                  *, next_uav_vertical_velocity: float,
+                 next_graph=None,
                  next_estimation_loss: float | None = None,
                  physical_contact=False, crash=False, excessive_drift=False,
                  battery_depleted=False, terminal=False):
@@ -180,7 +183,17 @@ class AdaptiveWeightReward:
             current_relative_state, next_relative_state, action,
             next_uav_vertical_velocity=next_uav_vertical_velocity)
         normalized = self.normalizer.transform(raw)
-        weights, latency_ms = self.weight_provider(graph, return_latency=True)
+        absorbing = bool(terminal or physical_contact or crash or excessive_drift
+                         or battery_depleted)
+        semantic_scale = float(cfg.semantic_potential_scale)
+        phi = phi_next = semantic_shape = 0.0
+        if (semantic_scale != 0.0 and next_graph is not None
+                and hasattr(self.weight_provider, "transition")):
+            weights, phi, phi_next, latency_ms = self.weight_provider.transition(
+                graph, next_graph, absorbing=absorbing)
+            semantic_shape = semantic_scale * (float(cfg.gamma) * phi_next - phi)
+        else:
+            weights, latency_ms = self.weight_provider(graph, return_latency=True)
         weights = np.asarray(weights, dtype=np.float64).reshape(-1)
         if weights.shape != (5,) or np.any(weights <= 0.0):
             raise ValueError("adaptive reward provider returned invalid weights")
@@ -190,17 +203,19 @@ class AdaptiveWeightReward:
             self.weight_provider, "weight_source", "adaptive"))
         relation_attention = getattr(
             self.weight_provider, "last_relation_attention", None)
-        # Terminal reward replaces every shaping term, as in the controlled
-        # Shin reward. We still log the pre-action graph's diagnostic weights,
-        # but every applied component contribution is zero.
+        # At a terminal transition the five dense Shin components are replaced
+        # by the sparse outcome.  A configured semantic potential retains the
+        # mathematically required absorbing-state correction -lambda*Phi(s).
         if task != 0.0:
             parts = {"task": float(task), "adaptive_shaping": 0.0,
                      "active_perception": 0.0,
                      "rgat_inference_latency_ms": float(latency_ms),
                      "terminal_reward": float(task),
-                     "total_shaping_reward": 0.0,
+                     "total_shaping_reward": float(semantic_shape),
                      "active_perception_reward": 0.0,
-                     "final_reward": float(task),
+                     "semantic_potential_shaping": float(semantic_shape),
+                     "phi": float(phi), "phi_next": float(phi_next),
+                     "final_reward": float(task + semantic_shape),
                      "weight_source": weight_source}
             if relation_attention is not None:
                 for index, value in enumerate(relation_attention, start=1):
@@ -213,7 +228,7 @@ class AdaptiveWeightReward:
                 parts[f"raw_rho_{index + 1}"] = float(raw[index])
                 parts[f"normalized_rho_{index + 1}"] = float(normalized[index])
                 parts[f"weighted_rho_{index + 1}"] = 0.0
-            return float(task), parts
+            return float(task + semantic_shape), parts
         contributions = weights * normalized
         active = 0.0
         if cfg.active_enabled:
@@ -225,9 +240,11 @@ class AdaptiveWeightReward:
                  "active_perception": float(active),
                  "rgat_inference_latency_ms": float(latency_ms),
                  "terminal_reward": 0.0,
-                 "total_shaping_reward": shaping,
+                 "total_shaping_reward": shaping + float(semantic_shape),
                  "active_perception_reward": float(active),
-                 "final_reward": shaping + float(active),
+                 "semantic_potential_shaping": float(semantic_shape),
+                 "phi": float(phi), "phi_next": float(phi_next),
+                 "final_reward": shaping + float(active) + semantic_shape,
                  "weight_source": weight_source}
         if relation_attention is not None:
             for index, value in enumerate(relation_attention, start=1):
@@ -240,7 +257,7 @@ class AdaptiveWeightReward:
             parts[f"raw_rho_{index + 1}"] = float(raw[index])
             parts[f"normalized_rho_{index + 1}"] = float(normalized[index])
             parts[f"weighted_rho_{index + 1}"] = float(contributions[index])
-        return shaping + float(active), parts
+        return shaping + float(active) + semantic_shape, parts
 
 
 class FixedBaselineRewardWeights:

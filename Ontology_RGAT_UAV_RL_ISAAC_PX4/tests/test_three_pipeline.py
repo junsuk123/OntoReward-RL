@@ -29,6 +29,8 @@ from ontology_rgat.ppo.recurrent import (PipelineActorCritic,
 from ontology_rgat.ppo import recurrent_train
 from ontology_rgat.ppo.recurrent_train import collect_episode_resilient
 from ontology_rgat.ppo.recurrent_train import (training_health_issue,
+                                               deployment_checkpoint_score,
+                                               update_episode,
                                                visual_recovery_metrics)
 from ontology_rgat.reward_modes import OntologyRewardContext, OntoRewardPBRS, TerminalFlags
 from ontology_rgat.reward_modes import ShinRewardConfig, active_perception_reward
@@ -196,6 +198,69 @@ def test_learning_efficiency_reports_shared_behavior_cloning_cost():
     assert summary["behavior_cloning_episodes"] == 3
     assert summary["total_environment_episodes"] == 9
     assert summary["total_environment_steps"] == 90
+
+
+def test_learning_efficiency_uses_per_pipeline_reward_design_cost():
+    rows = [{"pipeline": name, "optimization_phase": "ppo", "episode": 1,
+             "ppo_episode": 1, "ppo_environment_steps": 10,
+             "paper_success": 0.0}
+            for name in ("no_se_fixed", "onto_rgat_adaptive_weight_no_se")]
+    summary = {row["pipeline"]: row for row in learning_efficiency(
+        rows, reward_design_costs={
+            "onto_rgat_adaptive_weight_no_se": {"episodes": 12, "steps": 120}})}
+    assert summary["no_se_fixed"]["reward_design_environment_steps"] == 0
+    assert summary["onto_rgat_adaptive_weight_no_se"][
+        "reward_design_environment_steps"] == 120
+
+
+def test_safe_deployment_checkpoint_outranks_unsafe_contact_and_timeout():
+    safe = {"paper_success": 1, "pad_contact": 1,
+            "touchdown_lateral_error": .2, "fov_loss_fraction": .1,
+            "touchdown_relative_horizontal_velocity": .1}
+    unsafe = {"paper_success": 0, "pad_contact": 1, "unsafe_pad_contact": 1,
+              "crash_failure": 1, "touchdown_lateral_error": .1,
+              "fov_loss_fraction": 0.0,
+              "touchdown_relative_horizontal_velocity": .1}
+    timeout = {"paper_success": 0, "pad_contact": 0,
+               "touchdown_lateral_error": .5, "fov_loss_fraction": .2,
+               "touchdown_relative_horizontal_velocity": .1}
+    assert deployment_checkpoint_score(safe) > deployment_checkpoint_score(timeout)
+    assert deployment_checkpoint_score(timeout) > deployment_checkpoint_score(unsafe)
+
+
+def test_excessive_post_update_kl_rolls_back_the_ppo_epoch():
+    model = _model("no_se")
+    optimizer = torch.optim.Adam(model.parameters(), lr=.05)
+    images = torch.randint(0, 255, (4, 32, 32), dtype=torch.uint8)
+    proprio = np.tile(np.asarray([0., 0., 0., 1., 0., 0., 0.]), (4, 1))
+    truth = np.zeros((4, 6), dtype=np.float32)
+    hidden = model.initial_state(1)
+    with torch.no_grad():
+        output = model(images[:, None].float()[None] / 255.0,
+                       torch.as_tensor(proprio[None], dtype=torch.float32),
+                       true_relative_state=torch.as_tensor(truth[None]))
+        pre = output.action_mean[0].numpy()
+        action = torch.tanh(output.action_mean[0]).numpy()
+        log_prob = model.log_prob(
+            output.action_mean, torch.tanh(output.action_mean),
+            output.action_mean, output.action_std)[0].numpy()
+        values = output.value[0].numpy()
+    rows = [{
+        "image": images[index].numpy(), "proprioception": proprio[index],
+        "truth": truth[index], "pre_squash": pre[index],
+        "action": action[index], "log_prob": float(log_prob[index]),
+        "value": float(values[index]), "reward": float(index == 3),
+        "done": float(index == 3),
+        "hidden_h": hidden[0].numpy(), "hidden_c": hidden[1].numpy(),
+    } for index in range(4)]
+    before = {name: value.detach().clone() for name, value in model.state_dict().items()}
+    metrics = update_episode(
+        model, optimizer, rows, epochs=1, sequence_length=4,
+        target_kl=1e-12, rollback_on_excessive_kl=True,
+        entropy_coef=0.0, value_coef=0.0)
+    assert metrics["ppo_kl_rollback_count"] == 1.0
+    for name, value in model.state_dict().items():
+        torch.testing.assert_close(value, before[name], rtol=0.0, atol=0.0)
 
 
 def test_primary_specs_encode_the_intended_information_boundaries():
@@ -595,6 +660,10 @@ def test_rgat_split_is_by_whole_episode():
     assert history["split_unit"] == "episode"
     assert set(history["train_episode_ids"]).isdisjoint(
         history["validation_episode_ids"])
+    outcomes = {int(ep): int(dataset["meta"][dataset["meta"][:, 0] == ep, 2][0])
+                for ep in np.unique(dataset["meta"][:, 0])}
+    assert {outcomes[ep] for ep in history["train_episode_ids"]} == {0, 1}
+    assert {outcomes[ep] for ep in history["validation_episode_ids"]} == {0, 1}
 
 
 def test_direct_rgat_artifact_is_frozen_and_is_the_potential(tmp_path):

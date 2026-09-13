@@ -112,6 +112,10 @@ def test_dataset_split_never_splits_episode_or_scenario_group():
         index = dataset["episode_id"] == episode
         assert np.unique(dataset["split"][index]).size == 1
         assert np.unique(dataset["scenario"][index]).size == 1
+    validation = dataset["split"] == "validation"
+    training = dataset["split"] == "train"
+    assert set(dataset["success"][validation].astype(int)) == {0, 1}
+    assert set(dataset["success"][training].astype(int)) == {0, 1}
 
 
 def test_outcome_fields_are_not_part_of_graph_tensor():
@@ -168,15 +172,19 @@ def test_no_se_adaptive_reward_has_no_active_perception_term():
     assert parts["active_perception"] == 0.0
 
 
-def test_proposed_dispatch_neither_reads_estimator_loss_nor_calls_pbrs():
+def test_proposed_dispatch_uses_no_estimator_and_adds_rgat_semantic_pbrs():
     graph = adaptive_reward_graph(_observation(.5))
 
     class Provider:
         normalizer = RewardComponentNormalizer(exact_paper_raw=True)
         last_relation_attention = None
+        metadata = {"training_config": {
+            "semantic_potential_shaping_lambda": .75}}
         def __call__(self, _graph, return_latency=False):
             value = np.asarray([1, 1, .5, 1, 2.])
             return (value, .01) if return_latency else value
+        def transition(self, _graph, _next_graph, absorbing=False):
+            return np.asarray([1, 1, .5, 1, 2.]), .2, (.0 if absorbing else .6), .02
 
     previous = SimpleNamespace(
         critic=SimpleNamespace(true_relative_state=np.ones(6)),
@@ -188,11 +196,14 @@ def test_proposed_dispatch_neither_reads_estimator_loss_nor_calls_pbrs():
         excessive_drift=False, battery_depleted=False, terminal=False)
     value, parts, estimation_loss = _reward(
         "onto_rgat_adaptive_weight_no_se", previous, following,
-        None, None, Provider(), current_adaptive_graph=graph)
+        None, None, Provider(), current_adaptive_graph=graph,
+        next_adaptive_graph=adaptive_reward_graph(_observation(.7)))
     assert np.isfinite(value)
     assert estimation_loss is None
     assert parts["active_perception"] == 0.0
-    assert "phi" not in parts and "phi_next" not in parts
+    assert parts["phi"] == pytest.approx(.2)
+    assert parts["phi_next"] == pytest.approx(.6)
+    assert parts["semantic_potential_shaping"] > 0.0
 
 
 def test_ranking_pairs_use_success_and_only_clear_pareto_pairs():
@@ -277,6 +288,21 @@ def test_checkpoint_roundtrip_is_deterministic_and_frozen(tmp_path):
     assert first == pytest.approx(second)
     assert all(not parameter.requires_grad for parameter in frozen.model.parameters())
     assert not frozen.model.training
+
+
+def test_quality_gate_refuses_a_nearly_constant_or_unvalidated_artifact(tmp_path):
+    dataset = _dataset()
+    manifest = save_adaptive_dataset(
+        dataset, tmp_path / "data.npz", config_hash="abc",
+        source_behavior_policy={"name": "test_mixture"})
+    with pytest.raises(RuntimeError, match="quality gate rejected"):
+        prepare_adaptive_reward_artifact(
+            tmp_path / "rejected.pt", dataset, dataset_manifest=manifest,
+            config_hash="abc", settings={
+                "epochs": 2, "verbose": False,
+                "quality_gate": {"enabled": True,
+                                 "minimum_mean_weight_cv": 1.0}})
+    assert not (tmp_path / "rejected.pt").exists()
 
 
 def test_frozen_rgat_is_absent_from_ppo_optimizer_and_hash_unchanged():

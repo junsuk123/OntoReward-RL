@@ -42,12 +42,14 @@ estimator-free baseline, estimator-free ontology/R-GAT reward 방식을 비교�
 완료 결과와 checkpoint를 다시 만들지 않고 로드하며, `Ctrl-C`에서 전체 stack을
 안전하게 종료한다.
 
-별도 `results/seminar_fast/core3` 폴더에서 실제 training-only PD 교사 성공 착륙
+별도 `results/seminar_fast/core3_hybrid_v2` 폴더에서 실제 training-only PD 교사 성공 착륙
 4회를 공통 behavior-cloning 자료로 만든 뒤 `shin_se_fixed`, `no_se_fixed`,
-`onto_rgat_adaptive_weight_no_se`를 PPO 16회씩 학습한다. 교사는 움직이는 UGV 속도
+`onto_rgat_adaptive_weight_no_se`를 PPO 32회씩 학습한다. 교사는 움직이는 UGV 속도
 feed-forward와 simulator 상대상태를 action label 생성에만 사용한다. 저장되는 BC
 actor 입력은 camera와 UAV proprioception뿐이며, 최종 평가는 교사 없이
-쉬운 조건의 scenario 3종 × paired seed 2개로 수행한다. 기존 full checkpoint는
+쉬운 조건의 scenario 3종 × paired seed 3개로 수행한다. Adaptive reward 자료는
+성공/실패/위험 실패를 층화해 최소 12회(최대 24회) 수집하고 40 epoch 학습한다.
+기존 full checkpoint는
 변경하지 않는다. 이 결과는 경향 확인용이며 publication-scale 결과가 아니다.
 
 DDS, Isaac Sim, Pegasus, PX4 SITL, ROS 2 gateway, RViz 2, MATLAB 스타일 web
@@ -97,9 +99,9 @@ dashboard, result file을 건드리기 전에 실패한다.
 | ID | Estimator | Table-III 가중치 | Active | PBRS |
 |---|---:|---|---:|---:|
 | `shin_se_fixed` | 있음 | `[1,1,0.5,1,2]` 고정 | 있음 | 없음 |
-| `shin_se_rgat_weight` | 있음 | 동결 `w(G)` | 있음 | 없음 |
+| `shin_se_rgat_weight` | 있음 | 동결 `w(G)` | 있음 | 같은 R-GAT `Phi(G)` |
 | `no_se_fixed` | 없음 | `[1,1,0.5,1,2]` 고정 | 없음 | 없음 |
-| `onto_rgat_adaptive_weight_no_se` | 없음 | 동결 `w(G)` | 없음 | 없음 |
+| `onto_rgat_adaptive_weight_no_se` | 없음 | 동결 `w(G)` | 없음 | 같은 R-GAT `Phi(G)` |
 | `onto_rgat_potential_pbrs_no_se` | 없음 | 해당 없음 | 없음 | 기존 `Phi(G)` PBRS |
 
 ```bash
@@ -108,8 +110,9 @@ dashboard, result file을 건드리기 전에 실패한다.
   --experiment adaptive_reward_weight_comparison
 ```
 
-R-GAT 가중치의 양수/합 5.5 제약, 23-node 전용 graph, episode/scenario split,
-trajectory BCE/ranking/prior/smoothness/ontology loss와 PPO 동결 검사는
+R-GAT 가중치의 양수/합 5.5 제약, 23-node 전용 graph, terminal-class 층화
+episode/scenario split, validation-best checkpoint, trajectory BCE/ranking/context/
+semantic-potential loss와 PPO 동결·품질 검사는
 [전용 문서](docs/ONTOLOGY_RGAT_ADAPTIVE_REWARD_WEIGHTING.md)에 정의한다.
 
 Camera, 동결 keypoint weight, temporal backbone, actor/critic capacity, action mapping,

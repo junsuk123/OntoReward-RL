@@ -66,6 +66,9 @@ adaptive_reward:
   total_weight: 5.5
   logit_scale_kappa: 0.69314718056
   baseline_mixture_epsilon: 0.2
+  # 5개 Shin 성분에는 시야 회복 항이 없으므로 동일 R-GAT encoder의
+  # semantic potential을 PBRS 보조항으로 사용한다.
+  semantic_potential_shaping_lambda: 0.75
   freeze_during_ppo: true
   # 논문 수식 그대로 비교할 때 true. 기본 실험은 아래 공통 scale을 fixed와
   # adaptive arm 모두에 적용한다.
@@ -93,6 +96,7 @@ adaptive_reward_design:
   epochs_quick: 10
   epochs_full: 80
   learning_rate: 0.0005
+  potential_scale: 2.0
   hidden_dim: 24
   relation_dim: 6
   architecture: rgat
@@ -100,12 +104,24 @@ adaptive_reward_design:
     outcome_bce: 1.0
     ranking: 0.5
     ranking_temperature: 1.0
-    baseline_prior: 0.05
+    baseline_prior: 0.01
     temporal_smoothness: 0.02
     ontology_hinge: 0.1
+    contextual_weight: 0.35
+    semantic_potential: 0.75
+    observability_monotonic: 0.25
+    observability_margin: 0.02
     ontology_margin: 0.05
     yaw_safety_floor: 0.2
     condition_threshold: 0.6
+  minimum_successful_episodes: 3
+  minimum_failed_episodes: 3
+  minimum_risky_failures: 2
+  quality_gate:
+    enabled: true
+    minimum_validation_accuracy: 0.5
+    minimum_mean_weight_cv: 0.003
+    minimum_potential_monotonic_compliance: 0.55
   structural_ablations:
     - mlp_adaptive_weight_no_se
     - gat_adaptive_weight_no_se

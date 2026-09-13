@@ -30,8 +30,8 @@ ADAPTIVE_REWARD_NODE_NAMES = (
 ADAPTIVE_NODE_NAMES = tuple(SEMANTIC_NODE_NAMES) + ADAPTIVE_REWARD_NODE_NAMES
 ADAPTIVE_RELATION_NAMES = tuple(SEMANTIC_RELATION_NAMES)
 ADAPTIVE_GRAPH_INPUT_DIM = 6 + len(ADAPTIVE_NODE_NAMES)
-ADAPTIVE_GRAPH_VERSION = "ontology_rgat.adaptive_reward_graph/1-five-component"
-ADAPTIVE_MODEL_FORMAT = "ontology_rgat.adaptive_reward_weights/1-frozen"
+ADAPTIVE_GRAPH_VERSION = "ontology_rgat.adaptive_reward_graph/2-hybrid-potential"
+ADAPTIVE_MODEL_FORMAT = "ontology_rgat.adaptive_reward_weights/2-hybrid-potential"
 
 
 def adaptive_reward_graph(observation: SemanticObservation) -> OntologyGraph:
@@ -175,6 +175,33 @@ class AdaptiveRewardWeightHead(nn.Module):
         return self.pair_mlp(torch.cat((goal, terms), dim=-1)).squeeze(-1)
 
 
+class AdaptiveSemanticPotentialHead(nn.Module):
+    """Graph-level observability/safety value used by the PBRS supplement.
+
+    Adaptive weighting alone cannot reward regaining a marker: none of the five
+    Shin reward components contains visibility.  The head shares the R-GAT
+    encoder, but reads the SafeLanding embedding and a graph mean to provide a
+    bounded semantic potential without adding estimator or simulator truth to
+    the deployed information boundary.
+    """
+
+    def __init__(self, hidden_dim: int, goal_node: int, scale: float = 2.0):
+        super().__init__()
+        self.goal_node = int(goal_node)
+        self.scale = float(scale)
+        if not np.isfinite(self.scale) or self.scale <= 0.0:
+            raise ValueError("semantic potential scale must be positive and finite")
+        self.network = nn.Sequential(
+            nn.Linear(2 * hidden_dim, hidden_dim), nn.Tanh(),
+            nn.Linear(hidden_dim, 1))
+
+    def forward(self, embeddings: torch.Tensor) -> torch.Tensor:
+        goal = embeddings[:, self.goal_node]
+        pooled = embeddings.mean(dim=1)
+        return self.scale * torch.tanh(
+            self.network(torch.cat((goal, pooled), dim=-1)).squeeze(-1))
+
+
 class AdaptiveRewardWeightModel(nn.Module):
     """공통 graph encoder와 항별 pair head로 bounded weights를 출력한다."""
 
@@ -182,7 +209,8 @@ class AdaptiveRewardWeightModel(nn.Module):
                  architecture: str = "rgat", relation_dim: int = 6,
                  baseline_weights=BASELINE_REWARD_WEIGHTS,
                  total_weight: float = 5.5, kappa: float = 0.69314718056,
-                 epsilon: float = 0.2, **layer_kwargs: Any):
+                 epsilon: float = 0.2, potential_scale: float = 2.0,
+                 **layer_kwargs: Any):
         super().__init__()
         architecture = str(architecture).lower()
         if architecture not in {"rgat", "gat", "mlp"}:
@@ -206,6 +234,8 @@ class AdaptiveRewardWeightModel(nn.Module):
         self.head = AdaptiveRewardWeightHead(
             self.encoder.out_dim, [names[name] for name in ADAPTIVE_REWARD_NODE_NAMES],
             names["SafeLanding"])
+        self.potential_head = AdaptiveSemanticPotentialHead(
+            self.encoder.out_dim, names["SafeLanding"], potential_scale)
         self.register_buffer("baseline_weights", torch.as_tensor(
             baseline_weights, dtype=torch.float32))
         self.total_weight = float(total_weight)
@@ -216,7 +246,7 @@ class AdaptiveRewardWeightModel(nn.Module):
         generator = torch.Generator(device="cpu").manual_seed(int(seed))
         if isinstance(self.encoder, RGATEncoder):
             self.encoder.reset_encoder_parameters(generator)
-        for module in self.head.modules():
+        for module in list(self.head.modules()) + list(self.potential_head.modules()):
             if isinstance(module, nn.Linear):
                 with torch.no_grad():
                     module.weight.normal_(0.0, 0.08, generator=generator)
@@ -228,7 +258,7 @@ class AdaptiveRewardWeightModel(nn.Module):
                         module.weight.normal_(0.0, 0.08, generator=generator)
                         module.bias.zero_()
 
-    def forward(self, X, *, return_logits=False):
+    def forward(self, X, *, return_logits=False, return_potential=False):
         if X.dim() == 2:
             X = X.unsqueeze(0)
         embeddings = self.encoder(X)
@@ -237,7 +267,19 @@ class AdaptiveRewardWeightModel(nn.Module):
             logits, baseline_weights=self.baseline_weights,
             total_weight=self.total_weight, kappa=self.kappa,
             epsilon=self.epsilon)
-        return (weights, logits) if return_logits else weights
+        potential = self.potential_head(embeddings)
+        if return_logits and return_potential:
+            return weights, logits, potential
+        if return_logits:
+            return weights, logits
+        if return_potential:
+            return weights, potential
+        return weights
+
+    def potential(self, X) -> torch.Tensor:
+        if X.dim() == 2:
+            X = X.unsqueeze(0)
+        return self.potential_head(self.encoder(X))
 
     def attention(self, X):
         if not isinstance(self.encoder, RGATEncoder):
@@ -280,6 +322,7 @@ def adaptive_model_config(settings: dict[str, Any] | None = None) -> dict[str, A
             "logit_scale_kappa", settings.get("kappa", 0.69314718056))),
         "epsilon": float(settings.get(
             "baseline_mixture_epsilon", settings.get("epsilon", 0.2))),
+        "potential_scale": float(settings.get("potential_scale", 2.0)),
         "baseline_weights": list(settings.get(
             "baseline_weights", BASELINE_REWARD_WEIGHTS.tolist())),
     }
@@ -336,6 +379,9 @@ class FrozenAdaptiveRewardWeights:
         self.design_id = str(metadata["design_id"])
         self.sha256 = hashlib.sha256(self.path.read_bytes()).hexdigest()
         self.metadata = metadata
+        quality = dict(metadata.get("quality_gate") or {})
+        if bool(quality.get("enabled", False)) and not bool(quality.get("passed", False)):
+            raise ValueError("adaptive reward artifact failed its quality gate")
         self.last_relation_attention = None
         self.weight_source = "frozen_rgat_adaptive"
 
@@ -366,6 +412,40 @@ class FrozenAdaptiveRewardWeights:
                 for relation in range(len(ADAPTIVE_RELATION_NAMES))])
         elapsed_ms = (time.perf_counter() - started) * 1000.0
         return (weights, elapsed_ms) if return_latency else weights
+
+    @torch.no_grad()
+    def transition(self, graph: OntologyGraph, next_graph: OntologyGraph, *,
+                   absorbing=False):
+        """Evaluate weights and both PBRS potentials with one batched forward."""
+        for value in (graph, next_graph):
+            if tuple(value.node_names) != ADAPTIVE_NODE_NAMES:
+                raise ValueError("adaptive reward node schema mismatch")
+            if tuple(value.relation_names) != ADAPTIVE_RELATION_NAMES:
+                raise ValueError("adaptive reward relation schema mismatch")
+        self.assert_frozen()
+        started = time.perf_counter()
+        tensors = [graph.X.T] if absorbing else [graph.X.T, next_graph.X.T]
+        X = torch.as_tensor(np.stack(tensors), dtype=torch.float32)
+        weights, potential = self.model(X, return_potential=True)
+        weights_np = weights[0].cpu().numpy()
+        phi = float(potential[0].cpu())
+        phi_next = 0.0 if absorbing else float(potential[1].cpu())
+        layer = getattr(self.model.encoder, "layer2", None)
+        alpha = None if layer is None else layer.last_attention
+        if alpha is not None:
+            edge = alpha[0].mean(dim=0).cpu().numpy()
+            rel = np.asarray(graph.rel)
+            self.last_relation_attention = np.asarray([
+                float(edge[rel == relation].mean()) if np.any(rel == relation) else 0.0
+                for relation in range(len(ADAPTIVE_RELATION_NAMES))])
+        elapsed_ms = (time.perf_counter() - started) * 1000.0
+        return weights_np, phi, phi_next, elapsed_ms
+
+    @torch.no_grad()
+    def potential(self, graph: OntologyGraph) -> float:
+        self.assert_frozen()
+        X = torch.as_tensor(graph.X.T[None], dtype=torch.float32)
+        return float(self.model.potential(X)[0].cpu())
 
     @property
     def parameter_count(self) -> int:

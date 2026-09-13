@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import csv
+import copy
 import json
 from pathlib import Path
 from typing import Any, Mapping
@@ -25,6 +26,10 @@ DEFAULT_LOSS_CONFIG = {
     "baseline_prior": 0.05,
     "temporal_smoothness": 0.02,
     "ontology_hinge": 0.10,
+    "contextual_weight": 0.35,
+    "semantic_potential": 0.75,
+    "observability_monotonic": 0.25,
+    "observability_margin": 0.02,
     "ontology_margin": 0.05,
     "yaw_safety_floor": 0.20,
     "condition_threshold": 0.60,
@@ -53,7 +58,10 @@ def _trajectory_scores(weights, rho, dataset, split_name: str, gamma: float):
             torch.as_tensor(float(gamma), dtype=weights.dtype, device=weights.device),
             torch.arange(len(index), dtype=weights.dtype, device=weights.device))
         contribution = (weights.index_select(0, idx) * rho.index_select(0, idx)).sum(-1)
-        scores.append((discounts * contribution).sum())
+        # Compare a discounted mean, not an unnormalised sum.  Otherwise a
+        # 300-step timeout can outrank a short safe touchdown merely because it
+        # has more shaping terms.
+        scores.append((discounts * contribution).sum() / discounts.sum().clamp_min(1e-6))
         outcomes.append(float(success[index[0]]))
         ids.append(int(ep))
     if not scores:
@@ -119,6 +127,72 @@ def temporal_smoothness_pairs(dataset, split_name="train") -> list[tuple[int, in
         adjacent.extend((int(left), int(right))
                         for left, right in zip(index[:-1], index[1:]))
     return adjacent
+
+
+def _semantic_quality(X: torch.Tensor) -> torch.Tensor:
+    """Estimator-free observability/safety score used only as an inductive prior."""
+    names = {name: index for index, name in enumerate(ADAPTIVE_NODE_NAMES)}
+    value = X[:, :, 0]
+    selected = [
+        "KeypointConfidence", "VisibleKeypointFraction", "ImageAlignment",
+        "ImagePlaneMotion", "ScaleRate", "VisibilityMemory",
+        "ReacquisitionTrend", "VerticalMotionSafety", "AttitudeStability",
+    ]
+    quality = value[:, [names[name] for name in selected]].mean(dim=1)
+    visual_risk = value[:, names["VisualLossRisk"]]
+    battery_risk = value[:, names["BatteryRisk"]]
+    return torch.clamp(quality - .20 * visual_risk - .10 * battery_risk, 0.0, 1.0)
+
+
+def _potential_targets(dataset, gamma: float, device) -> torch.Tensor:
+    """Discounted terminal utility for every state, without graph-label leakage."""
+    episode = np.asarray(dataset["episode_id"], dtype=np.int64)
+    times = np.asarray(dataset["time_index"], dtype=np.int64)
+    success = np.asarray(dataset["success"], dtype=np.int64)
+    failure = np.asarray(dataset["failure_type"]).astype(str)
+    lateral = np.asarray(dataset["touchdown_error"], dtype=np.float64)
+    target = np.empty(len(episode), dtype=np.float32)
+    for ep in np.unique(episode):
+        index = np.flatnonzero(episode == ep)
+        order = index[np.argsort(times[index])]
+        first = int(order[0])
+        if success[first]:
+            utility = 1.0
+        elif failure[first] in {"collision", "unsafe_pad_contact", "battery_depleted"}:
+            utility = -1.0
+        elif failure[first] == "excessive_drift":
+            utility = -0.85
+        else:
+            # Preserve a useful distinction between a near miss and a blind,
+            # distant timeout instead of collapsing every failure to one label.
+            utility = -float(np.clip(.25 + lateral[first] / 2.0, .25, .80))
+        remaining = np.arange(len(order) - 1, -1, -1, dtype=np.float64)
+        target[order] = utility * np.power(float(gamma), remaining)
+    return torch.as_tensor(target, dtype=torch.float32, device=device)
+
+
+def _contextual_weight_target(X: torch.Tensor, baseline: torch.Tensor,
+                              total_weight: float) -> torch.Tensor:
+    """Safe graph-only prior that breaks the constant-weight local optimum."""
+    names = {name: index for index, name in enumerate(ADAPTIVE_NODE_NAMES)}
+    value = X[:, :, 0]
+    alignment = value[:, names["ImageAlignment"]]
+    scale = value[:, names["ApparentScale"]]
+    vertical = value[:, names["VerticalMotionSafety"]]
+    attitude = value[:, names["AttitudeStability"]]
+    motion = value[:, names["ImagePlaneMotion"]]
+    visibility = .5 * (value[:, names["VisibleKeypointFraction"]]
+                       + value[:, names["VisibilityMemory"]])
+    risk = 1.0 - visibility
+    factors = torch.stack((
+        1.0 + 1.4 * (1.0 - alignment) + .5 * risk,
+        .45 + 1.3 * alignment * visibility * (1.0 - .5 * scale),
+        .70 + 1.6 * scale + 1.2 * (1.0 - vertical) + .6 * risk,
+        .70 + 1.4 * scale * (1.0 - vertical),
+        .80 + 1.1 * (1.0 - motion) + .8 * (1.0 - attitude),
+    ), dim=-1)
+    desired = baseline[None] * factors
+    return float(total_weight) * desired / desired.sum(dim=-1, keepdim=True)
 
 
 def _ontology_hinge(weights, X, config):
@@ -192,19 +266,38 @@ def train_adaptive_reward_weights(dataset: Mapping[str, Any], *, settings=None,
                           device=device)
     train_mask = torch.as_tensor(
         np.asarray(dataset["split"]).astype(str) == "train", device=device)
+    validation_mask = torch.as_tensor(
+        np.asarray(dataset["split"]).astype(str) == "validation", device=device)
+    for name, mask in (("training", train_mask), ("validation", validation_mask)):
+        labels = set(np.asarray(dataset["success"], dtype=int)[
+            mask.detach().cpu().numpy()].tolist())
+        if labels != {0, 1}:
+            raise ValueError(
+                f"adaptive {name} split requires both success and failure episodes")
     pairs, pair_stats = select_ranking_pairs(dataset, "train")
     optimizer = torch.optim.Adam(
         list(model.parameters()) + list(calibrator.parameters()), lr=learning_rate)
     p0 = torch.as_tensor(BASELINE_REWARD_WEIGHTS / BASELINE_REWARD_WEIGHTS.sum(),
                          dtype=torch.float32, device=device)
+    baseline = torch.as_tensor(BASELINE_REWARD_WEIGHTS, dtype=torch.float32,
+                               device=device)
+    potential_target = _potential_targets(dataset, gamma, device)
+    contextual_target = _contextual_weight_target(
+        X, baseline, float(model.total_weight)).detach()
+    semantic_quality = _semantic_quality(X).detach()
     adjacent = temporal_smoothness_pairs(dataset, "train")
     adjacent_index = (None if not adjacent else torch.as_tensor(
         adjacent, dtype=torch.long, device=device))
     history = []
     rule_stats = {}
+    best_state = None
+    best_calibrator = None
+    best_validation = float("inf")
+    best_epoch = 0
     for epoch in range(1, epochs + 1):
         model.train()
-        weights = model(X)
+        weights, _, potentials = model(
+            X, return_logits=True, return_potential=True)
         scores, outcomes, episode_ids = _trajectory_scores(
             weights, rho, dataset, "train", gamma)
         logits = calibrator(scores)
@@ -224,11 +317,33 @@ def train_adaptive_reward_weights(dataset: Mapping[str, Any], *, settings=None,
                          / float(model.total_weight)) ** 2).mean())
         ontology_loss, rule_stats = _ontology_hinge(
             weights[train_mask], X[train_mask], loss_config)
+        contextual_loss = ((weights[train_mask] / float(model.total_weight)
+                            - contextual_target[train_mask]
+                            / float(model.total_weight)) ** 2).mean()
+        potential_loss = F.smooth_l1_loss(
+            potentials[train_mask], potential_target[train_mask])
+        monotonic_terms = []
+        if adjacent_index is not None:
+            left, right = adjacent_index[:, 0], adjacent_index[:, 1]
+            quality_delta = semantic_quality[right] - semantic_quality[left]
+            changed = quality_delta.abs() >= .02
+            if torch.any(changed):
+                direction = torch.sign(quality_delta[changed])
+                potential_delta = potentials[right[changed]] - potentials[left[changed]]
+                monotonic_terms.append(F.relu(
+                    float(loss_config["observability_margin"])
+                    - direction * potential_delta).square().mean())
+        observability_loss = (torch.stack(monotonic_terms).mean()
+                              if monotonic_terms else weights.sum() * 0.0)
         total = (float(loss_config["outcome_bce"]) * outcome_loss
                  + float(loss_config["ranking"]) * ranking_loss
                  + float(loss_config["baseline_prior"]) * prior_loss
                  + float(loss_config["temporal_smoothness"]) * smooth_loss
-                 + float(loss_config["ontology_hinge"]) * ontology_loss)
+                 + float(loss_config["ontology_hinge"]) * ontology_loss
+                 + float(loss_config["contextual_weight"]) * contextual_loss
+                 + float(loss_config["semantic_potential"]) * potential_loss
+                 + float(loss_config["observability_monotonic"])
+                 * observability_loss)
         if not torch.isfinite(total):
             raise FloatingPointError("adaptive reward offline loss is non-finite")
         optimizer.zero_grad(set_to_none=True)
@@ -237,23 +352,53 @@ def train_adaptive_reward_weights(dataset: Mapping[str, Any], *, settings=None,
             list(model.parameters()) + list(calibrator.parameters()), 5.0,
             error_if_nonfinite=True)
         optimizer.step()
+        model.eval()
+        with torch.no_grad():
+            candidate_weights, candidate_potential = model(
+                X, return_potential=True)
+            validation_scores, validation_outcomes, _ = _trajectory_scores(
+                candidate_weights, rho, dataset, "validation", gamma)
+            validation_logits = calibrator(validation_scores)
+            validation_bce = F.binary_cross_entropy_with_logits(
+                validation_logits, validation_outcomes)
+            validation_potential = F.smooth_l1_loss(
+                candidate_potential[validation_mask],
+                potential_target[validation_mask])
+            validation_objective = float(
+                validation_bce + float(loss_config["semantic_potential"])
+                * validation_potential)
+        if validation_objective < best_validation:
+            best_validation = validation_objective
+            best_epoch = epoch
+            best_state = copy.deepcopy(model.state_dict())
+            best_calibrator = copy.deepcopy(calibrator.state_dict())
         row = {"epoch": epoch, "total_loss": float(total.detach()),
                "outcome_bce": float(outcome_loss.detach()),
                "ranking_loss": float(ranking_loss.detach()),
                "baseline_prior": float(prior_loss.detach()),
                "temporal_smoothness": float(smooth_loss.detach()),
                "ontology_hinge": float(ontology_loss.detach()),
+               "contextual_weight": float(contextual_loss.detach()),
+               "semantic_potential": float(potential_loss.detach()),
+               "observability_monotonic": float(observability_loss.detach()),
+               "validation_bce": float(validation_bce),
+               "validation_potential": float(validation_potential),
+               "validation_objective": validation_objective,
                "calibration_scale": float(calibrator.scale.detach()),
                "calibration_bias": float(calibrator.bias.detach())}
         history.append(row)
         if verbose:
             print(f"adaptive R-GAT epoch {epoch:3d}/{epochs} "
                   f"loss={row['total_loss']:.4f} outcome={row['outcome_bce']:.4f} "
-                  f"rank={row['ranking_loss']:.4f}")
+                  f"rank={row['ranking_loss']:.4f} val={validation_objective:.4f}")
 
+    if best_state is None or best_calibrator is None:
+        raise RuntimeError("adaptive R-GAT did not produce a finite validation checkpoint")
+    model.load_state_dict(best_state)
+    calibrator.load_state_dict(best_calibrator)
     model.eval()
     with torch.no_grad():
-        weights = model(X)
+        weights, potentials = model(X, return_potential=True)
         validation_scores, validation_outcomes, _ = _trajectory_scores(
             weights, rho, dataset, "validation", gamma)
         if validation_scores.numel():
@@ -266,10 +411,39 @@ def train_adaptive_reward_weights(dataset: Mapping[str, Any], *, settings=None,
             validation_bce = None
             validation_accuracy = None
         weight_mean = weights.detach().cpu().numpy().mean(axis=0).tolist()
+        weight_array = weights.detach().cpu().numpy()
+        weight_cv = (weight_array.std(axis=0)
+                     / np.maximum(np.abs(weight_array.mean(axis=0)), 1e-8))
+        potential_array = potentials.detach().cpu().numpy()
+        quality_array = semantic_quality.detach().cpu().numpy()
+        potential_quality_correlation = float(np.corrcoef(
+            potential_array, quality_array)[0, 1])
+        if not np.isfinite(potential_quality_correlation):
+            potential_quality_correlation = 0.0
+        audit_pairs = temporal_smoothness_pairs(dataset, "validation")
+        if not audit_pairs:
+            audit_pairs = temporal_smoothness_pairs(dataset, "train")
+        agreements = []
+        for left, right in audit_pairs:
+            quality_delta = quality_array[right] - quality_array[left]
+            if abs(float(quality_delta)) < .02:
+                continue
+            potential_delta = potential_array[right] - potential_array[left]
+            agreements.append(float(quality_delta * potential_delta >= 0.0))
+        potential_monotonic_compliance = (
+            float(np.mean(agreements)) if agreements else 1.0)
     model_sha = freeze_adaptive_reward_model(model)
     metrics = {"final": history[-1], "validation_outcome_bce": validation_bce,
                "validation_accuracy": validation_accuracy,
-               "mean_weights": weight_mean, "ranking_pairs": pair_stats,
+               "best_epoch": int(best_epoch),
+               "best_validation_objective": float(best_validation),
+               "mean_weights": weight_mean,
+               "weight_coefficient_of_variation": weight_cv.tolist(),
+               "mean_weight_coefficient_of_variation": float(weight_cv.mean()),
+               "potential_quality_correlation": potential_quality_correlation,
+               "potential_observability_monotonic_compliance": (
+                   potential_monotonic_compliance),
+               "ranking_pairs": pair_stats,
                "ontology_rule_activations": rule_stats,
                "parameter_count": int(sum(p.numel() for p in model.parameters()))}
     calibration = {"raw_scale": float(calibrator.raw_scale.detach().cpu()),
@@ -289,6 +463,38 @@ def prepare_adaptive_reward_artifact(path: str | Path, dataset: Mapping[str, Any
         device=str(settings.get("device", "cpu")), verbose=bool(
             settings.get("verbose", True)))
     model_config = adaptive_model_config(settings)
+    gate_config = dict(settings.get("quality_gate") or {})
+    gate_enabled = bool(gate_config.get("enabled", False))
+    checks = {
+        "validation_accuracy": (
+            metrics["validation_accuracy"] is not None
+            and float(metrics["validation_accuracy"])
+            >= float(gate_config.get("minimum_validation_accuracy", .50))),
+        "weight_state_variation": (
+            float(metrics["mean_weight_coefficient_of_variation"])
+            >= float(gate_config.get("minimum_mean_weight_cv", .005))),
+        "potential_observability_direction": (
+            float(metrics["potential_observability_monotonic_compliance"])
+            >= float(gate_config.get(
+                "minimum_potential_monotonic_compliance", .55))),
+    }
+    quality_gate = {
+        "enabled": gate_enabled,
+        "passed": bool(not gate_enabled or all(checks.values())),
+        "checks": checks,
+        "thresholds": {
+            "minimum_validation_accuracy": float(gate_config.get(
+                "minimum_validation_accuracy", .50)),
+            "minimum_mean_weight_cv": float(gate_config.get(
+                "minimum_mean_weight_cv", .005)),
+            "minimum_potential_monotonic_compliance": float(gate_config.get(
+                "minimum_potential_monotonic_compliance", .55)),
+        },
+    }
+    if not quality_gate["passed"]:
+        failed = ", ".join(name for name, passed in checks.items() if not passed)
+        raise RuntimeError(
+            "adaptive R-GAT quality gate rejected the artifact: " + failed)
     metadata = {
         "format": ADAPTIVE_MODEL_FORMAT, "frozen": True,
         "graph_schema_version": ADAPTIVE_GRAPH_VERSION,
@@ -301,8 +507,14 @@ def prepare_adaptive_reward_artifact(path: str | Path, dataset: Mapping[str, Any
         "loss": (
             "lambda_out*BCE(sigmoid(a*J+b), outcome) + lambda_rank*ranking + "
             "lambda_prior*||p-p0||^2 + lambda_smooth*||p_t-p_t-1||^2 + "
-            "lambda_onto*ontology_hinge"),
-        "trajectory_score": "sum_t gamma^t w(G_t)^T normalized_rho_t",
+            "lambda_onto*ontology_hinge + lambda_context*context_prior + "
+            "lambda_phi*Huber(Phi,target) + lambda_obs*monotonic_visibility"),
+        "trajectory_score": (
+            "sum_t gamma^t w(G_t)^T normalized_rho_t / sum_t gamma^t"),
+        "semantic_potential": (
+            "shared frozen R-GAT encoder; Phi learns discounted terminal utility "
+            "with graph-only observability monotonic regularization"),
+        "quality_gate": quality_gate,
         "pair_selection": metrics["ranking_pairs"],
         "ontology_rules": [
             "NearPad & HighDescentRate => VerticalSpeedSafety >= LateralProgress + margin",

@@ -31,6 +31,11 @@ supervision과 평가/terminal 판정에도 training-only truth가 남는다.
 `tables/sample_efficiency.csv`에 각각 기록된다. 중단 후 같은 명령을 실행하면 시연
 artifact, pipeline checkpoint와 완료 평가 row를 재개한다.
 
+현재 preview v2는 pipeline별 PPO 32회, adaptive 설계 실제 비행 최소 12회(성공/실패/
+위험 실패 층화가 부족하면 최대 24회), R-GAT 40 epoch, scenario 3종 × paired seed
+3개를 사용하며 `results/seminar_fast/core3_hybrid_v2`에 저장한다. 이전 `core3` 결과는
+덮어쓰지 않는다.
+
 착륙 성공은 raw `pad_contact`가 아니다. 접촉, 패드 중심 위치, 수직속도, 패드 상대
 수평속도, roll/pitch tilt, 각속도의 여섯 gate를 모두 통과해야 한다. 접촉했지만 gate를
 위반하면 `status=unsafe_pad_contact`, `paper_success=0`, terminal reward `-10`이다.
@@ -88,6 +93,12 @@ Committed episode 수는 완전한 episode, optimizer update, checkpoint write, 
 write가 모두 끝난 뒤에만 변한다. Rendered S5의 simulated episode 30 s는 wall time
 30 s보다 오래 걸릴 수 있다. 그동안 `active episode`와 `live episode step`을 보고,
 committed count 하나만 멈췄다고 stall로 판단하지 않는다.
+
+PPO update 뒤 KL이 기준을 넘으면 해당 epoch 전체를 rollback하고 learning rate를
+절반으로 낮춘다. 각 rollout을 만든 update 전 policy 중 안전 착륙, 충돌, FOV loss,
+최종 오차를 함께 평가해 `<pipeline>.best.pt`를 보존하며 paired evaluation에는 마지막
+policy가 아니라 이 안전 best checkpoint를 사용한다. `<pipeline>.pt`는 중단점 재개용
+최신 optimizer checkpoint이므로 두 파일의 역할이 다르다.
 
 ![MATLAB 스타일 실시간 상태](images/live_dashboard_status.png)
 

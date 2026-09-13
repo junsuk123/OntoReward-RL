@@ -96,21 +96,21 @@ if [[ "$seminar_fast" == true ]]; then
     --config "$project_root/config/experiments/seminar_fast_comparison.yaml"
     --system-config "$project_root/config/seminar-fast-system.yaml"
     --experiment adaptive_reward_weight_comparison
-    --results-dir "$project_root/results/seminar_fast/core3"
+    --results-dir "$project_root/results/seminar_fast/core3_hybrid_v2"
     --pipelines shin_se_fixed no_se_fixed onto_rgat_adaptive_weight_no_se
-    --rgat-max-data-episodes 12
-    --rgat-epochs 10
+    --rgat-max-data-episodes 24
+    --rgat-epochs 40
   )
   if [[ "$training_budget_supplied" == false ]]; then
-    profile_arguments+=(--train-episodes 16)
+    profile_arguments+=(--train-episodes 32)
     training_budget_supplied=true
   fi
   if [[ "$evaluation_budget_supplied" == false ]]; then
-    profile_arguments+=(--eval-episodes 2)
+    profile_arguments+=(--eval-episodes 3)
     evaluation_budget_supplied=true
   fi
   if [[ "$rgat_budget_supplied" == false ]]; then
-    profile_arguments+=(--rgat-data-episodes 6)
+    profile_arguments+=(--rgat-data-episodes 12)
     rgat_budget_supplied=true
   fi
   arguments=("${profile_arguments[@]}" "${arguments[@]}")

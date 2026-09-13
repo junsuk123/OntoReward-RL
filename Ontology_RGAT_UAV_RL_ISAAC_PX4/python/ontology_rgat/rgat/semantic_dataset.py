@@ -23,7 +23,7 @@ from .train import train_potential
 
 
 SEMANTIC_DATASET_FORMAT = "ontology_rgat.semantic_rollouts/2-recovery-aware"
-SEMANTIC_MODEL_FORMAT = "ontology_rgat.semantic_potential/2-monotonic"
+SEMANTIC_MODEL_FORMAT = "ontology_rgat.semantic_potential/3-stratified-best"
 SEMANTIC_DATASET_PROVENANCE = "isaac_px4_estimator_free_recovery_behavior_mixture"
 SEMANTIC_SAMPLE_FIELDS = frozenset({"graph_X", "step_id"})
 MONOTONIC_COUNTERFACTUAL_NAMES = (

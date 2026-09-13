@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 import torch
 
-from ontology_rgat.bridge import EntryResetError, GatewayTimeout, PX4Failsafe
+from ontology_rgat.bridge import BridgeError, EntryResetError, GatewayTimeout, PX4Failsafe
 from ontology_rgat.benchmarks.experiment import (configuration_hash,
                                                  controlled_training_seeds,
                                                  episodes_per_method,
@@ -451,6 +451,29 @@ def test_exhausted_entry_reset_restarts_and_retries_same_policy_seed(monkeypatch
 
     assert rows == ["complete"] and metric["seed"] == 20015
     assert attempts == [20015, 20015]
+    assert recoveries == ["restart"]
+
+
+def test_peer_restart_estimator_warmup_retries_same_policy_seed(monkeypatch):
+    attempts = []
+    recoveries = []
+
+    def collect(_env, _model, _method, seed, **_kwargs):
+        attempts.append(seed)
+        if len(attempts) == 1:
+            raise BridgeError("PX4 estimator state is not valid yet.")
+        return ["complete"], {"seed": seed}
+
+    monkeypatch.setattr(recurrent_train, "collect_episode", collect)
+    env = type("Env", (), {
+        "cfg": type("Cfg", (), {"external": {"episode_recoveries": 2}})(),
+        "recover_infrastructure": lambda self: recoveries.append("restart"),
+    })()
+
+    rows, metric = collect_episode_resilient(env, object(), "shin_se", 20016)
+
+    assert rows == ["complete"] and metric["seed"] == 20016
+    assert attempts == [20016, 20016]
     assert recoveries == ["restart"]
 
 

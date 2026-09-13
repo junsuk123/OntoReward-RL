@@ -641,9 +641,15 @@ def collect_episode_resilient(env, model: PipelineActorCritic, method: str,
         try:
             return collect_episode(env, model, method, seed, **kwargs)
         except BridgeError as exc:
+            message = str(exc).lower()
             recoverable = (isinstance(exc, (EntryResetError, GatewayTimeout))
                            or (isinstance(exc, PX4Failsafe) and exc.recoverable)
-                           or "simulator has stalled" in str(exc).lower())
+                           or "simulator has stalled" in message
+                           # A peer can finish rebuilding the shared Isaac/PX4
+                           # stack while this worker is still in step().  The
+                           # first reply may then precede estimator readiness;
+                           # it is infrastructure transition, not task failure.
+                           or "estimator state is not valid yet" in message)
             recover = getattr(env, "recover_infrastructure", None)
             if not recoverable or attempt >= recoveries or not callable(recover):
                 raise

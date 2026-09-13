@@ -142,6 +142,23 @@ Dataset은 `(episode, scenario)` 단위로 train/validation을 분리하며, 충
 양쪽 split에 성공과 실패가 모두 포함되도록 층화한다. 최소 class 계약은 성공 3,
 실패 3, 위험 실패 2 episode다.
 
+## RViz 태그 인식 합성 영상
+
+아래 영상은 Isaac Sim 카메라가 발행한
+`/landing_pair_2/uav/perception/landing_camera/annotated`를 RViz에서 표시하는 것과
+동일한 합성 결과다. 원시 actor 영상에 넣는 정보가 아니라, 운영자 진단용 토픽에만
+ArUco 윤곽, marker ID, 검출 quality와 reprojection error를 덧그린다.
+
+| 시야 상실 | 태그 재포착 | 접촉 직전 접근 |
+|---|---|---|
+| ![ArUco 태그 시야 상실](images/rviz_annotated_visual_loss.png) | ![ArUco 태그 재포착](images/rviz_annotated_reacquisition.png) | ![접촉 직전 ArUco 태그 추적](images/rviz_annotated_precontact.png) |
+| `PAD NOT DETECTED`: marker가 영상에 있어도 유효 ArUco가 없는 상태 | `PAD DETECTED`: ID 132를 다시 검출한 직후 | 복수 ID와 reprojection error를 유지한 근접 장면 |
+
+왼쪽과 가운데는 실제 보상 설계 수집 비행의 같은 pair·seed 80046에서 연속으로
+캡처했다. 오른쪽은 바로 앞 성공 비행 seed 80045의 근접 프레임이다. 세 이미지는
+태그 인식 상태를 설명하기 위한 실제 live capture이며, 제안 PPO의 성능 증거로
+사용하지 않는다. 성능 비교에는 별도의 paired evaluation만 사용한다.
+
 ## 오프라인 학습 목적함수
 
 Episode $e$의 길이 편향을 제거한 discounted shaping score는

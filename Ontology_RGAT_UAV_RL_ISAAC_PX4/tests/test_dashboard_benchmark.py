@@ -51,16 +51,18 @@ def test_benchmark_monitor_publishes_refactored_contract_and_progress():
     })
 
     state = store.snapshot()
-    assert state["scalars"]["dashboard_profile"] == "shin2026"
+    assert state["scalars"]["dashboard_profile"] == "parallel_three_pair"
     assert "simulator truth" in state["scalars"]["actor_contract"]["forbidden"]
     assert "battery reserve" in state["scalars"]["actor_contract"]["reward_side"]
-    assert state["series"]["benchmark_step"][-1]["position_error"] == 1.0
-    assert state["series"]["benchmark_step"][-1]["status"] == "running"
-    assert state["series"]["benchmark_step"][-1]["shape"] == 0.3
-    assert state["series"]["benchmark_step"][-1]["battery_reserve"] == .4
-    assert state["series"]["benchmark_step"][-1]["battery_remaining_j"] == 4200.0
-    assert state["series"]["benchmark_step"][-1]["uav_speed_m_s"] == .5
-    assert state["series"]["benchmark_step"][-1]["ugv_speed_m_s"] == .12
+    live = state["series"]["benchmark_step_ontoreward"][-1]
+    assert live["position_error"] == 1.0
+    assert live["status"] == "running"
+    assert live["shape"] == 0.3
+    assert live["battery_reserve"] == .4
+    assert live["battery_remaining_j"] == 4200.0
+    assert live["uav_speed_m_s"] == .5
+    assert live["ugv_speed_m_s"] == .12
+    assert state["series"].get("benchmark_step", []) == []
     assert state["series"]["benchmark_train_ontoreward"][-1]["episode"] == 1
     assert state["scalars"]["current_action_envelope_scale"] == 0.5125
     assert state["scalars"]["current_pad_motion_scale"] == 0.5125
@@ -95,21 +97,22 @@ def test_benchmark_monitor_restores_csv_rows_and_pairs_evaluation_series():
 
 
 def test_dashboard_has_self_contained_matlab_style_benchmark_view():
-    assert "Shin 2026 controlled benchmark" in PAGE
+    assert "세 방법론 공통 RL 계약과 정보 경계" in PAGE
     assert "benchmark_eval_scenario" in PAGE
     assert "Hard information boundary" in PAGE
-    assert "recurrent estimate vs truth" in PAGE
+    assert "parallel_live_method" in PAGE
+    assert "pair-plot-grid" in PAGE
+    assert "benchmark_step_${method}" in PAGE
     assert "UAV action-envelope curriculum" in PAGE
-    assert "Current episode · real 3S battery" in PAGE
-    assert "Current episode · vehicle motion (m/s)" in PAGE
-    assert "Battery-depletion terminal rate" in PAGE
-    assert "completed episodes" in PAGE
+    assert "실시간 비행 상태 · pair별 독립 sensor" in PAGE
+    assert "배터리 고갈 종료율" in PAGE
+    assert "완료 학습 episode" in PAGE
     assert "rows.length+' completed'" in PAGE
     assert "training_total||0)/" not in PAGE
-    assert "active episode" in PAGE
-    assert "live episode step" in PAGE
     assert "parallel-pair-grid" in PAGE
     assert "3쌍 병렬 비전 착륙" in PAGE
+    assert "view:'urban'" not in PAGE
+    assert "rewardPanel" not in PAGE
     assert "debug only" not in PAGE
     assert "prefers-color-scheme:dark" not in PAGE
     for color in MATLAB_COLORS:

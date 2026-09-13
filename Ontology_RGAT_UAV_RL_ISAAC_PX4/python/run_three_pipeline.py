@@ -69,9 +69,24 @@ def _write_json(path: Path, value) -> None:
 class _LockedMonitor:
     """Serialize RViz/dashboard calls made by concurrent pair workers."""
 
-    def __init__(self, monitor, lock):
+    def __init__(self, monitor, lock, *, method: str = "", pair_index: int = 0,
+                 pair_count: int = 1):
         self._monitor = monitor
         self._lock = lock
+        self._method = str(method)
+        self._pair_index = int(pair_index)
+        self._pair_count = int(pair_count)
+
+    def stage(self, name: str, detail: str = "") -> None:
+        with self._lock:
+            if self._pair_count > 1:
+                self._monitor.store.stage(
+                    name, f"{self._pair_count} independent UAV/UGV pairs active")
+                self._monitor._update_pair(
+                    self._method, activity=str(name), activity_detail=str(detail),
+                    index=self._pair_index)
+            else:
+                self._monitor.stage(name, detail)
 
     def __getattr__(self, name):
         value = getattr(self._monitor, name)
@@ -861,8 +876,8 @@ def main():
     parser.add_argument("--no-rviz", action="store_true")
     parser.add_argument("--dashboard-port", type=int)
     parser.add_argument(
-        "--parallel-pairs", type=int, default=1,
-        help="run one selected pipeline per isolated UAV/UGV pair in one Isaac stage")
+        "--parallel-pairs", type=int, default=3,
+        help="number of isolated UAV/UGV pairs in the shared Isaac stage")
     args = parser.parse_args()
     if args.train_episodes is not None and args.total_train_episodes is not None:
         parser.error("use either --train-episodes or --total-train-episodes")
@@ -1263,8 +1278,12 @@ def main():
             histories = {}
             monitor_lock = threading.RLock()
             gpu_update_lock = threading.RLock() if args.parallel_pairs > 1 else None
-            worker_monitors = [_LockedMonitor(monitor, monitor_lock)
-                               for _ in range(args.parallel_pairs)]
+            worker_monitors = [
+                _LockedMonitor(
+                    monitor, monitor_lock,
+                    method=(args.pipelines[index] if args.parallel_pairs > 1 else ""),
+                    pair_index=index, pair_count=args.parallel_pairs)
+                for index in range(args.parallel_pairs)]
 
             def initialize_pipeline_model(name):
                 torch.manual_seed(model_seed)
@@ -1527,6 +1546,8 @@ def main():
             completed = {(row["pipeline"], row["scenario"], int(row["seed"]))
                          for row in evaluation_rows}
             monitor.restore_evaluation(evaluation_rows)
+            evaluation_lock = threading.RLock()
+
             def evaluate_pipeline(index, name):
                 model = models[name]
                 local_monitor = worker_monitors[index]
@@ -1562,6 +1583,13 @@ def main():
                                        "scenario": item["scenario"]})
                         new_rows.append(metric)
                         local_monitor.evaluation_update(name, metric)
+                        # Evaluation is real-time flight and can take long
+                        # enough to be interrupted. Commit every completed
+                        # pair/seed immediately instead of waiting for all
+                        # worker plans to finish.
+                        with evaluation_lock:
+                            evaluation_rows.append(metric)
+                            _write_csv(existing_eval, evaluation_rows)
                 return new_rows
 
             if args.parallel_pairs > 1:
@@ -1573,7 +1601,7 @@ def main():
                     futures = [executor.submit(evaluate_pipeline, index, name)
                                for index, name in enumerate(args.pipelines)]
                     for future in as_completed(futures):
-                        evaluation_rows.extend(future.result())
+                        future.result()
                 except BaseException:
                     _abort_parallel_workers(executor, futures, owned)
                     raise
@@ -1581,7 +1609,7 @@ def main():
                     executor.shutdown(wait=True)
             else:
                 for name in args.pipelines:
-                    evaluation_rows.extend(evaluate_pipeline(0, name))
+                    evaluate_pipeline(0, name)
             _write_csv(existing_eval, evaluation_rows)
 
             semantic_cost = {

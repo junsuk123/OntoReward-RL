@@ -471,7 +471,7 @@ class BenchmarkMonitor:
             for item in self.pair_layout
         }
         self.store.set(
-            dashboard_profile="shin2026", benchmark_mode=str(mode),
+            dashboard_profile="parallel_three_pair", benchmark_mode=str(mode),
             benchmark_methods=list(self.methods), config_hash=str(config_hash),
             training_total=self.training_total,
             evaluation_total=self.evaluation_total,
@@ -538,7 +538,8 @@ class BenchmarkMonitor:
             pipeline=pipeline_name, state_estimation=estimation_status,
             curriculum=float(curriculum), motion_scale=float(
                 curriculum if motion_scale is None else motion_scale),
-            action_scale=float(action_scale), marker_visible=None)
+            action_scale=float(action_scale), marker_visible=None,
+            success=None, landing_gate=None)
 
     def step(self, *, index: int, dt: float, method: str, reward: float,
              reward_parts: dict[str, Any], estimate, truth, in_fov: bool,
@@ -602,7 +603,8 @@ class BenchmarkMonitor:
             "battery_energy_used_j": float(battery.get("energy_used_j", 0.0)),
             "battery_power_kw": float(battery.get("power_w", 0.0)) / 1000.0,
         })
-        self.store.append("benchmark_step", point)
+        if len(self.methods) <= 1:
+            self.store.append("benchmark_step", point)
         self.store.append(f"benchmark_step_{method}", point)
         relative = np.asarray(
             ((state.get("truth") or {}).get("position")
@@ -703,7 +705,16 @@ class BenchmarkMonitor:
         self._update_pair(
             method, phase="evaluation", status=str(point.get("status", "complete")),
             scenario=str(point.get("scenario", "")),
-            success=float(point.get("paper_success", 0.0)))
+            success=float(point.get("paper_success", 0.0)),
+            landing_gate={
+                "contact": point.get("pad_contact"),
+                "position": point.get("landing_gate_position"),
+                "vertical_speed": point.get("landing_gate_vertical_speed"),
+                "relative_horizontal_speed": point.get(
+                    "landing_gate_relative_horizontal_speed"),
+                "attitude": point.get("landing_gate_attitude"),
+                "angular_rate": point.get("landing_gate_angular_rate"),
+            })
 
 
 class EpisodeMonitor:

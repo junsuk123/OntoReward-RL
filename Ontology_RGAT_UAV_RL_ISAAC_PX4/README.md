@@ -145,9 +145,11 @@ PPO optimizer는 동결 R-GAT parameter를 소유하지 않는다.
 curl -fsS http://127.0.0.1:8770/api/state
 ```
 
-Dashboard의 episode 수는 checkpoint/history에 commit된 episode를 나타낸다. 현재
-비행의 live step은 별도로 표시한다. 세 pair 카드에서 marker, 상대 XYZ, UAV/UGV 속도,
-battery, PX4 namespace, UDP endpoint와 camera topic을 동시에 확인할 수 있다. RViz는
+Dashboard의 episode 수는 checkpoint/history에 commit된 episode를 나타내며 현재
+비행의 live step은 별도로 표시한다. 웹 화면은 단일 pipeline용 레거시 view 없이 항상
+3-pair 전용이다. 세 pair 카드와 pair별 보상·비행·방법론 고유 그래프에서 marker, 상대
+XYZ, UAV/UGV 속도, battery, 착륙 gate, PX4 namespace, UDP endpoint와 camera topic을
+동시에 확인한다. 전체 학습·평가 그래프는 MATLAB 색상의 고정 3열 layout이다. RViz는
 세 camera dock 및 독립 `landing_pad_0..2` TF를 표시하고, Isaac viewport는 전체 편대를
 자동 framing한다.
 

@@ -23,13 +23,13 @@ def test_reward_monitor_publishes_rgat_pbrs_decomposition():
     assert row["shaped"] is True
 
 
-def test_dashboard_contains_formula_surface_and_live_decomposition():
-    assert "r<sub>R-GAT</sub>" in PAGE
-    assert "cv-rgat_reward_surface" in PAGE
-    assert "Live reward decomposition during PPO" in PAGE
+def test_dashboard_uses_pair_specific_reward_charts_without_legacy_panel():
+    assert "parallel_live_reward" in PAGE
+    assert "실시간 보상 · pair별 독립 trajectory" in PAGE
+    assert "benchmark_step_${method}" in PAGE
     assert "PBRS shaping" in PAGE
-    assert "Frozen coefficients distilled from R-GAT" in PAGE
-    assert "reward-acceptance" in PAGE
+    assert "cv-rgat_reward_surface" not in PAGE
+    assert "reward-acceptance" not in PAGE
 
 
 def test_dashboard_restores_only_matching_saved_acceptance(tmp_path):

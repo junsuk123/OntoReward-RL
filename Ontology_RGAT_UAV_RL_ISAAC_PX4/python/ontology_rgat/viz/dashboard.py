@@ -63,9 +63,9 @@ def _saved_reward_scalars(cfg) -> dict[str, Any]:
 
 
 PAGE = """<!doctype html>
-<html lang="en"><head><meta charset="utf-8">
+<html lang="ko"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Ontology-RGAT training</title>
+<title>3쌍 병렬 Ontology-RGAT 학습</title>
 <style>
 :root{color-scheme:light;--bg:#f2f2f2;--card:#ffffff;--ink:#262626;--muted:#666666;
 --line:#b8b8b8;--grid:#d8d8d8;--accent:#0072BD;--good:#77AC30;
@@ -78,8 +78,8 @@ gap:14px;align-items:baseline;flex-wrap:wrap;box-shadow:0 1px 2px rgba(0,0,0,.08
 h1{font-size:15px;margin:0;font-weight:600;letter-spacing:0}
 #stage{font-weight:600;color:var(--accent)}
 #age{color:var(--muted);font-variant-numeric:tabular-nums;margin-left:auto}
-main{padding:16px 20px;display:grid;gap:14px;
-grid-template-columns:repeat(auto-fit,minmax(330px,1fr))}
+main{padding:14px 16px;display:grid;gap:12px;
+grid-template-columns:repeat(3,minmax(250px,1fr))}
 .card{background:var(--card);border:1px solid #a6a6a6;border-radius:2px;padding:11px 13px;
 box-shadow:0 1px 2px rgba(0,0,0,.06)}
 .card h2{font-size:13px;margin:0 0 6px;text-align:center;color:var(--ink);font-weight:600}
@@ -101,7 +101,7 @@ border-radius:1px;padding:7px 9px}
 .method-chip{border:1px solid #a8a8a8;border-left:4px solid var(--accent);padding:5px 8px;
 background:white;font-variant-numeric:tabular-nums}.method-chip b,.method-chip small{display:block}
 .method-chip small{color:var(--muted)}
-.pair-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(285px,1fr));gap:9px}
+.pair-grid,.pair-plot-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
 .pair-card{border:1px solid #a8a8a8;border-top:4px solid var(--accent);background:#fafafa;
 padding:9px 10px;min-height:150px}.pair-head{display:flex;justify-content:space-between;
 gap:8px;align-items:baseline;margin-bottom:6px}.pair-head b{font-size:13px}.pair-head span{
@@ -113,6 +113,12 @@ font-variant-numeric:tabular-nums}.pair-metrics small{font-size:9px;color:var(--
 overflow-wrap:anywhere}.pair-state{font-weight:600}.pair-state.running{color:var(--accent)}
 .pair-state.success{color:var(--good)}.pair-state.failure,.pair-state.unsafe_touchdown{
 color:var(--bad)}
+.pair-plot{min-width:0;border:1px solid #b8b8b8;background:#fff;padding:7px}
+.pair-plot h3{height:34px;margin:0 0 3px;font-size:11px;line-height:1.3;text-align:center}
+.pair-plot canvas{height:170px}.pair-gates{display:flex;gap:3px;flex-wrap:wrap;margin-top:6px}
+.pair-gates i{font-style:normal;font-size:9px;padding:1px 4px;border:1px solid #bbb;
+background:#fff}.pair-gates i.pass{border-color:var(--good);color:#4a7620}
+.pair-gates i.fail{border-color:var(--bad);color:var(--bad)}
 .benchmark-formula{margin-top:9px;padding:6px 9px;border:1px solid #b8b8b8;background:#f7f7f7;
 font:12px/1.5 "Courier New",monospace;text-align:center}
 .g3d{position:relative}
@@ -134,29 +140,10 @@ font-size:11px;color:var(--muted);margin-top:10px}
 .relbar b{font-variant-numeric:tabular-nums;font-weight:600;color:var(--ink)}
 .relbar em{font-style:normal;opacity:.75}
 .note{font-size:11px;color:var(--muted);margin-top:8px}
-.reward-formula{font:600 18px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace;
-text-align:center;padding:8px 10px;border:1px solid var(--line);border-radius:8px;
-background:var(--bg);margin-bottom:10px}
-.reward-values{display:grid;grid-template-columns:repeat(auto-fit,minmax(125px,1fr));gap:7px;
-margin-bottom:10px}
-.reward-values div{border-left:3px solid var(--accent);padding:4px 8px;background:var(--bg)}
-.reward-values b{display:block;font-variant-numeric:tabular-nums;font-size:16px}
-.reward-values span{font-size:10px;color:var(--muted);text-transform:uppercase}
-.reward-grid{display:grid;grid-template-columns:minmax(260px,.8fr) minmax(360px,1.4fr);gap:14px}
-.reward-grid h3{font-size:11px;color:var(--muted);font-weight:600;margin:0 0 4px}
-.reward-grid canvas{height:220px}
-.reward-weights{display:grid;grid-template-columns:repeat(auto-fit,minmax(185px,1fr));
-gap:6px;margin:10px 0}.reward-weight{padding:6px 8px;border:1px solid var(--line);
-border-radius:7px;background:var(--bg)}.reward-weight .rw-head{display:flex;justify-content:space-between;
-font-size:11px}.reward-weight .track{height:6px;background:var(--line);border-radius:4px;
-overflow:hidden;margin:5px 0}.reward-weight .track i{display:block;height:100%;background:var(--accent)}
-.reward-weight small{color:var(--muted);font-size:9px}.acceptance{display:grid;
-grid-template-columns:repeat(3,1fr);gap:7px;margin:8px 0}.gate{padding:7px 9px;border-radius:7px;
-border:1px solid var(--line)}.gate.pass{border-left:4px solid #77AC30}.gate.fail{border-left:4px solid #A2142F}
-.gate.wait{border-left:4px solid #8a8f98}.gate b,.gate span{display:block}.gate span{font-size:10px;color:var(--muted)}
-@media(max-width:820px){.reward-grid{grid-template-columns:1fr}}
+@media(max-width:780px){main{grid-template-columns:1fr}.pair-grid,.pair-plot-grid{
+grid-template-columns:1fr}}
 </style></head><body>
-<header><h1 id="page-title">Ontology-RGAT &middot; Isaac Sim + PX4</h1>
+<header><h1 id="page-title">3쌍 병렬 비전 착륙 &middot; Isaac Sim + PX4 + PPO</h1>
 <span id="stage">connecting</span><span id="detail"></span><span id="age"></span></header>
 <main id="root"></main>
 <script>
@@ -174,136 +161,77 @@ const CARDS=[
  {id:'tiles',title:null},
  {id:'parallel_pairs',view:'benchmark',kind:'pairs',
   title:'동시 비행쌍 · 한 Isaac Sim 월드 / 독립 PX4·PPO'},
+ {id:'parallel_live_reward',view:'benchmark',kind:'pairplots',plot:'reward',
+  title:'실시간 보상 · pair별 독립 trajectory'},
+ {id:'parallel_live_flight',view:'benchmark',kind:'pairplots',plot:'flight',
+  title:'실시간 비행 상태 · pair별 독립 sensor'},
+ {id:'parallel_live_method',view:'benchmark',kind:'pairplots',plot:'method',
+  title:'방법론 고유 신호 · SE 오차 / 시각 관측 / R-GAT 의미 상태'},
  {id:'benchmark_contract',view:'benchmark',kind:'contract',
-  title:'Shin 2026 controlled benchmark · information boundary'},
- {id:'benchmark_success',view:'benchmark',title:'Training moving success rate',
+  title:'세 방법론 공통 RL 계약과 정보 경계'},
+ {id:'benchmark_success',view:'benchmark',title:'학습 이동 성공률',
   series:BENCHMARK_TRAIN,x:'episode',y:'paper_success',smooth:40,ymin:0,ymax:1},
  {id:'benchmark_return',view:'benchmark',
-  title:'Training reward return (diagnostic, not the success metric)',
+  title:'학습 누적 보상 (진단값, 성공 판정과 별도)',
   series:BENCHMARK_TRAIN,x:'episode',y:'episode_return',smooth:20},
- {id:'benchmark_curriculum',view:'benchmark',title:'Platform-motion curriculum c',
+ {id:'benchmark_curriculum',view:'benchmark',title:'UGV 운동 curriculum c',
   series:BENCHMARK_TRAIN,x:'episode',y:'curriculum',ymin:0,ymax:1},
  {id:'benchmark_action_scale',view:'benchmark',title:'UAV action-envelope curriculum',
   series:BENCHMARK_TRAIN,x:'episode',y:'action_envelope_scale',ymin:0,ymax:1},
- {id:'benchmark_position_rmse',view:'benchmark',title:'Estimator position RMSE',
+ {id:'benchmark_position_rmse',view:'benchmark',title:'SE 위치 RMSE',
   series:BENCHMARK_TRAIN,x:'episode',y:'position_rmse',smooth:12},
- {id:'benchmark_velocity_rmse',view:'benchmark',title:'Estimator velocity RMSE',
+ {id:'benchmark_velocity_rmse',view:'benchmark',title:'SE 속도 RMSE',
   series:BENCHMARK_TRAIN,x:'episode',y:'velocity_rmse',smooth:12},
- {id:'benchmark_aux',view:'benchmark',title:'Normalized auxiliary 6-state loss',
+ {id:'benchmark_aux',view:'benchmark',title:'정규화 6-state 보조 손실',
   series:BENCHMARK_TRAIN,x:'episode',y:'auxiliary_estimation_loss',smooth:12},
- {id:'benchmark_active_saturation',view:'benchmark',title:'Active-reward saturation rate',
+ {id:'benchmark_active_saturation',view:'benchmark',title:'Active reward 포화율',
   series:BENCHMARK_TRAIN,x:'episode',y:'active_reward_saturation_fraction',
   smooth:12,ymin:0,ymax:1},
  {id:'benchmark_adaptive_weights',view:'benchmark',
-  title:'Frozen adaptive reward weights (episode mean)',series:BENCHMARK_TRAIN,
+  title:'동결 adaptive reward 가중치 (episode 평균)',series:BENCHMARK_TRAIN,
   x:'episode',y:['adaptive_weight_1_mean','adaptive_weight_2_mean',
    'adaptive_weight_3_mean','adaptive_weight_4_mean','adaptive_weight_5_mean'],
   labels:['lateral','vertical','vz safety','undershoot','yaw']},
- {id:'benchmark_adaptive_latency',view:'benchmark',title:'Adaptive R-GAT inference latency',
+ {id:'benchmark_adaptive_latency',view:'benchmark',title:'Adaptive R-GAT 추론 지연',
   series:BENCHMARK_TRAIN,x:'episode',y:'adaptive_rgat_inference_latency_ms_mean',smooth:12},
- {id:'benchmark_policy_loss',view:'benchmark',title:'Recurrent PPO policy loss',
+ {id:'benchmark_policy_loss',view:'benchmark',title:'Recurrent PPO policy 손실',
   series:BENCHMARK_TRAIN,x:'episode',y:'ppo_loss',smooth:12},
- {id:'benchmark_value_loss',view:'benchmark',title:'Asymmetric critic value loss',
+ {id:'benchmark_value_loss',view:'benchmark',title:'Asymmetric critic value 손실',
   series:BENCHMARK_TRAIN,x:'episode',y:'value_loss',smooth:12},
  {id:'benchmark_entropy',view:'benchmark',title:'PPO policy entropy',
   series:BENCHMARK_TRAIN,x:'episode',y:'entropy',smooth:12},
- {id:'benchmark_kl',view:'benchmark',title:'PPO approximate KL divergence',
+ {id:'benchmark_kl',view:'benchmark',title:'PPO 근사 KL divergence',
   series:BENCHMARK_TRAIN,x:'episode',y:'kl_divergence',smooth:12},
- {id:'benchmark_lr',view:'benchmark',title:'Effective PPO learning rate',
+ {id:'benchmark_lr',view:'benchmark',title:'실효 PPO learning rate',
   series:BENCHMARK_TRAIN,x:'episode',y:'effective_learning_rate'},
- {id:'benchmark_early_stop',view:'benchmark',title:'PPO KL early-stop rate',
+ {id:'benchmark_early_stop',view:'benchmark',title:'PPO KL 조기 종료율',
   series:BENCHMARK_TRAIN,x:'episode',y:'ppo_early_stop',smooth:12,ymin:0,ymax:1},
- {id:'benchmark_battery_used',view:'benchmark',title:'Real-pack energy used per flight (J)',
+ {id:'benchmark_battery_used',view:'benchmark',title:'비행당 실제 pack 사용 에너지 (J)',
   series:BENCHMARK_TRAIN,x:'episode',y:'battery_energy_used_j',smooth:12},
- {id:'benchmark_battery_final',view:'benchmark',title:'Final normalized battery reserve',
+ {id:'benchmark_battery_final',view:'benchmark',title:'종료 시 정규화 배터리 여유',
   series:BENCHMARK_TRAIN,x:'episode',y:'battery_reserve_final',smooth:12,ymin:0,ymax:1},
- {id:'benchmark_battery_depleted',view:'benchmark',title:'Battery-depletion terminal rate',
+ {id:'benchmark_battery_depleted',view:'benchmark',title:'배터리 고갈 종료율',
   series:BENCHMARK_TRAIN,x:'episode',y:'battery_depleted',smooth:20,ymin:0,ymax:1},
- {id:'benchmark_reacquisition',view:'benchmark',title:'Visual reacquisition rate after FOV loss',
+ {id:'benchmark_reacquisition',view:'benchmark',title:'FOV 소실 후 재관측률',
   series:BENCHMARK_TRAIN,x:'episode',y:'visual_reacquisition_rate',smooth:12,ymin:0,ymax:1},
- {id:'benchmark_recovery_landing',view:'benchmark',title:'Loss → reacquisition → landing success',
+ {id:'benchmark_recovery_landing',view:'benchmark',title:'소실 → 재관측 → 착륙 성공률',
   series:BENCHMARK_TRAIN,x:'episode',y:'successful_recovery_landing',smooth:20,ymin:0,ymax:1},
- {id:'benchmark_unsafe_blind_descent',view:'benchmark',title:'Unsafe descent under low visibility',
+ {id:'benchmark_unsafe_blind_descent',view:'benchmark',title:'저시인성 상태의 위험 하강률',
   series:BENCHMARK_TRAIN,x:'episode',y:'unsafe_descent_low_visibility_fraction',
   smooth:12,ymin:0,ymax:1},
- {id:'benchmark_live_reward',view:'benchmark',title:'Current episode · reward decomposition',
-  series:BENCHMARK_STEP,x:'step',
-  y:['reward','task','shape','active_perception','lateral_progress','vertical_progress'],
-  labels:['total','terminal task','OntoReward PBRS','active perception','lateral','vertical']},
- {id:'benchmark_live_state',view:'benchmark',title:'Current episode · recurrent estimate vs truth',
-  series:BENCHMARK_STEP,x:'step',
-  y:['estimated_distance','true_distance','estimated_speed','true_speed'],
-  labels:['estimated distance','critic distance','estimated speed','critic speed']},
- {id:'benchmark_live_error',view:'benchmark',title:'Current episode · estimator and visibility',
-  series:BENCHMARK_STEP,x:'step',
-  y:['position_error','velocity_error','estimation_loss','in_fov'],
-  labels:['position error','velocity error','normalized 6-state MSE','target in FOV']},
- {id:'benchmark_live_semantic',view:'benchmark',title:'Current episode · estimator-free visual semantics',
-  series:BENCHMARK_STEP,x:'step',
-  y:['semantic_keypoint_confidence','semantic_visible_keypoint_fraction',
-     'semantic_image_alignment',
-     'semantic_apparent_target_scale','semantic_image_plane_motion_safety',
-     'semantic_scale_rate_safety','semantic_visibility_memory',
-     'semantic_reacquisition_trend','semantic_visual_loss_risk',
-     'semantic_vertical_motion_safety','semantic_attitude_stability','semantic_battery_risk'],
-  labels:['keypoint confidence','visible keypoint fraction','image alignment',
-          'apparent scale','image motion safety','scale-rate safety','visibility memory',
-          'reacquisition trend','visual-loss risk','vertical safety',
-          'attitude stability','battery risk'],ymin:0,ymax:1},
- {id:'benchmark_live_phi',view:'benchmark',title:'Current episode · direct R-GAT potential and PBRS',
-  series:BENCHMARK_STEP,x:'step',y:['phi','phi_next','shape'],
-  labels:['Phi(G_t)','Phi(G_t+1)','PBRS shaping']},
- {id:'benchmark_live_motion',view:'benchmark',title:'Current episode · vehicle motion (m/s)',
-  series:BENCHMARK_STEP,x:'step',y:['uav_speed_m_s','ugv_speed_m_s'],
-  labels:['UAV world speed','UGV road speed'],ymin:0},
- {id:'benchmark_live_battery',view:'benchmark',title:'Current episode · real 3S battery',
-  series:BENCHMARK_STEP,x:'step',
-  y:['battery_reserve','battery_state_of_charge','battery_power_kw'],
-  labels:['landing reserve [0,1]','pack state of charge','power (kW)'],ymin:0,ymax:1},
  {id:'benchmark_eval_scenario',view:'benchmark',kind:'evalbars',
-  title:'Paired evaluation success by scenario'},
- {id:'benchmark_eval_position',view:'benchmark',title:'Evaluation position RMSE',
+  title:'Scenario별 paired evaluation 성공률'},
+ {id:'benchmark_eval_position',view:'benchmark',title:'평가 위치 RMSE',
   series:BENCHMARK_EVAL,x:'evaluation_index',y:'position_rmse',smooth:8},
- {id:'benchmark_eval_velocity',view:'benchmark',title:'Evaluation velocity RMSE',
+ {id:'benchmark_eval_velocity',view:'benchmark',title:'평가 속도 RMSE',
   series:BENCHMARK_EVAL,x:'evaluation_index',y:'velocity_rmse',smooth:8},
  {id:'benchmark_eval_visual_loss',view:'benchmark',
-  title:'Estimation error while target is out of view',
+  title:'표적 FOV 소실 구간의 추정 오차',
   series:BENCHMARK_EVAL,x:'evaluation_index',y:'visual_loss_estimation_error',smooth:8},
- {id:'graph3d',view:'common',kind:'graph',title:'Learned ontology graph (3D, R-GAT attention)'},
- {id:'rgat_reward',view:'urban',kind:'reward',title:'R-GAT-shaped RL reward / R-GAT 보상함수',
-  series:['reward','episode'],x:'t',y:['reward','base','shape','phi','phi_next'],
-  labels:['final reward','sparse/base','PBRS shaping','Phi(s)','Phi(s next)']},
- {id:'ppo_return',view:'urban',title:'PPO episode return',series:['ppo_manual','ppo_proposed'],
-  x:'episode',y:'return',smooth:20},
- {id:'ppo_success',view:'urban',title:'PPO moving success rate',series:['ppo_manual','ppo_proposed'],
-  x:'episode',y:'success',smooth:40,ymin:0,ymax:1},
- {id:'ppo_steps',view:'urban',title:'PPO episode length (steps)',series:['ppo_manual','ppo_proposed'],
-  x:'episode',y:'steps',smooth:20},
- {id:'ppo_std',view:'urban',title:'Exploration std',series:['ppo_manual','ppo_proposed'],
-  x:'episode',y:'policy_std'},
- {id:'rgat_loss',view:'urban',title:'R-GAT potential loss',series:['rgat'],x:'epoch',
-  y:['train_mse','val_mse'],labels:['train','validation']},
- {id:'dataset',view:'urban',title:'Expert dataset success rate',series:['dataset'],
-  x:'episode',y:'success',smooth:8,ymin:0,ymax:1},
- {id:'episode_z',view:'urban',title:'Live episode: altitude above deck (m)',series:['episode'],
-  x:'t',y:'z'},
- {id:'episode_speed',view:'urban',title:'Live episode: deck and closing speed (m/s)',
-  series:['episode'],x:'t',y:['pad_speed','closing_speed'],
-  labels:['deck','closing']},
- {id:'episode_wind',view:'urban',title:'Live episode: UAV wind sensor and WindRisk',
-  series:['episode'],x:'t',y:['wind_speed','wind_risk'],
-  labels:['wind speed (m/s)','WindRisk [0,1]']},
- {id:'episode_energy',view:'urban',title:'Live episode: hover seconds remaining',
-  series:['episode'],x:'t',y:'hover_seconds_left'},
- {id:'episode_nav',view:'urban',title:'Live episode: what knows where the lorry is',
-  series:['episode'],x:'t',y:['marker_quality','gnss_quality','nav_confidence'],
-  labels:['markers','GNSS','combined'],ymin:0,ymax:1},
- {id:'episode_gnss_error',view:'urban',title:'Live episode: error in the pose being flown on (m)',
-  series:['episode'],x:'t',y:['estimate_error_m','gnss_sigma_xy'],
-  labels:['actual','reported 1-sigma']},
+ {id:'graph3d',view:'benchmark',kind:'graph',
+  title:'Pair 3 · 학습된 ontology graph와 R-GAT attention'},
 ];
-const LABELS={ppo_manual:'Manual',ppo_proposed:'Ontology-RGAT',rgat:'R-GAT',
- dataset:'expert',episode:'episode',reward:'live',benchmark_step:'current episode',
+const LABELS={benchmark_step:'current episode',
  benchmark_train_shin_se:'A · Shin SE',benchmark_train_no_se:'B · No SE',
  benchmark_train_onto_no_se:'C · Onto No SE',
  benchmark_eval_shin_se:'A · Shin SE',benchmark_eval_no_se:'B · No SE',
@@ -327,7 +255,7 @@ const LABELS={ppo_manual:'Manual',ppo_proposed:'Ontology-RGAT',rgat:'R-GAT',
 const root=document.getElementById('root');
 for(const c of CARDS){
   const el=document.createElement('section');
-  el.className='card'+((c.id==='tiles'||['graph','reward','contract','evalbars','pairs'].includes(c.kind))?' wide':'')
+  el.className='card'+((c.id==='tiles'||['graph','contract','evalbars','pairs','pairplots'].includes(c.kind))?' wide':'')
     +(c.kind==='graph'?' g3d':'');
   el.id='card-'+c.id;
   el.dataset.view=c.view||'common';
@@ -335,6 +263,10 @@ for(const c of CARDS){
   if(c.id==='tiles'){el.innerHTML='<div class="tiles" id="tiles"></div>';}
   else if(c.kind==='pairs'){el.innerHTML=`<h2>${c.title}</h2>
     <div class="pair-grid" id="parallel-pair-grid"></div>`;}
+  else if(c.kind==='pairplots'){el.innerHTML=`<h2>${c.title}</h2><div class="pair-plot-grid">`
+    +[0,1,2].map(index=>`<div class="pair-plot"><h3 id="pair-title-${c.id}-${index}">`
+      +`Pair ${index+1} · 초기화 대기</h3><canvas id="cv-${c.id}-${index}"></canvas>`
+      +`<div class="legend" id="lg-${c.id}-${index}"></div></div>`).join('')+'</div>';}
   else if(c.kind==='contract'){el.innerHTML=`<h2>${c.title}</h2>
     <div class="contract-grid" id="benchmark-contract"></div>
     <div class="method-strip" id="benchmark-methods"></div>
@@ -358,25 +290,6 @@ for(const c of CARDS){
       colour are the channel's current activation; edge width and opacity are the
       second R-GAT layer's attention, which is learned importance and not causal
       proof. Self-loops are not drawn.</div>`;}
-  else if(c.kind==='reward'){el.innerHTML=`<h2>${c.title}</h2>
-    <div class="reward-formula">r<sub>R-GAT</sub> = r<sub>sparse</sub>
-      + &lambda;[&gamma;&Phi;<sub>w</sub>(s&prime;)&minus;&Phi;<sub>w</sub>(s)],
-      &nbsp;&Phi;<sub>w</sub>(s)=&minus;&Sigma;<sub>i</sub>w<sub>i</sub>c<sub>i</sub>(s)</div>
-    <div class="reward-values" id="reward-values"></div>
-    <h3>Frozen coefficients distilled from R-GAT / 고정 보상 가중치</h3>
-    <div class="reward-weights" id="reward-weights"></div>
-    <div class="note" id="reward-task-constants"></div>
-    <div class="acceptance" id="reward-acceptance"></div>
-    <div class="reward-grid"><div><h3>PBRS shaping surface over learned potentials</h3>
-      <canvas id="cv-rgat_reward_surface"></canvas></div>
-      <div><h3>Live reward decomposition during PPO</h3>
-      <canvas id="cv-rgat_reward"></canvas><div class="legend" id="lg-rgat_reward"></div>
-      </div></div>
-    <div class="note">R-GAT counterfactual sensitivity is projected into bounded
-      coefficients that sum to one, then frozen before PPO. The surface is
-      F(s,s&prime;)=&lambda;(&gamma;&Phi;<sub>w</sub>(s&prime;)&minus;&Phi;<sub>w</sub>(s));
-      &Phi;<sub>w</sub>(s&prime;)=0 at terminal states. Equal PPO/PBRS &gamma; preserves
-      the sparse task optimum.</div>`;}
   else{el.innerHTML=`<h2>${c.title}</h2><canvas id="cv-${c.id}"></canvas>
     <div class="legend" id="lg-${c.id}"></div>`;}
   root.appendChild(el);
@@ -393,8 +306,7 @@ function draw(card,state){
   const line=css.getPropertyValue('--grid').trim();
   const muted=css.getPropertyValue('--muted').trim();
   const lines=[];const yKeys=Array.isArray(card.y)?card.y:[card.y];
-  const sources=(card.kind==='reward'&&(state.series.reward||[]).length)
-    ?['reward']:card.series;
+  const sources=card.series||[];
   for(const s of sources){
     const rows=state.series[s]||[];if(!rows.length)continue;
     for(const key of yKeys){
@@ -403,7 +315,9 @@ function draw(card,state){
         if(!Number.isFinite(yv)||!Number.isFinite(xv))continue;
         xs.push(xv);ys.push(yv);}
       if(!xs.length)continue;
-      const label=(card.labels&&yKeys.length>1)
+      const label=(card.kind==='pairplots')
+        ?(card.labels?card.labels[yKeys.indexOf(key)]:key)
+        :(card.labels&&yKeys.length>1)
         ?`${LABELS[s]||s} ${card.labels[yKeys.indexOf(key)]}`
         :(yKeys.length>1?(card.labels?card.labels[yKeys.indexOf(key)]:key):(LABELS[s]||s));
       const benchmarkMethod=s.replace(/^benchmark_(train|eval)_/,'');
@@ -447,69 +361,50 @@ function draw(card,state){
 }
 function formatTick(v){const a=Math.abs(v);return a>=1000?v.toExponential(1):
   (a>=100?Number(v).toFixed(0):a>=10?Number(v).toFixed(1):Number(v).toFixed(2));}
+function drawPairPlots(card,state){
+  const pairs=(state.scalars||{}).parallel_pair_status||[];
+  for(let index=0;index<3;index++){
+    const pair=pairs.find(item=>Number(item.index)===index)||pairs[index]||{};
+    const method=String(pair.method||'');
+    const title=document.getElementById(`pair-title-${card.id}-${index}`);
+    if(title)title.textContent=`Pair ${index+1} · ${LABELS['benchmark_train_'+method]||method||'초기화 대기'}`;
+    let spec;
+    if(card.plot==='reward')spec={
+      y:['reward','task','shape','active_perception'],
+      labels:['전체','terminal task','PBRS shaping','active perception']};
+    else if(card.plot==='flight')spec={
+      y:['uav_speed_m_s','ugv_speed_m_s','in_fov','battery_reserve'],
+      labels:['UAV 속도','UGV 속도','표적 FOV','배터리 여유'],ymin:0};
+    else if(method.startsWith('shin_se')||method==='shin2026')spec={
+      y:['position_error','velocity_error','estimation_loss','in_fov'],
+      labels:['위치 오차','속도 오차','6-state 손실','표적 FOV'],ymin:0};
+    else if(method.includes('rgat')||method.includes('onto'))spec={
+      y:['phi','phi_next','shape','semantic_image_alignment','semantic_visual_loss_risk'],
+      labels:['Phi(G_t)','Phi(G_t+1)','PBRS','image alignment','visual-loss risk']};
+    else spec={
+      y:['in_fov','lateral_progress','vertical_progress','vertical_speed_penalty'],
+      labels:['표적 FOV','수평 progress','수직 progress','수직속도 penalty']};
+    draw({...card,...spec,id:`${card.id}-${index}`,
+      series:method?[`benchmark_step_${method}`]:[],x:'step'},state);
+  }
+}
 function tiles(state){
   const s=state.scalars||{};const out=[];
   const add=(label,value)=>out.push(
     `<div class="tile"><b>${escapeHTML(value)}</b><span>${escapeHTML(label)}</span></div>`);
-  const last=(name,key)=>{const r=state.series[name];
-    return r&&r.length?r[r.length-1][key]:null;};
-  add('stage',state.stage.name);
-  if(s.dashboard_profile==='shin2026'){
-    const methods=s.benchmark_methods||[];
-    const pairCount=Number(s.parallel_pair_count||1);
-    const trained=methods.reduce((n,m)=>n+(state.series['benchmark_train_'+m]||[]).length,0);
-    add('phase',s.benchmark_phase||'initializing');
-    add('UAV / UGV pairs',pairCount);
-    if(pairCount===1&&(s.current_pipeline||s.current_method))
-      add('pipeline',s.current_pipeline||s.current_method);
-    if(pairCount===1&&s.state_estimation_status)
-      add('state estimation',s.state_estimation_status);
-    add('run mode',s.benchmark_mode||'--');
-    add('completed episodes',`${trained} / ${s.training_total||0}`);
-    if(pairCount===1&&s.current_training_episode!==undefined)
-      add('active episode',`${s.current_training_episode}`);
-    add('paired evaluation',`${s.evaluation_completed||0} / ${s.evaluation_total||0}`);
-    if(pairCount===1&&s.current_scenario)
-      add('scenario',s.current_scenario.replaceAll('_',' '));
-    const step=state.series.benchmark_step||[],latest=step.length?step[step.length-1]:null;
-    if(pairCount===1&&latest){add('live episode step',latest.step);
-      add('target visible',latest.in_fov?'yes':'no');
-      if(latest.state_estimation_enabled&&Number.isFinite(Number(latest.position_error)))
-        add('estimator error',Number(latest.position_error).toFixed(3)+' m');
-      add('UAV speed',Number(latest.uav_speed_m_s||0).toFixed(3)+' m/s');
-      add('UGV speed',Number(latest.ugv_speed_m_s||0).toFixed(3)+' m/s');
-      add('battery reserve',(100*Number(latest.battery_reserve||0)).toFixed(1)+'%');
-      add('battery energy',Number(latest.battery_remaining_j||0).toFixed(0)+' J');}
-    const current=s.current_method?(state.series['benchmark_train_'+s.current_method]||[]):[];
-    const trainedLast=current.length?current[current.length-1]:null;
-    if(pairCount===1&&trainedLast){add('optimizer phase',trainedLast.optimization_phase||'--');
-      add('effective LR',Number(trainedLast.effective_learning_rate||0).toExponential(2));}
-    if(pairCount===1&&s.current_curriculum!==undefined)
-      add('curriculum c',Number(s.current_curriculum).toFixed(3));
-    if(pairCount===1&&s.current_pad_motion_scale!==undefined)
-      add('UGV speed scale',Number(s.current_pad_motion_scale).toFixed(3));
-    if(pairCount===1&&s.current_action_envelope_scale!==undefined)
-      add('UAV envelope',Number(s.current_action_envelope_scale).toFixed(3));
-    if(s.rgat_dataset_episodes!==undefined){
-      add('R-GAT flight data',`${s.rgat_dataset_episodes} ep / ${s.rgat_dataset_samples||0} samples`);
-      add('R-GAT contacts',`${s.rgat_dataset_successes||0} / ${s.rgat_dataset_episodes}`);}
-    if(s.config_hash)add('config hash',String(s.config_hash).slice(0,10));
-    if(s.reward_design_id)add('reward design',String(s.reward_design_id).slice(0,16));
-    document.getElementById('tiles').innerHTML=out.join('');return;
-  }
-  if(s.dataset_episode)add('dataset episode',s.dataset_episode);
-  if(s.rgat_epoch)add('R-GAT epoch',`${s.rgat_epoch} (${s.rgat_device||'?'})`);
-  const rv=last('rgat','val_mse');if(rv!==null)add('R-GAT val MSE',rv.toFixed(4));
-  for(const arm of ['manual','proposed']){
-    const ep=s['ppo_'+arm+'_episode'];if(ep)add('PPO '+arm+' episode',ep);
-    const rows=state.series['ppo_'+arm];
-    if(rows&&rows.length){const n=Math.min(50,rows.length);
-      const w=rows.slice(-n);
-      const sr=w.reduce((a,r)=>a+r.success,0)/n;
-      add(arm+' success (last '+n+')',(100*sr).toFixed(1)+'%');}
-  }
-  const st=last('episode','status');if(st)add('episode status',st);
-  const z=last('episode','z');if(z!==null)add('altitude',z.toFixed(2)+' m');
+  const methods=s.benchmark_methods||[];
+  const trained=methods.reduce((n,m)=>n+(state.series['benchmark_train_'+m]||[]).length,0);
+  add('단계',state.stage.name);
+  add('실험 phase',s.benchmark_phase||'initializing');
+  add('UAV / UGV pair',Number(s.parallel_pair_count||3));
+  add('실행 모드',s.benchmark_mode||'--');
+  add('완료 학습 episode',`${trained} / ${s.training_total||0}`);
+  add('paired evaluation',`${s.evaluation_completed||0} / ${s.evaluation_total||0}`);
+  if(s.rgat_dataset_episodes!==undefined){
+    add('R-GAT 실제 비행 데이터',`${s.rgat_dataset_episodes} ep / ${s.rgat_dataset_samples||0}`);
+    add('R-GAT 안전 접촉',`${s.rgat_dataset_successes||0} / ${s.rgat_dataset_episodes}`);}
+  if(s.config_hash)add('설정 hash',String(s.config_hash).slice(0,10));
+  if(s.reward_design_id)add('보상 설계',String(s.reward_design_id).slice(0,16));
   document.getElementById('tiles').innerHTML=out.join('');
 }
 function escapeHTML(value){return String(value??'--').replace(/[&<>"']/g,c=>
@@ -517,18 +412,19 @@ function escapeHTML(value){return String(value??'--').replace(/[&<>"']/g,c=>
 function pairPanel(state){
   const box=document.getElementById('parallel-pair-grid');if(!box)return;
   const s=state.scalars||{},pairs=s.parallel_pair_status||s.parallel_pair_layout||[];
-  if(!pairs.length){box.innerHTML='<div class="note">비행쌍 초기화 대기 중</div>';return;}
-  box.innerHTML=pairs.map((pair,index)=>{
+  box.innerHTML=[0,1,2].map(index=>{
+    const pair=pairs.find(item=>Number(item.index)===index)||pairs[index]||{index:index};
     const method=pair.method||'--',rows=state.series['benchmark_step_'+method]||[];
     const live=rows.length?rows[rows.length-1]:{},xyz=pair.relative_xyz||null;
     const step=pair.step??live.step??0,status=String(pair.status||live.status||'waiting');
     const marker=pair.marker_visible===null||pair.marker_visible===undefined
       ?'대기':(pair.marker_visible?'관측':'소실');
     const reserve=Number(pair.battery_reserve??live.battery_reserve);
+    const gate=pair.landing_gate||null;
     const pos=xyz&&xyz.length===3
       ?`${Number(xyz[0]).toFixed(2)}, ${Number(xyz[1]).toFixed(2)}, ${Number(xyz[2]).toFixed(2)}`:'--';
     return `<div class="pair-card" style="border-top-color:${PALETTE[index%PALETTE.length]}">`
-      +`<div class="pair-head"><b>Pair ${Number(pair.index||0)+1} · ${escapeHTML(LABELS['benchmark_train_'+method]||method)}</b>`
+      +`<div class="pair-head"><b>Pair ${index+1} · ${escapeHTML(LABELS['benchmark_train_'+method]||method)}</b>`
       +`<span class="pair-state ${escapeHTML(status)}">${escapeHTML(status.toUpperCase())}</span></div>`
       +`<div class="pair-metrics"><div><b>${escapeHTML(pair.episode??0)} / ${escapeHTML(step)}</b><small>에피소드 / 스텝</small></div>`
       +`<div><b>${escapeHTML(marker)}</b><small>마커</small></div>`
@@ -536,7 +432,14 @@ function pairPanel(state){
       +`<div><b>${Number(pair.uav_speed_m_s??live.uav_speed_m_s??0).toFixed(2)} m/s</b><small>UAV 속도</small></div>`
       +`<div><b>${Number.isFinite(reserve)?(100*reserve).toFixed(1)+'%':'--'}</b><small>배터리 잔량</small></div>`
       +`<div><b>${escapeHTML(pos)}</b><small>패드 상대 XYZ (m)</small></div></div>`
+      +(gate?`<div class="pair-gates">`+
+        [['접촉','contact'],['위치','position'],['수직속도','vertical_speed'],
+         ['수평상대속도','relative_horizontal_speed'],['자세','attitude'],['각속도','angular_rate']]
+        .map(([label,key])=>{const value=gate[key],ready=value!==null&&value!==undefined;
+          const pass=ready&&Number(value)===1;return `<i class="${ready?(pass?'pass':'fail'):''}">`
+          +`${label} ${ready?(pass?'통과':'실패'):'대기'}</i>`;}).join('')+'</div>':'')
       +`<div class="pair-links">${escapeHTML(pair.phase||'waiting')} · ${escapeHTML(String(pair.scenario||'--').replaceAll('_',' '))}<br>`
+      +`${escapeHTML(pair.activity||'')} ${escapeHTML(pair.activity_detail||'')}<br>`
       +`route ${Number(pair.route_phase_fraction||0).toFixed(2)} · PX4 ${escapeHTML(pair.px4_namespace)} · UDP ${escapeHTML(pair.gateway_port)}/${escapeHTML(pair.learner_port)}<br>`
       +`${escapeHTML(pair.rviz_namespace)} · ${escapeHTML(pair.camera_topic)}</div></div>`;
   }).join('');
@@ -562,19 +465,7 @@ function benchmarkPanel(state){
     return `<div class="method-chip" style="border-left-color:${PALETTE[index%PALETTE.length]}">`+
       `<b>${escapeHTML(LABELS['benchmark_train_'+method]||method)}</b>`+
       `<small>${progress} episodes · ${rate}</small></div>`;}).join('');
-  const gate=s.last_landing_gate||null;
-  let gateChip='';
-  if(gate){
-    const checks=[['접촉','pad_contact'],['위치','position'],['수직속도','vertical_speed'],
-      ['상대수평속도','relative_horizontal_speed'],['자세','attitude'],['각속도','angular_rate']];
-    const safe=Number(gate.safe_landing)===1;
-    const detail=checks.map(([label,key])=>
-      `${label}:${Number(gate[key])===1?'통과':'실패'}`).join(' · ');
-    gateChip=`<div class="method-chip" style="border-left-color:${safe?'#2ca02c':'#d62728'}">`+
-      `<b>최근 착륙 판정: ${safe?'성공':'실패'}</b>`+
-      `<small>${escapeHTML(detail)}</small></div>`;
-  }
-  document.getElementById('benchmark-methods').innerHTML=methodChips+gateChip;
+  document.getElementById('benchmark-methods').innerHTML=methodChips;
 }
 function drawEvaluationBars(card,state){
   const cv=document.getElementById('cv-'+card.id),lg=document.getElementById('lg-'+card.id);
@@ -620,83 +511,6 @@ function drawEvaluationBars(card,state){
     const index=BENCHMARK_METHODS.indexOf(method);
     return `<span><i style="background:${PALETTE[index%PALETTE.length]}"></i>`+
       `${escapeHTML(LABELS['benchmark_eval_'+method]||method)}</span>`;}).join('');
-}
-function rewardSurface(state,last){
-  const cv=document.getElementById('cv-rgat_reward_surface');if(!cv)return;
-  const dpr=window.devicePixelRatio||1,w=cv.clientWidth,h=cv.clientHeight;
-  cv.width=w*dpr;cv.height=h*dpr;
-  const g=cv.getContext('2d');g.setTransform(dpr,0,0,dpr,0,0);g.clearRect(0,0,w,h);
-  const s=state.scalars||{},lambda=Number(s.reward_lambda??2),gamma=Number(s.reward_gamma??0.999);
-  const pad={l:39,r:10,t:8,b:30},pw=w-pad.l-pad.r,ph=h-pad.t-pad.b,n=48;
-  const peak=Math.max(lambda,1e-6);
-  for(let iy=0;iy<n;iy++)for(let ix=0;ix<n;ix++){
-    const phi=-1+(ix+.5)/n,phi1=-(iy+.5)/n;
-    const q=Math.max(-1,Math.min(1,lambda*(gamma*phi1-phi)/peak));
-    const a=Math.abs(q),base=245-95*a;
-    g.fillStyle=q>=0?`rgb(${base},${225-35*a},${245-8*a})`
-      :`rgb(${245-8*a},${220-25*a},${base})`;
-    g.fillRect(pad.l+ix*pw/n,pad.t+iy*ph/n,pw/n+1,ph/n+1);
-  }
-  const css=getComputedStyle(document.body),ink=css.getPropertyValue('--ink').trim();
-  g.strokeStyle=ink;g.lineWidth=1;g.strokeRect(pad.l,pad.t,pw,ph);
-  g.fillStyle=ink;g.font='10px sans-serif';g.textAlign='center';
-  g.fillText('-1',pad.l,h-15);g.fillText('-0.5',pad.l+pw/2,h-15);g.fillText('0',pad.l+pw,h-15);
-  g.fillText('fixed Phi_w(s)',pad.l+pw/2,h-3);g.textAlign='right';
-  g.fillText('0',pad.l-5,pad.t+4);g.fillText('-0.5',pad.l-5,pad.t+ph/2+3);
-  g.fillText('-1',pad.l-5,pad.t+ph+3);
-  g.save();g.translate(10,pad.t+ph/2);g.rotate(-Math.PI/2);g.textAlign='center';
-  g.fillText('learned Phi(s next)',0,0);g.restore();
-  if(last&&Number.isFinite(last.phi)&&Number.isFinite(last.phi_next)){
-    const x=pad.l+(last.phi+1)*pw,y=pad.t-last.phi_next*ph;
-    g.fillStyle='#ffd23f';g.strokeStyle='#16181d';g.lineWidth=2;
-    g.beginPath();g.arc(x,y,6,0,Math.PI*2);g.fill();g.stroke();
-  }
-}
-function rewardPanel(state){
-  const live=state.series.reward||[],fallback=state.series.episode||[];
-  const rows=live.length?live:fallback,last=rows.length?rows[rows.length-1]:null;
-  const s=state.scalars||{},box=document.getElementById('reward-values');
-  const fmt=v=>Number.isFinite(v)?Number(v).toFixed(4):'--';
-  const item=(label,value)=>`<div><b>${value}</b><span>${label}</span></div>`;
-  box.innerHTML=[
-    item('mode',last?last.mode:(s.reward_mode||'waiting')),
-    item('final reward r',fmt(last&&last.reward)),
-    item('sparse / base',fmt(last&&last.base)),
-    item('PBRS shaping F',fmt(last&&last.shape)),
-    item('Phi(s)',fmt(last&&last.phi)),
-    item('Phi(s next)',fmt(last&&last.phi_next)),
-    item('lambda',fmt(Number(s.reward_lambda??2))),
-    item('gamma',fmt(Number(s.reward_gamma??0.999))),
-  ].join('');
-  const weights=s.reward_weights||{},ranges=s.reward_ranges||{};
-  const weightBox=document.getElementById('reward-weights');
-  const entries=Object.entries(weights);
-  weightBox.innerHTML=entries.length?entries.map(([name,value])=>{
-    const range=ranges[name]||{},unit=range.unit||'';
-    return `<div class="reward-weight"><div class="rw-head"><span>${name.replaceAll('_',' ')}</span>`+
-      `<b>${Number(value).toFixed(5)}</b></div><div class="track">`+
-      `<i style="width:${Math.min(100,Number(value)*100)}%"></i></div>`+
-      `<small>range ${range.min??'--'}..${range.max??'--'} ${unit}</small></div>`;
-  }).join(''):'<span class="note">waiting for R-GAT reward-weight distillation</span>';
-  const task=s.reward_task_constants||{};
-  document.getElementById('reward-task-constants').textContent=Object.keys(task).length
-    ?'Fixed sparse task constants: '+Object.entries(task).map(([k,v])=>`${k}=${v}`).join(' · ')
-    :'Fixed sparse task constants are configured; waiting for the committed design.';
-  const gateBox=document.getElementById('reward-acceptance');
-  const gate=(label,pass,value)=>{
-    const stateClass=pass===undefined?'wait':(pass?'pass':'fail');
-    const verdict=pass===undefined?'WAIT':(pass?'PASS':'FAIL');
-    return `<div class="gate ${stateClass}"><b>${verdict} &middot; ${value}</b><span>${label}</span></div>`;};
-  const rewardPass=s.reward_optimization_pass,consistencyPass=s.rgat_consistency_pass;
-  const overall=s.optimization_overall_pass;
-  gateBox.innerHTML=[
-    gate('reward optimization: landing success',rewardPass,
-      Number.isFinite(s.reward_success_rate)?(100*s.reward_success_rate).toFixed(1)+'%':'pending'),
-    gate('R-GAT consistency: cross-condition std',consistencyPass,
-      Number.isFinite(s.rgat_consistency_std)?(100*s.rgat_consistency_std).toFixed(1)+' pp':'pending'),
-    gate('both requirements',overall,overall===undefined?'pending':'overall')
-  ].join('');
-  rewardSurface(state,last);
 }
 // ------------------------------------------------------------ 3D ontology
 // Hand-rolled: the page has to work with no network, so there is no three.js
@@ -918,11 +732,10 @@ function graphBind(){
 graphBind();
 
 function applyProfile(state){
-  const profile=state.scalars.dashboard_profile==='shin2026'?'benchmark':'urban';
+  const profile='benchmark';
   document.body.dataset.profile=profile;
-  document.getElementById('page-title').textContent=profile==='benchmark'
-    ?'3쌍 병렬 비전 착륙 · Isaac Sim + PX4 + PPO'
-    :'Ontology-RGAT · Isaac Sim + PX4';
+  document.getElementById('page-title').textContent=
+    '3쌍 병렬 비전 착륙 · Isaac Sim + PX4 + PPO';
   for(const c of CARDS){
     const el=document.getElementById('card-'+c.id);
     el.hidden=Boolean(c.view&&c.view!=='common'&&c.view!==profile);
@@ -934,14 +747,9 @@ function applyProfile(state){
     const estimator=active.some(x=>x.startsWith('shin_se')||x==='shin2026');
     for(const id of ['benchmark_position_rmse','benchmark_velocity_rmse','benchmark_aux',
                      'benchmark_active_saturation',
-                     'benchmark_live_state','benchmark_live_error',
                      'benchmark_eval_position','benchmark_eval_velocity',
                      'benchmark_eval_visual_loss']){
       const el=document.getElementById('card-'+id);if(el)el.hidden=!estimator;
-    }
-    const ontology=active.some(x=>x==='onto_no_se'||x.includes('rgat')||x.includes('pbrs'));
-    for(const id of ['benchmark_live_semantic','benchmark_live_phi']){
-      const el=document.getElementById('card-'+id);if(el)el.hidden=!ontology;
     }
     const adaptive=active.some(x=>x.includes('adaptive_weight')||x==='shin_se_rgat_weight');
     for(const id of ['benchmark_adaptive_weights','benchmark_adaptive_latency']){
@@ -964,20 +772,18 @@ async function tick(){
       if(profile==='benchmark')pairPanel(state);
       for(const c of CARDS){
         if(c.id==='tiles'||c.kind==='graph'||c.kind==='contract'||c.kind==='pairs'||
+           c.kind==='pairplots'||
            (c.view&&c.view!=='common'&&c.view!==profile))continue;
         c.kind==='evalbars'?drawEvaluationBars(c,state):draw(c,state);
       }
-      if(profile==='benchmark')benchmarkPanel(state);
-      if(profile==='urban'){
-        rewardPanel(state);
-        const gs=state.graph||null;
-        const stamp=gs?`${gs.source||'graph'}${gs.attention?'':' (schema only, '
-          +'the R-GAT has not been trained yet)'}`
-          +(gs.phi!==undefined?`  \u03a6=${gs.phi.toFixed(3)}`:'')
-          :'waiting for a graph';
-        document.getElementById('g3d-src').textContent=stamp;
-        G.data=gs;G.dirty=true;graphLegend();
-      }
+      for(const c of CARDS.filter(item=>item.kind==='pairplots'))drawPairPlots(c,state);
+      benchmarkPanel(state);
+      const gs=state.graph||null;
+      const stamp=gs?`${gs.source||'graph'}${gs.attention?'':' (schema only, '
+        +'R-GAT 학습 전)'}${gs.phi!==undefined?`  \u03a6=${gs.phi.toFixed(3)}`:''}`
+        :'ontology graph 초기화 대기';
+      document.getElementById('g3d-src').textContent=stamp;
+      G.data=gs;G.dirty=true;graphLegend();
     }
   }catch(e){document.getElementById('stage').textContent='disconnected';}
   const age=lastAt?Math.round((Date.now()-lastAt)/1000):0;

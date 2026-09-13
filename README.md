@@ -234,10 +234,13 @@ flight pipeline을 시작하지 않도록 실행 lock을 사용한다.
 - 표·그림: `tables/`, `figures/`
 - 재현 정보: `manifest.json`
 
-Dashboard는 MATLAB 기본 색상 순서로 세 pair의 에피소드/step, marker, 상대 위치,
-UAV·UGV 속도, 배터리와 독립 PX4/UDP/topic 상태를 동시에 표시한다. RViz는 세 landing
-camera dock과 `landing_pad_0..2` 독립 TF/trajectory를 사용하며 Isaac GUI는 전체 편대를
-자동으로 한 화면에 맞춘다.
+Dashboard는 단일 pipeline용 레거시 화면 없이 항상 3-pair 전용으로 구성된다. 상단의
+세 카드에서 committed episode와 live step, marker, 상대 위치, UAV·UGV 속도, 배터리,
+착륙 성공 gate, 독립 PX4/UDP/topic을 나란히 확인한다. 이어지는 보상·비행·방법론 고유
+신호도 pair별 독립 canvas 3개로 표시하고, 학습·평가 비교 그래프는 MATLAB 기본 색상
+순서의 고정 3열 layout을 사용한다. RViz는 세 landing camera dock과
+`landing_pad_0..2` 독립 TF/trajectory를 사용하며 Isaac GUI는 전체 편대를 자동으로
+한 화면에 맞춘다.
 
 ![MATLAB 스타일 실시간 대시보드](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/images/live_dashboard_status.png)
 

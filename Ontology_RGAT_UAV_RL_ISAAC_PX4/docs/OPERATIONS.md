@@ -106,13 +106,17 @@ curl -fsS http://127.0.0.1:8770/api/state
 
 Dashboard 항목:
 
-- 현재 stage와 세 pair별 pipeline
+- 공용 stage와 세 pair 각각의 독립 activity
 - 세 pair별 committed episode와 live step
-- episode return과 엄격 성공률
+- pair별 전체/task/PBRS/active-perception reward
 - pair별 FOV/keypoint, 상대 XYZ, UAV/UGV 속도와 battery reserve
+- pair별 SE 오차, estimator-free 시각 신호 또는 R-GAT potential
 - pair별 PX4 namespace, UDP endpoint, camera/RViz topic
-- adaptive weight, potential, relation attention
-- landing gate별 통과 여부
+- pair별 landing gate 6항목 통과 여부
+- 3열 MATLAB 색상 학습·평가 비교와 R-GAT relation attention
+
+웹 dashboard는 단일 pipeline용 레거시 view로 전환하지 않는다. 좁은 모바일 화면을
+제외하면 pair 카드, pair별 실시간 plot과 전체 비교 plot 모두 세 열을 유지한다.
 
 RViz는 세 annotated landing camera, 세 독립 TF(`landing_pad_0..2`, `uav_body_0..2`),
 pair별 UAV/UGV trail과 landing gate를 동시에 표시한다. Isaac GUI는 1280×720에서 세

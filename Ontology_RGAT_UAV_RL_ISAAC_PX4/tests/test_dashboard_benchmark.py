@@ -8,11 +8,11 @@ def test_benchmark_monitor_publishes_refactored_contract_and_progress():
     store = LiveStore()
     monitor = BenchmarkMonitor(store)
     monitor.configure(
-        methods=["shin2026", "ontoreward"], mode="quick",
+        methods=["shin_se_fixed", "shin_se_onto_rgat_fov"], mode="quick",
         config_hash="1234567890abcdef", training_total=16,
         evaluation_total=12, reward_design_id="rgat-7",
         reward_design_sha256="abc", pair_layout=[{
-            "index": 0, "method": "ontoreward",
+            "index": 0, "method": "shin_se_onto_rgat_fov",
             "route_phase_fraction": 0.0, "px4_namespace": "/fmu",
             "topic_root": "/landing_pair_0",
             "camera_topic": "/landing_pair_0/uav/perception/landing_camera/annotated",
@@ -20,13 +20,14 @@ def test_benchmark_monitor_publishes_refactored_contract_and_progress():
             "gateway_port": 14650, "learner_port": 14651,
         }])
     monitor.reset_episode(
-        method="ontoreward", phase="training", seed=42,
+        method="shin_se_onto_rgat_fov", phase="training", seed=42,
         scenario="training_random_walk", curriculum=0.25,
         action_scale=0.5125, motion_scale=0.5125)
     monitor.step(
-        index=1, dt=0.1, method="ontoreward", reward=0.3,
-        reward_parts={"task": 0.0, "shape": 0.3, "phi": -0.5,
-                      "phi_next": -0.2},
+        index=1, dt=0.1, method="shin_se_onto_rgat_fov", reward=0.3,
+        reward_parts={"task": 0.0, "active_perception": -0.01,
+                      "ontology_fov_reward": -0.02,
+                      "predicted_fov_loss_probability": 0.2},
         estimate=np.array([1, 0, -2, 0.5, 0, 0]),
         truth=np.array([0, 0, -2, 0, 0, 0]), in_fov=False,
         estimation_loss=0.2, state={
@@ -38,8 +39,8 @@ def test_benchmark_monitor_publishes_refactored_contract_and_progress():
                 "remaining_j": 4200.0, "energy_used_j": 600.0,
                 "power_w": 190.0,
             }})
-    monitor.training_update("ontoreward", {
-        "method": "ontoreward", "episode": 1, "episode_return": 3.0,
+    monitor.training_update("shin_se_onto_rgat_fov", {
+        "method": "shin_se_onto_rgat_fov", "episode": 1, "episode_return": 3.0,
         "paper_success": 1.0, "position_rmse": 0.2,
         "velocity_rmse": 0.1, "auxiliary_estimation_loss": 0.05,
         "ppo_loss": -0.01, "value_loss": 0.2, "entropy": 2.0,
@@ -51,26 +52,29 @@ def test_benchmark_monitor_publishes_refactored_contract_and_progress():
     })
 
     state = store.snapshot()
-    assert state["scalars"]["dashboard_profile"] == "parallel_three_pair"
+    assert state["scalars"]["dashboard_profile"] == "parallel_two_pair"
     assert "simulator truth" in state["scalars"]["actor_contract"]["forbidden"]
-    assert "battery reserve" in state["scalars"]["actor_contract"]["reward_side"]
-    live = state["series"]["benchmark_step_ontoreward"][-1]
+    assert "active perception" in state["scalars"]["actor_contract"]["reward_side"]
+    assert "-lambda_fov" in state["scalars"]["actor_contract"]["reward_side"]
+    live = state["series"]["benchmark_step_shin_se_onto_rgat_fov"][-1]
     assert live["position_error"] == 1.0
     assert live["status"] == "running"
-    assert live["shape"] == 0.3
+    assert live["active_perception"] == -0.01
+    assert live["ontology_fov_reward"] == -0.02
+    assert live["predicted_fov_loss_probability"] == 0.2
     assert live["battery_reserve"] == .4
     assert live["battery_remaining_j"] == 4200.0
     assert live["uav_speed_m_s"] == .5
     assert live["ugv_speed_m_s"] == .12
     assert state["series"].get("benchmark_step", []) == []
-    assert state["series"]["benchmark_train_ontoreward"][-1]["episode"] == 1
+    assert state["series"]["benchmark_train_shin_se_onto_rgat_fov"][-1]["episode"] == 1
     assert state["scalars"]["current_action_envelope_scale"] == 0.5125
     assert state["scalars"]["current_pad_motion_scale"] == 0.5125
     assert state["scalars"]["current_training_episode"] == 1
     pair = state["scalars"]["parallel_pair_status"][0]
-    assert pair["method"] == "ontoreward"
-    assert pair["assigned_method"] == "ontoreward"
-    assert pair["active_method"] == "ontoreward"
+    assert pair["method"] == "shin_se_onto_rgat_fov"
+    assert pair["assigned_method"] == "shin_se_onto_rgat_fov"
+    assert pair["active_method"] == "shin_se_onto_rgat_fov"
     assert pair["step"] == 1
     assert pair["marker_visible"] is False
     assert pair["relative_xyz"] == [0.0, 0.0, -2.0]
@@ -81,21 +85,21 @@ def test_benchmark_monitor_restores_csv_rows_and_pairs_evaluation_series():
     store = LiveStore()
     monitor = BenchmarkMonitor(store)
     monitor.configure(
-        methods=["shin2026", "ontoreward"], mode="full", config_hash="h",
+        methods=["shin_se_fixed", "shin_se_onto_rgat_fov"], mode="full", config_hash="h",
         training_total=20, evaluation_total=4)
-    monitor.restore_training("shin2026", [{
+    monitor.restore_training("shin_se_fixed", [{
         "episode": "2", "paper_success": "1.0", "episode_return": "4.5"}])
     monitor.restore_evaluation([
-        {"method": "shin2026", "scenario": "circle", "seed": "5",
+        {"method": "shin_se_fixed", "scenario": "circle", "seed": "5",
          "paper_success": "1.0", "position_rmse": "0.2"},
-        {"method": "ontoreward", "scenario": "circle", "seed": "5",
+        {"method": "shin_se_onto_rgat_fov", "scenario": "circle", "seed": "5",
          "paper_success": "0.0", "position_rmse": "0.3"},
     ])
 
     state = store.snapshot()
-    assert state["series"]["benchmark_train_shin2026"][0]["episode"] == 2
-    assert state["series"]["benchmark_eval_shin2026"][0]["evaluation_index"] == 1
-    assert state["series"]["benchmark_eval_ontoreward"][0]["evaluation_index"] == 1
+    assert state["series"]["benchmark_train_shin_se_fixed"][0]["episode"] == 2
+    assert state["series"]["benchmark_eval_shin_se_fixed"][0]["evaluation_index"] == 1
+    assert state["series"]["benchmark_eval_shin_se_onto_rgat_fov"][0]["evaluation_index"] == 1
     assert state["scalars"]["evaluation_completed"] == 2
 
 
@@ -103,14 +107,14 @@ def test_evaluation_pair_uses_evaluation_index_not_finished_training_episode():
     store = LiveStore()
     monitor = BenchmarkMonitor(store)
     monitor.configure(
-        methods=["shin2026"], mode="full", config_hash="h",
+        methods=["shin_se_fixed"], mode="full", config_hash="h",
         training_total=32, evaluation_total=3,
-        pair_layout=[{"index": 0, "method": "shin2026"}])
-    monitor.restore_training("shin2026", [
+        pair_layout=[{"index": 0, "method": "shin_se_fixed"}])
+    monitor.restore_training("shin_se_fixed", [
         {"episode": str(index), "paper_success": "0.0"}
         for index in range(1, 33)])
     monitor.restore_evaluation([{
-        "method": "shin2026", "scenario": "circle", "seed": "5",
+        "method": "shin_se_fixed", "scenario": "circle", "seed": "5",
         "paper_success": "1.0"}])
     restored_pair = store.snapshot()["scalars"]["parallel_pair_status"][0]
     assert restored_pair["episode"] == 1
@@ -118,7 +122,7 @@ def test_evaluation_pair_uses_evaluation_index_not_finished_training_episode():
     assert restored_pair["status"] == "complete"
 
     monitor.reset_episode(
-        method="shin2026", phase="evaluation", seed=6,
+        method="shin_se_fixed", phase="evaluation", seed=6,
         scenario="zigzag", curriculum=1.0)
 
     state = store.snapshot()
@@ -133,34 +137,34 @@ def test_pair_status_routes_by_physical_index_during_crossover():
     store = LiveStore()
     monitor = BenchmarkMonitor(store)
     monitor.configure(
-        methods=["shin2026", "ontoreward"], mode="full", config_hash="h",
+        methods=["shin_se_fixed", "shin_se_onto_rgat_fov"], mode="full", config_hash="h",
         training_total=2, evaluation_total=2,
         pair_layout=[
-            {"index": 0, "method": "shin2026"},
-            {"index": 1, "method": "ontoreward"},
+            {"index": 0, "method": "shin_se_fixed"},
+            {"index": 1, "method": "shin_se_onto_rgat_fov"},
         ])
 
     monitor.reset_episode(
-        method="ontoreward", phase="evaluation", seed=8,
+        method="shin_se_onto_rgat_fov", phase="evaluation", seed=8,
         scenario="circle", curriculum=1.0, pair_index=0)
     monitor.step(
-        index=3, dt=.1, method="ontoreward", reward=.1,
+        index=3, dt=.1, method="shin_se_onto_rgat_fov", reward=.1,
         reward_parts={}, estimate=None, truth=np.zeros(6), in_fov=True,
         estimation_loss=None, state={"position": [0.0, 0.0, -1.0]},
         pair_index=0)
 
     pairs = store.snapshot()["scalars"]["parallel_pair_status"]
     assert pairs[0]["index"] == 0
-    assert pairs[0]["method"] == "shin2026"
-    assert pairs[0]["assigned_method"] == "shin2026"
-    assert pairs[0]["active_method"] == "ontoreward"
+    assert pairs[0]["method"] == "shin_se_fixed"
+    assert pairs[0]["assigned_method"] == "shin_se_fixed"
+    assert pairs[0]["active_method"] == "shin_se_onto_rgat_fov"
     assert pairs[0]["step"] == 3
     assert pairs[1]["index"] == 1
     assert pairs[1]["step"] == 0
 
 
 def test_dashboard_has_self_contained_matlab_style_benchmark_view():
-    assert "세 방법론 공통 RL 계약과 정보 경계" in PAGE
+    assert "두 방법론의 동일 Shin RL 계약과 추가 FOV 분기" in PAGE
     assert "benchmark_eval_scenario" in PAGE
     assert "Hard information boundary" in PAGE
     assert "parallel_live_method" in PAGE
@@ -182,8 +186,8 @@ def test_dashboard_has_self_contained_matlab_style_benchmark_view():
     assert "rows.length+' completed'" in PAGE
     assert "training_total||0)/" not in PAGE
     assert "parallel-pair-grid" in PAGE
-    assert "3쌍 병렬 비전 착륙" in PAGE
-    assert "Ontology → R-GAT encoder → MLP 출력 head 모듈 추적" in PAGE
+    assert "2쌍 Shin baseline / Ontology-R-GAT FOV 비교" in PAGE
+    assert "FOV Ontology → R-GAT 미래 소실 확률 모듈" in PAGE
     assert "모든 node 값" in PAGE
     assert "모든 edge · attention-head 값" in PAGE
     assert "모든 MLP 출력 head 값" in PAGE
@@ -192,6 +196,8 @@ def test_dashboard_has_self_contained_matlab_style_benchmark_view():
     assert "view:'urban'" not in PAGE
     assert "rewardPanel" not in PAGE
     assert "debug only" not in PAGE
+    assert "No SE 행동 정책" not in PAGE
+    assert "[0,1,2].map" not in PAGE
     assert "prefers-color-scheme:dark" not in PAGE
     for color in MATLAB_COLORS:
         assert color in PAGE

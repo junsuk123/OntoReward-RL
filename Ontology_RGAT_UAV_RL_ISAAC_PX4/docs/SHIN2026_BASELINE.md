@@ -98,14 +98,12 @@ $$
 
 ## 제안법과의 관계
 
-`no_se_fixed`는 보조 추정과 active reward를 제거한다.
-`onto_rgat_adaptive_weight_no_se`도 상태추정을 제거하지만, 영상 의미 graph에서
-학습한 상태 적응 weight와 semantic PBRS를 사용한다. 따라서 비교의 핵심은
+`shin_se_onto_rgat_fov`는 위의 보조 상태추정, active-perception reward,
+다섯 shaping 항과 가중치를 모두 그대로 사용한다. 유일한 추가는 영상 관측성
+cue의 ontology graph와 동결 R-GAT 미래 FOV-loss 확률 보상이다.
 
 $$
-\text{추정오차 기반 관측성 학습}
-\quad\text{대}\quad
-\text{ontology potential 기반 관측성 학습}
+r_{proposed}=r_{Shin}-\lambda_{fov}p_{fov__loss}.
 $$
 
 이다.

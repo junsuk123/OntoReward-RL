@@ -17,6 +17,7 @@ from .adaptive_weight import (
     AdaptiveWeightReward, FixedBaselineRewardWeights, RewardComponentNormalizer,
     constrained_adaptive_weights, optional_estimation_error_component,
     shin_reward_components)
+from .fov_risk import DEFAULT_FOV_RISK_LAMBDA, ontology_fov_reward
 
 __all__ = ["OntoRewardPBRS", "FrozenControlledPotential",
            "NoSERewardContext", "OntologyRewardContext",
@@ -31,4 +32,5 @@ __all__ = ["OntoRewardPBRS", "FrozenControlledPotential",
            "AdaptiveWeightReward", "RewardComponentNormalizer",
            "FixedBaselineRewardWeights",
            "constrained_adaptive_weights", "optional_estimation_error_component",
-           "shin_reward_components"]
+           "shin_reward_components", "DEFAULT_FOV_RISK_LAMBDA",
+           "ontology_fov_reward"]

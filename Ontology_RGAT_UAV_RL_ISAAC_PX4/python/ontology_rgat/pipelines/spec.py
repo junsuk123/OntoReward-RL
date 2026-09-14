@@ -20,6 +20,7 @@ class PipelineSpec:
     ontology_enabled: bool
     ontology_input_mode: str | None
     use_direct_rgat_potential: bool
+    fov_risk_reward_enabled: bool = False
     reserved_latent_dimensions: int = 6
     use_adaptive_reward_weights: bool = False
     adaptive_reward_architecture: str | None = None
@@ -47,9 +48,20 @@ class PipelineSpec:
                      != self.active_perception_enabled)):
             raise ValueError(
                 "shin_table_active reward and active perception must agree")
-        if self.ontology_enabled:
+        if self.fov_risk_reward_enabled:
+            if not (self.ontology_enabled and self.state_estimation_enabled
+                    and self.auxiliary_estimation_loss_enabled
+                    and self.active_perception_enabled):
+                raise ValueError("FOV-risk reward is an additive extension of full Shin only")
+            if self.reward_mode != "shin_table_active":
+                raise ValueError("FOV-risk reward must preserve the Shin reward mode")
+            if self.ontology_input_mode != "fov_semantic_observation":
+                raise ValueError("FOV-risk reward requires the strict visual ontology input")
+            if self.use_direct_rgat_potential or self.use_adaptive_reward_weights:
+                raise ValueError("FOV-risk reward cannot use PBRS or adaptive weights")
+        elif self.ontology_enabled:
             if self.ontology_input_mode != "semantic_observation":
-                raise ValueError("ontology pipelines require semantic_observation input")
+                raise ValueError("legacy ontology pipelines require semantic_observation input")
             if self.reward_mode == "semantic_pbrs":
                 if not self.use_direct_rgat_potential or self.use_adaptive_reward_weights:
                     raise ValueError("semantic PBRS must use only the scalar R-GAT potential")
@@ -63,6 +75,7 @@ class PipelineSpec:
             else:
                 raise ValueError("ontology pipeline has an incompatible reward mode")
         elif (self.ontology_input_mode is not None or self.use_direct_rgat_potential
+              or self.fov_risk_reward_enabled
               or self.use_adaptive_reward_weights
               or self.adaptive_reward_architecture is not None):
             raise ValueError("non-ontology pipeline cannot configure an ontology input/potential")
@@ -78,6 +91,33 @@ class PipelineSpec:
 
 
 PIPELINES = {
+    "shin_se_fixed": PipelineSpec(
+        name="shin_se_fixed",
+        state_estimation_enabled=True,
+        auxiliary_estimation_loss_enabled=True,
+        active_perception_enabled=True,
+        reward_mode="shin_table_active",
+        ontology_enabled=False,
+        ontology_input_mode=None,
+        use_direct_rgat_potential=False,
+    ),
+    "shin_se_onto_rgat_fov": PipelineSpec(
+        name="shin_se_onto_rgat_fov",
+        state_estimation_enabled=True,
+        auxiliary_estimation_loss_enabled=True,
+        active_perception_enabled=True,
+        reward_mode="shin_table_active",
+        ontology_enabled=True,
+        ontology_input_mode="fov_semantic_observation",
+        use_direct_rgat_potential=False,
+        fov_risk_reward_enabled=True,
+    ),
+}
+
+# Historical and ablation-only definitions are intentionally absent from the
+# primary runner. They retain their exact IDs so no old method silently aliases
+# to either final scientific pipeline.
+LEGACY_PIPELINES = {
     "shin_se": PipelineSpec(
         name="shin_se",
         state_estimation_enabled=True,
@@ -110,14 +150,7 @@ PIPELINES = {
     ),
 }
 
-# 새 연구 질문을 위한 명시적 모드. 위의 세 기존 ID는 결과/체크포인트와
-# 기존 run.sh 호환성을 위해 그대로 둔다.
 ADAPTIVE_PIPELINES = {
-    "shin_se_fixed": PipelineSpec(
-        name="shin_se_fixed", state_estimation_enabled=True,
-        auxiliary_estimation_loss_enabled=True, active_perception_enabled=True,
-        reward_mode="shin_table_active", ontology_enabled=False,
-        ontology_input_mode=None, use_direct_rgat_potential=False),
     "shin_se_rgat_weight": PipelineSpec(
         name="shin_se_rgat_weight", state_estimation_enabled=True,
         auxiliary_estimation_loss_enabled=True, active_perception_enabled=True,
@@ -159,7 +192,7 @@ ADAPTIVE_PIPELINES = {
         ontology_input_mode="semantic_observation", use_direct_rgat_potential=False,
         use_adaptive_reward_weights=True, adaptive_reward_architecture="rgat"),
 }
-ALL_PIPELINES = {**PIPELINES, **ADAPTIVE_PIPELINES}
+ALL_PIPELINES = {**PIPELINES, **LEGACY_PIPELINES, **ADAPTIVE_PIPELINES}
 
 # Old commands remain accepted, but the three new names are the only primary
 # comparison IDs.  In particular, legacy ``ontoreward`` remains legacy rather
@@ -186,11 +219,34 @@ def available_pipeline_ids() -> tuple[str, ...]:
     return tuple(ALL_PIPELINES)
 
 
+_BASELINE_SPEC_FIELDS = (
+    "state_estimation_enabled", "auxiliary_estimation_loss_enabled",
+    "active_perception_enabled", "reward_mode", "reserved_latent_dimensions",
+)
+
+
+def assert_primary_baseline_equivalence() -> None:
+    """Fail fast if the proposed pipeline changes any baseline contract flag."""
+    baseline = PIPELINES["shin_se_fixed"]
+    proposed = PIPELINES["shin_se_onto_rgat_fov"]
+    mismatches = [name for name in _BASELINE_SPEC_FIELDS
+                  if getattr(baseline, name) != getattr(proposed, name)]
+    if mismatches:
+        raise RuntimeError(
+            f"proposed pipeline changed Shin baseline fields: {mismatches}")
+    if baseline.ontology_enabled or baseline.fov_risk_reward_enabled:
+        raise RuntimeError("Shin baseline must not enable the ontology branch")
+    if not (proposed.ontology_enabled and proposed.fov_risk_reward_enabled):
+        raise RuntimeError("proposed pipeline must add the FOV-risk ontology branch")
+    if proposed.use_direct_rgat_potential or proposed.use_adaptive_reward_weights:
+        raise RuntimeError("primary proposed pipeline cannot use PBRS/adaptive weights")
+
+
 def validate_pipeline_configuration(config: dict) -> None:
     """Refuse YAML declarations that disagree with executable presets."""
     configured = tuple(config.get("pipelines") or ())
     if not configured:
-        raise ValueError("three-pipeline configuration must list pipelines")
+        raise ValueError("experiment configuration must list pipelines")
     unknown = set(configured) - set(ALL_PIPELINES)
     if unknown:
         raise ValueError(f"unknown configured pipelines: {sorted(unknown)}")
@@ -212,6 +268,7 @@ def validate_pipeline_configuration(config: dict) -> None:
                 raise ValueError(
                     f"pipeline {name} YAML {key} disagrees with executable spec")
         optional_expected = {
+            "fov_risk_reward": spec.fov_risk_reward_enabled,
             "use_adaptive_reward_weights": spec.use_adaptive_reward_weights,
             "adaptive_reward_architecture": spec.adaptive_reward_architecture,
         }
@@ -224,6 +281,13 @@ def validate_pipeline_configuration(config: dict) -> None:
         "outcome_discount", ppo_gamma))
     if abs(ppo_gamma - design_gamma) > 1e-12:
         raise ValueError("R-GAT design/PBRS gamma must equal PPO gamma")
+    if any(name in PIPELINES for name in configured):
+        assert_primary_baseline_equivalence()
+    if any(ALL_PIPELINES[name].fov_risk_reward_enabled for name in configured):
+        risk = config.get("fov_risk") or {}
+        coefficient = float(risk.get("lambda_fov", 0.1))
+        if coefficient < 0.0:
+            raise ValueError("fov_risk.lambda_fov must be non-negative")
     adaptive_specs = [ALL_PIPELINES[name] for name in configured
                       if ALL_PIPELINES[name].use_adaptive_reward_weights]
     if adaptive_specs:

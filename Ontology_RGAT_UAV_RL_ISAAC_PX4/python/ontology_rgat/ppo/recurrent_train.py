@@ -19,12 +19,16 @@ from ..perception import (SEMANTIC_FEATURE_NAMES, grayscale_image_tensor,
 from ..pipelines import (available_pipeline_ids, get_pipeline,
                          primary_pipeline_ids)
 from ..rgat.adaptive_model import adaptive_reward_graph
+from ..rgat.fov_graph import (build_fov_graph,
+                              fov_observation_from_visual_semantics)
+from ..rgat.fov_risk_dataset import future_fov_loss_labels
 from ..reward_modes import (AdaptiveRewardConfig, AdaptiveWeightReward,
                             FixedBaselineRewardWeights,
                             OntoRewardPBRS, ShinReward, ShinRewardConfig,
                             NoSERewardContext, OntologyRewardContext,
                             ShinSERewardContext, TerminalFlags,
                             active_perception_reward, sparse_terminal_reward)
+from ..reward_modes.fov_risk import ontology_fov_reward
 from ..reward_modes.adaptive_weight import shin_reward_components
 from ..reward_modes.adaptive_weight import RewardComponentNormalizer
 from .behavior_cloning import behavior_clone
@@ -74,8 +78,9 @@ def _reward(method, previous, following, estimate, next_estimate, potential,
             *, gamma=0.99, shaping_lambda=1.0,
             current_semantic_graph=None, next_semantic_graph=None,
             current_adaptive_graph=None, next_adaptive_graph=None,
+            current_fov_graph=None,
             reward_normalizer=None,
-            estimation_loss_fn=None):
+            estimation_loss_fn=None, fov_risk_lambda=0.1):
     """Dispatch reward through the selected pipeline's narrow data contract."""
     terminal = _terminal_flags(following)
     try:
@@ -102,7 +107,8 @@ def _reward(method, previous, following, estimate, next_estimate, potential,
     if method == "sparse":
         value = sparse_terminal_reward(**terminal.as_kwargs())
         return value, {"task": value}, next_loss
-    if (spec is not None and spec.name in {"shin_se_fixed", "no_se_fixed"}
+    if (spec is not None and spec.name in {
+            "shin_se_fixed", "shin_se_onto_rgat_fov", "no_se_fixed"}
             and reward_normalizer is not None):
         if current_adaptive_graph is None:
             raise ValueError("normalized fixed reward requires current adaptive graph")
@@ -119,6 +125,16 @@ def _reward(method, previous, following, estimate, next_estimate, potential,
                         previous, following),
                 next_estimation_loss=next_loss,
                 **terminal.as_kwargs())
+        if spec.fov_risk_reward_enabled:
+            if current_fov_graph is None:
+                raise ValueError("proposed reward requires the strict FOV ontology graph")
+            if potential is None or not hasattr(potential, "predict"):
+                raise ValueError("proposed reward requires a frozen FOV-risk R-GAT")
+            probability = float(potential.predict(current_fov_graph))
+            addition = ontology_fov_reward(probability, fov_risk_lambda)
+            value += addition
+            parts["predicted_fov_loss_probability"] = probability
+            parts["ontology_fov_reward"] = addition
         return value, parts, next_loss
     if spec is not None and spec.reward_mode in {
             "shin_table_active", "shin_table_no_active"}:
@@ -147,6 +163,16 @@ def _reward(method, previous, following, estimate, next_estimate, potential,
                                       if isinstance(context, ShinSERewardContext)
                                       else None),
                 **context.terminal.as_kwargs())
+        if spec.fov_risk_reward_enabled:
+            if current_fov_graph is None:
+                raise ValueError("proposed reward requires the strict FOV ontology graph")
+            if potential is None or not hasattr(potential, "predict"):
+                raise ValueError("proposed reward requires a frozen FOV-risk R-GAT")
+            probability = float(potential.predict(current_fov_graph))
+            addition = ontology_fov_reward(probability, fov_risk_lambda)
+            value += addition
+            parts["predicted_fov_loss_probability"] = probability
+            parts["ontology_fov_reward"] = addition
         return value, parts, next_loss
     if spec is not None and spec.reward_mode == "adaptive_weight":
         if current_adaptive_graph is None or next_adaptive_graph is None:
@@ -228,6 +254,11 @@ def _semantic_from_output(output, proprioception, state, *, previous, dt):
         keypoint_visibility=output.keypoint_visibility[0, -1].detach().cpu().numpy(),
         battery_reserve=_battery_reserve(state), previous=previous, dt=dt)
     return observation, semantic_graph(observation)
+
+
+def _fov_graph_from_semantic(observation):
+    fov_observation = fov_observation_from_visual_semantics(observation)
+    return fov_observation, build_fov_graph(fov_observation)
 
 
 def _landing_phase(observation) -> str:
@@ -323,7 +354,7 @@ def collect_episode(env, model: PipelineActorCritic, method: str, seed: int,
                     gamma=0.99, shaping_lambda=1.0,
                     scenario="training_random_walk", monitor=None,
                     phase="evaluation", action_transform=None,
-                    reward_normalizer=None):
+                    reward_normalizer=None, fov_risk_lambda=0.1):
     """Collect one real episode while keeping actor/reward contracts separate."""
     model_spec = model.pipeline_spec
     try:
@@ -361,6 +392,7 @@ def collect_episode(env, model: PipelineActorCritic, method: str, seed: int,
         semantic, graph = _semantic_from_output(
             output, step.actor.proprioception, step.state,
             previous=None, dt=float(env.cfg.sim.dt))
+        fov_semantic, fov_graph = _fov_graph_from_semantic(semantic)
         adaptive_graph = adaptive_reward_graph(semantic)
         while True:
             mean = output.action_mean[:, -1]
@@ -389,6 +421,7 @@ def collect_episode(env, model: PipelineActorCritic, method: str, seed: int,
             next_semantic, next_graph = _semantic_from_output(
                 next_output, following.actor.proprioception, following.state,
                 previous=semantic, dt=float(env.cfg.sim.dt))
+            next_fov_semantic, next_fov_graph = _fov_graph_from_semantic(next_semantic)
             next_adaptive_graph = adaptive_reward_graph(next_semantic)
             estimate = (None if output.relative_state is None else
                         output.relative_state[0, -1].cpu().numpy())
@@ -400,10 +433,24 @@ def collect_episode(env, model: PipelineActorCritic, method: str, seed: int,
                 current_semantic_graph=graph, next_semantic_graph=next_graph,
                 current_adaptive_graph=adaptive_graph,
                 next_adaptive_graph=next_adaptive_graph,
+                current_fov_graph=fov_graph,
                 reward_normalizer=reward_normalizer,
+                fov_risk_lambda=fov_risk_lambda,
                 estimation_loss_fn=(
                     None if model.relative_state_head is None else
                     model.relative_state_head.numpy_loss))
+            if model_spec.fov_risk_reward_enabled:
+                parts.update({
+                    "fov_margin": float(fov_semantic.fov_margin),
+                    "keypoint_confidence": float(
+                        fov_semantic.keypoint_confidence),
+                    "visible_keypoint_fraction": float(
+                        fov_semantic.visible_keypoint_fraction),
+                    "visibility_memory": float(
+                        fov_semantic.visibility_memory),
+                    "reacquisition_trend": float(
+                        fov_semantic.reacquisition_trend),
+                })
             visual_loss_run = visual_loss_run + 1 if not following.pad_in_fov else 0
             longest_visual_loss = max(longest_visual_loss, visual_loss_run)
             row = {
@@ -422,6 +469,9 @@ def collect_episode(env, model: PipelineActorCritic, method: str, seed: int,
                     "remaining_j", 0.0)),
                 "reward_parts": parts,
                 "semantic_graph_X": graph.X.copy(),
+                "fov_graph_X": fov_graph.X.copy(),
+                "fov_graph_in_fov": bool(step.pad_in_fov),
+                "next_fov_graph_X": next_fov_graph.X.copy(),
                 "adaptive_graph_X": adaptive_graph.X.copy(),
                 "rho_raw": shin_reward_components(
                     step.critic.true_relative_state,
@@ -432,6 +482,7 @@ def collect_episode(env, model: PipelineActorCritic, method: str, seed: int,
                 "next_uav_vertical_velocity": float(
                     following.actor.body_velocity[2]),
                 "semantic_features": semantic.feature_vector.copy(),
+                "fov_semantic_features": fov_semantic.feature_vector.copy(),
                 "next_semantic_features": next_semantic.feature_vector.copy(),
                 "phase": str(phase), "scenario": str(scenario),
                 "landing_phase": _landing_phase(semantic),
@@ -460,16 +511,43 @@ def collect_episode(env, model: PipelineActorCritic, method: str, seed: int,
                     # dashboard traces the model's real input, not the smaller
                     # base semantic graph used by fixed-reward arms.
                     semantic_graph=(
-                        next_adaptive_graph
-                        if model_spec.use_adaptive_reward_weights else next_graph),
+                        next_adaptive_graph if model_spec.use_adaptive_reward_weights
+                        else next_fov_graph if model_spec.fov_risk_reward_enabled
+                        else next_graph),
                     scenario=scenario, status=status)
             hidden = output.hidden
             step, output = following, next_output
             semantic, graph = next_semantic, next_graph
+            fov_semantic, fov_graph = next_fov_semantic, next_fov_graph
             adaptive_graph = next_adaptive_graph
             if following.terminal:
                 break
     env.finish_episode()
+    prediction_steps = max(1, int(round(1.0 / float(env.cfg.sim.dt))))
+    if potential is not None:
+        prediction_steps = int(getattr(potential, "metadata", {}).get(
+            "prediction_horizon_steps", prediction_steps))
+    # Each graph belongs to the pre-action state t.  Append the terminal
+    # successor so the final actionable graph can still be labelled from t+1;
+    # passing only the post-action row flags would skip that immediate state.
+    fov_timeline = ([row["fov_graph_in_fov"] for row in rows]
+                    + [bool(rows[-1]["in_fov"])])
+    future_labels = future_fov_loss_labels(
+        fov_timeline, prediction_steps)[:-1]
+    for row, label in zip(rows, future_labels):
+        row["actual_future_fov_loss_label"] = float(label)
+        row["reward_parts"]["actual_future_fov_loss_label"] = float(label)
+    loss_runs = []
+    run = 0
+    for row in rows:
+        if row["in_fov"]:
+            if run:
+                loss_runs.append(run)
+                run = 0
+        else:
+            run += 1
+    if run:
+        loss_runs.append(run)
     truth_final = step.critic.true_relative_state
     state = step.state
     final_battery = _battery_sample(state)
@@ -512,11 +590,17 @@ def collect_episode(env, model: PipelineActorCritic, method: str, seed: int,
         "landing_gate_angular_rate": float(
             angular_rate <= float(env.cfg.criteria.rate)),
         "fov_loss_fraction": float(np.mean([not row["in_fov"] for row in rows])),
+        "fov_retention_ratio": float(np.mean([row["in_fov"] for row in rows])),
+        "fov_loss_episode_rate": float(any(not row["in_fov"] for row in rows)),
         # Reward-independent physical tracking error, available to every arm
         # and therefore safe to use for a common performance curriculum.
         "relative_position_rmse_m": float(np.sqrt(np.mean(np.asarray([
             row["truth"][:3] for row in rows], dtype=float) ** 2))),
         "longest_visual_loss_s": float(longest_visual_loss * env.cfg.sim.dt),
+        "maximum_continuous_fov_loss_duration_s": float(
+            longest_visual_loss * env.cfg.sim.dt),
+        "mean_continuous_fov_loss_duration_s": float(
+            np.mean(loss_runs) * env.cfg.sim.dt if loss_runs else 0.0),
         "action_envelope_scale": action_scale,
         "touchdown_time_s": float(len(rows) * env.cfg.sim.dt),
         "battery_reserve_initial": float(initial_battery.get("reserve", 1.0)),
@@ -588,9 +672,6 @@ def collect_episode(env, model: PipelineActorCritic, method: str, seed: int,
                 float(np.mean(potential_reacquisition_delta))
                 if potential_reacquisition_delta else 0.0),
         })
-    metric.update(visual_recovery_metrics(
-        rows, initial_in_fov=initial_in_fov,
-        success=bool(step.strict_success), dt=float(env.cfg.sim.dt)))
     if model_spec.state_estimation_enabled:
         position_error = np.asarray([
             row["estimate"][:3] - row["truth"][:3] for row in rows])
@@ -1272,6 +1353,7 @@ def train_live(env_factory: Callable, model, method, seeds, output_dir,
                 env, model, method, seed, curriculum=c, potential=potential,
                 gamma=float(ppo.get("gamma", .99)),
                 shaping_lambda=float(ppo.get("shaping_lambda", 1.0)),
+                fov_risk_lambda=float(ppo.get("fov_risk_lambda", 0.1)),
                 reward_normalizer=reward_normalizer,
                 monitor=monitor, phase=("perception warm-up" if perception_warmup
                                         else "training"),

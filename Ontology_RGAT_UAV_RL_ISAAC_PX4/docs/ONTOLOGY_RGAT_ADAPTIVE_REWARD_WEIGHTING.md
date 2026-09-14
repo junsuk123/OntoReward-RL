@@ -1,4 +1,7 @@
-# 제안 알고리즘: Hybrid Ontology R-GAT Reward
+# LEGACY / ABLATION ONLY: Hybrid Ontology R-GAT Reward
+
+> Adaptive reward weighting과 semantic PBRS는 현재 제안법이 아니다. 현재 제안법은
+> [Ontology-R-GAT 미래 FOV-loss 보상](ONTOLOGY_RGAT_FOV_RISK.md)이다.
 
 [문서 안내](README.md) · [시스템 개요](SYSTEM_OVERVIEW.md) ·
 [비교 설계](THREE_PIPELINE_COMPARISON.md)

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""One-command controlled shin_se/no_se/onto_no_se live experiment."""
+"""Shared orchestration engine; the normal entry point exposes two pipelines."""
 from __future__ import annotations
 
 import argparse
@@ -32,7 +32,8 @@ from ontology_rgat.bridge import BridgeError
 from ontology_rgat.cli import ensure_fastdds
 from ontology_rgat.evaluation import (write_adaptive_reward_figures,
                                       write_presentation_results,
-                                      write_three_pipeline_outputs)
+                                      write_three_pipeline_outputs,
+                                      write_two_pipeline_outputs)
 from ontology_rgat.perception import (RosGrayscaleSource,
                                       calibrate_keypoint_encoder,
                                       prepare_keypoint_encoder)
@@ -53,7 +54,10 @@ from ontology_rgat.rgat import (
     adaptive_episode_records, build_adaptive_dataset, load_adaptive_dataset,
     load_semantic_dataset, prepare_adaptive_reward_artifact,
     merge_semantic_datasets, prepare_semantic_rgat_artifact,
-    save_adaptive_dataset, save_semantic_dataset, semantic_episode_dataset)
+    save_adaptive_dataset, save_semantic_dataset, semantic_episode_dataset,
+    FrozenFOVRiskPredictor, build_fov_risk_dataset, horizon_steps,
+    load_fov_risk_dataset, prepare_fov_risk_artifact,
+    save_fov_risk_dataset)
 from ontology_rgat.stack import ExternalStack
 from ontology_rgat.viz.dashboard import Dashboard
 from ontology_rgat.viz.live import BenchmarkMonitor, STORE
@@ -145,6 +149,30 @@ def _pair_live_config(cfg, pair_index: int, pair_count: int):
         "external.entry_timeout": (
             float(cfg.external.entry_timeout) * entry_timeout_scale),
     })
+
+
+def _calibration_system_for_pair(system, pair_index: int, pair_count: int):
+    """Mirror the marker dictionary/IDs actually rendered for one pair.
+
+    Parallel Isaac scenes replace the single-vehicle marker dictionary and
+    offset IDs to prevent cross-pair detections.  Empirical keypoint labelling
+    must use that rendered board contract as well; otherwise every valid frame
+    is rejected before PPO starts.
+    """
+    if int(pair_count) == 1:
+        return system
+    resolved = deepcopy(system)
+    parallel = dict(resolved.get("parallel") or {})
+    vision = dict(resolved.get("vision") or {})
+    vision["dictionary"] = str(parallel.get(
+        "marker_dictionary", vision.get("dictionary", "DICT_4X4_100")))
+    stride = int(parallel.get("marker_id_stride", 60))
+    vision["board"] = [
+        {**dict(marker), "id": int(marker["id"]) + stride * int(pair_index)}
+        for marker in vision.get("board") or ()
+    ]
+    resolved["vision"] = vision
+    return resolved
 
 
 def _hold_after_complete(owned, monitor, *, sleep=time.sleep) -> None:
@@ -903,6 +931,86 @@ def _collect_semantic_data(*, cfg, camera, model, config, config_hash,
     return dataset, manifest, dataset_path, total_steps
 
 
+def _collect_fov_risk_data(*, cfg, camera, model, config, config_hash,
+                           checkpoint_path, results_dir, mode, monitor,
+                           episodes_override=None, max_episodes_override=None,
+                           source_pipeline="shin_se_fixed"):
+    """Collect same-domain trajectories and label future visibility offline."""
+    design = dict(config.get("fov_risk_design") or {})
+    risk = dict(config.get("fov_risk") or {})
+    minimum = int(episodes_override if episodes_override is not None else
+                  design.get(f"episodes_{mode}", 8 if mode == "quick" else 40))
+    maximum = int(max_episodes_override if max_episodes_override is not None else
+                  design.get(f"max_episodes_{mode}", max(3 * minimum, minimum)))
+    if minimum < 2 or maximum < minimum:
+        raise ValueError("FOV-risk collection requires 2+ episodes and a valid cap")
+    seconds = float(risk.get("prediction_horizon_seconds", 1.0))
+    control_hz = 1.0 / float(cfg.sim.dt)
+    prediction_steps = horizon_steps(seconds, control_hz)
+    dataset_path = Path(results_dir) / "rgat/fov_risk_rollouts.npz"
+    if dataset_path.is_file() and dataset_path.with_suffix(".manifest.json").is_file():
+        try:
+            cached, cached_manifest = load_fov_risk_dataset(
+                dataset_path, config_hash=config_hash)
+            if (int(cached_manifest.get("episodes", 0)) >= minimum
+                    and set(np.unique(cached["y"]).tolist()) == {0.0, 1.0}):
+                return (cached, cached_manifest, dataset_path,
+                        int(cached_manifest.get(
+                            "environment_steps", cached_manifest["samples"])))
+        except (OSError, ValueError, KeyError, json.JSONDecodeError) as exc:
+            print(f"Ignoring incompatible FOV-risk rollout cache: {exc}")
+
+    seed0 = int((config.get("seeds") or {}).get("fov_risk_dataset_start", 70000))
+    episodes = []
+    total_steps = 0
+    monitor.stage("FOV-risk data", "visual-only graph · future visibility labels")
+    with LiveShinEnvironment(
+            cfg, camera, horizon_steps=int(cfg.sim.max_steps)) as environment:
+        for episode_id in range(1, maximum + 1):
+            seed = seed0 + episode_id - 1
+            rows, metric = collect_episode_resilient(
+                environment, model, source_pipeline, seed, curriculum=1.0,
+                deterministic=False, scenario="training_random_walk",
+                monitor=monitor, phase="FOV-risk offline data",
+                action_transform=_behavior_transform((episode_id - 1) % 3))
+            episodes.append({
+                "episode_id": episode_id,
+                "seed": seed,
+                "samples": ([{"graph_X": row["fov_graph_X"],
+                              "in_fov": row["fov_graph_in_fov"]}
+                             for row in rows]
+                            + ([{"graph_X": rows[-1]["next_fov_graph_X"],
+                                 "in_fov": rows[-1]["in_fov"]}]
+                               if rows else [])),
+            })
+            total_steps += len(rows)
+            dataset = build_fov_risk_dataset(
+                episodes, prediction_steps=prediction_steps)
+            classes = set(np.unique(dataset["y"]).tolist())
+            if episode_id >= minimum and classes == {0.0, 1.0}:
+                break
+            print(f"FOV-risk data {episode_id}/{minimum} minimum "
+                  f"(cap {maximum}): loss_episode={int(metric['fov_loss_episode_rate'])}")
+    if set(np.unique(dataset["y"]).tolist()) != {0.0, 1.0}:
+        raise RuntimeError(
+            f"FOV-risk data has one label class after {maximum} episodes; "
+            "increase --rgat-max-data-episodes")
+    manifest = save_fov_risk_dataset(
+        dataset, dataset_path, config_hash=config_hash, seed=seed0,
+        horizon_seconds=seconds, control_hz=control_hz)
+    manifest.update({
+        "source_pipeline": source_pipeline,
+        "source_checkpoint_sha256": (
+            _sha256_file(checkpoint_path) if checkpoint_path is not None
+            and Path(checkpoint_path).is_file() else None),
+        "environment_steps": total_steps,
+        "episode_split_required": True,
+    })
+    # Persist the extended provenance without altering the checked NPZ digest.
+    _write_json(dataset_path.with_suffix(".manifest.json"), manifest)
+    return dataset, manifest, dataset_path, total_steps
+
+
 def _records_from_adaptive_dataset(dataset):
     records = []
     for index in range(len(dataset["episode_id"])):
@@ -1150,30 +1258,41 @@ def _collect_adaptive_data(*, cfg, camera, model, source_pipeline, config,
     return dataset, manifest, path, steps
 
 
-def main():
+def main(*, primary_only: bool = False):
     parser = argparse.ArgumentParser(
         formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument("--experiment", choices=(
-        "three_pipeline", "adaptive_reward_weight_comparison"),
+        ("two_pipeline_fov_risk",) if primary_only else
+        ("three_pipeline", "adaptive_reward_weight_comparison")),
                         default=None)
-    parser.add_argument("--pipelines", nargs="+", choices=available_pipeline_ids())
+    parser.add_argument(
+        "--pipelines", nargs="+",
+        choices=(primary_pipeline_ids() if primary_only else available_pipeline_ids()))
     parser.add_argument("--mode", choices=("quick", "full"), default="quick")
     parser.add_argument("--config", type=Path,
-                        default=ROOT / "config/experiments/three_pipeline_comparison.yaml")
+                        default=ROOT / "config/experiments/two_pipeline_comparison.yaml"
+                        if primary_only else
+                        ROOT / "config/experiments/three_pipeline_comparison.yaml")
     parser.add_argument("--system-config", type=Path,
                         default=ROOT / "config/shin2026-system.yaml")
     parser.add_argument("--results-dir", type=Path)
-    parser.add_argument("--reward-design", type=Path)
-    parser.add_argument("--adaptive-reward-design", type=Path)
+    if primary_only:
+        parser.set_defaults(reward_design=None, adaptive_reward_design=None,
+                            robust_adaptive_reward=False)
+    else:
+        parser.add_argument("--reward-design", type=Path)
+        parser.add_argument("--adaptive-reward-design", type=Path)
+    parser.add_argument("--fov-risk-model", type=Path)
     parser.add_argument("--no-prepare-reward-design", action="store_true")
     parser.add_argument("--rgat-data-episodes", type=int)
     parser.add_argument(
         "--rgat-max-data-episodes", type=int,
         help="hard cap for automatic real rollout extension when one class is missing")
     parser.add_argument("--rgat-epochs", type=int)
-    parser.add_argument(
-        "--robust-adaptive-reward", action="store_true",
-        help="reject collapsed adaptive artifacts and use the robust live R-GAT profile")
+    if not primary_only:
+        parser.add_argument(
+            "--robust-adaptive-reward", action="store_true",
+            help="reject collapsed adaptive artifacts and use the robust live R-GAT profile")
     parser.add_argument("--train-episodes", type=int)
     parser.add_argument("--total-train-episodes", type=int)
     parser.add_argument("--eval-episodes", type=int)
@@ -1193,7 +1312,7 @@ def main():
     parser.add_argument("--no-rviz", action="store_true")
     parser.add_argument("--dashboard-port", type=int)
     parser.add_argument(
-        "--parallel-pairs", type=int, default=3,
+        "--parallel-pairs", type=int, default=(2 if primary_only else 3),
         help="number of isolated UAV/UGV pairs in the shared Isaac stage")
     args = parser.parse_args()
     if args.train_episodes is not None and args.total_train_episodes is not None:
@@ -1220,6 +1339,8 @@ def main():
     configured = tuple(config.get("pipelines") or ())
     if args.pipelines is None:
         args.pipelines = list(configured)
+    if primary_only and len(set(args.pipelines)) != len(args.pipelines):
+        parser.error("a primary pipeline may be selected only once")
     if any(name not in configured for name in args.pipelines):
         parser.error("selected pipeline is absent from experiment configuration")
     for name in args.pipelines:
@@ -1228,7 +1349,9 @@ def main():
         parser.error(
             "parallel mode requires exactly one selected pipeline per UAV/UGV pair")
     if args.results_dir is None:
-        experiment_dir = ("adaptive_reward_weight" if
+        experiment_dir = ("two_pipeline_fov_risk" if
+                          config.get("experiment") == "two_pipeline_fov_risk" else
+                          "adaptive_reward_weight" if
                           config.get("experiment") == "adaptive_reward_weight_comparison"
                           else "three_pipeline")
         args.results_dir = ROOT / "results" / experiment_dir / args.mode
@@ -1239,6 +1362,8 @@ def main():
     if args.adaptive_reward_design is None:
         args.adaptive_reward_design = (
             args.results_dir / "rgat/adaptive_reward_weights.pt")
+    if args.fov_risk_model is None:
+        args.fov_risk_model = args.results_dir / "rgat/fov_risk_model.pt"
     args.results_dir.mkdir(parents=True, exist_ok=True)
 
     system = load_system_config(args.system_config)
@@ -1335,6 +1460,8 @@ def main():
         get_pipeline(name).use_direct_rgat_potential for name in args.pipelines)
     needs_adaptive = any(
         get_pipeline(name).use_adaptive_reward_weights for name in args.pipelines)
+    needs_fov_risk = any(
+        get_pipeline(name).fov_risk_reward_enabled for name in args.pipelines)
     potential = None
     artifact_error = None
     if needs_potential and args.reward_design.is_file():
@@ -1385,6 +1512,19 @@ def main():
     if needs_adaptive and adaptive_weights is None and args.no_prepare_reward_design:
         parser.error(
             f"adaptive reward mode requires a valid frozen model: {adaptive_error}")
+    fov_risk_model = None
+    fov_risk_error = None
+    if needs_fov_risk and args.fov_risk_model.is_file():
+        try:
+            fov_risk_model = FrozenFOVRiskPredictor(
+                args.fov_risk_model, expected_config_hash=config_hash,
+                device=args.device)
+            print(f"Using frozen future-FOV-loss R-GAT {fov_risk_model.design_id}.")
+        except (OSError, ValueError, KeyError) as exc:
+            fov_risk_error = str(exc)
+            print(f"Existing FOV-risk R-GAT is not reusable: {exc}")
+    if needs_fov_risk and fov_risk_model is None and args.no_prepare_reward_design:
+        parser.error(f"proposed pipeline requires a valid FOV-risk R-GAT: {fov_risk_error}")
 
     controlled_fields = {
         name: config.get(name) for name in
@@ -1392,7 +1532,8 @@ def main():
     }
     landing_contract = dict(system.get("landing") or {})
     manifest = {
-        "format": "ontology_rgat.three_pipeline_experiment/1",
+        "format": ("ontology_rgat.two_pipeline_fov_risk_experiment/1"
+                   if primary_only else "ontology_rgat.legacy_multi_pipeline_experiment/1"),
         "experiment": args.experiment, "mode": args.mode,
         "training_replicate": args.training_replicate,
         "configured_independent_model_seeds": independent_model_seeds,
@@ -1409,8 +1550,15 @@ def main():
         "N_estimator_warmup": selected_warmup,
         "N_training_environment_episodes": (
             train_count * len(args.pipelines) + selected_warmup),
-        "reward_design_collection_contract": _reward_design_collection_contract(
-            design_cfg, args.mode, design_minimum, design_maximum),
+        "reward_design_collection_contract": ({
+            "target": "future FOV loss within configured horizon",
+            "minimum_episodes": design_minimum,
+            "maximum_episodes": design_maximum,
+            "split": "whole episodes with no train/validation overlap",
+            "loss": "binary cross entropy only",
+            "synthetic_outcomes_allowed": False,
+        } if needs_fov_risk else _reward_design_collection_contract(
+            design_cfg, args.mode, design_minimum, design_maximum)),
         "training_seed_contract": {
             "ppo_seed_start": training_seed0,
             "ppo_seed_stop_exclusive": training_seed0 + train_count,
@@ -1445,6 +1593,8 @@ def main():
             "pending held-out deterministic best-vs-latest validation"),
         "reward_design_id": getattr(potential, "design_id", None),
         "adaptive_reward_design_id": getattr(adaptive_weights, "design_id", None),
+        "fov_risk_design_id": getattr(fov_risk_model, "design_id", None),
+        "fov_risk": config.get("fov_risk"),
         "adaptive_reward": config.get("adaptive_reward"),
         "adaptive_reward_runtime_profile": adaptive_settings.get(
             "runtime_profile", "configured"),
@@ -1498,6 +1648,8 @@ def main():
     training_pair_for, pair_training_methods = _balanced_training_pair_assignment(
         args.pipelines, args.parallel_pairs, args.training_replicate)
     ppo = dict(config.get("ppo") or {})
+    ppo["fov_risk_lambda"] = float(
+        (config.get("fov_risk") or {}).get("lambda_fov", 0.1))
     ppo_runtime_overrides = {}
     if args.robust_adaptive_reward:
         ppo_runtime_overrides = {
@@ -1565,8 +1717,10 @@ def main():
         methods=args.pipelines, mode=args.mode, config_hash=config_hash,
         training_total=(train_count * len(args.pipelines) + selected_warmup),
         evaluation_total=len(plan),
-        reward_design_id=getattr(potential, "design_id", None),
-        reward_design_sha256=getattr(potential, "sha256", None),
+        reward_design_id=getattr(
+            fov_risk_model if needs_fov_risk else potential, "design_id", None),
+        reward_design_sha256=getattr(
+            fov_risk_model if needs_fov_risk else potential, "sha256", None),
         pair_layout=[{
             "index": index,
             "method": name,
@@ -1628,9 +1782,12 @@ def main():
                 for index in range(args.parallel_pairs)]
             camera = cameras[0]
             monitor.stage("keypoint validation", "live Isaac camera · held-out labels")
+            calibration_system = _calibration_system_for_pair(
+                system, pair_index=0, pair_count=args.parallel_pairs)
             keypoint_pretraining = calibrate_keypoint_encoder(
                 args.results_dir / "models/shared/keypoint_encoder.pt",
-                keypoint_pretraining, camera, system=system, experiment=config,
+                keypoint_pretraining, camera, system=calibration_system,
+                experiment=config,
                 mode=args.mode, device=args.device)
             manifest["keypoint_pretraining"] = (
                 None if keypoint_pretraining is None else {
@@ -1721,7 +1878,8 @@ def main():
                 spec = get_pipeline(name)
                 reward_design = (adaptive_weights
                                  if spec.use_adaptive_reward_weights else
-                                 potential if spec.use_direct_rgat_potential else None)
+                                 potential if spec.use_direct_rgat_potential else
+                                 fov_risk_model if spec.fov_risk_reward_enabled else None)
                 if spec.use_adaptive_reward_weights:
                     if reward_design is None:
                         raise RuntimeError(f"{name} requires adaptive reward weights")
@@ -1768,7 +1926,8 @@ def main():
             independent_pipelines = [
                 name for name in args.pipelines
                 if not (get_pipeline(name).use_direct_rgat_potential
-                        or get_pipeline(name).use_adaptive_reward_weights)]
+                        or get_pipeline(name).use_adaptive_reward_weights
+                        or get_pipeline(name).fov_risk_reward_enabled)]
             if args.parallel_pairs > 1:
                 # Build every trainable actor and frozen behavior source before
                 # worker threads start. ``torch.manual_seed`` is process-global;
@@ -1785,6 +1944,10 @@ def main():
                     source_names.append(str(
                         (config.get("adaptive_reward_design") or {}).get(
                             "source_pipeline", "no_se_fixed")))
+                if needs_fov_risk:
+                    source_names.append(str(
+                        (config.get("fov_risk_design") or {}).get(
+                            "source_pipeline", "shin_se_fixed")))
                 prepared_names = list(dict.fromkeys(
                     [*args.pipelines, *source_names]))
                 prepared_parallel_models = {
@@ -1826,8 +1989,68 @@ def main():
                 for name in args.pipelines:
                     spec = get_pipeline(name)
                     if not (spec.use_direct_rgat_potential
-                            or spec.use_adaptive_reward_weights):
+                            or spec.use_adaptive_reward_weights
+                            or spec.fov_risk_reward_enabled):
                         train_pipeline(name)
+
+            fov_design_episodes = 0
+            fov_design_steps = 0
+            if needs_fov_risk and fov_risk_model is None:
+                source_name = str((config.get("fov_risk_design") or {}).get(
+                    "source_pipeline", "shin_se_fixed"))
+                source_checkpoint = None
+                if source_name in models:
+                    source_model = models[source_name]
+                    source_dir = args.results_dir / "models" / source_name
+                    source_checkpoint = (
+                        source_dir / f"{source_name}.best.pt"
+                        if (source_dir / f"{source_name}.best.pt").is_file()
+                        else source_dir / f"{source_name}.pt")
+                elif args.parallel_pairs > 1 and source_name in frozen_behavior_models:
+                    source_model = frozen_behavior_models[source_name]
+                    source_checkpoint = _load_reward_design_source_checkpoint(
+                        args.results_dir, source_name, source_model,
+                        config_hash=config_hash)
+                    print(
+                        f"Using an independently frozen {source_name} policy for "
+                        "offline FOV-risk data while baseline PPO trains.")
+                else:
+                    source_model = initialize_pipeline_model(source_name)
+                fov_dataset, fov_manifest, _, fov_design_steps = (
+                    _collect_fov_risk_data(
+                        cfg=pair_cfgs[reward_design_pair_indices[0]],
+                        camera=cameras[reward_design_pair_indices[0]],
+                        model=source_model, config=config,
+                        config_hash=config_hash, checkpoint_path=source_checkpoint,
+                        results_dir=args.results_dir, mode=args.mode,
+                        monitor=worker_monitors[reward_design_pair_indices[0]],
+                        episodes_override=args.rgat_data_episodes,
+                        max_episodes_override=args.rgat_max_data_episodes,
+                        source_pipeline=source_name))
+                fov_design_episodes = int(fov_manifest["episodes"])
+                settings = dict(config.get("fov_risk_design") or {})
+                settings["epochs"] = int(
+                    args.rgat_epochs or settings.get(
+                        f"epochs_{args.mode}", 10 if args.mode == "quick" else 80))
+                settings["device"] = args.device
+                monitor.stage("R-GAT training", "future FOV-loss BCE classifier")
+                fov_risk_model, fov_metadata = prepare_fov_risk_artifact(
+                    args.fov_risk_model, fov_dataset,
+                    dataset_manifest=fov_manifest, config_hash=config_hash,
+                    seed=model_seed, settings=settings)
+                manifest.update({
+                    "fov_risk_design_id": fov_risk_model.design_id,
+                    "fov_risk_design_sha256": fov_risk_model.sha256,
+                    "fov_risk_dataset": fov_manifest,
+                    "fov_risk_model": fov_metadata,
+                })
+                _write_json(manifest_path, manifest)
+                STORE.set(reward_design_id=fov_risk_model.design_id,
+                          reward_design_sha256=fov_risk_model.sha256)
+            elif needs_fov_risk:
+                fov_manifest = dict(fov_risk_model.metadata)
+                fov_design_episodes = int((fov_manifest.get(
+                    "dataset_manifest") or {}).get("episodes", 0))
 
             if needs_potential and potential is None:
                 preferred_source = str((config.get("rgat_design") or {}).get(
@@ -2105,7 +2328,8 @@ def main():
                 for name in args.pipelines:
                     spec = get_pipeline(name)
                     if (spec.use_direct_rgat_potential
-                            or spec.use_adaptive_reward_weights):
+                            or spec.use_adaptive_reward_weights
+                            or spec.fov_risk_reward_enabled):
                         train_pipeline(name)
 
             training_records = [row for name in args.pipelines
@@ -2131,7 +2355,8 @@ def main():
             def reward_design_for(name):
                 spec = get_pipeline(name)
                 return (adaptive_weights if spec.use_adaptive_reward_weights
-                        else potential if spec.use_direct_rgat_potential else None)
+                        else potential if spec.use_direct_rgat_potential
+                        else fov_risk_model if spec.fov_risk_reward_enabled else None)
 
             def select_pipeline_checkpoint(index, name):
                 model = models[name]
@@ -2170,6 +2395,8 @@ def main():
                                     curriculum=float(seminar_fast.get(
                                         "evaluation_curriculum", 1.0)),
                                     potential=reward_design_for(name),
+                                    fov_risk_lambda=float(ppo.get(
+                                        "fov_risk_lambda", 0.1)),
                                     deterministic=True,
                                     gamma=float(ppo.get("gamma", .99)),
                                     shaping_lambda=float(ppo.get(
@@ -2312,6 +2539,8 @@ def main():
                             curriculum=float(seminar_fast.get(
                                 "evaluation_curriculum", 1.0)),
                             potential=reward_design_for(name),
+                            fov_risk_lambda=float(ppo.get(
+                                "fov_risk_lambda", 0.1)),
                             deterministic=True, gamma=float(ppo.get("gamma", .99)),
                             shaping_lambda=float(ppo.get("shaping_lambda", 1.0)),
                             reward_normalizer=runtime_reward_normalizer,
@@ -2368,6 +2597,8 @@ def main():
                 "episodes": adaptive_design_episodes,
                 "steps": adaptive_design_steps,
             }
+            fov_cost = {"episodes": fov_design_episodes,
+                        "steps": fov_design_steps}
             reward_design_costs = {}
             for pipeline_name in args.pipelines:
                 pipeline_spec = get_pipeline(pipeline_name)
@@ -2378,10 +2609,15 @@ def main():
                 if pipeline_spec.use_adaptive_reward_weights:
                     episodes_cost += adaptive_cost["episodes"]
                     steps_cost += adaptive_cost["steps"]
+                if pipeline_spec.fov_risk_reward_enabled:
+                    episodes_cost += fov_cost["episodes"]
+                    steps_cost += fov_cost["steps"]
                 if episodes_cost or steps_cost:
                     reward_design_costs[pipeline_name] = {
                         "episodes": episodes_cost, "steps": steps_cost}
-            reports = write_three_pipeline_outputs(
+            report_writer = (write_two_pipeline_outputs if primary_only
+                             else write_three_pipeline_outputs)
+            reports = report_writer(
                 evaluation_rows, training_records, args.results_dir,
                 reward_design_episodes=0, reward_design_steps=0,
                 reward_design_costs=reward_design_costs,
@@ -2396,8 +2632,9 @@ def main():
                     if get_pipeline(name).state_estimation_enabled
                     for row in histories.get(name, [])
                     if row.get("optimization_phase") == "perception_warmup"))
-            reports["adaptive_reward_figures"] = write_adaptive_reward_figures(
-                args.results_dir)
+            if needs_adaptive:
+                reports["adaptive_reward_figures"] = write_adaptive_reward_figures(
+                    args.results_dir)
             reward_design_cost = design_episodes + source_training_episodes
             reward_design_step_cost = design_steps + source_training_steps
             warmup_step_cost = sum(
@@ -2406,8 +2643,10 @@ def main():
                 if get_pipeline(name).state_estimation_enabled
                 for row in histories.get(name, [])
                 if row.get("optimization_phase") == "perception_warmup")
-            total_design_episodes = reward_design_cost + adaptive_design_episodes
-            total_design_steps = reward_design_step_cost + adaptive_design_steps
+            total_design_episodes = (reward_design_cost + adaptive_design_episodes
+                                     + fov_design_episodes)
+            total_design_steps = (reward_design_step_cost + adaptive_design_steps
+                                  + fov_design_steps)
             cloning_episodes = (0 if demonstrations is None else
                                 len(demonstrations.get("attempted_seeds", ())))
             cloning_steps = (0 if demonstrations is None else
@@ -2467,7 +2706,8 @@ def main():
             rviz.close()
         if dashboard is not None:
             dashboard.stop()
-    print(f"Three-pipeline experiment complete: {args.results_dir}")
+    label = "Two-pipeline" if primary_only else "Legacy multi-pipeline"
+    print(f"{label} experiment complete: {args.results_dir}")
     return 0
 
 

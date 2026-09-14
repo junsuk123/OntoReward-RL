@@ -7,8 +7,7 @@ from ontology_rgat.evaluation.presentation import (
 
 METHODS = (
     "shin_se_fixed",
-    "no_se_fixed",
-    "onto_rgat_adaptive_weight_no_se",
+    "shin_se_onto_rgat_fov",
 )
 
 
@@ -34,13 +33,13 @@ def test_incomplete_run_uses_current_training_and_never_stale_evaluation(tmp_pat
     manifest = {
         "execution_status": "configured; results pending",
         "pipeline_specs": {method: {
-            "use_adaptive_reward_weights": method.startswith("onto_")}
+            "fov_risk_reward_enabled": method.endswith("onto_rgat_fov")}
             for method in METHODS},
-        "adaptive_reward_design_id": None,
+        "fov_risk_design_id": None,
         "evaluation": {"circle": 1},
     }
     (tmp_path / "manifest.json").write_text(json.dumps(manifest))
-    for method in METHODS[:2]:
+    for method in METHODS:
         _write_csv(tmp_path / "models" / method / f"{method}_training.csv",
                    [_row(method, method == "shin_se_fixed")])
     _write_csv(tmp_path / "evaluation/per_episode.csv",
@@ -49,15 +48,13 @@ def test_incomplete_run_uses_current_training_and_never_stale_evaluation(tmp_pat
     assert summary["performance_status"] == "training_preliminary"
     by_method = {row["method"]: row for row in summary["safe_landing_metrics"]}
     assert by_method["shin_se_fixed"]["safe_landings"] == 1
-    assert by_method["no_se_fixed"]["safe_landings"] == 0
-    assert by_method["onto_rgat_adaptive_weight_no_se"]["episodes"] == 0
+    assert by_method["shin_se_onto_rgat_fov"]["episodes"] == 0
     assert (tmp_path / "presentation/slide13_safe_landing_performance.png").is_file()
     assert (tmp_path / "presentation/slide14_rgat_reward_validation.png").is_file()
     for name in (
             "page14_success_rate_ci.png",
             "page14_touchdown_lateral_error.png",
-            "page15_reward_weights_comparison.png",
-            "page15_reward_model_validation.png",
+            "fov_risk_model_validation.png",
             "page16_training_safe_landing_progress.png"):
         assert (tmp_path / "presentation" / name).is_file()
     text = (tmp_path / "presentation/presentation_results_summary.json").read_text()

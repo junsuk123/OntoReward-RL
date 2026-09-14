@@ -65,7 +65,7 @@ def _saved_reward_scalars(cfg) -> dict[str, Any]:
 PAGE = """<!doctype html>
 <html lang="ko"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>3쌍 병렬 Ontology-RGAT 학습</title>
+<title>2쌍 Shin baseline / Ontology-R-GAT FOV 비교</title>
 <style>
 :root{color-scheme:light;--bg:#f2f2f2;--card:#ffffff;--ink:#262626;--muted:#666666;
 --line:#b8b8b8;--grid:#d8d8d8;--accent:#0072BD;--good:#77AC30;
@@ -101,7 +101,7 @@ border-radius:1px;padding:7px 9px}
 .method-chip{border:1px solid #a8a8a8;border-left:4px solid var(--accent);padding:5px 8px;
 background:white;font-variant-numeric:tabular-nums}.method-chip b,.method-chip small{display:block}
 .method-chip small{color:var(--muted)}
-.pair-grid,.pair-plot-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.pair-grid,.pair-plot-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
 .pair-card{border:1px solid #a8a8a8;border-top:4px solid var(--accent);background:#fafafa;
 padding:9px 10px;min-height:150px}.pair-head{display:flex;justify-content:space-between;
 gap:8px;align-items:baseline;margin-bottom:6px}.pair-head b{font-size:13px}.pair-head span{
@@ -166,17 +166,13 @@ white-space:nowrap}.audit-table th:nth-child(2),.audit-table td:nth-child(2){tex
 @media(max-width:780px){main{grid-template-columns:1fr}.pair-grid,.pair-plot-grid{
 grid-template-columns:1fr}.graph-audit{grid-template-columns:1fr}}
 </style></head><body>
-<header><h1 id="page-title">3쌍 병렬 비전 착륙 &middot; Isaac Sim + PX4 + PPO</h1>
+<header><h1 id="page-title">2쌍 Shin baseline / Ontology-R-GAT FOV 비교</h1>
 <span id="stage">connecting</span><span id="detail"></span><span id="age"></span></header>
 <main id="root"></main>
 <script>
 // MATLAB default color order (R2025a), shared with the PNG exporters.
 const PALETTE=['#0072BD','#D95319','#EDB120','#7E2F8E','#77AC30','#4DBEEE','#A2142F'];
-const BENCHMARK_METHODS=['shin_se','no_se','onto_no_se','shin2026','sparse',
-  'manual_no_active','ontoreward','ontoreward_plus_active',
-  'shin_se_fixed','shin_se_rgat_weight','no_se_fixed',
-  'onto_rgat_adaptive_weight_no_se','onto_rgat_potential_pbrs_no_se',
-  'mlp_adaptive_weight_no_se','gat_adaptive_weight_no_se','rgat_adaptive_weight_no_se'];
+const BENCHMARK_METHODS=['shin_se_fixed','shin_se_onto_rgat_fov'];
 const BENCHMARK_TRAIN=BENCHMARK_METHODS.map(x=>'benchmark_train_'+x);
 const BENCHMARK_EVAL=BENCHMARK_METHODS.map(x=>'benchmark_eval_'+x);
 const BENCHMARK_STEP=BENCHMARK_METHODS.map(x=>'benchmark_step_'+x);
@@ -192,7 +188,7 @@ const CARDS=[
  {id:'parallel_live_method',view:'benchmark',kind:'pairplots',plot:'method',
   title:'방법론 고유 신호 · SE 오차 / 시각 관측 / R-GAT 의미 상태'},
  {id:'benchmark_contract',view:'benchmark',kind:'contract',
-  title:'세 방법론 공통 RL 계약과 정보 경계'},
+  title:'두 방법론의 동일 Shin RL 계약과 추가 FOV 분기'},
  {id:'benchmark_eval_success',view:'benchmark',title:'[현재 평가] 이동 성공률',
   series:BENCHMARK_EVAL,x:'evaluation_index',y:'paper_success',smooth:5,ymin:0,ymax:1},
  {id:'benchmark_eval_return',view:'benchmark',title:'[현재 평가] episode 누적 보상',
@@ -224,13 +220,9 @@ const CARDS=[
  {id:'benchmark_active_saturation',view:'benchmark',title:'Active reward 포화율',
   series:BENCHMARK_TRAIN,x:'episode',y:'active_reward_saturation_fraction',
   smooth:12,ymin:0,ymax:1},
- {id:'benchmark_adaptive_weights',view:'benchmark',
-  title:'동결 adaptive reward 가중치 (episode 평균)',series:BENCHMARK_TRAIN,
-  x:'episode',y:['adaptive_weight_1_mean','adaptive_weight_2_mean',
-   'adaptive_weight_3_mean','adaptive_weight_4_mean','adaptive_weight_5_mean'],
-  labels:['lateral','vertical','vz safety','undershoot','yaw']},
- {id:'benchmark_adaptive_latency',view:'benchmark',title:'Adaptive R-GAT 추론 지연',
-  series:BENCHMARK_TRAIN,x:'episode',y:'adaptive_rgat_inference_latency_ms_mean',smooth:12},
+ {id:'benchmark_fov_risk',view:'benchmark',title:'미래 FOV 소실 확률 / 추가 보상',
+  series:BENCHMARK_STEP,x:'step',
+  y:['predicted_fov_loss_probability','ontology_fov_reward'],smooth:3},
  {id:'benchmark_policy_loss',view:'benchmark',title:'Recurrent PPO policy 손실',
   series:BENCHMARK_TRAIN,x:'episode',y:'ppo_loss',smooth:12},
  {id:'benchmark_value_loss',view:'benchmark',title:'Asymmetric critic value 손실',
@@ -257,29 +249,13 @@ const CARDS=[
   series:BENCHMARK_TRAIN,x:'episode',y:'unsafe_descent_low_visibility_fraction',
   smooth:12,ymin:0,ymax:1},
  {id:'graph3d',view:'benchmark',kind:'graph',
-  title:'Ontology → R-GAT encoder → MLP 출력 head 모듈 추적'},
+  title:'FOV Ontology → R-GAT 미래 소실 확률 모듈'},
 ];
 const LABELS={benchmark_step:'current episode',
- benchmark_train_shin_se:'A · Shin SE',benchmark_train_no_se:'B · No SE',
- benchmark_train_onto_no_se:'C · Onto No SE',
- benchmark_eval_shin_se:'A · Shin SE',benchmark_eval_no_se:'B · No SE',
- benchmark_eval_onto_no_se:'C · Onto No SE',
- benchmark_train_shin_se_fixed:'Shin SE · fixed',
- benchmark_train_shin_se_rgat_weight:'Shin SE · R-GAT weight',
- benchmark_train_no_se_fixed:'No SE · fixed',
- benchmark_train_onto_rgat_adaptive_weight_no_se:'Onto R-GAT adaptive · no SE',
- benchmark_train_onto_rgat_potential_pbrs_no_se:'Onto R-GAT potential PBRS · no SE',
- benchmark_eval_shin_se_fixed:'Shin SE · fixed',
- benchmark_eval_shin_se_rgat_weight:'Shin SE · R-GAT weight',
- benchmark_eval_no_se_fixed:'No SE · fixed',
- benchmark_eval_onto_rgat_adaptive_weight_no_se:'Onto R-GAT adaptive · no SE',
- benchmark_eval_onto_rgat_potential_pbrs_no_se:'Onto R-GAT potential PBRS · no SE',
- benchmark_train_shin2026:'Shin + active',benchmark_train_sparse:'Sparse',
- benchmark_train_manual_no_active:'Shin − active',benchmark_train_ontoreward:'OntoReward',
- benchmark_train_ontoreward_plus_active:'OntoReward + active',
- benchmark_eval_shin2026:'Shin + active',benchmark_eval_sparse:'Sparse',
- benchmark_eval_manual_no_active:'Shin − active',benchmark_eval_ontoreward:'OntoReward',
- benchmark_eval_ontoreward_plus_active:'OntoReward + active'};
+ benchmark_train_shin_se_fixed:'Baseline · Shin SE fixed',
+ benchmark_train_shin_se_onto_rgat_fov:'Proposed · Shin + Ontology-R-GAT FOV',
+ benchmark_eval_shin_se_fixed:'Baseline · Shin SE fixed',
+ benchmark_eval_shin_se_onto_rgat_fov:'Proposed · Shin + Ontology-R-GAT FOV'};
 const root=document.getElementById('root');
 for(const c of CARDS){
   const el=document.createElement('section');
@@ -293,7 +269,7 @@ for(const c of CARDS){
   else if(c.kind==='pairs'){el.innerHTML=`<h2>${c.title}</h2>
     <div class="pair-grid" id="parallel-pair-grid"></div>`;}
   else if(c.kind==='pairplots'){el.innerHTML=`<h2>${c.title}</h2><div class="pair-plot-grid">`
-    +[0,1,2].map(index=>`<div class="pair-plot"><h3 id="pair-title-${c.id}-${index}">`
+    +[0,1].map(index=>`<div class="pair-plot"><h3 id="pair-title-${c.id}-${index}">`
       +`Pair ${index+1} · 초기화 대기</h3><canvas id="cv-${c.id}-${index}"></canvas>`
       +`<div class="legend" id="lg-${c.id}-${index}"></div></div>`).join('')+'</div>';}
   else if(c.kind==='contract'){el.innerHTML=`<h2>${c.title}</h2>
@@ -324,8 +300,8 @@ for(const c of CARDS){
     <div class="note">Drag to rotate, wheel to zoom, hover a node to isolate its links.
       Depth is distance from the raw semantic channels to SafeLanding; node size and
       colour are the channel's current activation; edge width and opacity are the
-      second R-GAT layer's attention, which is learned importance and not causal
-      proof. Self-loops remain in the audit table even though the 3D canvas omits them.</div>`;}
+      R-GAT message-passing coefficients. They are not reported as relation importance
+      or causal evidence. Self-loops remain in the audit table even though the 3D canvas omits them.</div>`;}
   else{el.innerHTML=`<h2>${c.title}</h2><canvas id="cv-${c.id}"></canvas>
     <div class="legend" id="lg-${c.id}"></div>`;}
   root.appendChild(el);
@@ -400,7 +376,7 @@ function formatTick(v){const a=Math.abs(v);return a>=1000?v.toExponential(1):
 function methodLabel(method){return LABELS['benchmark_train_'+method]||method||'초기화 대기';}
 function drawPairPlots(card,state){
   const pairs=(state.scalars||{}).parallel_pair_status||[];
-  for(let index=0;index<3;index++){
+  for(let index=0;index<2;index++){
     const pair=pairs.find(item=>Number(item.index)===index)||pairs[index]||{};
     const assigned=String(pair.assigned_method||pair.method||'');
     const method=String(pair.active_method||assigned);
@@ -411,17 +387,17 @@ function drawPairPlots(card,state){
         (method&&method!==assigned?` · 학습 배정 ${assignedLabel}`:'');}
     let spec;
     if(card.plot==='reward')spec={
-      y:['reward','task','shape','active_perception'],
-      labels:['전체','terminal task','PBRS shaping','active perception']};
+      y:['reward','task','active_perception','ontology_fov_reward'],
+      labels:['전체','terminal task','Shin active perception','Ontology FOV 추가']};
     else if(card.plot==='flight')spec={
       y:['uav_speed_m_s','ugv_speed_m_s','in_fov','battery_reserve'],
       labels:['UAV 속도','UGV 속도','표적 FOV','배터리 여유'],ymin:0};
-    else if(method.startsWith('shin_se')||method==='shin2026')spec={
+    else if(method==='shin_se_onto_rgat_fov')spec={
+      y:['position_error','estimation_loss','predicted_fov_loss_probability','ontology_fov_reward'],
+      labels:['SE 위치 오차','6-state 손실','미래 FOV 소실 확률','추가 FOV 보상']};
+    else if(method==='shin_se_fixed')spec={
       y:['position_error','velocity_error','estimation_loss','in_fov'],
       labels:['위치 오차','속도 오차','6-state 손실','표적 FOV'],ymin:0};
-    else if(method.includes('rgat')||method.includes('onto'))spec={
-      y:['phi','phi_next','shape','semantic_image_alignment','semantic_visual_loss_risk'],
-      labels:['Phi(G_t)','Phi(G_t+1)','PBRS','image alignment','visual-loss risk']};
     else spec={
       y:['in_fov','lateral_progress','vertical_progress','vertical_speed_penalty'],
       labels:['표적 FOV','수평 progress','수직 progress','수직속도 penalty']};
@@ -437,7 +413,7 @@ function tiles(state){
   const trained=methods.reduce((n,m)=>n+(state.series['benchmark_train_'+m]||[]).length,0);
   add('단계',state.stage.name);
   add('실험 phase',s.benchmark_phase||'initializing');
-  add('UAV / UGV pair',Number(s.parallel_pair_count||3));
+  add('UAV / UGV pair',Number(s.parallel_pair_count||2));
   add('실행 모드',s.benchmark_mode||'--');
   const trainingDone=trained>=Number(s.training_total||0)&&Number(s.training_total||0)>0;
   add('학습 checkpoint',`${trained} / ${s.training_total||0}${trainingDone?' · 완료':' · 진행'}`);
@@ -464,9 +440,10 @@ function phasePanel(state){
     '현재 변화는 pair별 live plot, 방법별 평가 진행 수와 “[현재 평가]” 그래프에서 확인하십시오.</span>';
   else if(phase==='training')box.innerHTML='<b>PPO 학습 진행 중</b>'+
     '<span>episode가 종료되고 optimizer와 checkpoint 기록이 완료될 때 학습 그래프가 증가합니다.</span>';
-  else if(phase.includes('reward-design')||String(state.stage.name||'').includes('reward'))
-    box.innerHTML='<b>R-GAT 보상 설계 데이터 수집/학습 중</b>'+
-      '<span>Onto R-GAT pair은 동결된 No SE 행동 정책으로 실제 전이를 수집한 뒤 제안 PPO로 전환됩니다. 고정 보상 baseline은 동시에 학습합니다.</span>';
+  else if(phase.includes('reward-design')||String(state.stage.name||'').includes('reward')
+      ||String(state.stage.name||'').includes('FOV'))
+    box.innerHTML='<b>FOV-risk R-GAT 데이터 수집/학습 중</b>'+
+      '<span>제안 모델 전용 pair은 동결된 Shin baseline 정책으로 동일 simulator-domain 시각 전이를 수집합니다. baseline PPO는 다른 독립 pair에서 동시에 학습합니다.</span>';
   else box.innerHTML='<b>실험 초기화 중</b><span>pair 연결 및 artifact 준비 상태를 확인하고 있습니다.</span>';
 }
 function escapeHTML(value){return String(value??'--').replace(/[&<>"']/g,c=>
@@ -474,7 +451,8 @@ function escapeHTML(value){return String(value??'--').replace(/[&<>"']/g,c=>
 function pairPanel(state){
   const box=document.getElementById('parallel-pair-grid');if(!box)return;
   const s=state.scalars||{},pairs=s.parallel_pair_status||s.parallel_pair_layout||[];
-  box.innerHTML=[0,1,2].map(index=>{
+  const pairCount=Math.max(1,Number(s.parallel_pair_count||pairs.length||2));
+  box.innerHTML=Array.from({length:pairCount},(_,index)=>{
     const pair=pairs.find(item=>Number(item.index)===index)||pairs[index]||{index:index};
     const assigned=pair.assigned_method||pair.method||'--';
     const method=pair.active_method||assigned;
@@ -892,7 +870,7 @@ function applyProfile(state){
   const profile='benchmark';
   document.body.dataset.profile=profile;
   document.getElementById('page-title').textContent=
-    '3쌍 병렬 비전 착륙 · Isaac Sim + PX4 + PPO';
+    '2쌍 Shin baseline / Ontology-R-GAT FOV 비교';
   for(const c of CARDS){
     const el=document.getElementById('card-'+c.id);
     el.hidden=Boolean(c.view&&c.view!=='common'&&c.view!==profile);
@@ -907,10 +885,6 @@ function applyProfile(state){
                      'benchmark_eval_position','benchmark_eval_velocity',
                      'benchmark_eval_visual_loss']){
       const el=document.getElementById('card-'+id);if(el)el.hidden=!estimator;
-    }
-    const adaptive=active.some(x=>x.includes('adaptive_weight')||x==='shin_se_rgat_weight');
-    for(const id of ['benchmark_adaptive_weights','benchmark_adaptive_latency']){
-      const el=document.getElementById('card-'+id);if(el)el.hidden=!adaptive;
     }
   }
   return profile;

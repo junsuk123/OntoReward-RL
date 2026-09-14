@@ -1,0 +1,74 @@
+extends: shin2026_baseline.yaml
+experiment: two_pipeline_fov_risk
+pipelines: [shin_se_fixed, shin_se_onto_rgat_fov]
+paired_seeds: true
+
+# The two declarations are deliberately identical through the complete Shin
+# baseline. The proposed arm adds only the final two FOV flags.
+pipeline_contract:
+  shin_se_fixed:
+    state_estimation: true
+    auxiliary_estimation_loss: true
+    active_perception: true
+    reward_mode: shin_table_active
+    ontology_enabled: false
+    ontology_input_mode: null
+    use_direct_rgat_potential: false
+    fov_risk_reward: false
+    use_adaptive_reward_weights: false
+    adaptive_reward_architecture: null
+  shin_se_onto_rgat_fov:
+    state_estimation: true
+    auxiliary_estimation_loss: true
+    active_perception: true
+    reward_mode: shin_table_active
+    ontology_enabled: true
+    ontology_input_mode: fov_semantic_observation
+    use_direct_rgat_potential: false
+    fov_risk_reward: true
+    use_adaptive_reward_weights: false
+    adaptive_reward_architecture: null
+
+fov_risk:
+  lambda_fov: 0.1
+  prediction_horizon_seconds: 1.0
+  visibility_criterion: pad_in_fov
+  freeze_during_ppo: true
+
+fov_risk_design:
+  source_pipeline: shin_se_fixed
+  episodes_quick: 8
+  episodes_full: 40
+  max_episodes_quick: 24
+  max_episodes_full: 120
+  validation_fraction: 0.2
+  epochs_quick: 10
+  epochs_full: 80
+  batch_size: 64
+  learning_rate: 0.0005
+  hidden_dim: 24
+  relation_dim: 6
+  heads: 1
+
+# Disable the inherited legacy potential-design block on the primary path.
+rgat_design: null
+
+seeds:
+  fov_risk_dataset_start: 70000
+  estimator_warmup_start: 19000
+  independent_training_starts_full: [20000, 120000, 220000]
+
+training:
+  episodes_quick: 8
+  episodes_full: 40960
+  independent_seeds_full: [42, 1042, 2042]
+
+evaluation:
+  training_random_walk: 10000
+  straight_8mps: 1000
+  linear_acceleration_wave: 1000
+  circle: 1000
+  zigzag: 1000
+  u_turn: 1000
+  vertical_heave_boat: 1000
+

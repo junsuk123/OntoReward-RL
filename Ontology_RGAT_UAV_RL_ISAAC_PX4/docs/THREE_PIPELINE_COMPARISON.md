@@ -1,4 +1,7 @@
-# 3개 파이프라인 통제 비교
+# LEGACY / ABLATION ONLY: 3개 파이프라인 통제 비교
+
+> 이 문서는 이전 실험 재현용이다. 현재 기본 실행과 과학적 주장은
+> [두 pipeline 비교](TWO_PIPELINE_COMPARISON.md)가 정의한다.
 
 [문서 안내](README.md) · [시스템 개요](SYSTEM_OVERVIEW.md) ·
 [제안 알고리즘](ONTOLOGY_RGAT_ADAPTIVE_REWARD_WEIGHTING.md) ·

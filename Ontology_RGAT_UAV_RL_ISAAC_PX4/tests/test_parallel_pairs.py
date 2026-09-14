@@ -65,9 +65,29 @@ def test_parallel_route_phases_and_marker_ids_fit_declared_dictionary():
     assert min(expanded) >= 0 and max(expanded) < 250
 
 
-def test_bare_repository_launcher_selects_three_pair_operator_profile():
+def test_keypoint_calibration_uses_the_board_rendered_for_each_parallel_pair():
+    from config_loader import load_config
+    from run_three_pipeline import _calibration_system_for_pair
+
+    system = load_config(ROOT / "config/shin2026-system.yaml")
+    original_dictionary = system["vision"]["dictionary"]
+    original_ids = [int(marker["id"]) for marker in system["vision"]["board"]]
+    pair0 = _calibration_system_for_pair(system, 0, 2)
+    pair1 = _calibration_system_for_pair(system, 1, 2)
+    stride = int(system["parallel"]["marker_id_stride"])
+
+    assert pair0["vision"]["dictionary"] == system["parallel"]["marker_dictionary"]
+    assert [int(marker["id"]) for marker in pair0["vision"]["board"]] == original_ids
+    assert [int(marker["id"]) for marker in pair1["vision"]["board"]] == [
+        marker_id + stride for marker_id in original_ids]
+    assert system["vision"]["dictionary"] == original_dictionary
+    assert [int(marker["id"]) for marker in system["vision"]["board"]] == original_ids
+
+
+def test_bare_repository_launcher_selects_two_pair_operator_profile():
     launcher = (ROOT.parent / "run.sh").read_text(encoding="utf-8")
     assert "if [[ $# -eq 0 ]]" in launcher
     assert "seminar_fast=true" in launcher
-    assert "--parallel-pairs 3" in launcher
+    assert "--parallel-pairs 2" in launcher
+    assert "--pipelines shin_se_fixed shin_se_onto_rgat_fov" in launcher
     assert "--stay-open" in launcher

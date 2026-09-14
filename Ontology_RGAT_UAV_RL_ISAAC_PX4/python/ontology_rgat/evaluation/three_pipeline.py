@@ -1,4 +1,4 @@
-"""Reward-independent reporting for the primary three-pipeline comparison."""
+"""Reward-independent reporting shared by primary and legacy comparisons."""
 from __future__ import annotations
 
 import csv
@@ -16,6 +16,9 @@ PHYSICAL_METRICS = (
     "touchdown_relative_horizontal_velocity", "touchdown_tilt",
     "touchdown_roll", "touchdown_pitch", "touchdown_angular_rate",
     "collision_rate", "excessive_drift_rate", "fov_loss_fraction",
+    "fov_retention_ratio", "fov_loss_episode_rate",
+    "mean_continuous_fov_loss_duration_s",
+    "maximum_continuous_fov_loss_duration_s",
     "longest_visual_loss_s", "visual_loss_events",
     "visual_reacquisition_events", "visual_reacquisition_rate",
     "mean_visual_reacquisition_time_s", "recovery_climb_fraction",
@@ -24,7 +27,7 @@ PHYSICAL_METRICS = (
     "adaptive_rgat_inference_latency_ms_mean",
     "adaptive_rgat_parameter_count",
 )
-PRIMARY_PIPELINES = ("shin_se", "no_se", "onto_no_se")
+PRIMARY_PIPELINES = ("shin_se_fixed", "shin_se_onto_rgat_fov")
 
 
 def _replicate(row) -> str:
@@ -118,7 +121,9 @@ def paired_differences(records):
     index = {(_replicate(row), row["pipeline"], row["scenario"], int(row["seed"])): row
              for row in records}
     present = {row["pipeline"] for row in records}
-    if "onto_rgat_adaptive_weight_no_se" in present:
+    if "shin_se_onto_rgat_fov" in present:
+        comparisons = (("shin_se_onto_rgat_fov", "shin_se_fixed"),)
+    elif "onto_rgat_adaptive_weight_no_se" in present:
         proposed = "onto_rgat_adaptive_weight_no_se"
         baselines = [name for name in (
             "shin_se_fixed", "shin_se_rgat_weight", "no_se_fixed",
@@ -395,11 +400,13 @@ def _write_figures(records, training_records, figures_dir: Path,
     index = {(_replicate(row), row["pipeline"], row["scenario"], int(row["seed"])): row
              for row in records}
     labels, values = [], []
-    proposed = ("onto_rgat_adaptive_weight_no_se"
+    proposed = ("shin_se_onto_rgat_fov" if "shin_se_onto_rgat_fov" in pipelines
+                else "onto_rgat_adaptive_weight_no_se"
                 if "onto_rgat_adaptive_weight_no_se" in pipelines else "onto_no_se")
-    baselines = ([name for name in (
-        "shin_se_fixed", "shin_se_rgat_weight", "no_se_fixed",
-        "onto_rgat_potential_pbrs_no_se") if name in pipelines]
+    baselines = (["shin_se_fixed"] if proposed == "shin_se_onto_rgat_fov" else
+        [name for name in (
+            "shin_se_fixed", "shin_se_rgat_weight", "no_se_fixed",
+            "onto_rgat_potential_pbrs_no_se") if name in pipelines]
         if proposed != "onto_no_se" else ["shin_se", "no_se"])
     for baseline in baselines:
         diff = []

@@ -18,18 +18,15 @@ import numpy as np
 
 METHODS = (
     "shin_se_fixed",
-    "no_se_fixed",
-    "onto_rgat_adaptive_weight_no_se",
+    "shin_se_onto_rgat_fov",
 )
 METHOD_LABELS = {
-    "shin_se_fixed": "Shin SE · fixed",
-    "no_se_fixed": "No SE · fixed",
-    "onto_rgat_adaptive_weight_no_se": "Onto R-GAT · adaptive · no SE",
+    "shin_se_fixed": "Baseline · Shin SE fixed",
+    "shin_se_onto_rgat_fov": "Proposed · Shin + Ontology-R-GAT FOV",
 }
 METHOD_COLORS = {
     "shin_se_fixed": "#D95319",
-    "no_se_fixed": "#7E2F8E",
-    "onto_rgat_adaptive_weight_no_se": "#77AC30",
+    "shin_se_onto_rgat_fov": "#77AC30",
 }
 COMPONENT_LABELS = ("수평 접근", "수직 접근", "하강 안전", "미달 방지", "요 안정")
 COMPONENT_COLORS = ("#0072BD", "#D95319", "#EDB120", "#7E2F8E", "#77AC30")
@@ -137,9 +134,8 @@ def _current_training_rows(results_dir: Path, manifest: Mapping[str, Any]):
     specs = dict(manifest.get("pipeline_specs") or {})
     for method in METHODS:
         spec = dict(specs.get(method) or {})
-        # 적응 보상 artifact가 아직 없으면 예전 proposed CSV를 재사용하지 않는다.
-        if spec.get("use_adaptive_reward_weights") and not manifest.get(
-                "adaptive_reward_design_id"):
+        if spec.get("fov_risk_reward_enabled") and not manifest.get(
+                "fov_risk_design_id"):
             rows[method] = []
             continue
         primary = results_dir / "models" / method / f"{method}_training.csv"
@@ -267,8 +263,8 @@ def _save_performance_figures(output_dir: Path, summaries, distributions,
                         color="#777777", fontsize=8)
         ax.axhline(.35, color="#A2142F", linestyle="--", linewidth=1.3,
                    label="성공 한계 0.35 m")
-        ax.set_xlim(.5, 3.5)
-        ax.set_xticks(range(1, 4), labels, rotation=9, ha="right")
+        ax.set_xlim(.5, len(METHODS) + .5)
+        ax.set_xticks(range(1, len(METHODS) + 1), labels, rotation=9, ha="right")
         ax.set_ylabel("접촉 순간 수평 오차 [m]")
         ax.set_title("패드 접촉 시 수평 오차 분포", fontweight="bold")
         ax.legend(loc="upper right", fontsize=8)
@@ -571,6 +567,49 @@ def _save_reward_diagnostics(output_dir: Path, results_dir: Path,
     return [path, weights_path, validation_path], validation_rows, artifact_status, exact
 
 
+def _save_fov_risk_diagnostics(output_dir: Path, manifest: Mapping[str, Any]):
+    model = dict(manifest.get("fov_risk_model") or {})
+    validation = dict(model.get("validation_metrics") or {})
+    rows = [{
+        "metric": key,
+        "value": validation.get(key),
+        "split": "whole held-out episodes",
+    } for key in ("auroc", "f1", "precision", "recall", "best_validation_bce")]
+    confusion = validation.get("confusion_matrix")
+    if confusion:
+        rows.append({"metric": "confusion_matrix", "value": str(confusion),
+                     "split": "whole held-out episodes"})
+    _write_csv(output_dir / "fov_risk_validation.csv", rows)
+    status = ("validation-best frozen classifier" if model.get("frozen")
+              else "FOV-risk model training pending")
+    figures = []
+    finite = [(row["metric"], float(row["value"])) for row in rows
+              if row["metric"] != "confusion_matrix"
+              and row["value"] is not None
+              and math.isfinite(float(row["value"]))]
+    plt = _configure_matplotlib()
+    fig, ax = plt.subplots(figsize=(7.2, 4.15))
+    if finite:
+        names, values = zip(*finite)
+        ax.bar(names, values, color="#77AC30")
+        ax.set_ylim(0, max(1.0, max(values) * 1.1))
+        ax.set_ylabel("Metric value")
+    else:
+        ax.text(.5, .5, "FOV-risk model training pending", ha="center",
+                va="center", transform=ax.transAxes, color="#777777")
+        ax.set_xticks([])
+        ax.set_yticks([])
+    ax.set_title("Future FOV-loss R-GAT validation")
+    fig.tight_layout()
+    path = output_dir / "fov_risk_model_validation.png"
+    composite_path = output_dir / "slide14_rgat_reward_validation.png"
+    fig.savefig(path, dpi=220)
+    fig.savefig(composite_path, dpi=220)
+    plt.close(fig)
+    figures.extend((path, composite_path))
+    return figures, rows, status, bool(model.get("frozen"))
+
+
 def write_presentation_results(results_dir, output_dir=None) -> dict[str, Any]:
     """발표용 지표 CSV/JSON과 슬라이드용 PNG를 생성하고 경로를 반환한다."""
     results_dir = Path(results_dir).resolve()
@@ -584,10 +623,8 @@ def write_presentation_results(results_dir, output_dir=None) -> dict[str, Any]:
         output_dir, summaries, distributions, grouped, title, status,
         training_grouped=_current_training_rows(results_dir, manifest))
 
-    dataset_manifest = _read_json(
-        results_dir / "rgat" / "adaptive_reward_rollouts.manifest.json")
-    reward_figures, validation, artifact_status, exact = _save_reward_diagnostics(
-        output_dir, results_dir, dataset_manifest)
+    reward_figures, validation, artifact_status, exact = (
+        _save_fov_risk_diagnostics(output_dir, manifest))
     figures.extend(reward_figures)
     catalog = (
         {"slide": 14, "metric": "안전 착륙률", "definition":
@@ -598,14 +635,8 @@ def write_presentation_results(results_dir, output_dir=None) -> dict[str, Any]:
          "unsafe_pad_contact 평균", "uncertainty": "표본 수 N 병기"},
         {"slide": 14, "metric": "시야 상실률", "definition":
          "episode별 fov_loss_fraction 평균", "uncertainty": "표본 수 N 병기"},
-        {"slide": 15, "metric": "검증 정확도", "definition":
-         "held-out episode terminal outcome 분류 정확도", "uncertainty": "episode 분할"},
-        {"slide": 15, "metric": "순위 일치율", "definition":
-         "성공 trajectory 점수가 실패 trajectory보다 큰 pair 비율", "uncertainty": "선택 pair 수 병기"},
-        {"slide": 15, "metric": "평균 가중치 CV", "definition":
-         "상태별 adaptive weight 변동계수의 5성분 평균", "uncertainty": "품질 게이트 기준 비교"},
-        {"slide": 15, "metric": "관측 방향 일치율", "definition":
-         "관측 품질 변화와 semantic potential 변화의 방향 일치 비율", "uncertainty": "시간 인접 pair"},
+        {"slide": 15, "metric": "FOV-risk AUROC/F1", "definition":
+         "held-out episode의 1초 내 FOV-loss 이진 분류", "uncertainty": "episode 단위 분할"},
         {"slide": 16, "metric": "최근 5회 학습 안전 착륙률", "definition":
          "방법별 PPO training checkpoint에 기록된 strict_success의 5-episode 이동평균", "uncertainty": "학습 추세 진단"},
     )
@@ -632,8 +663,7 @@ def write_presentation_results(results_dir, output_dir=None) -> dict[str, Any]:
         "- `slide13_safe_landing_performance.png`: 13쪽 전체 패널\n"
         "- `page14_success_rate_ci.png`: 14쪽 안전 착륙률과 95% 신뢰구간\n"
         "- `page14_touchdown_lateral_error.png`: 14쪽 접촉 수평 오차 분포\n"
-        "- `page15_reward_weights_comparison.png`: 15쪽 고정/R-GAT 평균 가중치\n"
-        "- `page15_reward_model_validation.png`: 15쪽 보상 모델 검증 지표\n"
+        "- `fov_risk_model_validation.png`: R-GAT AUROC/F1/precision/recall\n"
         "- `page16_training_safe_landing_progress.png`: 16쪽 PPO 학습 진행 추세\n"
         "- `slide13_safe_landing_performance.png`, `slide14_rgat_reward_validation.png`: 복합 진단용\n\n"
         "> 완료 전 수치는 예비 학습 결과입니다. 최종 평가와 혼용하지 마십시오. "

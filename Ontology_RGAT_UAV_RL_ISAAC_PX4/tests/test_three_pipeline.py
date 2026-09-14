@@ -446,15 +446,16 @@ def test_excessive_post_update_kl_rolls_back_the_ppo_epoch():
 
 
 def test_primary_specs_encode_the_intended_information_boundaries():
-    shin = PIPELINES["shin_se"]
-    assert shin.state_estimation_enabled
-    assert shin.auxiliary_estimation_loss_enabled
-    assert shin.active_perception_enabled
-    for name in ("no_se", "onto_no_se"):
-        spec = PIPELINES[name]
-        assert not spec.state_estimation_enabled
-        assert not spec.auxiliary_estimation_loss_enabled
-        assert not spec.active_perception_enabled
+    baseline = PIPELINES["shin_se_fixed"]
+    proposed = PIPELINES["shin_se_onto_rgat_fov"]
+    for spec in (baseline, proposed):
+        assert spec.state_estimation_enabled
+        assert spec.auxiliary_estimation_loss_enabled
+        assert spec.active_perception_enabled
+        assert spec.reward_mode == "shin_table_active"
+    assert not baseline.ontology_enabled
+    assert proposed.ontology_enabled
+    assert proposed.fov_risk_reward_enabled
 
 
 def test_estimator_outputs_physical_units_beyond_tanh_and_normalizes_loss():
@@ -944,10 +945,10 @@ def test_multiple_training_replicates_use_hierarchical_paired_bootstrap():
 
 def test_pipeline_hash_changes_with_information_boundary_configuration():
     config = load_experiment(
-        ROOT / "config/experiments/three_pipeline_comparison.yaml")
+        ROOT / "config/experiments/two_pipeline_comparison.yaml")
     altered = {**config, "pipeline_contract": {
-        **config["pipeline_contract"], "onto_no_se": {
-            **config["pipeline_contract"]["onto_no_se"],
+        **config["pipeline_contract"], "shin_se_onto_rgat_fov": {
+            **config["pipeline_contract"]["shin_se_onto_rgat_fov"],
             "reward": "illegal_changed_reward"}}}
     assert configuration_hash(config) != configuration_hash(altered)
     assert tuple(config["pipelines"]) == tuple(PIPELINES)

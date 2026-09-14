@@ -34,6 +34,21 @@ from .semantic_dataset import (
 from .reward_design import (FixedRewardDesign, distill_reward_design,
                             load_reward_design, save_reward_design)
 from .topology import Topology
+from .fov_graph import (
+    FOV_FEATURE_NAMES, FOV_GOAL_NODE, FOV_GRAPH_INPUT_DIM, FOV_GRAPH_VERSION,
+    FOV_NODE_NAMES, FOV_RELATION_NAMES, FOVSemanticObservation,
+    build_fov_graph, empty_fov_graph, fov_margin,
+    fov_observation_from_visual_semantics)
+from .fov_risk_model import (FOV_RISK_MODEL_FORMAT, FOVRiskModel,
+                             FrozenFOVRiskPredictor, save_fov_risk_model,
+                             state_dict_digest)
+from .fov_risk_dataset import (
+    FOV_RISK_DATASET_FORMAT, build_fov_risk_dataset, dataset_digest,
+    future_fov_loss_labels, horizon_steps, load_fov_risk_dataset,
+    save_fov_risk_dataset, split_by_episode, validate_fov_risk_dataset)
+from .fov_risk_train import (binary_classification_metrics,
+                             prepare_fov_risk_artifact,
+                             train_fov_risk_model)
 
 __all__ = ["RGAT", "RelationalGraphAttention", "RGATEncoder", "PotentialHead",
            "RGATPotential", "Topology",
@@ -57,4 +72,16 @@ __all__ = ["RGAT", "RelationalGraphAttention", "RGATEncoder", "PotentialHead",
            "load_adaptive_dataset", "save_adaptive_dataset",
            "validate_adaptive_dataset", "prepare_adaptive_reward_artifact",
            "select_ranking_pairs", "temporal_smoothness_pairs",
-           "train_adaptive_reward_weights"]
+           "train_adaptive_reward_weights",
+           "FOV_FEATURE_NAMES", "FOV_GOAL_NODE", "FOV_GRAPH_INPUT_DIM",
+           "FOV_GRAPH_VERSION", "FOV_NODE_NAMES", "FOV_RELATION_NAMES",
+           "FOVSemanticObservation", "build_fov_graph", "empty_fov_graph",
+           "fov_margin", "fov_observation_from_visual_semantics",
+           "FOV_RISK_MODEL_FORMAT", "FOVRiskModel", "FrozenFOVRiskPredictor",
+           "save_fov_risk_model", "state_dict_digest",
+           "FOV_RISK_DATASET_FORMAT", "build_fov_risk_dataset",
+           "dataset_digest", "future_fov_loss_labels", "horizon_steps",
+           "load_fov_risk_dataset", "save_fov_risk_dataset",
+           "split_by_episode", "validate_fov_risk_dataset",
+           "binary_classification_metrics", "prepare_fov_risk_artifact",
+           "train_fov_risk_model"]

@@ -520,7 +520,7 @@ class BenchmarkMonitor:
             for item in self.pair_layout
         }
         self.store.set(
-            dashboard_profile="parallel_three_pair", benchmark_mode=str(mode),
+            dashboard_profile="parallel_two_pair", benchmark_mode=str(mode),
             benchmark_methods=list(self.methods), config_hash=str(config_hash),
             training_total=self.training_total,
             evaluation_total=self.evaluation_total,
@@ -537,12 +537,13 @@ class BenchmarkMonitor:
                              "512 LSTM -> latent y[256]"),
                 "actor": "y[6:256] + proprioception -> action[4]",
                 "critic": "training only: proprioception[7] + truth[6]",
-                "reward_side": ("A/B: training truth -> Table III; C: confidence-gated "
-                                "keypoints + visual history + UAV/battery reserve -> direct R-GAT"),
-                "state_estimation": ("shin_se only: unbounded y[0:6] decoded to "
-                                     "physical units; scale-normalized loss"),
+                "reward_side": ("both: unchanged Shin Table III + active perception; "
+                                "proposed only: -lambda_fov * P(future FOV loss)"),
+                "state_estimation": ("both: unbounded y[0:6] decoded to physical "
+                                     "units; identical scale-normalized auxiliary loss"),
                 "forbidden": ("deployed actor: platform/GNSS/truth; onto graph: "
-                              "relative estimate, simulator truth and critic truth"),
+                              "relative estimate, simulator truth, critic truth, "
+                              "platform position/velocity"),
             })
 
     def stage(self, name: str, detail: str = "") -> None:
@@ -646,7 +647,10 @@ class BenchmarkMonitor:
         for key in ("task", "lateral_progress", "vertical_progress",
                     "vertical_speed_penalty", "undershoot_penalty",
                     "yaw_rate_penalty", "active_perception", "shape",
-                    "phi", "phi_next"):
+                    "phi", "phi_next", "ontology_fov_reward",
+                    "predicted_fov_loss_probability", "fov_margin",
+                    "keypoint_confidence", "visible_keypoint_fraction",
+                    "visibility_memory", "reacquisition_trend"):
             point[key] = float(parts.get(key, 0.0))
         battery = (state.get("battery") if isinstance(state, dict)
                    and isinstance(state.get("battery"), dict) else {})

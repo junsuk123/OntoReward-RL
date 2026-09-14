@@ -1,0 +1,19 @@
+extends: two_pipeline_comparison.yaml
+
+seminar_fast:
+  label: 10-hour two-pair baseline-vs-FOV-risk preliminary comparison
+  publication_claim_allowed: false
+  evaluation_curriculum: 1.0
+  evaluation_scenarios: [training_random_walk, circle, zigzag]
+
+training:
+  episodes_full: 144
+
+ppo:
+  health_grace_episodes: 145
+
+fov_risk_design:
+  episodes_full: 40
+  max_episodes_full: 120
+  epochs_full: 80
+

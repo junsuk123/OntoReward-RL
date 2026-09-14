@@ -8,9 +8,9 @@ from pathlib import Path
 import yaml
 
 
-PRIMARY_PIPELINES = ("shin_se", "no_se", "onto_no_se")
+PRIMARY_PIPELINES = ("shin_se_fixed", "shin_se_onto_rgat_fov")
 ADAPTIVE_PIPELINES = (
-    "shin_se_fixed", "shin_se_rgat_weight", "no_se_fixed",
+    "shin_se_rgat_weight", "no_se_fixed",
     "onto_rgat_adaptive_weight_no_se", "onto_rgat_potential_pbrs_no_se",
     "mlp_adaptive_weight_no_se", "gat_adaptive_weight_no_se",
     "rgat_adaptive_weight_no_se",

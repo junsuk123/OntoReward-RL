@@ -5,8 +5,20 @@ from ontology_rgat.viz.live import BenchmarkMonitor, LiveStore, MATLAB_COLORS
 
 
 def test_benchmark_monitor_publishes_refactored_contract_and_progress():
+    class FakeRviz:
+        def __init__(self):
+            self.steps = []
+            self.potential = None
+
+        def clear_trails(self, **_kwargs):
+            pass
+
+        def publish_benchmark_step(self, **kwargs):
+            self.steps.append(kwargs)
+
     store = LiveStore()
-    monitor = BenchmarkMonitor(store)
+    rviz = FakeRviz()
+    monitor = BenchmarkMonitor(store, rviz=rviz)
     monitor.configure(
         methods=["shin_se_fixed", "shin_se_onto_rgat_fov"], mode="quick",
         config_hash="1234567890abcdef", training_total=16,
@@ -27,7 +39,9 @@ def test_benchmark_monitor_publishes_refactored_contract_and_progress():
         index=1, dt=0.1, method="shin_se_onto_rgat_fov", reward=0.3,
         reward_parts={"task": 0.0, "active_perception": -0.01,
                       "ontology_fov_reward": -0.02,
-                      "predicted_fov_loss_probability": 0.2},
+                      "predicted_fov_loss_probability": 0.2,
+                      "fov_margin": 0.35, "keypoint_confidence": 0.7,
+                      "visible_keypoint_fraction": 0.5},
         estimate=np.array([1, 0, -2, 0.5, 0, 0]),
         truth=np.array([0, 0, -2, 0, 0, 0]), in_fov=False,
         estimation_loss=0.2, state={
@@ -78,7 +92,14 @@ def test_benchmark_monitor_publishes_refactored_contract_and_progress():
     assert pair["step"] == 1
     assert pair["marker_visible"] is False
     assert pair["relative_xyz"] == [0.0, 0.0, -2.0]
+    assert pair["active_perception"] == -0.01
+    assert pair["fov_margin"] == 0.35
+    assert pair["predicted_fov_loss_probability"] == 0.2
+    assert pair["ontology_fov_reward"] == -0.02
     assert state["series"]["benchmark_step_pair_0"][-1]["reward"] == .3
+    assert rviz.steps[-1]["reward"] == .3
+    assert rviz.steps[-1]["reward_parts"]["fov_margin"] == .35
+    assert rviz.steps[-1]["pair_index"] == 0
 
 
 def test_benchmark_monitor_restores_csv_rows_and_pairs_evaluation_series():
@@ -188,6 +209,10 @@ def test_dashboard_has_self_contained_matlab_style_benchmark_view():
     assert "parallel-pair-grid" in PAGE
     assert "2쌍 Shin baseline / Ontology-R-GAT FOV 비교" in PAGE
     assert "FOV Ontology → R-GAT 미래 소실 확률 모듈" in PAGE
+    assert "공통 Shin active-perception reward" in PAGE
+    assert "제안 모델에만 추가된 Ontology-R-GAT FOV-risk reward" in PAGE
+    assert "P(loss≤1s)" in PAGE
+    assert "series:['benchmark_step_shin_se_onto_rgat_fov']" in PAGE
     assert "모든 node 값" in PAGE
     assert "모든 edge · attention-head 값" in PAGE
     assert "모든 MLP 출력 head 값" in PAGE

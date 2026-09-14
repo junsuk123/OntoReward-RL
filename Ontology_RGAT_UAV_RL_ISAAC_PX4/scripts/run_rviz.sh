@@ -10,8 +10,8 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --parallel-pairs)
       [[ $# -ge 2 ]] || { echo "ERROR: --parallel-pairs needs a value" >&2; exit 2; }
-      [[ "$2" =~ ^[1-3]$ ]] || {
-        echo "ERROR: --parallel-pairs must be between 1 and 3" >&2; exit 2;
+      [[ "$2" =~ ^[12]$ ]] || {
+        echo "ERROR: --parallel-pairs must be 1 or 2 for the primary comparison" >&2; exit 2;
       }
       if (( $2 > 1 )); then
         layout="$workspace_root/rviz/ontology_rgat_parallel.rviz"

@@ -109,6 +109,12 @@ color:var(--muted);font-size:10px}.pair-metrics{display:grid;grid-template-colum
 gap:5px}.pair-metrics div{background:#fff;border:1px solid #d0d0d0;padding:4px 5px}
 .pair-metrics b,.pair-metrics small{display:block}.pair-metrics b{font-size:13px;
 font-variant-numeric:tabular-nums}.pair-metrics small{font-size:9px;color:var(--muted)}
+.pair-rewards{display:grid;grid-template-columns:1fr 1.65fr;gap:5px;margin-top:6px}
+.pair-reward{border:1px solid #c5c5c5;border-left:4px solid var(--accent);background:#fff;
+padding:5px 7px}.pair-reward.added{border-left-color:var(--warn)}
+.pair-reward.off{border-left-color:var(--line);color:var(--muted)}
+.pair-reward b,.pair-reward small{display:block}.pair-reward b{font-size:11px;
+font-variant-numeric:tabular-nums}.pair-reward small{font-size:9px;color:var(--muted)}
 .pair-links{margin-top:6px;color:var(--muted);font:9px/1.45 "Courier New",monospace;
 overflow-wrap:anywhere}.pair-state{font-weight:600}.pair-state.running{color:var(--accent)}
 .pair-assignment{margin:-1px 0 7px;padding:3px 5px;border-left:3px solid var(--line);
@@ -221,8 +227,9 @@ const CARDS=[
   series:BENCHMARK_TRAIN,x:'episode',y:'active_reward_saturation_fraction',
   smooth:12,ymin:0,ymax:1},
  {id:'benchmark_fov_risk',view:'benchmark',title:'미래 FOV 소실 확률 / 추가 보상',
-  series:BENCHMARK_STEP,x:'step',
-  y:['predicted_fov_loss_probability','ontology_fov_reward'],smooth:3},
+  series:['benchmark_step_shin_se_onto_rgat_fov'],x:'step',
+  y:['predicted_fov_loss_probability','ontology_fov_reward'],
+  labels:['미래 FOV 소실 확률','Ontology-R-GAT FOV 추가 보상'],smooth:3},
  {id:'benchmark_policy_loss',view:'benchmark',title:'Recurrent PPO policy 손실',
   series:BENCHMARK_TRAIN,x:'episode',y:'ppo_loss',smooth:12},
  {id:'benchmark_value_loss',view:'benchmark',title:'Asymmetric critic value 손실',
@@ -465,6 +472,12 @@ function pairPanel(state){
     const marker=pair.marker_visible===null||pair.marker_visible===undefined
       ?'대기':(pair.marker_visible?'관측':'소실');
     const reserve=Number(pair.battery_reserve??live.battery_reserve);
+    const activeReward=Number(pair.active_perception??live.active_perception);
+    const fovMargin=Number(pair.fov_margin??live.fov_margin);
+    const fovRisk=Number(pair.predicted_fov_loss_probability??
+      live.predicted_fov_loss_probability);
+    const ontoReward=Number(pair.ontology_fov_reward??live.ontology_fov_reward);
+    const proposed=method==='shin_se_onto_rgat_fov';
     const gate=pair.landing_gate||null;
     const pos=xyz&&xyz.length===3
       ?`${Number(xyz[0]).toFixed(2)}, ${Number(xyz[1]).toFixed(2)}, ${Number(xyz[2]).toFixed(2)}`:'--';
@@ -480,6 +493,13 @@ function pairPanel(state){
       +`<div><b>${Number(pair.uav_speed_m_s??live.uav_speed_m_s??0).toFixed(2)} m/s</b><small>UAV 속도</small></div>`
       +`<div><b>${Number.isFinite(reserve)?(100*reserve).toFixed(1)+'%':'--'}</b><small>배터리 잔량</small></div>`
       +`<div><b>${escapeHTML(pos)}</b><small>패드 상대 XYZ (m)</small></div></div>`
+      +`<div class="pair-rewards"><div class="pair-reward"><b>${Number.isFinite(activeReward)?activeReward.toFixed(3):'--'}</b>`
+      +`<small>공통 Shin active-perception reward</small></div>`
+      +(proposed
+        ?`<div class="pair-reward added"><b>margin ${Number.isFinite(fovMargin)?fovMargin.toFixed(2):'--'} · P(loss≤1s) ${Number.isFinite(fovRisk)?fovRisk.toFixed(2):'--'} · r ${Number.isFinite(ontoReward)?ontoReward.toFixed(3):'--'}</b>`
+          +`<small>제안 모델에만 추가된 Ontology-R-GAT FOV-risk reward</small></div>`
+        :`<div class="pair-reward added off"><b>OFF</b><small>Ontology-R-GAT FOV-risk 추가 분기</small></div>`)
+      +`</div>`
       +(gate?`<div class="pair-gates">`+
         [['접촉','contact'],['위치','position'],['수직속도','vertical_speed'],
          ['수평상대속도','relative_horizontal_speed'],['자세','attitude'],['각속도','angular_rate']]
@@ -562,7 +582,7 @@ function drawEvaluationBars(card,state){
 }
 // ------------------------------------------------------------ 3D ontology
 // Hand-rolled: the page has to work with no network, so there is no three.js
-// to reach for. Fourteen nodes and forty edges is well inside what a painter's
+// to reach for. The compact fixed graph is well inside what a painter's
 // algorithm on a 2D canvas can do at 60 Hz, and doing it by hand is what lets
 // the depth cue, the attention width and the hover isolation share one pass.
 const REL_COLORS=['#c0392b','#0d8c4d','#1a59bf','#8a8f98'];

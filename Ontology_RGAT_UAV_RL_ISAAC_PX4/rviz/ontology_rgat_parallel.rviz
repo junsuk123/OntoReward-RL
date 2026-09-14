@@ -4,9 +4,8 @@ Panels:
     Property Tree Widget:
       Expanded:
         - /Global Options1
-        - /Pair 1 · Shin SE1
-        - /Pair 2 · No SE1
-        - /Pair 3 · Onto R-GAT1
+        - /Pair 1 · Baseline Shin SE fixed1
+        - /Pair 2 · Proposed + Ontology-R-GAT FOV1
       Splitter Ratio: 0.5
     Tree Height: 430
   - Class: rviz_common/Views
@@ -32,10 +31,8 @@ Visualization Manager:
         All Enabled: true
         landing_pad_0: {Value: true}
         landing_pad_1: {Value: true}
-        landing_pad_2: {Value: true}
         uav_body_0: {Value: true}
         uav_body_1: {Value: true}
-        uav_body_2: {Value: true}
         map: {Value: true}
       Marker Scale: 0.45
       Name: Pair-isolated TF
@@ -59,6 +56,20 @@ Visualization Manager:
             History Policy: Keep Last
             Reliability Policy: Best Effort
             Value: /landing_rl/pair_0/scene
+          Value: true
+        - Class: rviz_default_plugins/MarkerArray
+          Enabled: true
+          Name: FOV ontology graph (active only for proposed policy)
+          Namespaces:
+            ontology_edge: true
+            ontology_label: true
+            ontology_node: true
+          Topic:
+            Depth: 1
+            Durability Policy: Volatile
+            History Policy: Keep Last
+            Reliability Policy: Best Effort
+            Value: /landing_rl/pair_0/ontology
           Value: true
         - Alpha: 1
           Buffer Length: 1
@@ -99,7 +110,7 @@ Visualization Manager:
           Max Value: 1
           Median window: 5
           Min Value: 0
-          Name: Pair 1 camera · Shin SE
+          Name: Pair 1 camera · Baseline Shin SE fixed
           Normalize Range: false
           Topic:
             Depth: 1
@@ -109,7 +120,7 @@ Visualization Manager:
             Value: /landing_pair_0/uav/perception/landing_camera/annotated
           Value: true
       Enabled: true
-      Name: Pair 1 · Shin SE
+      Name: Pair 1 · Baseline Shin SE fixed
     - Class: rviz_common/Group
       Displays:
         - Class: rviz_default_plugins/MarkerArray
@@ -125,6 +136,20 @@ Visualization Manager:
             History Policy: Keep Last
             Reliability Policy: Best Effort
             Value: /landing_rl/pair_1/scene
+          Value: true
+        - Class: rviz_default_plugins/MarkerArray
+          Enabled: true
+          Name: FOV ontology graph (active only for proposed policy)
+          Namespaces:
+            ontology_edge: true
+            ontology_label: true
+            ontology_node: true
+          Topic:
+            Depth: 1
+            Durability Policy: Volatile
+            History Policy: Keep Last
+            Reliability Policy: Best Effort
+            Value: /landing_rl/pair_1/ontology
           Value: true
         - Alpha: 1
           Buffer Length: 1
@@ -165,7 +190,7 @@ Visualization Manager:
           Max Value: 1
           Median window: 5
           Min Value: 0
-          Name: Pair 2 camera · No SE
+          Name: Pair 2 camera · Proposed + Ontology-R-GAT FOV
           Normalize Range: false
           Topic:
             Depth: 1
@@ -175,87 +200,7 @@ Visualization Manager:
             Value: /landing_pair_1/uav/perception/landing_camera/annotated
           Value: true
       Enabled: true
-      Name: Pair 2 · No SE
-    - Class: rviz_common/Group
-      Displays:
-        - Class: rviz_default_plugins/MarkerArray
-          Enabled: true
-          Name: Scene and landing gate
-          Namespaces:
-            campus_road_route: true
-            landing_outcome: true
-            scene: true
-          Topic:
-            Depth: 1
-            Durability Policy: Volatile
-            History Policy: Keep Last
-            Reliability Policy: Best Effort
-            Value: /landing_rl/pair_2/scene
-          Value: true
-        - Class: rviz_default_plugins/MarkerArray
-          Enabled: true
-          Name: R-GAT ontology attention
-          Namespaces:
-            ontology_edge: true
-            ontology_label: true
-            ontology_node: true
-          Topic:
-            Depth: 1
-            Durability Policy: Volatile
-            History Policy: Keep Last
-            Reliability Policy: Best Effort
-            Value: /landing_rl/pair_2/ontology
-          Value: true
-        - Alpha: 1
-          Buffer Length: 1
-          Class: rviz_default_plugins/Path
-          Color: 237; 177; 32
-          Enabled: true
-          Line Style: Lines
-          Line Width: 0.025
-          Name: UAV trail
-          Pose Style: None
-          Topic:
-            Depth: 1
-            Durability Policy: Volatile
-            Filter size: 10
-            History Policy: Keep Last
-            Reliability Policy: Best Effort
-            Value: /landing_rl/pair_2/uav_path
-          Value: true
-        - Alpha: 1
-          Buffer Length: 1
-          Class: rviz_default_plugins/Path
-          Color: 77; 190; 238
-          Enabled: true
-          Line Style: Lines
-          Line Width: 0.02
-          Name: UGV trail
-          Pose Style: None
-          Topic:
-            Depth: 1
-            Durability Policy: Volatile
-            Filter size: 10
-            History Policy: Keep Last
-            Reliability Policy: Best Effort
-            Value: /landing_rl/pair_2/pad_path
-          Value: true
-        - Class: rviz_default_plugins/Image
-          Enabled: true
-          Max Value: 1
-          Median window: 5
-          Min Value: 0
-          Name: Pair 3 camera · Onto R-GAT
-          Normalize Range: false
-          Topic:
-            Depth: 1
-            Durability Policy: Volatile
-            History Policy: Keep Last
-            Reliability Policy: Best Effort
-            Value: /landing_pair_2/uav/perception/landing_camera/annotated
-          Value: true
-      Enabled: true
-      Name: Pair 3 · Onto R-GAT
+      Name: Pair 2 · Proposed + Ontology-R-GAT FOV
   Enabled: true
   Global Options:
     Background Color: 48; 48; 48
@@ -310,25 +255,15 @@ Visualization Manager:
         Target Frame: landing_pad_1
         Value: Orbit (rviz_default_plugins)
         Yaw: 2.35
-      - Class: rviz_default_plugins/Orbit
-        Distance: 8
-        Focal Point: {X: 0, Y: 0, Z: 1}
-        Name: Pair 3 close-up
-        Pitch: 0.42
-        Target Frame: landing_pad_2
-        Value: Orbit (rviz_default_plugins)
-        Yaw: 2.35
 Window Geometry:
   Displays:
     collapsed: false
   Height: 1016
   Hide Left Dock: false
   Hide Right Dock: false
-  Pair 1 camera · Shin SE:
+  Pair 1 camera · Baseline Shin SE fixed:
     collapsed: false
-  Pair 2 camera · No SE:
-    collapsed: false
-  Pair 3 camera · Onto R-GAT:
+  Pair 2 camera · Proposed + Ontology-R-GAT FOV:
     collapsed: false
   Views:
     collapsed: false

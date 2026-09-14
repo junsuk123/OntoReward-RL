@@ -4,7 +4,7 @@ This replaces the retired MATLAB ``viz.RealtimeMonitor`` figure. RViz is the
 better tool for the job here and not merely a substitute: it already has the
 simulator's own TF tree, the deck, the marker board and the camera, so the
 learner only has to add what it alone knows -- where the policy thinks it is,
-where it has been, and which ontology relations the potential is attending to.
+where it has been, and the proposed branch's current FOV-risk diagnostics.
 
 Topics published under ``cfg.viz.rviz.namespace`` (default ``/landing_rl``):
 
@@ -15,9 +15,9 @@ Topics published under ``cfg.viz.rviz.namespace`` (default ``/landing_rl``):
 ``/scene``                   ``visualization_msgs/MarkerArray``: deck, success
                              cylinder, wind/aero arrows, HUD and a persistent
                              colour-coded landing-outcome banner
-``/ontology``                ``visualization_msgs/MarkerArray``: the 14 ontology
-                             nodes coloured by activation and the 34 relation
-                             edges scaled by the potential's attention
+``/ontology``                ``visualization_msgs/MarkerArray``: the active
+                             ontology schema, node values, and R-GAT
+                             message-passing coefficients (when available)
 ``/telemetry``               ``std_msgs/String``, the same JSON the dashboard
                              gets, for anything else that wants to subscribe
 ===========================  ===================================================
@@ -33,7 +33,7 @@ from __future__ import annotations
 
 import json
 import math
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
 
 import numpy as np
 
@@ -43,16 +43,6 @@ __all__ = ["RvizPublisher", "RvizPublisherGroup"]
 # 0 degrades, 1 supports, 2 contributes, 3 self.
 RELATION_COLORS = ((0.85, 0.25, 0.20), (0.15, 0.60, 0.35),
                    (0.20, 0.45, 0.80), (0.55, 0.55, 0.58))
-
-# Column and row of each node in the graph overlay, in schema order. The layout
-# follows the edge structure: raw channels on the left, the derived stability
-# terms next, touchdown safety, then the goal.
-GRAPH_LAYOUT = (
-    (0, 3.5), (0, 2.5), (0, 1.5), (0, 0.5), (0, -0.5), (0, -1.5),
-    (1, -1.5), (1, 1.0), (1, -0.2), (2, 0.4), (0, -2.5), (0, -3.5), (0, -4.5),
-    (3, 0.4),
-)
-
 
 def _rgba(marker, rgb: Sequence[float], alpha: float = 1.0) -> None:
     marker.color.r, marker.color.g, marker.color.b = (float(c) for c in rgb)
@@ -387,39 +377,48 @@ class RvizPublisher:
         self.scene_pub.publish(array)
 
     # ------------------------------------------------------------- ontology
-    def _publish_ontology(self, cur) -> None:
-        """Draw the ontology with the potential's own attention on the edges.
+    def _publish_ontology_graph(self, graph, values=None, *, potential=None) -> None:
+        """Draw any active ontology without assuming the retired 14-node schema.
 
-        Attention is learned importance, not causal proof; the overlay is an
-        interpretability aid and is labelled as one in the docs.
+        Edge width is the R-GAT message-passing coefficient at this sample. It
+        is deliberately not labelled as relation importance or causal proof.
         """
         Marker = self.m["Marker"]
-        graph = cur.graph
-        values = cur.sem.node_values
+        if values is None:
+            values = np.asarray(graph.X, dtype=float)[0, :]
+        values = np.asarray(values, dtype=float).reshape(-1)
         origin = np.asarray(self.opt.graph_origin_pad_m, dtype=float)
         scale = float(self.opt.graph_scale_m)
-        positions = [origin + scale * np.array([2.0 * col, 0.0, row])
-                     for col, row in GRAPH_LAYOUT]
+        from .graph3d import layout_3d
+        layout = layout_3d(
+            graph.src, graph.dst, len(graph.node_names), int(graph.goal_node))
+        positions = [origin + scale * np.array([1.8 * p[0], p[1], p[2]])
+                     for p in layout]
 
         alpha = None
-        if self.potential is not None:
+        selected_potential = self.potential if potential is None else potential
+        if selected_potential is not None:
             try:
-                alpha = self.potential.explain(graph)["edge_alpha"]
+                alpha = selected_potential.explain(graph)["edge_alpha"]
             except Exception:                          # pragma: no cover - defensive
                 alpha = None
 
         array = self.m["MarkerArray"]()
-        from ..semantic import RISK_NODES, GOAL_NODE
         for i, (name, position) in enumerate(zip(graph.node_names, positions)):
             node = self._marker("ontology_node", i, Marker.SPHERE, self.opt.pad_frame)
             node.pose.position.x, node.pose.position.y, node.pose.position.z = (
                 float(position[0]), float(position[1]), float(position[2]))
             size = 0.09 + 0.10 * float(np.clip(values[i], 0.0, 1.0))
             node.scale.x = node.scale.y = node.scale.z = size
-            if i == GOAL_NODE:
+            node_name = str(name).lower()
+            is_risk = ("risk" in node_name or "loss" in node_name
+                       or "error" in node_name
+                       or str(name) in {"ImagePlaneMotion", "ScaleRate",
+                                        "TargetMotion"})
+            if i == int(graph.goal_node):
                 _rgba(node, (0.95, 0.78, 0.20), 0.95)
                 node.scale.x = node.scale.y = node.scale.z = 0.20
-            elif i in RISK_NODES:
+            elif is_risk:
                 _rgba(node, _risk_color(values[i]), 0.95)
             else:
                 _rgba(node, _support_color(values[i]), 0.95)
@@ -432,7 +431,8 @@ class RvizPublisher:
             label.pose.position.z = float(position[2]) + 0.16
             label.scale.z = 0.085
             _rgba(label, (0.92, 0.92, 0.92), 0.9)
-            label.text = (name if i == GOAL_NODE else f"{name} {values[i]:.2f}")
+            label.text = (str(name) if i == int(graph.goal_node)
+                          else f"{name} {values[i]:.2f}")
             array.markers.append(label)
 
         peak = float(np.max(alpha)) if alpha is not None and alpha.size else 1.0
@@ -452,6 +452,10 @@ class RvizPublisher:
             _rgba(edge, RELATION_COLORS[int(r) % len(RELATION_COLORS)], 0.35 + 0.6 * a)
             array.markers.append(edge)
         self.graph_pub.publish(array)
+
+    def _publish_ontology(self, cur) -> None:
+        self._publish_ontology_graph(
+            cur.graph, cur.sem.node_values, potential=self.potential)
 
     # ------------------------------------------------------------ per step
     def publish_step(self, log, cur, info: dict[str, Any]) -> None:
@@ -506,6 +510,9 @@ class RvizPublisher:
     def publish_benchmark_step(self, *, state: dict[str, Any], method: str,
                                scenario: str, step: int, dt: float,
                                in_fov: bool, status: str,
+                               reward: float = 0.0,
+                               reward_parts: Mapping[str, Any] | None = None,
+                               semantic_graph=None, potential=None,
                                pair_index: int | None = None) -> None:
         """Publish the recurrent Shin benchmark without its legacy log type.
 
@@ -551,6 +558,14 @@ class RvizPublisher:
         self._publish_path(
             self.pad_path_pub, self.opt.pad_frame, pad_relative_trail)
 
+        parts = reward_parts or {}
+        is_proposed = str(method) == "shin_se_onto_rgat_fov"
+        active_reward = float(parts.get("active_perception", 0.0))
+        onto_reward = float(parts.get("ontology_fov_reward", 0.0))
+        fov_risk = float(np.clip(
+            parts.get("predicted_fov_loss_probability", 0.0), 0.0, 1.0))
+        fov_margin = float(np.clip(parts.get("fov_margin", 0.0), 0.0, 1.0))
+
         Marker = self.m["Marker"]
         array = self.m["MarkerArray"]()
         deck = self._marker("scene", 0, Marker.CUBE, self.opt.pad_frame)
@@ -571,7 +586,8 @@ class RvizPublisher:
         uav.pose.position.x, uav.pose.position.y, uav.pose.position.z = (
             float(value) for value in relative)
         uav.scale.x, uav.scale.y, uav.scale.z = 0.34, 0.34, 0.14
-        _rgba(uav, (0.16, 0.48, 0.95), 0.96)
+        _rgba(uav, _risk_color(fov_risk) if is_proposed
+              else (0.16, 0.48, 0.95), 0.96)
         array.markers.append(uav)
 
         drop = self._marker("scene", 3, Marker.LINE_LIST, self.opt.pad_frame)
@@ -590,10 +606,18 @@ class RvizPublisher:
                   else (0.98, 0.30, 0.22) if status == "failure"
                   else (0.94, 0.94, 0.94))
         _rgba(text, colour, 0.96)
-        text.text = (f"{method} | {scenario}\n"
+        method_label = ("PROPOSED · Shin + Ontology-R-GAT FOV"
+                        if is_proposed else "BASELINE · Shin SE fixed")
+        common = (f"COMMON Shin: r={float(reward):+.3f}  "
+                  f"r_active={active_reward:+.3f}")
+        branch = (f"ADDED FOV: margin={fov_margin:.2f}  "
+                  f"P(loss<=1s)={fov_risk:.2f}  r_onto={onto_reward:+.3f}"
+                  if is_proposed else "ADDED FOV branch: OFF")
+        text.text = (f"{method_label} | {scenario}\n"
                      f"t={step * dt:5.1f}s  {status.upper()}\n"
                      f"relative xyz=({relative[0]:+.2f}, {relative[1]:+.2f}, "
-                     f"{relative[2]:+.2f}) m  marker={'ON' if in_fov else 'LOST'}")
+                     f"{relative[2]:+.2f}) m  marker={'ON' if in_fov else 'LOST'}\n"
+                     f"{common}\n{branch}")
         array.markers.append(text)
 
         route_points = tuple(getattr(self.opt, "route_waypoints_enu_m", ()))
@@ -610,23 +634,36 @@ class RvizPublisher:
             array.markers.append(route)
         self.scene_pub.publish(array)
 
+        self._counter += 1
+        publish_graph = bool(getattr(self.opt, "publish_ontology_graph", True))
+        if (semantic_graph is not None and publish_graph
+                and (int(step) == 1 or self._counter % self._graph_every == 0
+                     or str(status) != "running")):
+            self._publish_ontology_graph(semantic_graph, potential=potential)
+
         message = self.m["String"]()
         message.data = json.dumps({
             "method": str(method), "scenario": str(scenario),
             "step": int(step), "t": float(step * dt), "status": str(status),
             "position_pad": [float(value) for value in relative],
             "marker_visible": bool(in_fov),
-        })
+            "reward": float(reward),
+            "active_perception_reward": active_reward,
+            "ontology_fov_branch_enabled": is_proposed,
+            "fov_margin": fov_margin if is_proposed else None,
+            "predicted_fov_loss_probability": fov_risk if is_proposed else None,
+            "ontology_fov_reward": onto_reward if is_proposed else None,
+        }, allow_nan=False)
         self.telemetry_pub.publish(message)
 
 
 class RvizPublisherGroup:
     """Route each concurrent method to its own RViz topics and TF frames.
 
-    The three learners share one process and one Isaac stage, but visual state
+    The two learners share one process and one Isaac stage, but visual state
     is not a shared control resource. Keeping an independent publisher and
     trail per method prevents one episode reset from erasing the other two and
-    prevents three ``map -> landing_pad`` transforms from overwriting each
+    prevents the two ``map -> landing_pad`` transforms from overwriting each
     other.
     """
 

@@ -1,3 +1,4 @@
+import json
 from types import SimpleNamespace
 from pathlib import Path
 
@@ -5,6 +6,7 @@ import numpy as np
 
 from ontology_rgat.viz.rviz import _outcome_style
 from ontology_rgat.viz.rviz import RvizPublisher, RvizPublisherGroup
+from ontology_rgat.rgat.fov_graph import FOVSemanticObservation, build_fov_graph
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -34,18 +36,23 @@ def test_rviz_keeps_map_fixed_and_follows_the_landing_pad():
     assert profile.count("Reliability Policy: Best Effort") == 7
 
 
-def test_parallel_rviz_layout_has_three_isolated_pairs_and_cameras():
+def test_parallel_rviz_layout_has_exactly_two_primary_pairs_and_cameras():
     profile = (ROOT / "rviz" / "ontology_rgat_parallel.rviz").read_text(
         encoding="utf-8")
     assert "Fixed Frame: map" in profile
-    for index in range(3):
+    for index in range(2):
         assert f"/landing_rl/pair_{index}/scene" in profile
+        assert f"/landing_rl/pair_{index}/ontology" in profile
         assert f"/landing_rl/pair_{index}/uav_path" in profile
         assert f"/landing_rl/pair_{index}/pad_path" in profile
         assert (f"/landing_pair_{index}/uav/perception/landing_camera/annotated"
                 in profile)
         assert f"Target Frame: landing_pad_{index}" in profile
-    assert "/landing_rl/pair_2/ontology" in profile
+    assert "Pair 1 · Baseline Shin SE fixed" in profile
+    assert "Pair 2 · Proposed + Ontology-R-GAT FOV" in profile
+    assert "No SE" not in profile
+    assert "pair_2" not in profile
+    assert "landing_pad_2" not in profile
 
 
 def test_rviz_group_routes_reset_and_step_by_method():
@@ -141,3 +148,56 @@ def test_terminal_scene_publishes_banner_hit_and_miss_line():
     assert outcome[0].text.startswith("LANDING FAILED")
     assert "0.50 m" in outcome[0].text
     assert outcome[0].color.r > outcome[0].color.g
+
+
+def test_benchmark_scene_and_telemetry_show_proposed_fov_branch():
+    rviz = RvizPublisher.__new__(RvizPublisher)
+    rviz.cfg = SimpleNamespace(criteria=SimpleNamespace(xy=0.35))
+    rviz.opt = SimpleNamespace(
+        pad_frame="landing_pad_1", publish_rate_hz=10.0, trail_length=20,
+        deck_size_m=(1.5, 1.5), route_waypoints_enu_m=(),
+        publish_ontology_graph=True, graph_origin_pad_m=(0.0, -2.6, 1.6),
+        graph_scale_m=0.42)
+    rviz.node = SimpleNamespace(
+        get_clock=lambda: SimpleNamespace(now=lambda: SimpleNamespace(to_msg=lambda: 0)))
+    rviz.m = {
+        "Marker": _Message, "MarkerArray": _MarkerArray, "Point": _Message,
+        "String": _Message, "Path": _Message, "PoseStamped": _Message,
+    }
+    rviz.scene_pub = _Publisher()
+    rviz.graph_pub = _Publisher()
+    rviz.telemetry_pub = _Publisher()
+    rviz.uav_path_pub = _Publisher()
+    rviz.pad_path_pub = _Publisher()
+    rviz._uav_trail = []
+    rviz._pad_trail = []
+    rviz._counter = 0
+    rviz._graph_every = 5
+    rviz.potential = None
+    rviz._broadcast_tf = lambda *_args: None
+    rviz._publish_path = lambda *_args: None
+    graph = build_fov_graph(FOVSemanticObservation(*([0.5] * 8)))
+
+    rviz.publish_benchmark_step(
+        state={"pad": {"position": [0.0, 0.0, 0.0]},
+               "truth": {"valid": True, "position": [0.1, -0.2, 1.3]},
+               "quaternion_wxyz": [1.0, 0.0, 0.0, 0.0]},
+        method="shin_se_onto_rgat_fov", scenario="circle", step=1, dt=0.1,
+        in_fov=True, status="running", reward=-0.07,
+        reward_parts={"active_perception": -0.01, "fov_margin": 0.3,
+                      "predicted_fov_loss_probability": 0.6,
+                      "ontology_fov_reward": -0.06},
+        semantic_graph=graph)
+
+    scene = rviz.scene_pub.messages[-1].markers
+    hud = next(marker for marker in scene if marker.type == _Message.TEXT_VIEW_FACING)
+    assert "PROPOSED · Shin + Ontology-R-GAT FOV" in hud.text
+    assert "COMMON Shin" in hud.text
+    assert "P(loss<=1s)=0.60" in hud.text
+    assert "r_onto=-0.060" in hud.text
+    assert rviz.graph_pub.messages[-1].markers
+    telemetry = json.loads(rviz.telemetry_pub.messages[-1].data)
+    assert telemetry["ontology_fov_branch_enabled"] is True
+    assert telemetry["active_perception_reward"] == -0.01
+    assert telemetry["predicted_fov_loss_probability"] == 0.6
+    assert telemetry["ontology_fov_reward"] == -0.06

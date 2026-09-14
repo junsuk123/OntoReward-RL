@@ -1,4 +1,4 @@
-"""Live training telemetry: one store, three consumers.
+"""Live training telemetry shared by the browser, RViz, and file exports.
 
 The retired MATLAB monitors each owned a figure window, which is why an
 unattended run was invisible from outside MATLAB and a headless one was
@@ -691,12 +691,23 @@ class BenchmarkMonitor:
             ugv_speed_m_s=point["ugv_speed_m_s"],
             battery_reserve=point["battery_reserve"],
             relative_xyz=(relative.tolist() if relative.shape == (3,) else None),
-            reward=float(reward), pair_index=resolved_pair_index)
+            reward=float(reward),
+            active_perception=point["active_perception"],
+            ontology_fov_reward=point["ontology_fov_reward"],
+            predicted_fov_loss_probability=point[
+                "predicted_fov_loss_probability"],
+            fov_margin=point["fov_margin"],
+            keypoint_confidence=point["keypoint_confidence"],
+            visible_keypoint_fraction=point["visible_keypoint_fraction"],
+            pair_index=resolved_pair_index)
         if self.rviz is not None and state is not None:
             self.rviz.publish_benchmark_step(
                 state=state, method=method, scenario=scenario, step=index,
                 dt=dt, in_fov=in_fov, status=status,
-                pair_index=pair_index)
+                reward=float(reward), reward_parts=parts,
+                semantic_graph=semantic_graph,
+                potential=self.potential_for(method),
+                pair_index=resolved_pair_index)
 
     def restore_training(self, method: str, history: Sequence[dict[str, Any]]) -> None:
         rows = [self._plain(dict(row)) for row in history]

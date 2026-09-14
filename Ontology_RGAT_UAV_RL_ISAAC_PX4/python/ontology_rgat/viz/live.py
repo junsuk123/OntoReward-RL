@@ -51,6 +51,10 @@ class LiveStore:
         # only the latest one is ever drawn, and keeping a history of them
         # would be several megabytes of graph nobody looks at.
         self._graph: dict[str, Any] | None = None
+        # Parallel workers must not overwrite one another's graph. Keep one
+        # latest snapshot per physical-pair/method while retaining ``graph``
+        # above for clients written against the former single-graph API.
+        self._graphs: dict[str, dict[str, Any]] = {}
         self._stage = {"name": "idle", "detail": "", "started": time.time()}
         self.revision = 0
 
@@ -73,10 +77,16 @@ class LiveStore:
             self._scalars.update(scalars)
             self.revision += 1
 
-    def graph(self, payload: dict[str, Any] | None) -> None:
-        """Replace the ontology graph snapshot the 3D view draws."""
+    def graph(self, payload: dict[str, Any] | None, *, key: str | None = None) -> None:
+        """Replace one keyed graph snapshot and the legacy latest snapshot."""
         with self._lock:
             self._graph = payload
+            if key is not None:
+                graph_key = str(key)
+                if payload is None:
+                    self._graphs.pop(graph_key, None)
+                else:
+                    self._graphs[graph_key] = payload
             self.revision += 1
 
     def stage(self, name: str, detail: str = "") -> None:
@@ -93,6 +103,7 @@ class LiveStore:
                 "scalars": dict(self._scalars),
                 "series": {k: list(v) for k, v in self._series.items()},
                 "graph": self._graph,
+                "graphs": dict(self._graphs),
                 "time": time.time(),
             }
 
@@ -409,6 +420,7 @@ class BenchmarkMonitor:
         self.store = store or STORE
         self.rviz = rviz
         self._potential = None
+        self._potentials: dict[str, Any] = {}
         self.methods: tuple[str, ...] = ()
         self.training_total = 0
         self.evaluation_total = 0
@@ -425,18 +437,33 @@ class BenchmarkMonitor:
         if self.rviz is not None:
             self.rviz.potential = value
 
+    def set_potential(self, method: str, value) -> None:
+        """Bind a reward-side model to exactly one experiment arm."""
+        self._potentials[str(method)] = value
+        if len(self.methods) <= 1:
+            self.potential = value
+
+    def potential_for(self, method: str):
+        selected = self._potentials.get(str(method))
+        if selected is not None:
+            return selected
+        return self._potential if len(self.methods) <= 1 else None
+
+    def _resolve_pair_index(self, method: str, pair_index: int | None) -> int:
+        if pair_index is not None:
+            return int(pair_index)
+        matching = [index for index, status in self.pair_status.items()
+                    if str(status.get("assigned_method",
+                                      status.get("method"))) == str(method)]
+        if not matching:
+            matching = [index for index, status in self.pair_status.items()
+                        if str(status.get("active_method")) == str(method)]
+        return int(matching[0] if matching else 0)
+
     def _update_pair(self, method: str, *, pair_index: int | None = None,
                      **values: Any) -> None:
         """Atomically publish one pair without overwriting another worker."""
-        if pair_index is None:
-            matching = [index for index, status in self.pair_status.items()
-                        if str(status.get("assigned_method",
-                                          status.get("method"))) == str(method)]
-            if not matching:
-                matching = [index for index, status in self.pair_status.items()
-                            if str(status.get("active_method")) == str(method)]
-            pair_index = matching[0] if matching else 0
-        key = int(pair_index)
+        key = self._resolve_pair_index(method, pair_index)
         current = dict(self.pair_status.get(key) or {"index": key})
         # ``method`` in the layout is the experiment arm permanently assigned
         # to this physical pair. Reward-design collection can temporarily run
@@ -529,12 +556,7 @@ class BenchmarkMonitor:
         if len(self.methods) <= 1:
             self.store.replace("benchmark_step", [])
         self.store.replace(f"benchmark_step_{method}", [])
-        resolved_pair_index = pair_index
-        if resolved_pair_index is None:
-            matching = [index for index, status in self.pair_status.items()
-                        if str(status.get("assigned_method",
-                                          status.get("method"))) == str(method)]
-            resolved_pair_index = matching[0] if matching else 0
+        resolved_pair_index = self._resolve_pair_index(method, pair_index)
         self.store.replace(f"benchmark_step_pair_{int(resolved_pair_index)}", [])
         # Completed histories only advance after optimizer/checkpoint commit.
         # Publish the in-flight episode separately so a 30 s simulated flight
@@ -606,11 +628,21 @@ class BenchmarkMonitor:
             if values.shape == (len(SEMANTIC_FEATURE_NAMES),):
                 point.update({f"semantic_{name}": float(value)
                               for name, value in zip(SEMANTIC_FEATURE_NAMES, values)})
-        if semantic_graph is not None:
+        resolved_pair_index = self._resolve_pair_index(method, pair_index)
+        # The browser polls at 1.5 s and the graph is an audit view, not a
+        # control input. Re-running the encoder trace every fifth 10 Hz step is
+        # sufficient while keeping the telemetry cost away from PPO timing.
+        if semantic_graph is not None and (int(index) == 1 or int(index) % 5 == 0):
             from .graph3d import graph_payload
+            graph_key = f"pair_{resolved_pair_index}:{method}"
             self.store.graph(graph_payload(
-                semantic_graph, potential=self.potential,
-                source=f"{method} step {index}", phi=parts.get("phi")))
+                semantic_graph, potential=self.potential_for(method),
+                source=f"pair {resolved_pair_index + 1} · {method} step {index}",
+                phi=parts.get("phi"), extra={
+                    "graph_id": graph_key,
+                    "method": str(method),
+                    "pair_index": int(resolved_pair_index),
+                }), key=graph_key)
         for key in ("task", "lateral_progress", "vertical_progress",
                     "vertical_speed_penalty", "undershoot_penalty",
                     "yaw_rate_penalty", "active_perception", "shape",
@@ -640,12 +672,6 @@ class BenchmarkMonitor:
         if len(self.methods) <= 1:
             self.store.append("benchmark_step", point)
         self.store.append(f"benchmark_step_{method}", point)
-        resolved_pair_index = pair_index
-        if resolved_pair_index is None:
-            matching = [index for index, status in self.pair_status.items()
-                        if str(status.get("assigned_method",
-                                          status.get("method"))) == str(method)]
-            resolved_pair_index = matching[0] if matching else 0
         self.store.append(
             f"benchmark_step_pair_{int(resolved_pair_index)}", point)
         relative = np.asarray(

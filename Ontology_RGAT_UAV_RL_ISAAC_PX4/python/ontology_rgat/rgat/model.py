@@ -49,6 +49,25 @@ class RGATEncoder(nn.Module):
     def out_dim(self) -> int:
         return int(self.layer2.out_dim)
 
+    def module_description(self) -> dict[str, Any]:
+        """JSON-safe architecture metadata for monitoring and reports."""
+        return {
+            "name": type(self).__name__,
+            "kind": "R-GAT encoder",
+            "input_dim": self.in_dim,
+            "output_dim": self.out_dim,
+            "residual": self.residual,
+            "layers": [{
+                "name": f"R-GAT layer {index}",
+                "input_dim": int(layer.in_dim),
+                "output_dim": int(layer.out_dim),
+                "attention_heads": int(layer.heads),
+                "head_aggregation": str(layer.head_aggregation),
+                "attention_mode": str(layer.attention_mode),
+                "attention_style": str(layer.attention_style),
+            } for index, layer in enumerate((self.layer1, self.layer2), start=1)],
+        }
+
     def reset_encoder_parameters(self, generator: torch.Generator, *,
                                  scheme: str = "matlab", scale: float = 0.12) -> None:
         self.layer1.reset_parameters(generator, scheme=scheme, scale=scale)
@@ -147,28 +166,57 @@ class RGATPotential(RGATEncoder):
 
     @torch.no_grad()
     def explain(self, graph: OntologyGraph) -> dict[str, Any]:
-        """Second-layer edge attention, for interpretability only.
+        """Node, per-head edge and output-head values for interpretability.
 
         Attention is learned importance, not causal proof.
         """
-        device = self.w_out.device
-        X = torch.as_tensor(graph.X.T, dtype=self.w_out.dtype, device=device).unsqueeze(0)
-        _, alpha = super().forward(X, return_attention=True)
-        edge_alpha = alpha.mean(dim=(0, 1)).cpu().numpy()   # mean over batch and heads
-        rel = np.asarray(graph.rel)
-        n_rel = len(graph.relation_names)
-        relation_mean = np.array([
-            float(edge_alpha[rel == r].mean()) if np.any(rel == r) else 0.0
-            for r in range(n_rel)])
-        return {
-            "edge_alpha": edge_alpha,
-            "src": np.asarray(graph.src),
-            "dst": np.asarray(graph.dst),
-            "rel": rel,
-            "relation_mean": relation_mean,
-            "relation_names": list(graph.relation_names),
-            "node_names": list(graph.node_names),
-        }
+        was_training = self.training
+        self.eval()
+        try:
+            device = self.w_out.device
+            X = torch.as_tensor(
+                graph.X.T, dtype=self.w_out.dtype, device=device).unsqueeze(0)
+            encoded, alpha = super().forward(X, return_attention=True)
+            goal = encoded[:, self.topology.goal_node, :]
+            pre_activation = goal @ self.w_out.t() + self.b_out
+            phi = torch.tanh(pre_activation).squeeze(-1)
+            # alpha is [batch, attention-head, edge]. Preserve every head for
+            # the audit table while retaining the historical mean for width.
+            edge_alpha_heads = alpha[0].transpose(0, 1).cpu().numpy()
+            edge_alpha = edge_alpha_heads.mean(axis=1)
+            embeddings = encoded[0].cpu().numpy()
+            rel = np.asarray(graph.rel)
+            n_rel = len(graph.relation_names)
+            relation_mean = np.array([
+                float(edge_alpha[rel == r].mean()) if np.any(rel == r) else 0.0
+                for r in range(n_rel)])
+            return {
+                "edge_alpha": edge_alpha,
+                "edge_alpha_heads": edge_alpha_heads,
+                "node_embeddings": embeddings,
+                "src": np.asarray(graph.src),
+                "dst": np.asarray(graph.dst),
+                "rel": rel,
+                "relation_mean": relation_mean,
+                "relation_names": list(graph.relation_names),
+                "node_names": list(graph.node_names),
+                "model": {
+                    "architecture": "rgat_potential",
+                    "encoder": self.module_description(),
+                    "output_heads": [{
+                        "name": "PotentialHead",
+                        "kind": "Linear + tanh",
+                        "inputs": [str(graph.node_names[graph.goal_node])],
+                        "outputs": [{
+                            "name": "Phi",
+                            "pre_activation": float(pre_activation[0, 0].cpu()),
+                            "value": float(phi[0].cpu()),
+                        }],
+                    }],
+                },
+            }
+        finally:
+            self.train(was_training)
 
 
 def build_potential(cfg: Config, graph: OntologyGraph,

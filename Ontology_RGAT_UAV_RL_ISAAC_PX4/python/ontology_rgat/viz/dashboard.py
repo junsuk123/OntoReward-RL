@@ -135,6 +135,8 @@ font:12px/1.5 "Courier New",monospace;text-align:center}
 font-size:11px;color:var(--muted)}
 .bar label{display:flex;gap:5px;align-items:center}
 .bar input[type=range]{width:104px}
+.bar select{max-width:330px;font:inherit;font-size:11px;padding:2px 6px;border:1px solid var(--line);
+background:var(--card);color:var(--ink)}
 .bar button{font:inherit;font-size:11px;padding:2px 9px;border:1px solid var(--line);
 border-radius:6px;background:var(--card);color:var(--ink);cursor:pointer}
 .tip{position:absolute;pointer-events:none;z-index:2;background:var(--card);
@@ -146,9 +148,23 @@ font-size:11px;color:var(--muted);margin-top:10px}
 .relbar .track i{display:block;height:6px;border-radius:3px}
 .relbar b{font-variant-numeric:tabular-nums;font-weight:600;color:var(--ink)}
 .relbar em{font-style:normal;opacity:.75}
+.module-flow{display:flex;gap:6px;align-items:stretch;overflow-x:auto;margin:9px 0 7px;
+padding-bottom:2px}.module-box{min-width:155px;flex:1;border:1px solid var(--line);
+border-top:3px solid var(--accent);background:#fafafa;padding:6px 8px}.module-box.head{
+border-top-color:var(--warn)}.module-box b,.module-box small{display:block}.module-box b{font-size:11px}
+.module-box small{font-size:9px;color:var(--muted)}.module-arrow{align-self:center;color:var(--muted);
+font-size:18px}.graph-audit{display:grid;grid-template-columns:minmax(230px,.8fr) minmax(360px,1.4fr)
+minmax(300px,1fr);gap:8px;margin-top:9px}.audit-panel{border:1px solid var(--line);
+background:#fff;min-width:0}.audit-panel h3{font-size:11px;margin:0;padding:5px 7px;
+background:#f1f1f1;border-bottom:1px solid var(--line)}.audit-scroll{max-height:245px;overflow:auto}
+.audit-table{width:100%;border-collapse:collapse;font:9px/1.35 "Courier New",monospace;
+font-variant-numeric:tabular-nums}.audit-table th{position:sticky;top:0;background:#f7f7f7;z-index:1}
+.audit-table th,.audit-table td{padding:3px 5px;border-bottom:1px solid #e5e5e5;text-align:right;
+white-space:nowrap}.audit-table th:nth-child(2),.audit-table td:nth-child(2){text-align:left}
+.audit-empty{padding:12px;color:var(--muted);font-size:10px}
 .note{font-size:11px;color:var(--muted);margin-top:8px}
 @media(max-width:780px){main{grid-template-columns:1fr}.pair-grid,.pair-plot-grid{
-grid-template-columns:1fr}}
+grid-template-columns:1fr}.graph-audit{grid-template-columns:1fr}}
 </style></head><body>
 <header><h1 id="page-title">3쌍 병렬 비전 착륙 &middot; Isaac Sim + PX4 + PPO</h1>
 <span id="stage">connecting</span><span id="detail"></span><span id="age"></span></header>
@@ -241,7 +257,7 @@ const CARDS=[
   series:BENCHMARK_TRAIN,x:'episode',y:'unsafe_descent_low_visibility_fraction',
   smooth:12,ymin:0,ymax:1},
  {id:'graph3d',view:'benchmark',kind:'graph',
-  title:'Pair 3 · 학습된 ontology graph와 R-GAT attention'},
+  title:'Ontology → R-GAT encoder → MLP 출력 head 모듈 추적'},
 ];
 const LABELS={benchmark_step:'current episode',
  benchmark_train_shin_se:'A · Shin SE',benchmark_train_no_se:'B · No SE',
@@ -291,18 +307,25 @@ for(const c of CARDS){
     <canvas id="cv-${c.id}" style="height:270px"></canvas>
     <div class="legend" id="lg-${c.id}"></div>`;}
   else if(c.kind==='graph'){el.innerHTML=`<h2>${c.title}</h2>
-    <div class="bar"><span id="g3d-src">waiting for a graph</span>
+    <div class="bar"><select id="g3d-select" aria-label="graph module"></select>
+      <span id="g3d-src">waiting for a graph</span>
       <label style="margin-left:auto"><input type="checkbox" id="g3d-auto" checked>spin</label>
       <label>hide weak edges<input type="range" id="g3d-floor" min="0" max="0.9"
         step="0.05" value="0"></label>
       <button id="g3d-reset">reset view</button></div>
     <canvas id="cv-graph3d"></canvas><div class="tip" id="g3d-tip"></div>
     <div class="relbar" id="rel-graph3d"></div>
+    <div class="module-flow" id="g3d-modules"></div>
+    <div class="graph-audit">
+      <section class="audit-panel"><h3>모든 node 값</h3><div class="audit-scroll" id="g3d-nodes"></div></section>
+      <section class="audit-panel"><h3>모든 edge · attention-head 값</h3><div class="audit-scroll" id="g3d-edges"></div></section>
+      <section class="audit-panel"><h3>모든 MLP 출력 head 값</h3><div class="audit-scroll" id="g3d-heads"></div></section>
+    </div>
     <div class="note">Drag to rotate, wheel to zoom, hover a node to isolate its links.
       Depth is distance from the raw semantic channels to SafeLanding; node size and
       colour are the channel's current activation; edge width and opacity are the
       second R-GAT layer's attention, which is learned importance and not causal
-      proof. Self-loops are not drawn.</div>`;}
+      proof. Self-loops remain in the audit table even though the 3D canvas omits them.</div>`;}
   else{el.innerHTML=`<h2>${c.title}</h2><canvas id="cv-${c.id}"></canvas>
     <div class="legend" id="lg-${c.id}"></div>`;}
   root.appendChild(el);
@@ -566,7 +589,7 @@ function drawEvaluationBars(card,state){
 // the depth cue, the attention width and the hover isolation share one pass.
 const REL_COLORS=['#c0392b','#0d8c4d','#1a59bf','#8a8f98'];
 const G={yaw:-0.55,pitch:0.30,zoom:1,auto:true,floor:0,hover:-1,drag:null,
-         data:null,dirty:true,pts:[],fit:0};
+         data:null,graphs:{},selected:'',manual:false,dirty:true,pts:[],fit:0};
 const clamp01=v=>Math.max(0,Math.min(1,v));
 function riskColor(v){const t=clamp01(v);
   return [Math.round(255*(0.20+0.72*t)),Math.round(255*(0.70-0.50*t)),
@@ -671,7 +694,7 @@ function graphDraw(){
   const near=data.nodes.map((n,i)=>i).sort((a,b)=>P[a].d-P[b].d);
   for(const i of near){
     const n=data.nodes[i],p=P[i];
-    const text=n.role==='goal'?n.name:`${n.name} ${n.value.toFixed(2)}`;
+    const text=`${n.name} ${n.value.toFixed(2)}`;
     const tw=g.measureText(text).width;
     const x=Math.max(tw/2+4,Math.min(w-tw/2-4,p.x));
     const base=p.y-radius(n,p)-6;
@@ -716,6 +739,83 @@ function graphLegend(){
       +`background:${c}"></i></span>`
       +`<b>${m===undefined?'&mdash;':m.toFixed(3)}</b>`;}).join('');
 }
+function graphNumber(value,digits=6){
+  if(value===null||value===undefined||value==='')return '—';
+  const number=Number(value);return Number.isFinite(number)?number.toFixed(digits):'—';
+}
+function graphTable(headers,rows){
+  if(!rows.length)return '<div class="audit-empty">값이 아직 발행되지 않았습니다.</div>';
+  return '<table class="audit-table"><thead><tr>'+headers.map(value=>
+    `<th>${escapeHTML(value)}</th>`).join('')+'</tr></thead><tbody>'+rows.map(row=>
+    '<tr>'+row.map(value=>`<td>${escapeHTML(String(value))}</td>`).join('')+
+    '</tr>').join('')+'</tbody></table>';
+}
+function graphAudit(){
+  const data=G.data||{},nodes=data.nodes||[],edges=data.edges||[],model=data.model||{};
+  const nodeRows=nodes.map((node,index)=>[index,`${node.name} (${node.role})`,
+    graphNumber(node.value),graphNumber(node.embedding_mean),graphNumber(node.embedding_l2)]);
+  document.getElementById('g3d-nodes').innerHTML=graphTable(
+    ['#','node','input','embed mean','embed L2'],nodeRows);
+
+  const maxHeads=edges.reduce((maximum,edge)=>Math.max(maximum,(edge.heads||[]).length),0);
+  const edgeRows=edges.map((edge,index)=>{
+    const source=nodes[edge.s]?nodes[edge.s].name:String(edge.s);
+    const target=nodes[edge.d]?nodes[edge.d].name:String(edge.d);
+    const relation=(data.relations||[])[edge.r];
+    const values=[index,`${source} → ${target}`,relation?relation.name:String(edge.r),
+      graphNumber(edge.a)];
+    for(let head=0;head<maxHeads;head++)values.push(graphNumber((edge.heads||[])[head]));
+    return values;
+  });
+  document.getElementById('g3d-edges').innerHTML=graphTable(
+    ['#','edge','relation','mean α',...Array.from({length:maxHeads},(_,i)=>`H${i+1} α`)],edgeRows);
+
+  const outputHeads=model.output_heads||[],headRows=[];
+  for(const head of outputHeads)for(const output of head.outputs||[]){
+    const pre=output.logit!==undefined?output.logit:output.pre_activation;
+    headRows.push([String(head.name||'head'),String(output.name||'output'),
+      graphNumber(pre),graphNumber(output.value),graphNumber(output.hidden_mean),
+      graphNumber(output.hidden_l2)]);
+  }
+  document.getElementById('g3d-heads').innerHTML=graphTable(
+    ['MLP head','output','logit/raw','value','hidden mean','hidden L2'],headRows);
+
+  const flow=document.getElementById('g3d-modules'),encoder=model.encoder||{};
+  const boxes=[{name:'Ontology input',detail:`${nodes.length} nodes · ${edges.length} edges`}];
+  for(const layer of encoder.layers||[])boxes.push({name:layer.name||'encoder layer',
+    detail:`${layer.input_dim??'—'} → ${layer.output_dim??'—'} · ${layer.attention_heads??0} attention heads`});
+  for(const head of outputHeads)boxes.push({name:head.name||'output head',head:true,
+    detail:`${head.kind||'MLP'} · ${(head.outputs||[]).length} outputs`});
+  flow.innerHTML=boxes.map((box,index)=>(index?'<span class="module-arrow">→</span>':'')+
+    `<div class="module-box${box.head?' head':''}"><b>${escapeHTML(box.name)}</b>`+
+    `<small>${escapeHTML(box.detail)}</small></div>`).join('');
+}
+function graphSnapshots(state){
+  const incoming={...(state.graphs||{})};
+  if(!Object.keys(incoming).length&&state.graph)incoming.legacy=state.graph;
+  G.graphs=incoming;
+  const keys=Object.keys(incoming).sort((left,right)=>{
+    const a=incoming[left],b=incoming[right];
+    return Number(a.pair_index??99)-Number(b.pair_index??99)||left.localeCompare(right);
+  });
+  const modeled=keys.find(key=>incoming[key]&&incoming[key].model);
+  if(!keys.includes(G.selected)||(modeled&&!G.manual&&!(incoming[G.selected]||{}).model))
+    G.selected=modeled||keys[0]||'';
+  const select=document.getElementById('g3d-select');
+  select.innerHTML=keys.map(key=>{const graph=incoming[key]||{};
+    const pair=graph.pair_index===undefined?'':`Pair ${Number(graph.pair_index)+1} · `;
+    const suffix=graph.model?` · ${graph.model.architecture||'R-GAT'}`:' · schema only';
+    return `<option value="${escapeHTML(key)}"${key===G.selected?' selected':''}>`+
+      `${escapeHTML(pair+(graph.method||key)+suffix)}</option>`;}).join('');
+  select.disabled=keys.length<2;
+  G.data=incoming[G.selected]||null;
+  const graph=G.data;
+  document.getElementById('g3d-src').textContent=graph
+    ?`${graph.source||G.selected}${graph.attention?'':' · attention 대기'}`+
+      `${graph.phi!==undefined?` · Φ=${Number(graph.phi).toFixed(3)}`:''}`
+    :'ontology graph 초기화 대기';
+  G.dirty=true;graphLegend();graphAudit();
+}
 function graphTip(ev){
   const tip=document.getElementById('g3d-tip');
   const data=G.data;
@@ -731,7 +831,8 @@ function graphTip(ev){
   tip.innerHTML=`<b>${n.name}</b><br>activation ${n.value.toFixed(3)}`
     +` &middot; ${n.role} &middot; depth ${n.layer}`
     +(best?`<br>strongest link: ${data.nodes[best.s].name} &rarr;`
-       +` ${data.nodes[best.d].name} (${rel}, &alpha;=${best.a.toFixed(3)})`:'');
+       +` ${data.nodes[best.d].name} (${rel}, &alpha;=${best.a.toFixed(3)}`
+       +`${best.heads&&best.heads.length?', heads=['+best.heads.map(value=>Number(value).toFixed(3)).join(', ')+']':''})`:'');
   const card=document.getElementById('card-graph3d').getBoundingClientRect();
   tip.style.display='block';
   tip.style.left=Math.min(ev.clientX-card.left+12,card.width-tip.offsetWidth-8)+'px';
@@ -739,6 +840,15 @@ function graphTip(ev){
 }
 function graphBind(){
   const cv=document.getElementById('cv-graph3d');if(!cv)return;
+  document.getElementById('g3d-select').addEventListener('change',event=>{
+    G.selected=event.target.value;G.manual=true;G.data=G.graphs[G.selected]||null;
+    G.hover=-1;G.fit=0;G.dirty=true;graphLegend();graphAudit();
+    const graph=G.data;
+    document.getElementById('g3d-src').textContent=graph
+      ?`${graph.source||G.selected}${graph.attention?'':' · attention 대기'}`+
+        `${graph.phi!==undefined?` · Φ=${Number(graph.phi).toFixed(3)}`:''}`
+      :'ontology graph 초기화 대기';
+  });
   cv.addEventListener('pointerdown',e=>{
     G.drag={x:e.clientX,y:e.clientY};cv.classList.add('drag');
     cv.setPointerCapture(e.pointerId);});
@@ -827,12 +937,7 @@ async function tick(){
       }
       for(const c of CARDS.filter(item=>item.kind==='pairplots'))drawPairPlots(c,state);
       benchmarkPanel(state);
-      const gs=state.graph||null;
-      const stamp=gs?`${gs.source||'graph'}${gs.attention?'':' (schema only, '
-        +'R-GAT 학습 전)'}${gs.phi!==undefined?`  \u03a6=${gs.phi.toFixed(3)}`:''}`
-        :'ontology graph 초기화 대기';
-      document.getElementById('g3d-src').textContent=stamp;
-      G.data=gs;G.dirty=true;graphLegend();
+      graphSnapshots(state);
     }
   }catch(e){document.getElementById('stage').textContent='disconnected';}
   const age=lastAt?Math.round((Date.now()-lastAt)/1000):0;

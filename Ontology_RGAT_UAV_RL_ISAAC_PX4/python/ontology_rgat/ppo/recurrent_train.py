@@ -455,7 +455,13 @@ def collect_episode(env, model: PipelineActorCritic, method: str, seed: int,
                     estimation_loss=estimation_loss, state=following.state,
                     pipeline_spec=model_spec,
                     semantic_features=next_semantic.feature_vector,
-                    semantic_graph=next_graph,
+                    # Adaptive weighting consumes the extended ontology with
+                    # five reward-term nodes. Publish that exact graph so the
+                    # dashboard traces the model's real input, not the smaller
+                    # base semantic graph used by fixed-reward arms.
+                    semantic_graph=(
+                        next_adaptive_graph
+                        if model_spec.use_adaptive_reward_weights else next_graph),
                     scenario=scenario, status=status)
             hidden = output.hidden
             step, output = following, next_output

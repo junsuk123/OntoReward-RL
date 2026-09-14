@@ -92,7 +92,27 @@ def test_payload_carries_attention_when_a_model_is_given(graph):
     assert alpha.std() > 0.0
     means = [r["mean"] for r in payload["relations"]]
     assert len(means) == len(g.relation_names) and all(m >= 0.0 for m in means)
+    assert all(len(edge["heads"]) == cfg.rgat.heads
+               for edge in payload["edges"])
+    assert all("embedding_l2" in node for node in payload["nodes"])
+    assert payload["model"]["architecture"] == "rgat_potential"
+    output = payload["model"]["output_heads"][0]["outputs"][0]
+    assert output["name"] == "Phi"
+    assert -1.0 <= output["value"] <= 1.0
     json.dumps(payload)
+
+
+def test_store_keeps_parallel_graphs_without_losing_legacy_latest(graph):
+    _, sem, g = graph
+    store = LiveStore()
+    first = graph_payload(g, sem.node_values, source="pair 1")
+    second = graph_payload(g, sem.node_values, source="pair 2")
+    store.graph(first, key="pair_0:baseline")
+    store.graph(second, key="pair_1:proposed")
+    snapshot = store.snapshot()
+    assert set(snapshot["graphs"]) == {
+        "pair_0:baseline", "pair_1:proposed"}
+    assert snapshot["graph"]["source"] == "pair 2"
 
 
 def test_publisher_throttles_and_can_be_forced(graph):

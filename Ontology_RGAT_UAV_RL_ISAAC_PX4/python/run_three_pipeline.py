@@ -1587,6 +1587,15 @@ def main():
             "learner_port": int(pair_cfgs[index].external.local_port),
         } for index, name in enumerate(
             pair_training_methods if args.parallel_pairs > 1 else args.pipelines[:1])])
+    # Dashboard graph inference is method-scoped. A single global model lets
+    # fixed-reward workers overwrite the proposed arm and can even apply an
+    # adaptive graph model to an incompatible baseline schema.
+    for name in args.pipelines:
+        spec = get_pipeline(name)
+        reward_model = (adaptive_weights if spec.use_adaptive_reward_weights
+                        else potential if spec.use_direct_rgat_potential else None)
+        if reward_model is not None:
+            monitor.set_potential(name, reward_model)
     dashboard = Dashboard(cfg, STORE).start()
     rviz_process, rviz_log = _start_rviz(
         cfg.viz.rviz.enabled and not args.no_rviz and not args.headless,
@@ -1882,7 +1891,9 @@ def main():
                     settings=design_settings)
                 potential = FrozenSemanticRGATPotential(
                     args.reward_design, expected_config_hash=config_hash)
-                monitor.potential = potential
+                for name in args.pipelines:
+                    if get_pipeline(name).use_direct_rgat_potential:
+                        monitor.set_potential(name, potential)
                 manifest.update({
                     "reward_design_id": potential.design_id,
                     "reward_design_sha256": potential.sha256,
@@ -1895,7 +1906,9 @@ def main():
                 STORE.set(reward_design_id=potential.design_id,
                           reward_design_sha256=potential.sha256)
             elif needs_potential:
-                monitor.potential = potential
+                for name in args.pipelines:
+                    if get_pipeline(name).use_direct_rgat_potential:
+                        monitor.set_potential(name, potential)
                 model_manifest = potential.metadata
                 data_manifest = model_manifest.get("dataset_manifest") or {}
                 design_episodes = int(data_manifest.get("episodes", 0))
@@ -2047,6 +2060,9 @@ def main():
                 adaptive_weights = FrozenAdaptiveRewardWeights(
                     args.adaptive_reward_design,
                     expected_config_hash=config_hash)
+                for name in args.pipelines:
+                    if get_pipeline(name).use_adaptive_reward_weights:
+                        monitor.set_potential(name, adaptive_weights)
                 manifest.update({
                     "adaptive_reward_design_id": adaptive_weights.design_id,
                     "adaptive_reward_design_sha256": adaptive_weights.sha256,

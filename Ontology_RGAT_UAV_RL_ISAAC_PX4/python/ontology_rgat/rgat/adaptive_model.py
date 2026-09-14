@@ -174,6 +174,16 @@ class AdaptiveRewardWeightHead(nn.Module):
         terms = embeddings[:, self.reward_node_indices, :]
         return self.pair_mlp(torch.cat((goal, terms), dim=-1)).squeeze(-1)
 
+    def trace(self, embeddings: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """Return the five logits and their MLP hidden activations."""
+        goal = embeddings[:, self.goal_node:self.goal_node + 1, :]
+        goal = goal.expand(-1, len(self.reward_node_indices), -1)
+        terms = embeddings[:, self.reward_node_indices, :]
+        paired = torch.cat((goal, terms), dim=-1)
+        hidden = self.pair_mlp[1](self.pair_mlp[0](paired))
+        logits = self.pair_mlp[2](hidden).squeeze(-1)
+        return logits, hidden
+
 
 class AdaptiveSemanticPotentialHead(nn.Module):
     """Graph-level observability/safety value used by the PBRS supplement.
@@ -200,6 +210,16 @@ class AdaptiveSemanticPotentialHead(nn.Module):
         pooled = embeddings.mean(dim=1)
         return self.scale * torch.tanh(
             self.network(torch.cat((goal, pooled), dim=-1)).squeeze(-1))
+
+    def trace(self, embeddings: torch.Tensor
+              ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Return bounded potential, raw scalar and MLP hidden activation."""
+        goal = embeddings[:, self.goal_node]
+        pooled = embeddings.mean(dim=1)
+        features = torch.cat((goal, pooled), dim=-1)
+        hidden = self.network[1](self.network[0](features))
+        raw = self.network[2](hidden).squeeze(-1)
+        return self.scale * torch.tanh(raw), raw, hidden
 
 
 class AdaptiveRewardWeightModel(nn.Module):
@@ -286,6 +306,98 @@ class AdaptiveRewardWeightModel(nn.Module):
             return None
         _, attention = self.encoder(X, return_attention=True)
         return attention
+
+    @torch.no_grad()
+    def explain(self, graph: OntologyGraph) -> dict[str, Any]:
+        """Return a complete JSON-ready trace of encoder and output heads.
+
+        The trace is monitoring-only: it exposes graph inputs, per-edge values
+        from every attention head, the five reward-head logits/weights and the
+        semantic-potential head value. It never feeds anything back to PPO.
+        """
+        if tuple(graph.node_names) != ADAPTIVE_NODE_NAMES:
+            raise ValueError("adaptive reward node schema mismatch")
+        if tuple(graph.relation_names) != ADAPTIVE_RELATION_NAMES:
+            raise ValueError("adaptive reward relation schema mismatch")
+        was_training = self.training
+        self.eval()
+        try:
+            parameter = next(self.parameters())
+            X = torch.as_tensor(
+                graph.X.T[None], dtype=parameter.dtype, device=parameter.device)
+            if isinstance(self.encoder, RGATEncoder):
+                embeddings, attention = self.encoder(X, return_attention=True)
+                edge_alpha_heads = attention[0].transpose(0, 1).cpu().numpy()
+                edge_alpha = edge_alpha_heads.mean(axis=1)
+                encoder = self.encoder.module_description()
+            else:
+                embeddings = self.encoder(X)
+                edge_alpha_heads = None
+                edge_alpha = None
+                encoder = {
+                    "name": type(self.encoder).__name__,
+                    "kind": "MLP graph ablation",
+                    "input_dim": int(graph.X.shape[0]),
+                    "output_dim": int(self.encoder.out_dim),
+                    "layers": [
+                        {"name": "MLP layer 1", "output_dim": int(self.encoder.out_dim)},
+                        {"name": "MLP layer 2", "output_dim": int(self.encoder.out_dim)},
+                    ],
+                }
+
+            logits, reward_hidden = self.head.trace(embeddings)
+            weights = constrained_adaptive_weights(
+                logits, baseline_weights=self.baseline_weights,
+                total_weight=self.total_weight, kappa=self.kappa,
+                epsilon=self.epsilon)
+            potential, potential_raw, potential_hidden = (
+                self.potential_head.trace(embeddings))
+            rel = np.asarray(graph.rel)
+            relation_mean = None if edge_alpha is None else np.asarray([
+                float(edge_alpha[rel == index].mean())
+                if np.any(rel == index) else 0.0
+                for index in range(len(graph.relation_names))])
+
+            reward_outputs = []
+            for index, name in enumerate(REWARD_COMPONENT_NAMES):
+                hidden = reward_hidden[0, index]
+                reward_outputs.append({
+                    "name": str(name),
+                    "logit": float(logits[0, index].cpu()),
+                    "value": float(weights[0, index].cpu()),
+                    "hidden_mean": float(hidden.mean().cpu()),
+                    "hidden_l2": float(torch.linalg.vector_norm(hidden).cpu()),
+                })
+            return {
+                "edge_alpha": edge_alpha,
+                "edge_alpha_heads": edge_alpha_heads,
+                "node_embeddings": embeddings[0].cpu().numpy(),
+                "relation_mean": relation_mean,
+                "model": {
+                    "architecture": self.architecture,
+                    "encoder": encoder,
+                    "output_heads": [{
+                        "name": "AdaptiveRewardWeightHead",
+                        "kind": "Pair MLP",
+                        "inputs": ["SafeLanding", *ADAPTIVE_REWARD_NODE_NAMES],
+                        "outputs": reward_outputs,
+                    }, {
+                        "name": "AdaptiveSemanticPotentialHead",
+                        "kind": "Pooled MLP + scaled tanh",
+                        "inputs": ["SafeLanding", "GraphMean"],
+                        "outputs": [{
+                            "name": "Phi_semantic",
+                            "pre_activation": float(potential_raw[0].cpu()),
+                            "value": float(potential[0].cpu()),
+                            "hidden_mean": float(potential_hidden[0].mean().cpu()),
+                            "hidden_l2": float(torch.linalg.vector_norm(
+                                potential_hidden[0]).cpu()),
+                        }],
+                    }],
+                },
+            }
+        finally:
+            self.train(was_training)
 
 
 def adaptive_model_digest(model: nn.Module) -> str:
@@ -456,6 +568,15 @@ class FrozenAdaptiveRewardWeights:
         X = torch.as_tensor(graph.X.T[None], dtype=torch.float32)
         attention = self.model.attention(X)
         return None if attention is None else attention.cpu().numpy()
+
+    @torch.no_grad()
+    def explain(self, graph: OntologyGraph) -> dict[str, Any]:
+        """Dashboard-facing full graph and MLP-head inference trace."""
+        self.assert_frozen()
+        trace = self.model.explain(graph)
+        trace["model"]["design_id"] = self.design_id
+        trace["model"]["frozen"] = True
+        return trace
 
 
 def save_adaptive_reward_artifact(path: str | Path, model: nn.Module, *,

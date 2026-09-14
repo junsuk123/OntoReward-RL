@@ -254,6 +254,15 @@ def test_adaptive_model_outputs_nonconstant_weights_and_attention_separately():
     attention = model.attention(X)
     assert attention is not None and attention.ndim == 3
     assert attention.shape[-1] != weight.shape[-1]
+    graph = adaptive_reward_graph(_observation(.55))
+    trace = model.explain(graph)
+    assert trace["edge_alpha_heads"].shape[0] == len(graph.src)
+    assert trace["node_embeddings"].shape[0] == len(graph.node_names)
+    heads = trace["model"]["output_heads"]
+    assert [head["name"] for head in heads] == [
+        "AdaptiveRewardWeightHead", "AdaptiveSemanticPotentialHead"]
+    assert len(heads[0]["outputs"]) == 5
+    assert len(heads[1]["outputs"]) == 1
 
 
 def test_offline_cpu_smoke_loss_and_gradients_are_finite():
@@ -291,6 +300,11 @@ def test_checkpoint_roundtrip_is_deterministic_and_frozen(tmp_path):
     first = frozen(graph)
     second = frozen(graph)
     assert first == pytest.approx(second)
+    trace = frozen.explain(graph)
+    assert trace["model"]["frozen"] is True
+    assert trace["model"]["design_id"] == frozen.design_id
+    assert [row["value"] for row in
+            trace["model"]["output_heads"][0]["outputs"]] == pytest.approx(first)
     assert all(not parameter.requires_grad for parameter in frozen.model.parameters())
     assert not frozen.model.training
 

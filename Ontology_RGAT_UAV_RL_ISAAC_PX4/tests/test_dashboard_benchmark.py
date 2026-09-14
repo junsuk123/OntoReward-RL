@@ -183,6 +183,12 @@ def test_dashboard_has_self_contained_matlab_style_benchmark_view():
     assert "training_total||0)/" not in PAGE
     assert "parallel-pair-grid" in PAGE
     assert "3쌍 병렬 비전 착륙" in PAGE
+    assert "Ontology → R-GAT encoder → MLP 출력 head 모듈 추적" in PAGE
+    assert "모든 node 값" in PAGE
+    assert "모든 edge · attention-head 값" in PAGE
+    assert "모든 MLP 출력 head 값" in PAGE
+    assert "state.graphs" in PAGE
+    assert "graphSnapshots" in PAGE
     assert "view:'urban'" not in PAGE
     assert "rewardPanel" not in PAGE
     assert "debug only" not in PAGE

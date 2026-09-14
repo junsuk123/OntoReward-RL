@@ -124,6 +124,21 @@ def _role(index: int, goal_node: int, name: str = "") -> str:
     return "risk" if index in RISK_NODES or "risk" in name.lower() else "support"
 
 
+def _plain(value: Any) -> Any:
+    """Recursively convert a model trace into strict JSON-compatible values."""
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, (np.integer,)):
+        return int(value)
+    if isinstance(value, (np.floating,)):
+        return float(value) if np.isfinite(value) else None
+    if isinstance(value, dict):
+        return {str(key): _plain(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_plain(item) for item in value]
+    return value
+
+
 def graph_payload(graph, values: Sequence[float] | None = None, *,
                   potential=None, source: str = "", phi: float | None = None,
                   extra: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -144,31 +159,59 @@ def graph_payload(graph, values: Sequence[float] | None = None, *,
     values = np.asarray(values, dtype=float).reshape(-1)
 
     alpha = None
+    alpha_heads = None
     relation_mean = None
+    node_embeddings = None
+    model_trace = None
     if potential is not None:
         try:
             explained = potential.explain(graph)
-            alpha = np.asarray(explained["edge_alpha"], dtype=float).reshape(-1)
-            relation_mean = np.asarray(explained["relation_mean"], dtype=float)
+            if explained.get("edge_alpha") is not None:
+                alpha = np.asarray(
+                    explained["edge_alpha"], dtype=float).reshape(-1)
+            if explained.get("edge_alpha_heads") is not None:
+                alpha_heads = np.asarray(
+                    explained["edge_alpha_heads"], dtype=float)
+                if alpha_heads.ndim == 1:
+                    alpha_heads = alpha_heads[:, None]
+            if explained.get("relation_mean") is not None:
+                relation_mean = np.asarray(
+                    explained["relation_mean"], dtype=float)
+            if explained.get("node_embeddings") is not None:
+                node_embeddings = np.asarray(
+                    explained["node_embeddings"], dtype=float)
+            model_trace = _plain(explained.get("model"))
         except Exception as exc:                       # pragma: no cover - defensive
             # A view is never worth taking a run down with it.
             print(f"WARNING: attention read-out failed for the 3D graph: {exc}")
             alpha = None
 
     pos, layers = _geometry(src, dst, n_nodes, int(graph.goal_node))
-    nodes = [{
-        "name": str(name),
-        "value": float(values[i]) if i < values.size else 0.0,
-        "pos": [round(float(c), 4) for c in pos[i]],
-        "layer": int(layer),
-        "role": _role(i, int(graph.goal_node), str(name)),
-    } for i, (name, layer) in enumerate(zip(graph.node_names, layers))]
+    nodes = []
+    for i, (name, layer) in enumerate(zip(graph.node_names, layers)):
+        node = {
+            "name": str(name),
+            "value": float(values[i]) if i < values.size else 0.0,
+            "pos": [round(float(c), 4) for c in pos[i]],
+            "layer": int(layer),
+            "role": _role(i, int(graph.goal_node), str(name)),
+        }
+        if (node_embeddings is not None and node_embeddings.ndim == 2
+                and i < node_embeddings.shape[0]):
+            embedding = node_embeddings[i]
+            node["embedding_mean"] = float(np.mean(embedding))
+            node["embedding_l2"] = float(np.linalg.norm(embedding))
+        nodes.append(node)
 
     edges = []
     for e in range(src.size):
         edge = {"s": int(src[e]), "d": int(dst[e]), "r": int(rel[e])}
         if alpha is not None and e < alpha.size:
             edge["a"] = round(float(alpha[e]), 6)
+        if (alpha_heads is not None and alpha_heads.ndim == 2
+                and e < alpha_heads.shape[0]):
+            edge["heads"] = [round(float(value), 6)
+                             for value in alpha_heads[e]]
         edges.append(edge)
 
     relations = []
@@ -187,6 +230,8 @@ def graph_payload(graph, values: Sequence[float] | None = None, *,
         "goal_node": int(graph.goal_node),
         "time": time.time(),
     }
+    if model_trace is not None:
+        payload["model"] = model_trace
     if phi is not None and np.isfinite(phi):
         payload["phi"] = float(phi)
     if extra:

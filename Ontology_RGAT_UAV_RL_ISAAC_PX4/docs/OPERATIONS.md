@@ -123,7 +123,9 @@ Dashboard 항목:
 - pair별 SE 오차, estimator-free 시각 신호 또는 R-GAT potential
 - pair별 PX4 namespace, UDP endpoint, camera/RViz topic
 - pair별 landing gate 6항목 통과 여부
-- 3열 MATLAB 색상 학습·평가 비교와 R-GAT relation attention
+- 3열 MATLAB 색상 학습·평가 비교와 pair/method별 R-GAT graph selector
+- 전체 ontology node activation과 self-loop 포함 전체 edge/head attention
+- R-GAT encoder 2계층 및 reward-weight/semantic-potential MLP 출력 head 값
 
 웹 dashboard는 단일 pipeline용 레거시 view로 전환하지 않는다. 좁은 모바일 화면을
 제외하면 pair 카드, pair별 실시간 plot과 전체 비교 plot 모두 세 열을 유지한다.
@@ -131,6 +133,18 @@ Dashboard 항목:
 평가에서는 정책이 seed마다 세 물리 pair를 순환하므로, 카드 제목과 색은
 `current_method`/“현재 정책”을 따른다. 성공률과 `evaluation/per_episode.csv` 행도
 물리 pair의 학습 배정이 아니라 실제로 실행된 `method`에 귀속된다.
+
+코드 변경 전에 시작된 장시간 실험은 in-process HTML을 교체하지 않는다. 그 실행을
+중단하지 않고 새 graph UI를 확인할 때는 읽기 전용 mirror를 별도 포트에 띄운다.
+mirror는 기존 `/api/state`와 동결 artifact만 읽으며 PX4/ROS/optimizer에는 연결하지 않는다.
+
+```bash
+PYTHONPATH=Ontology_RGAT_UAV_RL_ISAAC_PX4/python \
+python Ontology_RGAT_UAV_RL_ISAAC_PX4/python/run_dashboard_mirror.py \
+  --port 8771 --source-url http://127.0.0.1:8770/api/state \
+  --artifact Ontology_RGAT_UAV_RL_ISAAC_PX4/results/seminar_10h/core3_parallel_144/rgat/adaptive_reward_weights.pt \
+  --manifest Ontology_RGAT_UAV_RL_ISAAC_PX4/results/seminar_10h/core3_parallel_144/manifest.json
+```
 
 RViz는 세 annotated landing camera, 세 독립 TF(`landing_pad_0..2`, `uav_body_0..2`),
 pair별 UAV/UGV trail과 landing gate를 동시에 표시한다. Isaac GUI는 1280×720에서 세

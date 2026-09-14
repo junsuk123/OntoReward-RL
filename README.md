@@ -271,7 +271,10 @@ Dashboard는 단일 pipeline용 레거시 화면 없이 항상 3-pair 전용으�
 세 카드에서 committed episode와 live step, marker, 상대 위치, UAV·UGV 속도, 배터리,
 착륙 성공 gate, 독립 PX4/UDP/topic을 나란히 확인한다. 이어지는 보상·비행·방법론 고유
 신호도 pair별 독립 canvas 3개로 표시하고, 학습·평가 비교 그래프는 MATLAB 기본 색상
-순서의 고정 3열 layout을 사용한다. RViz는 세 landing camera dock과
+순서의 고정 3열 layout을 사용한다. Graph selector는 pair/method별 snapshot을 분리하고
+ontology 입력, R-GAT 2계층, MLP 출력 head를 모듈로 표시한다. 전체 node activation,
+self-loop를 포함한 edge별·attention-head별 값, 5개 적응 보상 weight와 semantic
+potential 출력은 스크롤 가능한 감사 표에서 함께 확인한다. RViz는 세 landing camera dock과
 `landing_pad_0..2` 독립 TF/trajectory를 사용하며 Isaac GUI는 전체 편대를 자동으로
 한 화면에 맞춘다.
 

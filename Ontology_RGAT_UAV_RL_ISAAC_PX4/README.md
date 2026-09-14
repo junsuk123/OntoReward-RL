@@ -60,7 +60,8 @@ source로만 재사용할 수 있다. 최종 비교 arm은 `ppo_training_contrac
 `run.sh`는 설정 검증, simulator/PX4/ROS/RViz/dashboard 기동, keypoint 준비, PPO,
 실제 R-GAT 자료 수집, R-GAT 학습·동결, 제안법 PPO, paired evaluation과 보고서 생성을
 순서대로 수행한다. 동일 명령을 다시 실행하면 호환되는 checkpoint와 완료 episode부터
-재개한다.
+재개한다. Dashboard의 graph module은 pair/method를 분리하고 ontology node 값,
+R-GAT edge/head attention과 두 MLP 출력 head의 실시간 값을 함께 표시한다.
 
 ## 시뮬레이션 환경
 

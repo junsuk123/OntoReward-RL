@@ -426,6 +426,7 @@ class BenchmarkMonitor:
         self.evaluation_total = 0
         self.pair_layout: list[dict[str, Any]] = []
         self.pair_status: dict[int, dict[str, Any]] = {}
+        self._phase_episode_counts: dict[tuple[int, str], int] = {}
 
     @property
     def potential(self):
@@ -509,6 +510,7 @@ class BenchmarkMonitor:
         self.training_total = int(training_total)
         self.evaluation_total = int(evaluation_total)
         self.pair_layout = [dict(item) for item in (pair_layout or ())]
+        self._phase_episode_counts.clear()
         self.pair_status = {
             int(item["index"]): {
                 **dict(item),
@@ -562,9 +564,28 @@ class BenchmarkMonitor:
         # Completed histories only advance after optimizer/checkpoint commit.
         # Publish the in-flight episode separately so a 30 s simulated flight
         # cannot look frozen for one or two minutes on a rendered lockstep run.
-        is_training = str(phase) == "training"
-        current_episode = len(self.store.series(
-            f"benchmark_{'train' if is_training else 'eval'}_{method}")) + 1
+        phase_name = str(phase)
+        is_training = phase_name in {"training", "perception warm-up"}
+        is_evaluation = phase_name == "evaluation"
+        if is_training:
+            current_episode = len(self.store.series(
+                f"benchmark_train_{method}")) + 1
+            episode_kind = ("학습 warm-up" if phase_name == "perception warm-up"
+                            else "학습")
+        elif is_evaluation:
+            current_episode = len(self.store.series(
+                f"benchmark_eval_{method}")) + 1
+            episode_kind = "평가"
+        else:
+            # Offline reward-design rollouts are not committed to either the
+            # training or evaluation history. Count them per physical pair and
+            # phase so concurrent baseline warm-up cannot overwrite pair 2's
+            # visible episode progress.
+            phase_key = (int(resolved_pair_index), phase_name)
+            current_episode = self._phase_episode_counts.get(phase_key, 0) + 1
+            self._phase_episode_counts[phase_key] = current_episode
+            episode_kind = ("FOV 데이터" if "FOV" in phase_name
+                            else "설계 데이터")
         if self.rviz is not None:
             self.rviz.clear_trails(method=method, pair_index=pair_index)
         try:
@@ -577,19 +598,22 @@ class BenchmarkMonitor:
             pipeline_name = str(method)
             estimation_status = "ENABLED" if method == "shin2026" else "LEGACY"
         self.store.set(
-            benchmark_phase=str(phase), current_method=str(method),
+            benchmark_phase=phase_name, current_method=str(method),
             current_pipeline=pipeline_name,
             state_estimation_status=estimation_status,
             current_seed=int(seed), current_scenario=str(scenario),
             current_training_episode=(int(current_episode) if is_training else None),
-            current_evaluation_episode=(None if is_training else int(current_episode)),
+            current_evaluation_episode=(int(current_episode)
+                                        if is_evaluation else None),
+            current_design_episode=(int(current_episode)
+                                    if not is_training and not is_evaluation else None),
             current_curriculum=float(curriculum),
             current_pad_motion_scale=float(
                 curriculum if motion_scale is None else motion_scale),
             current_action_envelope_scale=float(action_scale))
         self._update_pair(
-            method, phase=str(phase), seed=int(seed), scenario=str(scenario),
-            episode=int(current_episode), episode_kind=("학습" if is_training else "평가"),
+            method, phase=phase_name, seed=int(seed), scenario=str(scenario),
+            episode=int(current_episode), episode_kind=episode_kind,
             step=0, status="running",
             pipeline=pipeline_name, state_estimation=estimation_status,
             curriculum=float(curriculum), motion_scale=float(

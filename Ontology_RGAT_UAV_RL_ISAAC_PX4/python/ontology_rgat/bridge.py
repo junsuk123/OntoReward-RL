@@ -242,7 +242,7 @@ class PX4Bridge:
         # Give the gateway's autonomous hold a little more time than that full
         # client-side window; otherwise it enters AUTO.LAND first and the final
         # diagnostic misleadingly reports the resulting descent as an unstable
-        # hover.  This matters in a shared three-camera world whose wall clock
+        # hover.  This matters in a shared two-camera world whose wall clock
         # advances more slowly than a single-pair simulation.
         prestream_s = (float(self.cfg.prestream_count)
                        / float(self.cfg.control_hz))
@@ -331,7 +331,15 @@ class PX4Bridge:
                 float(np.linalg.norm(state["velocity"])))
 
     def wait_at_entry(self, target: np.ndarray) -> dict[str, Any]:
-        """Hand over only once PX4 holds the entry pose."""
+        """Hand over only once PX4 holds the entry pose.
+
+        The outer timeout is deliberately wall-clock bounded so a stalled
+        simulator cannot hang the runner. Marker memory and settling are
+        physical-duration requirements, however, and therefore follow PX4's
+        lockstep simulation clock. On a rendered multi-pair stage one second
+        of simulation can take many wall seconds; expiring marker memory on
+        wall time made a perfectly visible pad fail the reset gate.
+        """
         started = time.monotonic()
         settled_since: float | None = None
         marker_seen_at: float | None = None
@@ -377,13 +385,22 @@ class PX4Bridge:
                 time.sleep(0.05)
                 continue
             here, speed = self.entry_state(state)
-            now = time.monotonic()
+            wall_now = time.monotonic()
+            try:
+                sample_now = float(state["px4_time_us"]) * 1e-6
+                if not np.isfinite(sample_now):
+                    raise ValueError("non-finite PX4 timestamp")
+            except (KeyError, TypeError, ValueError, OverflowError):
+                # Hardware adapters and focused protocol tests may not expose
+                # a PX4 timestamp. They retain the historical wall-clock
+                # behaviour instead of losing the readiness gate entirely.
+                sample_now = wall_now
             if float(state.get("marker_quality", 0.0)) > 0.0:
-                marker_seen_at = now
+                marker_seen_at = sample_now
             marker_ready = (
                 not bool(self.cfg.require_pad_in_view)
                 or (marker_seen_at is not None
-                    and now - marker_seen_at <= float(getattr(
+                    and sample_now - marker_seen_at <= float(getattr(
                         self.cfg, "entry_marker_memory", 0.0))))
             at_target = (
                 float(np.linalg.norm(here - target)) <= float(self.cfg.entry_tolerance)
@@ -392,8 +409,8 @@ class PX4Bridge:
             if not at_target:
                 settled_since = None
             elif settled_since is None:
-                settled_since = time.monotonic()
-            elif time.monotonic() - settled_since >= float(self.cfg.entry_settle):
+                settled_since = sample_now
+            elif sample_now - settled_since >= float(self.cfg.entry_settle):
                 return state
             time.sleep(0.02)
         if state is None:
@@ -487,7 +504,7 @@ class PX4Bridge:
             ) -> dict[str, Any]:
         """Wait out a short EKF-validity flap without recording stale state.
 
-        A three-camera rendered frame advances simulated time much more slowly
+        A two-camera rendered frame advances simulated time much more slowly
         than wall time. PX4 may publish one invalid local-position sample
         during estimator handover even though the next simulated sample is
         valid. The gateway continues streaming the current setpoint while this
@@ -658,8 +675,8 @@ class PX4Bridge:
             # After a completed touchdown we intentionally disarm and stop
             # OFFBOARD. PX4 can retain VehicleStatus.failsafe for one callback
             # while its benign SITL link-loss flags clear. Rejecting that
-            # disarmed transition restarts the entire shared three-pair world
-            # and discards two unrelated trajectories. It is safe to accept
+            # disarmed transition restarts the entire shared two-pair world
+            # and discards the unrelated trajectory. It is safe to accept
             # only this gateway-classified case while explicitly disarmed;
             # the same flag while armed still aborts the episode immediately.
             ignored_disarmed_link_failsafe = bool(

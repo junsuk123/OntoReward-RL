@@ -245,6 +245,35 @@ def test_entry_gate_tolerates_brief_marker_dropout(monkeypatch):
     assert state["marker_quality"] == 0.0
 
 
+def test_entry_gate_uses_px4_time_for_marker_memory_and_settling(monkeypatch):
+    class SlowRenderedClock:
+        value = -5.0
+
+        def monotonic(self):
+            self.value += 5.0
+            return self.value
+
+    clock = SlowRenderedClock()
+    monkeypatch.setattr(bridge_module.time, "monotonic", clock.monotonic)
+    monkeypatch.setattr(bridge_module.time, "sleep", lambda _seconds: None)
+    states = iter([
+        {"armed": True, "marker_quality": 0.5, "px4_time_us": 0},
+        {"armed": True, "marker_quality": 0.0, "px4_time_us": 250_000},
+        {"armed": True, "marker_quality": 0.0, "px4_time_us": 500_000},
+    ])
+    bridge = object.__new__(PX4Bridge)
+    bridge.cfg = SimpleNamespace(
+        entry_timeout=100.0, arm_retry=2.0, entry_tolerance=0.5,
+        entry_speed_tolerance=0.2, require_pad_in_view=True,
+        entry_marker_memory=2.0, entry_settle=0.5)
+    bridge.get_state = lambda: next(states)
+    bridge.entry_state = lambda _state: (np.zeros(3), 0.0)
+
+    state = bridge.wait_at_entry(np.zeros(3))
+
+    assert state["px4_time_us"] == 500_000
+
+
 def test_entry_gate_aborts_immediately_after_pad_contact(monkeypatch):
     monkeypatch.setattr(bridge_module.time, "sleep", lambda _seconds: None)
     bridge = object.__new__(PX4Bridge)

@@ -22,18 +22,20 @@ parallel:
   pair_offsets_enu_m:
     - [0.0, 0.0, 0.0]
     - [0.0, 0.0, 0.0]
-    - [0.0, 0.0, 0.0]
-  # 세 UGV를 조사한 동일 캠퍼스 도로의 서로 다른 진행 지점에 둔다.
+  # 두 UGV를 조사한 동일 캠퍼스 도로의 서로 다른 진행 지점에 둔다.
   # 단순 XY 평행 이동은 차를 도로 밖에 놓고 UAV 진입 영역도 겹치므로 쓰지 않는다.
-  # 폐곡선 길이의 0/8/16% 지점에서 출발해 같은 waypoint를 열차처럼 순서대로 따른다.
-  route_phase_fractions: [0.0, 0.08, 0.16]
-  marker_dictionary: DICT_5X5_250
+  # 폐곡선 길이의 0/8% 지점에서 출발해 같은 waypoint를 열차처럼 순서대로 따른다.
+  route_phase_fractions: [0.0, 0.08]
+  # Pair 1의 먼 0.32 m 표식은 7--8 m 진입 고도에서 약 10 px에 불과하다.
+  # 같은 0--249 ID 범위를 유지하면서 셀당 픽셀 수가 더 큰 4x4 사전을 써서
+  # 저조도 렌더 프레임의 reset-gate 검출을 안정화한다.
+  marker_dictionary: DICT_4X4_250
   marker_id_stride: 60
-  # Operator-only settings for the shared three-pair stage. This block is
+  # Operator-only settings for the shared two-pair stage. This block is
   # excluded from the scientific config hash and cannot invalidate a policy.
   operator_view:
     # Operator-only overview. Actor cameras retain their scientific 512x320
-    # resolution; this window need not cost more pixels than all three.
+    # resolution; this window need not cost more pixels than both cameras.
     viewport_resolution: [640, 360]
     frame: street
     offset_m: [-14.0, 4.5, 12.0]

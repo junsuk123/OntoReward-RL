@@ -154,6 +154,40 @@ def test_evaluation_pair_uses_evaluation_index_not_finished_training_episode():
     assert state["scalars"]["current_training_episode"] is None
 
 
+def test_warmup_and_fov_data_publish_independent_episode_progress():
+    store = LiveStore()
+    monitor = BenchmarkMonitor(store)
+    monitor.configure(
+        methods=["shin_se_fixed", "shin_se_onto_rgat_fov"], mode="quick",
+        config_hash="h", training_total=6, evaluation_total=1,
+        pair_layout=[
+            {"index": 0, "method": "shin_se_fixed"},
+            {"index": 1, "method": "shin_se_onto_rgat_fov"},
+        ])
+
+    monitor.reset_episode(
+        method="shin_se_fixed", phase="perception warm-up", seed=10,
+        scenario="warmup", curriculum=0.0, pair_index=0)
+    warmup = store.snapshot()["scalars"]
+    assert warmup["current_training_episode"] == 1
+    assert warmup["current_evaluation_episode"] is None
+    assert warmup["parallel_pair_status"][0]["episode_kind"] == "학습 warm-up"
+
+    monitor.reset_episode(
+        method="shin_se_fixed", phase="FOV-risk offline data", seed=20,
+        scenario="training_random_walk", curriculum=1.0, pair_index=1)
+    monitor.reset_episode(
+        method="shin_se_fixed", phase="FOV-risk offline data", seed=21,
+        scenario="training_random_walk", curriculum=1.0, pair_index=1)
+    fov = store.snapshot()["scalars"]
+    assert fov["current_design_episode"] == 2
+    assert fov["current_training_episode"] is None
+    assert fov["current_evaluation_episode"] is None
+    assert fov["parallel_pair_status"][0]["episode"] == 1
+    assert fov["parallel_pair_status"][1]["episode"] == 2
+    assert fov["parallel_pair_status"][1]["episode_kind"] == "FOV 데이터"
+
+
 def test_pair_status_routes_by_physical_index_during_crossover():
     store = LiveStore()
     monitor = BenchmarkMonitor(store)

@@ -49,19 +49,20 @@ def test_parallel_route_phases_and_marker_ids_fit_declared_dictionary():
 
     config = load_config(ROOT / "config/seminar-fast-system.yaml")
     parallel = config["parallel"]
-    assert len(parallel["pair_offsets_enu_m"]) >= 3
+    assert len(parallel["pair_offsets_enu_m"]) == 2
     assert all(tuple(offset) == (0.0, 0.0, 0.0)
-               for offset in parallel["pair_offsets_enu_m"][:3])
-    phases = parallel["route_phase_fractions"][:3]
-    assert len(phases) == 3
-    assert len(set(float(value) for value in phases)) == 3
+               for offset in parallel["pair_offsets_enu_m"])
+    phases = parallel["route_phase_fractions"]
+    assert len(phases) == 2
+    assert len(set(float(value) for value in phases)) == 2
     assert all(0.0 <= float(value) < 1.0 for value in phases)
+    assert parallel["marker_dictionary"] == "DICT_4X4_250"
     marker_ids = [int(marker["id"]) for marker in config["vision"]["board"]]
     expanded = {
         marker_id + pair * int(parallel["marker_id_stride"])
-        for pair in range(3) for marker_id in marker_ids
+        for pair in range(2) for marker_id in marker_ids
     }
-    assert len(expanded) == 3 * len(marker_ids)
+    assert len(expanded) == 2 * len(marker_ids)
     assert min(expanded) >= 0 and max(expanded) < 250
 
 

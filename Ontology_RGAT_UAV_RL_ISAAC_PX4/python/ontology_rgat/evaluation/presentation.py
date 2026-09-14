@@ -348,7 +348,9 @@ def _save_performance_figures(output_dir: Path, summaries, distributions,
                 color=METHOD_COLORS[method], label=f"{METHOD_LABELS[method]} (N={len(values)})")
     ax.set(xlabel="PPO 에피소드", ylabel="최근 5회 안전 착륙률",
            ylim=(-.03, 1.03), title="학습 진행률 — PPO checkpoint 기록")
-    ax.legend(fontsize=8, loc="best")
+    handles, labels = ax.get_legend_handles_labels()
+    if handles:
+        ax.legend(handles, labels, fontsize=8, loc="best")
     fig.tight_layout()
     progress_path = output_dir / "training_safe_landing_progress.png"
     fig.savefig(progress_path, dpi=220)

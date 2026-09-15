@@ -551,6 +551,21 @@ class BenchmarkMonitor:
     def stage(self, name: str, detail: str = "") -> None:
         self.store.stage(name, detail)
 
+    def reset_started(self, *, method: str, phase: str, seed: int,
+                      scenario: str, pair_index: int | None = None) -> None:
+        """Show that a pair is flying its entry hover before the episode starts.
+
+        ``reset_episode`` is published only once PX4 holds the seeded entry
+        pose, which on a rendered multi-pair stage takes a minute or more.
+        Without this the pair reads "waiting" for that whole time, so a reset
+        gate that keeps timing out is indistinguishable from an idle worker.
+        The episode counter advances at handover, not here.
+        """
+        self._update_pair(
+            method, phase=str(phase), seed=int(seed), scenario=str(scenario),
+            step=0, status="entry hover", marker_visible=None,
+            success=None, landing_gate=None, pair_index=pair_index)
+
     def reset_episode(self, *, method: str, phase: str, seed: int,
                       scenario: str, curriculum: float,
                       action_scale: float = 1.0,

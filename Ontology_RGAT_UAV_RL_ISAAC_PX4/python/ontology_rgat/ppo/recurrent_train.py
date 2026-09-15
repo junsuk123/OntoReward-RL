@@ -365,6 +365,11 @@ def collect_episode(env, model: PipelineActorCritic, method: str, seed: int,
             and requested_spec.name != model_spec.name):
         raise ValueError(
             f"model pipeline {model_spec.name} cannot run reward pipeline {method}")
+    if monitor is not None and callable(getattr(monitor, "reset_started", None)):
+        # The entry hover can take a minute or more per pair on a rendered
+        # stage; publish it so the dashboard does not read "waiting".
+        monitor.reset_started(
+            method=method, phase=phase, seed=seed, scenario=scenario)
     step = env.reset(seed, curriculum, scenario=scenario)
     reset_detail = ((getattr(env.bridge, "last_reset_ack", {}) or {}).get(
         "detail") or {})
@@ -967,6 +972,47 @@ def no_landing_abort_episode(ppo, planned_policy_episodes=None) -> int:
     return max(grace, min(maximum, budget_grace))
 
 
+def battery_depletion_beyond_reserve(rows) -> tuple[float, str]:
+    """Battery depletion the policy is responsible for, not the seed.
+
+    Every episode starts with a seeded reserve of 9--55 hover seconds while
+    the flight may last 30 s, so a policy that has not yet learned to land
+    depletes roughly half of its episodes by construction. Counting those
+    against the learner stopped a healthy full run at episode 53 with 65 %
+    depletion. Estimate the energy a full-length flight costs from the
+    window's own timed-out episodes and judge depletion only on episodes
+    whose reserve covered that flight; those can deplete only through excess
+    thrust. Histories without energy columns keep the plain fraction.
+    """
+    rows = list(rows)
+    if not rows:
+        return 0.0, "battery depletion"
+    depleted = [float(row.get("battery_depleted", 0.0)) > 0.0 for row in rows]
+    plain = float(np.mean(depleted))
+    full_flights = []
+    for row in rows:
+        try:
+            used = float(row.get("battery_energy_used_j"))
+        except (TypeError, ValueError):
+            continue
+        if str(row.get("status", "")) == "timeout" and math.isfinite(used) and used > 0.0:
+            full_flights.append(used)
+    if not full_flights:
+        return plain, "battery depletion"
+    full_flight_j = float(np.median(full_flights))
+    covered = []
+    for row, was_depleted in zip(rows, depleted):
+        try:
+            initial = float(row.get("battery_energy_initial_j"))
+        except (TypeError, ValueError):
+            return plain, "battery depletion"
+        if math.isfinite(initial) and initial >= full_flight_j:
+            covered.append(was_depleted)
+    if not covered:
+        return 0.0, "battery depletion beyond the seeded reserve"
+    return float(np.mean(covered)), "battery depletion beyond the seeded reserve"
+
+
 def training_health_issue(history, ppo, *, warmup_episodes=0,
                           planned_policy_episodes=None) -> str | None:
     """Return why an unattended run is not learning, after a fair window."""
@@ -984,13 +1030,12 @@ def training_health_issue(history, ppo, *, warmup_episodes=0,
         float(row.get("fov_loss_fraction", 1.0)) for row in recent]))
     limit = float(ppo.get("health_max_fov_loss_fraction", 0.80))
     issues = []
-    battery_fraction = float(np.mean([
-        float(row.get("battery_depleted", 0.0)) for row in recent]))
+    battery_fraction, battery_label = battery_depletion_beyond_reserve(recent)
     battery_limit = float(ppo.get(
         "health_max_battery_depletion_fraction", 0.60))
     if battery_fraction > battery_limit:
         issues.append(
-            f"battery depletion is {battery_fraction:.1%} (limit {battery_limit:.1%})")
+            f"{battery_label} is {battery_fraction:.1%} (limit {battery_limit:.1%})")
     if len(policy_rows) < grace:
         return "; ".join(issues) or None
     if successes == 0.0 and len(policy_rows) >= no_landing_grace:

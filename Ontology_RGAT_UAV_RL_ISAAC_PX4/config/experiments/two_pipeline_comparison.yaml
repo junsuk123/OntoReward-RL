@@ -38,9 +38,9 @@ fov_risk:
 fov_risk_design:
   source_pipeline: shin_se_fixed
   episodes_quick: 8
-  episodes_full: 40
+  episodes_full: 40000
   max_episodes_quick: 24
-  max_episodes_full: 120
+  max_episodes_full: 120000
   validation_fraction: 0.2
   epochs_quick: 10
   epochs_full: 80
@@ -60,7 +60,7 @@ seeds:
 
 training:
   episodes_quick: 8
-  episodes_full: 40960
+  episodes_full: 40000
   independent_seeds_full: [42, 1042, 2042]
 
 evaluation:

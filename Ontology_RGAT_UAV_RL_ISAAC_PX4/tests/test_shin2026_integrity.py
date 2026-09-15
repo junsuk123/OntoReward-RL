@@ -28,12 +28,17 @@ from ontology_rgat.benchmarks.shin2026 import (ActorObservation,
                                                assert_actor_payload_safe,
                                                default_shin2026_config)
 from ontology_rgat.bridge import BridgeError
+from ontology_rgat.mathx import euler_to_quat
 from ontology_rgat.controllers import VelocityYawRateController
 from ontology_rgat.curriculum import (PlatformMotionCurriculum,
                                       fitted_update_interval)
-from ontology_rgat.initialization import (camera_centered_hover_offset,
+from ontology_rgat.initialization import (R_BODY_FROM_OPTICAL_NADIR,
+                                          body_from_optical,
+                                          camera_centered_hover_offset,
                                           constrain_camera_visible_entry,
                                           curriculum_motion_scale,
+                                          pad_in_camera_view,
+                                          pad_view_margin,
                                           yaw_aligned_hover_offset)
 from ontology_rgat.estimation import LSTMRelativeStateEstimator
 from ontology_rgat.perception import (PRETRAIN_FORMAT, ShinKeypointEncoder,
@@ -324,6 +329,57 @@ def test_camera_visible_entry_erodes_footprint_by_marker_board_radius():
 
     assert np.linalg.norm(full_board[:2] - centre[:2]) < np.linalg.norm(
         point_only[:2] - centre[:2])
+
+
+def test_entry_view_geometry_uses_the_rendered_camera_frame():
+    import marker_vision
+
+    np.testing.assert_array_equal(
+        R_BODY_FROM_OPTICAL_NADIR, marker_vision.R_BODY_FROM_OPTICAL)
+    view_axis = body_from_optical(60.0)[:, 2]
+    np.testing.assert_allclose(
+        view_axis, [math.cos(math.radians(60.0)), 0.0,
+                    -math.sin(math.radians(60.0))], atol=1e-12)
+
+
+def test_camera_centred_hover_puts_the_pad_on_the_optical_axis_at_any_altitude():
+    identity = [1.0, 0.0, 0.0, 0.0]
+    for altitude in (2.0, 4.5, 7.55, 8.0):
+        assert pad_view_margin(
+            camera_centered_hover_offset(altitude), identity) < 1e-9
+    yaw = math.radians(120.0)
+    yawed = yaw_aligned_hover_offset(camera_centered_hover_offset(4.5), yaw)
+    assert pad_view_margin(yawed, euler_to_quat([0.0, 0.0, yaw])) < 1e-9
+
+
+def test_entry_view_margin_grows_towards_the_frame_edge_and_beyond():
+    identity = [1.0, 0.0, 0.0, 0.0]
+    centre = camera_centered_hover_offset(4.5)
+    # The 64-deg narrow axis spans left/right: at the 4.5 m hover the slant
+    # range is about 5.0 m, so the frame edge is about 3.1 m to the side.
+    inside = pad_view_margin(centre + np.array([0.0, 1.0, 0.0]), identity)
+    edge = pad_view_margin(centre + np.array([0.0, 3.5, 0.0]), identity)
+    assert 0.0 < inside < 1.0 < edge
+    assert pad_view_margin([3.0, 0.0, 4.5], identity) > 1.0
+    # Ahead of and just above the deck, the forward/down camera has the
+    # pad behind its image plane.
+    assert math.isinf(pad_view_margin([5.0, 0.0, 1.0], identity))
+    assert pad_view_margin([0.0, 0.0, 4.5], identity, pitch_down_deg=90.0) == 0.0
+    assert pad_in_camera_view(centre, identity)
+    assert not pad_in_camera_view(
+        centre + np.array([0.0, 3.0, 0.0]), identity, margin_fraction=0.85)
+
+
+def test_live_config_copies_the_rendered_camera_into_the_entry_gate(tmp_path):
+    from run_shin2026_pipeline import _live_config
+
+    cfg = _live_config("quick", tmp_path, ROOT / "config" / "shin2026-system.yaml")
+    camera = load_config(ROOT / "config" / "shin2026-system.yaml")["vision"]["camera"]
+    assert list(cfg.external.entry_camera["resolution"]) == list(camera["resolution"])
+    assert cfg.external.entry_camera["pitch_down_deg"] == camera["pitch_down_deg"]
+    assert cfg.external.entry_camera["horizontal_fov_deg"] == camera["horizontal_fov_deg"]
+    assert cfg.external.entry_view_geometry is True
+    assert 0.0 < cfg.external.entry_view_margin <= 1.0
 
 
 def test_keypoint_heatmaps_drive_the_descriptor_embedding():

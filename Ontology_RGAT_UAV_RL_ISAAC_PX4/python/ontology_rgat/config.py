@@ -430,7 +430,30 @@ def default_config(mode: str = "quick", target: str = "sitl") -> Config:
         # this setup-only gate does not demand an unrealistic uninterrupted
         # camera solve for the full settle interval.
         "entry_marker_memory": 2.0,       # s since the most recent detection
+        # The detector is one witness, the simulator's geometry the other:
+        # from the upper Table-I entry altitudes a 0.32 m tag is ~10 px in a
+        # 512x320 frame and cannot be decoded although the pad is centred in
+        # the image. When the pad centre projects inside the landing camera's
+        # frame (bridge.entry_view_margin, computed on the same pad-relative
+        # pose the climb is judged on) the pad is in view. The margin is the
+        # admissible fraction of the half field of view; 0.85 keeps the pad
+        # centre out of the outer 15 % of the frame on every side. The camera
+        # model is copied from the system YAML's vision.camera block by the
+        # live runner so it matches the rendered camera.
+        "entry_view_geometry": True,
+        "entry_view_margin": 0.85,
+        "entry_camera": {
+            "resolution": [512, 320],
+            "horizontal_fov_deg": 90.0,
+            "pitch_down_deg": 60.0,
+            "mount_translation_flu_m": [0.0, 0.0, -0.16],
+        },
         "entry_settle": 0.5,              # s held inside tolerance
+        # Unmeasured OFFBOARD position hold between episodes (bridge.
+        # hold_for_next_airborne_reset). It must outlast PPO/estimator
+        # updates; the gateway lands the vehicle when it expires, which PX4
+        # then reports as an offboard-loss failsafe at the next reset.
+        "between_episode_hold_s": 900.0,
         "entry_timeout": 90.0,            # s; must outlast PX4's post-boot arm refusal
         "arm_retry": 2.0,                 # s between arm attempts during the climb
         # PX4 SITL stops accepting arm commands after hours of lockstep; a

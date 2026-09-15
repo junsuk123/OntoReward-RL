@@ -9,6 +9,7 @@ import ontology_rgat.bridge as bridge_module
 from ontology_rgat.bridge import (BridgeError, EntryResetError, PX4Bridge,
                                   PX4EstimatorInvalid, PX4Failsafe,
                                   pacing_anchor_us)
+from ontology_rgat.initialization import camera_centered_hover_offset
 from ontology_rgat_px4.protocol import (
     ProtocolError,
     VehicleSample,
@@ -274,6 +275,105 @@ def test_entry_gate_uses_px4_time_for_marker_memory_and_settling(monkeypatch):
     assert state["px4_time_us"] == 500_000
 
 
+def _entry_gate_bridge(states, *, require_pad_in_view=True):
+    bridge = object.__new__(PX4Bridge)
+    bridge.cfg = SimpleNamespace(
+        entry_timeout=10.0, arm_retry=2.0, entry_tolerance=0.5,
+        entry_speed_tolerance=0.2, require_pad_in_view=require_pad_in_view,
+        entry_marker_memory=2.0, entry_settle=0.5, entry_frame="pad",
+        entry_view_geometry=True, entry_view_margin=0.85,
+        entry_camera={"resolution": [512, 320], "horizontal_fov_deg": 90.0,
+                      "pitch_down_deg": 60.0,
+                      "mount_translation_flu_m": [0.0, 0.0, -0.16]})
+    bridge.get_state = lambda: next(states)
+    return bridge
+
+
+def test_entry_gate_hands_over_on_simulator_geometry_without_a_marker_fix(
+        monkeypatch, capsys):
+    """A 0.32 m tag is ~10 px from 7.5 m: the detector never fires there."""
+    class Clock:
+        value = -0.2
+
+        def monotonic(self):
+            self.value += 0.2
+            return self.value
+
+    monkeypatch.setattr(bridge_module.time, "monotonic", Clock().monotonic)
+    monkeypatch.setattr(bridge_module.time, "sleep", lambda _seconds: None)
+    entry = camera_centered_hover_offset(7.55)
+    states = iter([
+        {"armed": True, "marker_quality": 0.0, "px4_time_us": 1_000_000 * n,
+         "position": entry.tolist(), "velocity": [0.0, 0.0, 0.0],
+         "quaternion_wxyz": [1.0, 0.0, 0.0, 0.0], "position_frame": "pad"}
+        for n in range(6)
+    ])
+    bridge = _entry_gate_bridge(states)
+
+    state = bridge.wait_at_entry(entry)
+
+    assert state["marker_quality"] == 0.0
+    assert state["px4_time_us"] == 1_000_000
+    assert "handing over on simulator geometry" in capsys.readouterr().out
+
+
+def test_entry_gate_geometry_rejects_a_pad_outside_the_camera_frame(monkeypatch):
+    class Clock:
+        value = -1.0
+
+        def monotonic(self):
+            self.value += 1.0
+            return self.value
+
+    monkeypatch.setattr(bridge_module.time, "monotonic", Clock().monotonic)
+    monkeypatch.setattr(bridge_module.time, "sleep", lambda _seconds: None)
+    # Hovering ahead of the deck: the forward/down camera looks away from it.
+    entry = np.array([3.0, 0.0, 4.5])
+
+    def states():
+        n = 0
+        while True:
+            n += 1
+            yield {"armed": True, "marker_quality": 0.0,
+                   "px4_time_us": 1_000_000 * n, "position": entry.tolist(),
+                   "velocity": [0.0, 0.0, 0.0],
+                   "quaternion_wxyz": [1.0, 0.0, 0.0, 0.0],
+                   "position_frame": "pad"}
+
+    bridge = _entry_gate_bridge(states())
+
+    with pytest.raises(EntryResetError, match="pad view offset 2.11"):
+        bridge.wait_at_entry(entry)
+
+
+def test_entry_gate_geometry_is_not_consulted_for_world_frame_entries(monkeypatch):
+    class Clock:
+        value = -1.0
+
+        def monotonic(self):
+            self.value += 1.0
+            return self.value
+
+    monkeypatch.setattr(bridge_module.time, "monotonic", Clock().monotonic)
+    monkeypatch.setattr(bridge_module.time, "sleep", lambda _seconds: None)
+    entry = camera_centered_hover_offset(4.5)
+
+    def states():
+        n = 0
+        while True:
+            n += 1
+            yield {"armed": True, "marker_quality": 0.0,
+                   "px4_time_us": 1_000_000 * n, "position": entry.tolist(),
+                   "velocity": [0.0, 0.0, 0.0],
+                   "quaternion_wxyz": [1.0, 0.0, 0.0, 0.0]}
+
+    bridge = _entry_gate_bridge(states())
+    bridge.cfg.entry_frame = "world"
+
+    with pytest.raises(EntryResetError, match="pad view offset n/a"):
+        bridge.wait_at_entry(entry)
+
+
 def test_entry_gate_aborts_immediately_after_pad_contact(monkeypatch):
     monkeypatch.setattr(bridge_module.time, "sleep", lambda _seconds: None)
     bridge = object.__new__(PX4Bridge)
@@ -389,7 +489,7 @@ def test_airborne_reset_hold_is_bounded_and_keeps_offboard_alive():
     assert kind == "goto" and expected == ("ack",)
     assert np.linalg.norm(payload["position"][:2]) == pytest.approx(9.0)
     assert payload["position"][2] == pytest.approx(8.0)
-    assert payload["frame"] == "pad" and payload["hold_s"] == 120.0
+    assert payload["frame"] == "pad" and payload["hold_s"] == 900.0
 
 
 def test_optical_position_update_is_bounded_around_dr_prediction():
@@ -477,7 +577,7 @@ def test_goto_refuses_positions_outside_the_city(position):
         validate_goto({"position": position})
 
 
-@pytest.mark.parametrize("hold_s", (0.0, -1.0, 600.0, float("nan"), "soon"))
+@pytest.mark.parametrize("hold_s", (0.0, -1.0, 1200.0, float("nan"), "soon"))
 def test_goto_hold_is_bounded(hold_s):
     with pytest.raises(ProtocolError):
         validate_goto({"position": [0.0, 0.0, 4.0], "hold_s": hold_s})

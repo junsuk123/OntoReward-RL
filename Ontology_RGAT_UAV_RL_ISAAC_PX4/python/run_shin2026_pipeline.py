@@ -100,6 +100,17 @@ def _live_config(mode, results_dir, system_config):
     cfg.external.entry_marker_memory = float(
         benchmark.get("entry_marker_memory_s",
                       cfg.external.entry_marker_memory))
+    # The entry gate's geometric pad-in-view test must use the camera Isaac
+    # actually renders with, so copy that model rather than the defaults.
+    camera = dict((simulator_config.get("vision") or {}).get("camera") or {})
+    entry_camera = dict(cfg.external.entry_camera)
+    for key in ("resolution", "horizontal_fov_deg", "pitch_down_deg",
+                "mount_translation_flu_m"):
+        if key in camera:
+            entry_camera[key] = camera[key]
+    cfg.external.entry_camera = entry_camera
+    if "entry_view_margin" in benchmark:
+        cfg.external.entry_view_margin = float(benchmark["entry_view_margin"])
     cfg.viz.rviz.deck_size_m = list(pad.get("deck_size_m", (1.5, 1.5)))
     cfg.viz.rviz.deck_height_m = float(pad.get("deck_height_m", 0.0))
     cfg.viz.rviz.route_waypoints_enu_m = list(

@@ -91,7 +91,9 @@ GOTO_MAX_PAD_RADIUS_M = 10.0
 GOTO_FRAMES = ("world", "pad")
 # A freshly booted PX4 refuses to arm for roughly 40 s, and the hold has to
 # outlast that plus the climb.
-GOTO_MAX_HOLD_S = 120.0
+# Long enough to cover a PPO/estimator update between measured episodes on
+# a rendered two-pair stage; a learner that dies mid-hold still lands.
+GOTO_MAX_HOLD_S = 900.0
 
 
 @dataclass(frozen=True)

@@ -14,6 +14,7 @@ from typing import Any, Iterable, Sequence
 import numpy as np
 
 from .config import Config
+from .initialization import pad_view_margin
 from .mathx import quat_to_euler_zyx
 
 __all__ = ["PX4Bridge", "BridgeError", "EntryResetError", "GatewayRejected",
@@ -300,6 +301,34 @@ class PX4Bridge:
             return True
         return float(state.get("marker_quality", 0.0)) > 0.0
 
+    def entry_view_margin(self, state: dict[str, Any],
+                          here: np.ndarray) -> float | None:
+        """Normalised image position of the pad centre, from simulator geometry.
+
+        Below 1 the pad centre is inside the landing camera's frame; ``None``
+        when the geometry cannot be evaluated (no attitude in the sample, or a
+        world-frame entry whose pad-relative pose is unknown). The camera model
+        is ``cfg.external.entry_camera``, copied from the same ``vision.camera``
+        block Isaac builds the rendered camera from.
+        """
+        if str(getattr(self.cfg, "entry_frame", "pad")).lower() != "pad":
+            return None
+        quaternion = state.get("quaternion_wxyz")
+        if quaternion is None:
+            return None
+        camera = getattr(self.cfg, "entry_camera", None)
+        params = dict(camera) if isinstance(camera, dict) else {}
+        try:
+            return float(pad_view_margin(
+                np.asarray(here, dtype=float), quaternion,
+                image_size=params.get("resolution", (512, 320)),
+                horizontal_fov_deg=float(params.get("horizontal_fov_deg", 90.0)),
+                pitch_down_deg=float(params.get("pitch_down_deg", 60.0)),
+                mount_translation_flu_m=params.get(
+                    "mount_translation_flu_m", (0.0, 0.0, -0.16))))
+        except (TypeError, ValueError):
+            return None
+
     @staticmethod
     def entry_state(state: dict[str, Any]) -> tuple[np.ndarray, float]:
         """Pad-relative pose and settling speed to decide handover on.
@@ -339,10 +368,21 @@ class PX4Bridge:
         lockstep simulation clock. On a rendered multi-pair stage one second
         of simulation can take many wall seconds; expiring marker memory on
         wall time made a perfectly visible pad fail the reset gate.
+
+        "Pad in view" is satisfied by either a recent ArUco fix or by the
+        simulator's own geometry placing the pad centre inside the landing
+        camera's frame (``entry_view_margin``). The detector alone cannot be
+        the gate: from the upper half of the Table-I entry altitude range a
+        0.32 m tag is about ten pixels wide in a 512x320 frame, so it cannot
+        be decoded even though the pad fills the centre of the image, and on
+        a shared multi-pair stage one pair timing out here restarts the
+        simulator under every other pair's episode.
         """
         started = time.monotonic()
         settled_since: float | None = None
         marker_seen_at: float | None = None
+        detector_ready = False
+        view_margin: float | None = None
         state: dict[str, Any] | None = None
         last_arm = float("-inf")
         was_armed = False
@@ -397,11 +437,19 @@ class PX4Bridge:
                 sample_now = wall_now
             if float(state.get("marker_quality", 0.0)) > 0.0:
                 marker_seen_at = sample_now
+            detector_ready = (
+                marker_seen_at is not None
+                and sample_now - marker_seen_at <= float(getattr(
+                    self.cfg, "entry_marker_memory", 0.0)))
+            view_margin = self.entry_view_margin(state, here)
+            geometry_ready = (
+                bool(getattr(self.cfg, "entry_view_geometry", True))
+                and view_margin is not None
+                and view_margin <= float(getattr(
+                    self.cfg, "entry_view_margin", 0.85)))
             marker_ready = (
                 not bool(self.cfg.require_pad_in_view)
-                or (marker_seen_at is not None
-                    and sample_now - marker_seen_at <= float(getattr(
-                        self.cfg, "entry_marker_memory", 0.0))))
+                or detector_ready or geometry_ready)
             at_target = (
                 float(np.linalg.norm(here - target)) <= float(self.cfg.entry_tolerance)
                 and speed <= float(self.cfg.entry_speed_tolerance)
@@ -411,6 +459,16 @@ class PX4Bridge:
             elif settled_since is None:
                 settled_since = sample_now
             elif sample_now - settled_since >= float(self.cfg.entry_settle):
+                if bool(self.cfg.require_pad_in_view) and not detector_ready:
+                    # Setup-only diagnostic: the episode opens on geometry,
+                    # so the operator can see that the detector could not
+                    # decode the board from this altitude.
+                    print(
+                        "Entry gate: pad centre is inside the landing camera "
+                        f"frame (normalised offset {view_margin:.2f}) at "
+                        f"{float(here[2]):.1f} m but ArUco quality is "
+                        f"{float(state.get('marker_quality', 0.0)):.2f}; "
+                        "handing over on simulator geometry.")
                 return state
             time.sleep(0.02)
         if state is None:
@@ -420,7 +478,9 @@ class PX4Bridge:
             f"PX4 did not hold the entry pose within {float(self.cfg.entry_timeout):.1f} s "
             f"(offset {float(np.linalg.norm(here - target)):.2f} m, "
             f"speed {speed:.2f} m/s, "
-            f"marker quality {float(state.get('marker_quality', 0.0)):.2f}).")
+            f"marker quality {float(state.get('marker_quality', 0.0)):.2f}, "
+            "pad view offset "
+            f"{'n/a' if view_margin is None else format(view_margin, '.2f')}).")
 
     # ------------------------------------------------------------------- step
     def step(self, action: Iterable[float]) -> dict[str, Any]:
@@ -550,6 +610,13 @@ class PX4Bridge:
         AUTO.LAND, which cannot always be cancelled before the next entry
         timeout. The next episode is still gated on its independently seeded
         entry hover; this target is only unmeasured staging.
+
+        The hold must outlast the whole between-episode gap: when it expired
+        the gateway released the setpoint stream and commanded a landing, PX4
+        raised ``offboard_control_signal_lost``, and the next reset rebuilt
+        the shared simulator under both pairs. On a rendered two-pair stage
+        that gap exceeded the old 120 s during estimator warm-up as well as
+        during PPO updates.
         """
         state = self.last_state or self.get_state()
         truth = state.get("truth") if isinstance(state.get("truth"), dict) else {}
@@ -563,7 +630,11 @@ class PX4Bridge:
         yaw = float(quat_to_euler_zyx(state["quaternion_wxyz"])[2])
         self.transact(
             "goto", {"position": position.tolist(), "yaw": yaw,
-                     "frame": "pad", "hold_s": 120.0}, ("ack",))
+                     "frame": "pad",
+                     "hold_s": float(getattr(
+                         getattr(self, "cfg", None),
+                         "between_episode_hold_s", 900.0))},
+            ("ack",))
 
     def stop_after_outcome(self, timeout: float | None = None) -> bool:
         """Stop control and confirm PX4 has landed before the next reset."""

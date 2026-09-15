@@ -188,6 +188,34 @@ def test_warmup_and_fov_data_publish_independent_episode_progress():
     assert fov["parallel_pair_status"][1]["episode_kind"] == "FOV 데이터"
 
 
+def test_entry_hover_is_published_before_the_episode_starts():
+    store = LiveStore()
+    monitor = BenchmarkMonitor(store)
+    monitor.configure(
+        methods=["shin_se_fixed", "shin_se_onto_rgat_fov"], mode="quick",
+        config_hash="h", training_total=6, evaluation_total=1,
+        pair_layout=[
+            {"index": 0, "method": "shin_se_fixed"},
+            {"index": 1, "method": "shin_se_onto_rgat_fov"},
+        ])
+
+    monitor.reset_started(
+        method="shin_se_onto_rgat_fov", phase="FOV-risk offline data",
+        seed=70000, scenario="training_random_walk")
+    pairs = store.snapshot()["scalars"]["parallel_pair_status"]
+    assert pairs[1]["status"] == "entry hover"
+    assert pairs[1]["phase"] == "FOV-risk offline data"
+    assert pairs[1]["episode"] == 0
+    assert pairs[0]["status"] == "waiting"
+
+    monitor.reset_episode(
+        method="shin_se_onto_rgat_fov", phase="FOV-risk offline data",
+        seed=70000, scenario="training_random_walk", curriculum=1.0)
+    pairs = store.snapshot()["scalars"]["parallel_pair_status"]
+    assert pairs[1]["status"] == "running"
+    assert pairs[1]["episode"] == 1
+
+
 def test_pair_status_routes_by_physical_index_during_crossover():
     store = LiveStore()
     monitor = BenchmarkMonitor(store)

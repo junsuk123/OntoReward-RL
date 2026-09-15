@@ -530,6 +530,34 @@ def test_training_health_gate_catches_battery_failure_before_learning_grace():
     assert issue == "battery depletion is 100.0% (limit 60.0%)"
 
 
+def test_training_health_gate_ignores_depletion_the_seeded_reserve_forces():
+    """9--55 hover seconds against a 30 s flight depletes half the episodes."""
+    history = []
+    for episode in range(1, 21):
+        short_reserve = episode % 3 != 0          # 13 of 20 episodes
+        history.append({
+            "episode": episode, "paper_success": 0, "fov_loss_fraction": .1,
+            "battery_depleted": 1 if short_reserve else 0,
+            "battery_energy_initial_j": 3000.0 if short_reserve else 8000.0,
+            "battery_energy_used_j": 3000.0 if short_reserve else 5500.0,
+            "status": "battery_depleted" if short_reserve else "timeout",
+        })
+    ppo = {"health_window_episodes": 20, "health_grace_episodes": 40,
+           "health_max_battery_depletion_fraction": .6}
+    assert training_health_issue(history, ppo) is None
+
+    # A policy that burns the pack despite an ample reserve is still caught.
+    wasteful = [dict(row, battery_depleted=1, battery_energy_used_j=8000.0,
+                     status="battery_depleted")
+                if row["status"] == "timeout" else dict(row)
+                for row in history]
+    wasteful[2].update(status="timeout", battery_depleted=0,
+                       battery_energy_used_j=5500.0)
+    issue = training_health_issue(wasteful, ppo)
+    assert issue is not None
+    assert issue.startswith("battery depletion beyond the seeded reserve is")
+
+
 def test_short_live_budget_extends_only_the_no_landing_grace():
     history = [{
         "episode": episode, "paper_success": 0,

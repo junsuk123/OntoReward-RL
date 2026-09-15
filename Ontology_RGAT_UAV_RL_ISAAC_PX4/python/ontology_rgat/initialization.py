@@ -5,6 +5,8 @@ import math
 
 import numpy as np
 
+from .mathx import quat_to_rotm
+
 
 def camera_centered_hover_offset(
         altitude_m: float, pitch_down_deg: float = 60.0,
@@ -103,6 +105,82 @@ def constrain_camera_visible_entry(
     if reach > footprint_radius:
         result[:2] = centre[:2] + delta * (footprint_radius / reach)
     return result
+
+
+# The rendered landing camera's optical frame (OpenCV: +X right, +Y down, +Z
+# view) expressed in body FLU axes when it looks straight down. This is the
+# same constant as ``isaac_sim.marker_vision.R_BODY_FROM_OPTICAL``; Isaac's
+# ``aim_at_nadir`` forces the camera prim onto exactly this frame after the
+# configured down-pitch, so image +X spans the vehicle's pitch plane and image
+# +Y spans left/right. ``tests/test_shin2026_integrity.py`` asserts equality.
+R_BODY_FROM_OPTICAL_NADIR = np.array([
+    [1.0, 0.0, 0.0],
+    [0.0, -1.0, 0.0],
+    [0.0, 0.0, -1.0],
+])
+
+
+def body_from_optical(pitch_down_deg: float) -> np.ndarray:
+    """Optical-to-body rotation of the forward/down landing camera."""
+    pitch_down = float(pitch_down_deg)
+    if not math.isfinite(pitch_down) or not 0.0 < pitch_down <= 90.0:
+        raise ValueError("camera pitch-down must be finite and in (0, 90] deg")
+    angle = math.radians(pitch_down - 90.0)
+    c, s = math.cos(angle), math.sin(angle)
+    rotate_y = np.array([[c, 0.0, s], [0.0, 1.0, 0.0], [-s, 0.0, c]])
+    return rotate_y @ R_BODY_FROM_OPTICAL_NADIR
+
+
+def pad_view_margin(uav_position_pad_enu, uav_quaternion_wxyz, *,
+                    image_size=(512, 320), horizontal_fov_deg: float = 90.0,
+                    pitch_down_deg: float = 60.0,
+                    mount_translation_flu_m=(0.0, 0.0, -0.16),
+                    pad_position_enu=(0.0, 0.0, 0.0)) -> float:
+    """How deep inside the camera frustum the pad centre projects.
+
+    Returns the pad centre's normalised image coordinate: the larger of
+    ``|x| / tan(hfov/2)`` and ``|y| / tan(vfov/2)`` in the optical frame, so a
+    value below 1 lies inside the frame, 0 is the optical axis and ``inf`` is
+    behind the camera. The pose is the gravity-aligned pad-relative ENU
+    position the entry climb is flown on together with the ENU/FLU attitude.
+    """
+    position = np.asarray(uav_position_pad_enu, dtype=float).reshape(-1)
+    pad = np.asarray(pad_position_enu, dtype=float).reshape(-1)
+    mount = np.asarray(mount_translation_flu_m, dtype=float).reshape(-1)
+    quaternion = np.asarray(uav_quaternion_wxyz, dtype=float).reshape(-1)
+    width, height = (int(value) for value in image_size)
+    hfov = math.radians(float(horizontal_fov_deg))
+    if (position.shape != (3,) or pad.shape != (3,) or mount.shape != (3,)
+            or quaternion.shape != (4,) or not np.isfinite(position).all()
+            or not np.isfinite(pad).all() or not np.isfinite(mount).all()
+            or not np.isfinite(quaternion).all() or width < 2 or height < 2
+            or not 0.0 < hfov < math.pi):
+        raise ValueError("pad view geometry configuration is invalid")
+    rotation = quat_to_rotm(quaternion)
+    camera_position = position + rotation @ mount
+    optical_in_enu = rotation @ body_from_optical(pitch_down_deg)
+    ray = optical_in_enu.T @ (pad - camera_position)
+    depth = float(ray[2])
+    if depth <= 1e-9:
+        return math.inf
+    tan_half_h = math.tan(hfov / 2.0)
+    tan_half_v = tan_half_h * height / width
+    return max(abs(float(ray[0])) / depth / tan_half_h,
+               abs(float(ray[1])) / depth / tan_half_v)
+
+
+def pad_in_camera_view(uav_position_pad_enu, uav_quaternion_wxyz, *,
+                       margin_fraction: float = 0.85, **camera) -> bool:
+    """Is the pad centre inside the frame, clear of its edges?
+
+    ``margin_fraction`` is the admissible fraction of the half field of view,
+    so 0.85 keeps the centre out of the outer 15 % of the image on each side.
+    """
+    fraction = float(margin_fraction)
+    if not math.isfinite(fraction) or not 0.0 < fraction <= 1.0:
+        raise ValueError("view margin fraction must be in (0, 1]")
+    return pad_view_margin(
+        uav_position_pad_enu, uav_quaternion_wxyz, **camera) <= fraction
 
 
 def curriculum_motion_scale(curriculum: float, minimum_scale: float) -> float:

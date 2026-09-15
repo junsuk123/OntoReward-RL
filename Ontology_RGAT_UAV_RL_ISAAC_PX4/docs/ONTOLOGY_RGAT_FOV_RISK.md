@@ -33,3 +33,9 @@ state-dict checksum을 검사한다.
 Artifact metadata는 dataset/graph version, seed, horizon, split episode ID, AUROC, F1,
 precision, recall, confusion matrix와 model checksum을 기록한다.
 
+기본 artifact 경로는 결과 디렉터리 아래의 `rgat/fov_risk_rollouts.npz`와
+`rgat/fov_risk_model.pt`다. 기본 설정의 `lambda_fov`는 0.1이며, 학습·평가 중
+`freeze_during_ppo=true` 계약에 따라 model checksum이 변하지 않아야 한다. 한 class가
+부족하면 runner는 `--rgat-max-data-episodes`까지 실제 rollout을 추가할 수 있으며,
+빠른 세미나 실행은 40 episode에서 시작해 최대 120 episode로 제한한다.
+

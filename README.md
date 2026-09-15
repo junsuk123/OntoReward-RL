@@ -26,6 +26,13 @@ R-GAT 입력은 `KeypointConfidence`, `VisibleKeypointFraction`, `FOVMargin`,
 `ReacquisitionTrend`의 8개 시각 특징뿐이다. Simulator truth, 실제/추정 상대 위치·속도,
 critic privileged state는 입력할 수 없다.
 
+## 현재 실행 경로
+
+현재 기본 연구 경로는 `config/experiments/two_pipeline_comparison.yaml`의 두
+pipeline 비교다. `shin_se_fixed`와 `shin_se_onto_rgat_fov`는 Shin baseline을
+공유하고, 후자만 동결된 visual-only R-GAT의 1초 미래 FOV-loss 보상을 추가한다.
+Estimator-free, adaptive-weight, PBRS 실험은 legacy/ablation 경로다.
+
 ## 실행
 
 기본 실행은 두 개의 독립 UAV/UGV·PX4·namespace·port·learner·buffer·optimizer를 쓴다.
@@ -34,7 +41,19 @@ critic privileged state는 입력할 수 없다.
 ./run.sh --pipelines shin_se_fixed shin_se_onto_rgat_fov --parallel-pairs 2
 ```
 
-인자 없는 `./run.sh`도 같은 두 pipeline과 두 pair를 선택하며 세미나용 예산을 적용한다.
+인자 없는 `./run.sh`는 `seminar_10h_two_pipeline.yaml`을 자동 선택하는 재현 가능한
+세미나 프로파일이다. 두 pair, pipeline당 144 training episodes, 5 evaluation
+episodes, 40 FOV-risk data episodes를 사용하고 결과를
+`results/seminar_10h/two_pipe_parallel_144/`에 저장한다. 이 프로파일은
+`publication_claim_allowed: false`이므로 논문 결과로 보고하지 않는다.
+
+더 큰 명시적 실행은 위 명령처럼 실행한다. 기본 full 경로는 선택한 pipeline 전체에
+800 training episodes, 5 evaluation episodes, 40 FOV-risk data episodes를 적용한다.
+필요하면 `--total-train-episodes`, `--eval-episodes`, `--rgat-data-episodes`,
+`--rgat-epochs`, `--results-dir`로 덮어쓸 수 있다. 직접 runner를 호출할 때는
+`Ontology_RGAT_UAV_RL_ISAAC_PX4/`에서 `python python/run_two_pipeline.py --help`로
+primary-only 옵션을 확인한다.
+
 예전 estimator-free/adaptive-weight/PBRS 실험은 기본 경로와 결과 집계에서 제외되어 있고,
 필요할 때만 `--legacy-multi-pipeline`으로 명시적으로 실행한다.
 
@@ -49,5 +68,6 @@ cd Ontology_RGAT_UAV_RL_ISAAC_PX4
 정보 누출 차단, graph 결정성, 확률·보상 범위, R-GAT 동결, episode-level split,
 단독 및 2-pair 실행 계약을 포함한다.
 
-상세 내용은 [구현 README](Ontology_RGAT_UAV_RL_ISAAC_PX4/README.md)와
+상세 내용은 [구현 README](Ontology_RGAT_UAV_RL_ISAAC_PX4/README.md),
+[운영 절차](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/OPERATIONS.md),
 [두 pipeline 비교 설계](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/TWO_PIPELINE_COMPARISON.md)를 참고한다.

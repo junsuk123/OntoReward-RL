@@ -34,6 +34,23 @@ $$r_{proposed}(t)=r_{base}(t)-\lambda_{fov}p_{fov\_loss}(t)$$
 `lambda_fov`의 기본값은 0.1이며 설정 가능하다. 0이면 같은 trajectory의 두 보상은
 수치적으로 동일하다. 다섯 baseline 가중치는 설정 대상이 아니다.
 
+FOV-risk label의 기본 prediction horizon은 1.0초이며, 실제 control frequency에
+맞춰 step 수로 변환한다. `visibility_criterion`은 `pad_in_fov`이고, 제안 branch는
+`freeze_during_ppo: true`로 설정된다. R-GAT은 BCE-only offline 학습의 validation-best
+checkpoint로 고정되며 PPO optimizer에 들어가지 않는다.
+
+## 설정과 실행 프로파일
+
+주 설정은 `config/experiments/two_pipeline_comparison.yaml`이다. quick profile은
+8 training episodes와 8 FOV-risk design episodes를 사용한다. 명시적 full 실행의
+설정 예산은 40,000 training episodes와 40,000 FOV-risk design episodes이며, 실행
+스크립트는 deadline을 위해 CLI에서 더 작은 예산으로 덮어쓸 수 있다.
+
+인자 없는 상위 `./run.sh`는 별도 `seminar_10h_two_pipeline.yaml`을 선택해 pipeline당
+144 training episodes, 40 data episodes, 80 epochs, 5 evaluation episodes를 사용한다.
+이 설정은 `publication_claim_allowed: false`인 예비 비교이므로 full 결과와 섞어
+집계하지 않는다.
+
 ## 평가
 
 주 지표는 Landing Success Rate, FOV Loss Episode Rate, FOV Retention Ratio,
@@ -42,4 +59,8 @@ confusion matrix를 보고한다. 상태추정 오차와 loss는 양쪽 공통 �
 해석하지 않는다.
 
 Attention/message-passing coefficient는 relation importance나 인과 근거로 보고하지 않는다.
+
+YAML에 선언된 평가 시나리오는 `training_random_walk`, `straight_8mps`,
+`linear_acceleration_wave`, `circle`, `zigzag`, `u_turn`, `vertical_heave_boat`다.
+세미나 프로파일은 이 중 `training_random_walk`, `circle`, `zigzag`만 사용한다.
 

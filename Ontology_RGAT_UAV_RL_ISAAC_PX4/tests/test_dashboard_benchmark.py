@@ -43,7 +43,7 @@ def test_benchmark_monitor_publishes_refactored_contract_and_progress():
                       "fov_margin": 0.35, "keypoint_confidence": 0.7,
                       "visible_keypoint_fraction": 0.5},
         estimate=np.array([1, 0, -2, 0.5, 0, 0]),
-        truth=np.array([0, 0, -2, 0, 0, 0]), in_fov=False,
+        truth=np.array([0, 0, -2, 0, 0, 0]), geometric_in_fov=False,
         estimation_loss=0.2, state={
             "position": [0.0, 0.0, -2.0],
             "world": {"velocity": [0.3, 0.4, 0.0]},
@@ -90,7 +90,7 @@ def test_benchmark_monitor_publishes_refactored_contract_and_progress():
     assert pair["assigned_method"] == "shin_se_onto_rgat_fov"
     assert pair["active_method"] == "shin_se_onto_rgat_fov"
     assert pair["step"] == 1
-    assert pair["marker_visible"] is False
+    assert pair["geometric_pad_center_in_fov"] is False
     assert pair["relative_xyz"] == [0.0, 0.0, -2.0]
     assert pair["active_perception"] == -0.01
     assert pair["fov_margin"] == 0.35
@@ -232,7 +232,7 @@ def test_pair_status_routes_by_physical_index_during_crossover():
         scenario="circle", curriculum=1.0, pair_index=0)
     monitor.step(
         index=3, dt=.1, method="shin_se_onto_rgat_fov", reward=.1,
-        reward_parts={}, estimate=None, truth=np.zeros(6), in_fov=True,
+        reward_parts={}, estimate=None, truth=np.zeros(6), geometric_in_fov=True,
         estimation_loss=None, state={"position": [0.0, 0.0, -1.0]},
         pair_index=0)
 

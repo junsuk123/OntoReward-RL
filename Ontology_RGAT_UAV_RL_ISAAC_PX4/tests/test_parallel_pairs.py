@@ -44,7 +44,7 @@ def test_gateway_single_pair_keeps_original_topics_and_port():
     assert resolved.gateway_port == 14650
 
 
-def test_parallel_route_phases_and_marker_ids_fit_declared_dictionary():
+def test_parallel_route_phases_separate_the_two_pairs_without_marker_ids():
     from config_loader import load_config
 
     config = load_config(ROOT / "config/seminar-fast-system.yaml")
@@ -56,32 +56,45 @@ def test_parallel_route_phases_and_marker_ids_fit_declared_dictionary():
     assert len(phases) == 2
     assert len(set(float(value) for value in phases)) == 2
     assert all(0.0 <= float(value) < 1.0 for value in phases)
-    assert parallel["marker_dictionary"] == "DICT_4X4_250"
-    marker_ids = [int(marker["id"]) for marker in config["vision"]["board"]]
-    expanded = {
-        marker_id + pair * int(parallel["marker_id_stride"])
-        for pair in range(2) for marker_id in marker_ids
-    }
-    assert len(expanded) == 2 * len(marker_ids)
-    assert min(expanded) >= 0 and max(expanded) < 250
+    # Pairs are separated along the route, not by marker identity: the primary
+    # profile has no dictionary and no board to stride.
+    assert parallel["marker_dictionary"] is None
+    assert parallel["marker_id_stride"] is None
+    assert config["vision"]["mode"] == "keypoint_fiducial"
+    assert not config["vision"].get("board")
 
 
-def test_keypoint_calibration_uses_the_board_rendered_for_each_parallel_pair():
+def test_keypoint_calibration_shares_one_target_across_parallel_pairs():
     from config_loader import load_config
     from run_three_pipeline import _calibration_system_for_pair
 
     system = load_config(ROOT / "config/shin2026-system.yaml")
-    original_dictionary = system["vision"]["dictionary"]
+    landing_pad = dict(system["vision"]["landing_pad"])
+
+    # Every pair's deck carries the identical six-keypoint target, so nothing
+    # is specialised and nothing in the source profile is mutated.
+    for pair_index in range(2):
+        resolved = _calibration_system_for_pair(system, pair_index, 2)
+        assert resolved["vision"]["landing_pad"] == landing_pad
+        assert not resolved["vision"].get("dictionary")
+        assert not resolved["vision"].get("board")
+    assert system["vision"]["landing_pad"] == landing_pad
+
+
+def test_legacy_aruco_profile_still_separates_parallel_pairs_by_marker_id():
+    from config_loader import load_config
+    from run_three_pipeline import _calibration_system_for_pair
+
+    system = load_config(ROOT / "config/system.yaml")
     original_ids = [int(marker["id"]) for marker in system["vision"]["board"]]
+    stride = int(system["parallel"]["marker_id_stride"])
     pair0 = _calibration_system_for_pair(system, 0, 2)
     pair1 = _calibration_system_for_pair(system, 1, 2)
-    stride = int(system["parallel"]["marker_id_stride"])
 
     assert pair0["vision"]["dictionary"] == system["parallel"]["marker_dictionary"]
     assert [int(marker["id"]) for marker in pair0["vision"]["board"]] == original_ids
     assert [int(marker["id"]) for marker in pair1["vision"]["board"]] == [
         marker_id + stride for marker_id in original_ids]
-    assert system["vision"]["dictionary"] == original_dictionary
     assert [int(marker["id"]) for marker in system["vision"]["board"]] == original_ids
 
 

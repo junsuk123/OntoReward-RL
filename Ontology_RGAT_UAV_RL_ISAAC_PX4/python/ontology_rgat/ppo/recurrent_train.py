@@ -14,8 +14,9 @@ import torch
 
 from ..bridge import BridgeError, EntryResetError, GatewayTimeout, PX4Failsafe
 from ..curriculum import PlatformMotionCurriculum
-from ..perception import (SEMANTIC_FEATURE_NAMES, grayscale_image_tensor,
-                          semantic_graph, semantic_observation)
+from ..perception import (POINT_CONFIDENCE_THRESHOLD, SEMANTIC_FEATURE_NAMES,
+                          grayscale_image_tensor, semantic_graph,
+                          semantic_observation)
 from ..pipelines import (available_pipeline_ids, get_pipeline,
                          primary_pipeline_ids)
 from ..rgat.adaptive_model import adaptive_reward_graph
@@ -273,8 +274,20 @@ def _landing_phase(observation) -> str:
 
 def visual_recovery_metrics(rows, *, initial_in_fov: bool, success: bool,
                             dt: float) -> dict[str, float]:
-    """Measure observability loss, action-level recovery and its outcome."""
-    visibility = [bool(initial_in_fov)] + [bool(row["in_fov"]) for row in rows]
+    """Separate geometric FOV behaviour from neural perception quality.
+
+    Two independent families come out of here and must not be conflated:
+
+    * ``geometric_fov_*`` -- derived only from simulator pad-centre frustum
+      truth, so they say whether the target was physically in frame.
+    * ``*keypoint*`` -- derived only from the encoder's own keypoint
+      confidence and visibility, so they say how well perception was doing.
+
+    A frame can be geometrically in view while the encoder sees nothing; that
+    is perception degradation, and it is reported as such rather than as an
+    FOV loss.
+    """
+    visibility = [bool(initial_in_fov)] + [bool(row["geometric_in_fov"]) for row in rows]
     losses = 0
     reacquisitions = 0
     loss_start = None
@@ -296,17 +309,31 @@ def visual_recovery_metrics(rows, *, initial_in_fov: bool, success: bool,
 
     feature_index = {name: index for index, name in enumerate(SEMANTIC_FEATURE_NAMES)}
     lost_commands = []
-    low_visibility_commands = []
+    low_keypoint_commands = []
+    low_keypoint_steps = 0
+    scored_steps = 0
+    in_view_scored_steps = 0
+    blind_while_in_view = 0
+    keypoint_confidence = []
+    visible_keypoint_fraction = []
     for index, row in enumerate(rows):
         command = np.asarray(row.get("command", np.zeros(4)), dtype=float)
         if not visibility[index]:
             lost_commands.append(command)
         semantic = np.asarray(row.get("semantic_features", ()), dtype=float)
         if semantic.size == len(SEMANTIC_FEATURE_NAMES):
-            low = (semantic[feature_index["visible_keypoint_fraction"]] < 0.5
-                   or semantic[feature_index["keypoint_confidence"]] < 0.01)
-            if low:
-                low_visibility_commands.append(command)
+            scored_steps += 1
+            confidence = float(semantic[feature_index["keypoint_confidence"]])
+            visible = float(semantic[feature_index["visible_keypoint_fraction"]])
+            keypoint_confidence.append(confidence)
+            visible_keypoint_fraction.append(visible)
+            if visible < 0.5 or confidence < POINT_CONFIDENCE_THRESHOLD:
+                low_keypoint_steps += 1
+                low_keypoint_commands.append(command)
+                if visibility[index]:
+                    blind_while_in_view += 1
+            if visibility[index]:
+                in_view_scored_steps += 1
 
     def fraction(commands, predicate):
         if not commands:
@@ -314,15 +341,33 @@ def visual_recovery_metrics(rows, *, initial_in_fov: bool, success: bool,
         return float(np.mean([predicate(command) for command in commands]))
 
     output = {
-        "visual_loss_events": float(losses),
-        "visual_reacquisition_events": float(reacquisitions),
-        "visual_reacquisition_rate": float(reacquisitions / max(losses, 1)),
-        "mean_visual_reacquisition_time_s": (
+        # Geometric camera-frustum truth.
+        "geometric_fov_loss_events": float(losses),
+        "geometric_fov_reacquisition_events": float(reacquisitions),
+        "geometric_fov_reacquisition_rate": float(reacquisitions / max(losses, 1)),
+        "mean_geometric_fov_reacquisition_time_s": (
             float(np.mean(completed_durations)) if completed_durations else 0.0),
-        "recovery_climb_fraction": fraction(
+        "climb_during_geometric_fov_loss_fraction": fraction(
             lost_commands, lambda command: command[2] > 0.05),
-        "unsafe_descent_low_visibility_fraction": fraction(
-            low_visibility_commands, lambda command: command[2] < -0.05),
+        "descent_during_geometric_fov_loss_fraction": fraction(
+            lost_commands, lambda command: command[2] < -0.05),
+        # Neural perception quality, independent of the above.
+        "low_keypoint_visibility_fraction": float(
+            low_keypoint_steps / scored_steps) if scored_steps else 0.0,
+        "keypoint_confidence_mean": (
+            float(np.mean(keypoint_confidence)) if keypoint_confidence else 0.0),
+        "visible_keypoint_fraction_mean": (
+            float(np.mean(visible_keypoint_fraction))
+            if visible_keypoint_fraction else 0.0),
+        "descent_during_low_keypoint_visibility_fraction": fraction(
+            low_keypoint_commands, lambda command: command[2] < -0.05),
+        # Infrastructure witness, not a behavioural score: the pad was
+        # physically in frame and the encoder still saw nothing.
+        "blind_perception_while_geometric_fov_fraction": float(
+            blind_while_in_view / in_view_scored_steps)
+        if in_view_scored_steps else 0.0,
+        "geometric_fov_scored_step_fraction": float(
+            in_view_scored_steps / scored_steps) if scored_steps else 0.0,
         "recovery_landing_opportunity": float(losses > 0 and reacquisitions > 0),
         "successful_recovery_landing": float(
             losses > 0 and reacquisitions > 0 and bool(success)),
@@ -340,7 +385,7 @@ def visual_recovery_metrics(rows, *, initial_in_fov: bool, success: bool,
                 float(parts["phi_next"]) - float(parts["phi"]))
     if potential_loss or potential_reacquisition:
         output.update({
-            "potential_delta_on_visual_loss_mean": (
+            "potential_delta_on_geometric_fov_loss_mean": (
                 float(np.mean(potential_loss)) if potential_loss else 0.0),
             "potential_delta_on_reacquisition_mean": (
                 float(np.mean(potential_reacquisition))
@@ -375,7 +420,7 @@ def collect_episode(env, model: PipelineActorCritic, method: str, seed: int,
         "detail") or {})
     domain_randomization = reset_detail.get("domain_randomization") or {}
     initial_battery = dict(_battery_sample(step.state))
-    initial_in_fov = bool(step.pad_in_fov)
+    initial_in_fov = bool(step.geometric_pad_center_in_fov)
     action_scale = float(env.adapter.controller.action_scale)
     if monitor is not None:
         monitor.reset_episode(
@@ -456,7 +501,7 @@ def collect_episode(env, model: PipelineActorCritic, method: str, seed: int,
                     "reacquisition_trend": float(
                         fov_semantic.reacquisition_trend),
                 })
-            visual_loss_run = visual_loss_run + 1 if not following.pad_in_fov else 0
+            visual_loss_run = visual_loss_run + 1 if not following.geometric_pad_center_in_fov else 0
             longest_visual_loss = max(longest_visual_loss, visual_loss_run)
             row = {
                 "image": np.asarray(step.actor.image, dtype=np.uint8),
@@ -468,14 +513,14 @@ def collect_episode(env, model: PipelineActorCritic, method: str, seed: int,
                 "command": following.command.copy(),
                 "log_prob": float(log_prob.item()),
                 "value": float(output.value.item()), "reward": float(reward),
-                "done": float(following.terminal), "in_fov": following.pad_in_fov,
+                "done": float(following.terminal), "geometric_in_fov": following.geometric_pad_center_in_fov,
                 "battery_reserve": _battery_reserve(step.state),
                 "battery_energy_j": float(_battery_sample(step.state).get(
                     "remaining_j", 0.0)),
                 "reward_parts": parts,
                 "semantic_graph_X": graph.X.copy(),
                 "fov_graph_X": fov_graph.X.copy(),
-                "fov_graph_in_fov": bool(step.pad_in_fov),
+                "fov_graph_in_fov": bool(step.geometric_pad_center_in_fov),
                 "next_fov_graph_X": next_fov_graph.X.copy(),
                 "adaptive_graph_X": adaptive_graph.X.copy(),
                 "rho_raw": shin_reward_components(
@@ -507,7 +552,7 @@ def collect_episode(env, model: PipelineActorCritic, method: str, seed: int,
                     index=len(rows), dt=env.cfg.sim.dt, method=method,
                     reward=reward, reward_parts=parts, estimate=next_estimate,
                     truth=following.critic.true_relative_state,
-                    in_fov=following.pad_in_fov,
+                    geometric_in_fov=following.geometric_pad_center_in_fov,
                     estimation_loss=estimation_loss, state=following.state,
                     pipeline_spec=model_spec,
                     semantic_features=next_semantic.feature_vector,
@@ -535,8 +580,8 @@ def collect_episode(env, model: PipelineActorCritic, method: str, seed: int,
     # Each graph belongs to the pre-action state t.  Append the terminal
     # successor so the final actionable graph can still be labelled from t+1;
     # passing only the post-action row flags would skip that immediate state.
-    fov_timeline = ([row["fov_graph_in_fov"] for row in rows]
-                    + [bool(rows[-1]["in_fov"])])
+    fov_timeline = ([row["fov_graph_geometric_in_fov"] for row in rows]
+                    + [bool(rows[-1]["geometric_in_fov"])])
     future_labels = future_fov_loss_labels(
         fov_timeline, prediction_steps)[:-1]
     for row, label in zip(rows, future_labels):
@@ -545,7 +590,7 @@ def collect_episode(env, model: PipelineActorCritic, method: str, seed: int,
     loss_runs = []
     run = 0
     for row in rows:
-        if row["in_fov"]:
+        if row["geometric_in_fov"]:
             if run:
                 loss_runs.append(run)
                 run = 0
@@ -569,6 +614,12 @@ def collect_episode(env, model: PipelineActorCritic, method: str, seed: int,
         # complete safe-landing gate instead of raw contact.
         "paper_success": float(step.strict_success),
         "strict_success": float(step.strict_success),
+        # Reported alongside, never instead of, the strict criterion: the
+        # baseline paper counts a simulated landing as landing-pad contact,
+        # so both definitions are logged for both arms and the strict one
+        # remains the project-level success. Identical for Baseline and
+        # Proposed.
+        "paper_contact_success": float(step.physical_contact),
         "pad_contact": float(step.physical_contact),
         "unsafe_pad_contact": float(step.unsafe_pad_contact),
         "crash_failure": float(step.crash),
@@ -594,17 +645,17 @@ def collect_episode(env, model: PipelineActorCritic, method: str, seed: int,
             tilt <= float(env.cfg.criteria.tilt)),
         "landing_gate_angular_rate": float(
             angular_rate <= float(env.cfg.criteria.rate)),
-        "fov_loss_fraction": float(np.mean([not row["in_fov"] for row in rows])),
-        "fov_retention_ratio": float(np.mean([row["in_fov"] for row in rows])),
-        "fov_loss_episode_rate": float(any(not row["in_fov"] for row in rows)),
+        "geometric_fov_loss_fraction": float(np.mean([not row["geometric_in_fov"] for row in rows])),
+        "geometric_fov_retention_ratio": float(np.mean([row["geometric_in_fov"] for row in rows])),
+        "geometric_fov_loss_episode_rate": float(any(not row["geometric_in_fov"] for row in rows)),
         # Reward-independent physical tracking error, available to every arm
         # and therefore safe to use for a common performance curriculum.
         "relative_position_rmse_m": float(np.sqrt(np.mean(np.asarray([
             row["truth"][:3] for row in rows], dtype=float) ** 2))),
-        "longest_visual_loss_s": float(longest_visual_loss * env.cfg.sim.dt),
-        "maximum_continuous_fov_loss_duration_s": float(
+        "longest_geometric_fov_loss_s": float(longest_visual_loss * env.cfg.sim.dt),
+        "maximum_continuous_geometric_fov_loss_duration_s": float(
             longest_visual_loss * env.cfg.sim.dt),
-        "mean_continuous_fov_loss_duration_s": float(
+        "mean_continuous_geometric_fov_loss_duration_s": float(
             np.mean(loss_runs) * env.cfg.sim.dt if loss_runs else 0.0),
         "action_envelope_scale": action_scale,
         "touchdown_time_s": float(len(rows) * env.cfg.sim.dt),
@@ -658,7 +709,7 @@ def collect_episode(env, model: PipelineActorCritic, method: str, seed: int,
         success=bool(step.strict_success), dt=float(env.cfg.sim.dt)))
     potential_loss_delta = []
     potential_reacquisition_delta = []
-    visibility = [initial_in_fov] + [bool(row["in_fov"]) for row in rows]
+    visibility = [initial_in_fov] + [bool(row["geometric_in_fov"]) for row in rows]
     for index, row in enumerate(rows):
         parts = row.get("reward_parts", {})
         if "phi" not in parts or "phi_next" not in parts:
@@ -670,7 +721,7 @@ def collect_episode(env, model: PipelineActorCritic, method: str, seed: int,
             potential_reacquisition_delta.append(delta)
     if potential_loss_delta or potential_reacquisition_delta:
         metric.update({
-            "potential_delta_on_visual_loss_mean": (
+            "potential_delta_on_geometric_fov_loss_mean": (
                 float(np.mean(potential_loss_delta))
                 if potential_loss_delta else 0.0),
             "potential_delta_on_reacquisition_mean": (
@@ -689,7 +740,7 @@ def collect_episode(env, model: PipelineActorCritic, method: str, seed: int,
             for row in rows], dtype=float)
         active_limit = ShinRewardConfig().active_alpha
         lost_errors = [row["estimation_loss"]
-                       for row in rows if not row["in_fov"]]
+                       for row in rows if not row["geometric_in_fov"]]
         metric.update({
             "position_rmse": float(np.sqrt(np.mean(position_error ** 2))),
             "velocity_rmse": float(np.sqrt(np.mean(velocity_error ** 2))),
@@ -697,7 +748,7 @@ def collect_episode(env, model: PipelineActorCritic, method: str, seed: int,
             "active_reward_saturation_fraction": float(np.mean(
                 active_values <= (-active_limit + 1e-8))),
             "active_reward_standard_deviation": float(np.std(active_values)),
-            "visual_loss_estimation_error": (
+            "geometric_fov_loss_estimation_error": (
                 float(np.mean(lost_errors)) if lost_errors else 0.0),
         })
     if rows and "weight_1" in rows[0].get("reward_parts", {}):
@@ -1026,9 +1077,6 @@ def training_health_issue(history, ppo, *, warmup_episodes=0,
         return None
     recent = policy_rows[-window:]
     successes = sum(float(row.get("paper_success", 0.0)) for row in recent)
-    fov_loss = float(np.mean([
-        float(row.get("fov_loss_fraction", 1.0)) for row in recent]))
-    limit = float(ppo.get("health_max_fov_loss_fraction", 0.80))
     issues = []
     battery_fraction, battery_label = battery_depletion_beyond_reserve(recent)
     battery_limit = float(ppo.get(
@@ -1040,29 +1088,31 @@ def training_health_issue(history, ppo, *, warmup_episodes=0,
         return "; ".join(issues) or None
     if successes == 0.0 and len(policy_rows) >= no_landing_grace:
         issues.append(f"no landing in the last {window} policy episodes")
-    if fov_loss > limit:
-        issues.append(f"mean FOV loss is {fov_loss:.1%} (limit {limit:.1%})")
-    loss_events = sum(float(row.get("visual_loss_events", 0.0)) for row in recent)
-    reacquisitions = sum(float(row.get(
-        "visual_reacquisition_events", 0.0)) for row in recent)
-    minimum_events = int(ppo.get("health_min_visual_loss_events", 5))
-    if loss_events >= minimum_events:
-        reacquisition_rate = reacquisitions / max(loss_events, 1.0)
-        minimum_reacquisition = float(ppo.get(
-            "health_min_reacquisition_rate", 0.25))
-        if reacquisition_rate < minimum_reacquisition:
+    # Geometric FOV retention, reacquisition rate and low-visibility descent
+    # are *the* dependent variables of the Baseline-vs-Proposed comparison.
+    # Aborting a run because the Baseline scores badly on them would delete
+    # the very weakness the proposed FOV-risk reward is meant to improve, so
+    # they are reported (see ``visual_recovery_metrics``) and never fatal.
+    #
+    # What remains fatal here is an infrastructure failure that no policy can
+    # cause: the pad was geometrically inside the frame for a meaningful part
+    # of the window and the frozen encoder still reported no keypoints at all,
+    # which means the camera, the renderer or the encoder artifact is broken.
+    blind = [float(row.get("blind_perception_while_geometric_fov_fraction", 0.0))
+             for row in recent]
+    in_view = [float(row.get("geometric_fov_scored_step_fraction", 0.0))
+               for row in recent]
+    blind_limit = float(ppo.get("health_max_blind_perception_fraction", 0.98))
+    minimum_in_view = float(ppo.get(
+        "health_min_geometric_fov_scored_step_fraction", 0.10))
+    if blind and float(np.mean(in_view)) >= minimum_in_view:
+        blind_fraction = float(np.mean(blind))
+        if blind_fraction > blind_limit:
             issues.append(
-                f"visual reacquisition is {reacquisition_rate:.1%} "
-                f"(minimum {minimum_reacquisition:.1%})")
-        unsafe_descent = float(np.mean([float(row.get(
-            "unsafe_descent_low_visibility_fraction", 0.0))
-            for row in recent]))
-        unsafe_limit = float(ppo.get(
-            "health_max_unsafe_descent_low_visibility_fraction", 0.50))
-        if unsafe_descent > unsafe_limit:
-            issues.append(
-                f"unsafe low-visibility descent is {unsafe_descent:.1%} "
-                f"(limit {unsafe_limit:.1%})")
+                "the frozen keypoint encoder reported no landmarks on "
+                f"{blind_fraction:.1%} of the steps where the pad centre was "
+                f"geometrically in frame (limit {blind_limit:.1%}); this is a "
+                "perception-infrastructure failure, not a policy outcome")
 
     def stalled_high(field, limit_key, default):
         values = [float(row[field]) for row in policy_rows
@@ -1125,9 +1175,9 @@ def deployment_checkpoint_score(metric) -> float:
     unsafe = float(metric.get("unsafe_pad_contact", 0.0))
     crash = float(metric.get("crash_failure", 0.0))
     lateral = min(max(float(metric.get("touchdown_lateral_error", 5.0)), 0.0), 5.0)
-    fov = np.clip(float(metric.get("fov_loss_fraction", 1.0)), 0.0, 1.0)
+    fov = np.clip(float(metric.get("geometric_fov_loss_fraction", 1.0)), 0.0, 1.0)
     blind_descent = np.clip(float(metric.get(
-        "unsafe_descent_low_visibility_fraction", 0.0)), 0.0, 1.0)
+        "descent_during_low_keypoint_visibility_fraction", 0.0)), 0.0, 1.0)
     relative_speed = min(max(float(metric.get(
         "touchdown_relative_horizontal_velocity", 2.0)), 0.0), 2.0)
     # Safe landing dominates. Unsafe contact can never beat a contact-free near
@@ -1161,7 +1211,7 @@ def aggregate_deployment_validation(metrics) -> dict[str, float]:
         "crashes": float(sum(float(
             row.get("crash_failure", 0.0)) for row in rows)),
         "contact_rate": mean("pad_contact"),
-        "mean_fov_loss_fraction": mean("fov_loss_fraction", 1.0),
+        "mean_geometric_fov_loss_fraction": mean("geometric_fov_loss_fraction", 1.0),
         "mean_touchdown_lateral_error": mean(
             "touchdown_lateral_error", 5.0),
         "mean_physical_score": float(np.mean([
@@ -1177,7 +1227,7 @@ def deployment_validation_key(summary) -> tuple[float, ...]:
         -float(summary["crashes"]),
         float(summary["mean_physical_score"]),
         float(summary["contact_rate"]),
-        -float(summary["mean_fov_loss_fraction"]),
+        -float(summary["mean_geometric_fov_loss_fraction"]),
         -float(summary["mean_touchdown_lateral_error"]),
     )
 
@@ -1543,8 +1593,8 @@ def train_live(env_factory: Callable, model, method, seeds, output_dir,
                         key: metric.get(key) for key in (
                             "paper_success", "pad_contact", "unsafe_pad_contact",
                             "crash_failure", "touchdown_lateral_error",
-                            "fov_loss_fraction",
-                            "unsafe_descent_low_visibility_fraction")},
+                            "geometric_fov_loss_fraction",
+                            "descent_during_low_keypoint_visibility_fraction")},
                     model_state=rollout_model_state,
                     training_contract_id=training_contract_id)
             persist_history()

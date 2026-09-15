@@ -37,7 +37,8 @@ from ontology_rgat.evaluation import (write_adaptive_reward_figures,
 from ontology_rgat.perception import (RosGrayscaleSource,
                                       calibrate_keypoint_encoder,
                                       prepare_keypoint_encoder)
-from ontology_rgat.pipelines import (available_pipeline_ids, get_pipeline,
+from ontology_rgat.pipelines import (assert_no_aruco_in_primary_system,
+                                     available_pipeline_ids, get_pipeline,
                                      primary_pipeline_ids,
                                      validate_pipeline_configuration)
 from ontology_rgat.ppo.behavior_cloning import (
@@ -152,14 +153,20 @@ def _pair_live_config(cfg, pair_index: int, pair_count: int):
 
 
 def _calibration_system_for_pair(system, pair_index: int, pair_count: int):
-    """Mirror the marker dictionary/IDs actually rendered for one pair.
+    """Mirror the landing target actually rendered for one pair.
 
-    Parallel Isaac scenes replace the single-vehicle marker dictionary and
-    offset IDs to prevent cross-pair detections.  Empirical keypoint labelling
-    must use that rendered board contract as well; otherwise every valid frame
-    is rejected before PPO starts.
+    In the primary keypoint benchmark every pair's deck carries the identical
+    six-keypoint fiducial target, and each pair's camera only ever sees its own
+    deck, so there is nothing to specialise: labels come from projecting the
+    same known landmarks through that pair's own training-only pose.
+
+    The branch below is the retained legacy ArUco path, where parallel scenes
+    did have to replace the dictionary and offset marker IDs to prevent
+    cross-pair detections.
     """
     if int(pair_count) == 1:
+        return system
+    if str((system.get("vision") or {}).get("mode", "")) == "keypoint_fiducial":
         return system
     resolved = deepcopy(system)
     parallel = dict(resolved.get("parallel") or {})
@@ -835,9 +842,9 @@ def _collect_semantic_data(*, cfg, camera, model, config, config_hash,
     def recovery_statistics(rows):
         return {
             "episodes_with_visual_loss": sum(
-                float(row.get("visual_loss_events", 0)) > 0 for row in rows),
+                float(row.get("geometric_fov_loss_events", 0)) > 0 for row in rows),
             "episodes_with_reacquisition": sum(
-                float(row.get("visual_reacquisition_events", 0)) > 0
+                float(row.get("geometric_fov_reacquisition_events", 0)) > 0
                 for row in rows),
             "successful_recovery_episodes": sum(
                 float(row.get("successful_recovery_landing", 0)) > 0
@@ -887,16 +894,16 @@ def _collect_semantic_data(*, cfg, camera, model, config, config_hash,
                     "behavior_component": (episode - 1) % 3,
                     "paper_success": metric["paper_success"],
                     "status": metric["status"], "steps": metric["steps"],
-                    "visual_loss_events": metric["visual_loss_events"],
-                    "visual_reacquisition_events": metric[
-                        "visual_reacquisition_events"],
-                    "visual_reacquisition_rate": metric[
-                        "visual_reacquisition_rate"],
-                    "mean_visual_reacquisition_time_s": metric[
-                        "mean_visual_reacquisition_time_s"],
-                    "recovery_climb_fraction": metric["recovery_climb_fraction"],
-                    "unsafe_descent_low_visibility_fraction": metric[
-                        "unsafe_descent_low_visibility_fraction"],
+                    "geometric_fov_loss_events": metric["geometric_fov_loss_events"],
+                    "geometric_fov_reacquisition_events": metric[
+                        "geometric_fov_reacquisition_events"],
+                    "geometric_fov_reacquisition_rate": metric[
+                        "geometric_fov_reacquisition_rate"],
+                    "mean_geometric_fov_reacquisition_time_s": metric[
+                        "mean_geometric_fov_reacquisition_time_s"],
+                    "climb_during_geometric_fov_loss_fraction": metric["climb_during_geometric_fov_loss_fraction"],
+                    "descent_during_low_keypoint_visibility_fraction": metric[
+                        "descent_during_low_keypoint_visibility_fraction"],
                     "successful_recovery_landing": metric[
                         "successful_recovery_landing"],
                 })
@@ -977,10 +984,10 @@ def _collect_fov_risk_data(*, cfg, camera, model, config, config_hash,
                 "episode_id": episode_id,
                 "seed": seed,
                 "samples": ([{"graph_X": row["fov_graph_X"],
-                              "in_fov": row["fov_graph_in_fov"]}
+                              "geometric_in_fov": row["fov_graph_geometric_in_fov"]}
                              for row in rows]
                             + ([{"graph_X": rows[-1]["next_fov_graph_X"],
-                                 "in_fov": rows[-1]["in_fov"]}]
+                                 "geometric_in_fov": rows[-1]["geometric_in_fov"]}]
                                if rows else [])),
             })
             total_steps += len(rows)
@@ -990,7 +997,7 @@ def _collect_fov_risk_data(*, cfg, camera, model, config, config_hash,
             if episode_id >= minimum and classes == {0.0, 1.0}:
                 break
             print(f"FOV-risk data {episode_id}/{minimum} minimum "
-                  f"(cap {maximum}): loss_episode={int(metric['fov_loss_episode_rate'])}")
+                  f"(cap {maximum}): loss_episode={int(metric['geometric_fov_loss_episode_rate'])}")
     if set(np.unique(dataset["y"]).tolist()) != {0.0, 1.0}:
         raise RuntimeError(
             f"FOV-risk data has one label class after {maximum} episodes; "
@@ -1345,6 +1352,11 @@ def main(*, primary_only: bool = False):
         parser.error("selected pipeline is absent from experiment configuration")
     for name in args.pipelines:
         get_pipeline(name)
+    if any(name in primary_pipeline_ids() for name in args.pipelines):
+        # Fail before the stack starts if the simulator profile still paints
+        # an ArUco board or lets a detector-solved pose drive the policy.
+        assert_no_aruco_in_primary_system(
+            load_system_config(Path(args.system_config)))
     if args.parallel_pairs > 1 and args.parallel_pairs != len(args.pipelines):
         parser.error(
             "parallel mode requires exactly one selected pipeline per UAV/UGV pair")
@@ -1705,8 +1717,8 @@ def main(*, primary_only: bool = False):
             "success_rate_threshold", 0.20)),
         "max_position_rmse_m": float(curriculum_raw.get(
             "max_position_rmse_m", 2.0)),
-        "max_fov_loss_fraction": float(curriculum_raw.get(
-            "max_fov_loss_fraction", 0.50)),
+        "max_geometric_fov_loss_fraction": float(curriculum_raw.get(
+            "max_geometric_fov_loss_fraction", 0.50)),
     }
 
     rviz = (RvizPublisher.create(
@@ -1778,6 +1790,12 @@ def main(*, primary_only: bool = False):
                 topic=("/landing_uav0/perception/landing_camera/image_raw"
                        if args.parallel_pairs == 1 else
                        f"/landing_pair_{index}/uav/perception/landing_camera/image_raw"),
+                # Training-label-only: projects the known pad landmarks for
+                # keypoint supervision. Never reaches the actor observation.
+                truth_pose_topic=(
+                    "/landing_uav0/perception/pad_relative_truth_pose"
+                    if args.parallel_pairs == 1 else
+                    f"/landing_pair_{index}/uav/perception/pad_relative_truth_pose"),
                 node_name=f"shin2026_actor_camera_{index}"))
                 for index in range(args.parallel_pairs)]
             camera = cameras[0]
@@ -1786,7 +1804,8 @@ def main(*, primary_only: bool = False):
                 system, pair_index=0, pair_count=args.parallel_pairs)
             keypoint_pretraining = calibrate_keypoint_encoder(
                 args.results_dir / "models/shared/keypoint_encoder.pt",
-                keypoint_pretraining, camera, system=calibration_system,
+                keypoint_pretraining, camera.labelled,
+                system=calibration_system,
                 experiment=config,
                 mode=args.mode, device=args.device)
             manifest["keypoint_pretraining"] = (

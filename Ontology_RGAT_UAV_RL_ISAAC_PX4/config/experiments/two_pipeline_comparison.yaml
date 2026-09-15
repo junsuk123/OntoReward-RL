@@ -32,7 +32,12 @@ pipeline_contract:
 fov_risk:
   lambda_fov: 0.1
   prediction_horizon_seconds: 1.0
-  visibility_criterion: pad_in_fov
+  # Geometric camera-frustum visibility of the landing-pad centre, from
+  # simulator geometry only (isaac_sim/keypoint_geometry.py). Deliberately not
+  # marker-detection success and not learned keypoint confidence: at 10 Hz
+  # control the label says whether geometric FOV is lost within the next ten
+  # control steps.
+  visibility_criterion: geometric_pad_center_in_fov
   freeze_during_ppo: true
 
 fov_risk_design:

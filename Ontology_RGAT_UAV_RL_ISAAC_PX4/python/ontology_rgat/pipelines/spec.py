@@ -8,6 +8,17 @@ accident.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+from typing import Any, Mapping
+
+
+# The one admissible definition of landing-pad field-of-view retention: the pad
+# centre projects inside the rendered camera's frustum with positive depth.
+# See ``isaac_sim/keypoint_geometry.geometric_pad_center_in_fov``.
+GEOMETRIC_FOV_CRITERION = "geometric_pad_center_in_fov"
+
+# Perception settings that belong to the retained legacy ArUco profile and may
+# never appear in the primary two-pipeline experiment.
+FORBIDDEN_PRIMARY_VISION_KEYS = ("dictionary", "board")
 
 
 @dataclass(frozen=True)
@@ -288,6 +299,14 @@ def validate_pipeline_configuration(config: dict) -> None:
         coefficient = float(risk.get("lambda_fov", 0.1))
         if coefficient < 0.0:
             raise ValueError("fov_risk.lambda_fov must be non-negative")
+        criterion = str(risk.get(
+            "visibility_criterion", GEOMETRIC_FOV_CRITERION))
+        if criterion != GEOMETRIC_FOV_CRITERION:
+            raise ValueError(
+                "the future-FOV-loss label must be geometric pad-centre "
+                f"frustum visibility, not {criterion!r}")
+        if float(risk.get("prediction_horizon_seconds", 1.0)) <= 0.0:
+            raise ValueError("fov_risk.prediction_horizon_seconds must be positive")
     adaptive_specs = [ALL_PIPELINES[name] for name in configured
                       if ALL_PIPELINES[name].use_adaptive_reward_weights]
     if adaptive_specs:
@@ -312,3 +331,31 @@ def validate_pipeline_configuration(config: dict) -> None:
         design = config.get("adaptive_reward_design") or {}
         if abs(float(design.get("trajectory_gamma", ppo_gamma)) - ppo_gamma) > 1e-12:
             raise ValueError("adaptive trajectory gamma must equal PPO gamma")
+
+
+def assert_no_aruco_in_primary_system(system: Mapping[str, Any]) -> None:
+    """Refuse a primary run whose simulator profile still carries ArUco.
+
+    The deployed policy perceives the pad with a learned six-keypoint encoder.
+    A marker board, a dictionary or a detector-driven pose source anywhere in
+    the same profile would make the visual target and the claimed perception
+    method disagree, so this fails the run rather than reporting a comparison
+    built on two different perception systems.
+    """
+    vision = dict((system or {}).get("vision") or {})
+    mode = str(vision.get("mode", ""))
+    if mode != "keypoint_fiducial":
+        raise ValueError(
+            "the primary two-pipeline experiment requires vision.mode "
+            f"'keypoint_fiducial', not {mode!r}")
+    present = [key for key in FORBIDDEN_PRIMARY_VISION_KEYS if vision.get(key)]
+    if present:
+        raise ValueError(
+            f"ArUco settings {present} are forbidden in the primary "
+            "experiment; set them to null")
+    if bool(vision.get("pose_source_for_policy", False)):
+        raise ValueError(
+            "a detector-solved pose must never drive the primary policy")
+    landing_pad = dict(vision.get("landing_pad") or {})
+    if str(landing_pad.get("layout", "hexagonal")) != "hexagonal":
+        raise ValueError("the six-keypoint landing target must be hexagonal")

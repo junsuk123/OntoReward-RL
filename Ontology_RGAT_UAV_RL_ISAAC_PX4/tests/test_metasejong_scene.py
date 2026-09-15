@@ -108,30 +108,29 @@ def test_shin_profile_uses_campus_plaza_and_fitted_platform():
         [9.0, 55.0])
 
     half_length, half_width = (0.5 * value for value in pad.deck_size_m)
-    # The texture adds one quiet-zone cell around a 4x4 tag, so the visible
-    # quad is 4/3 of the configured physical marker side.
-    markers = config["vision"]["board"]
-    assert config["vision"]["dictionary"] == "DICT_4X4_100"
-    assert len(markers) == 45
-    assert len({marker["id"] for marker in markers}) == len(markers)
-    assert sorted({float(marker["side_m"]) for marker in markers}) == pytest.approx(
-        [0.04, 0.12, 0.32])
-    assert sum(float(marker["side_m"]) <= 0.04 for marker in markers) == 37
-    for marker in markers:
-        half_quad = 0.5 * float(marker["side_m"]) * (4.0 / 3.0)
-        x, y = (float(value) for value in marker["center_xy_m"])
-        assert abs(x) + half_quad <= half_length
-        assert abs(y) + half_quad <= half_width
+    # The deployed policy is keypoint-based, so the deck carries six fixed
+    # landmarks rather than a bit-coded tag board.
+    from keypoint_geometry import pad_landmarks
 
-    # Quiet zones may not overlap: overlap makes both adjacent codewords
-    # invalid even if their black squares themselves remain disjoint.
-    for index, first in enumerate(markers):
-        ax, ay = (float(value) for value in first["center_xy_m"])
-        ah = 0.5 * float(first["side_m"]) * (4.0 / 3.0)
-        for second in markers[index + 1:]:
-            bx, by = (float(value) for value in second["center_xy_m"])
-            bh = 0.5 * float(second["side_m"]) * (4.0 / 3.0)
-            assert abs(ax - bx) >= ah + bh or abs(ay - by) >= ah + bh
+    assert config["vision"]["mode"] == "keypoint_fiducial"
+    assert not config["vision"].get("dictionary")
+    assert not config["vision"].get("board")
+    landing_pad = config["vision"]["landing_pad"]
+    assert landing_pad["layout"] == "hexagonal"
+    landmarks = pad_landmarks(float(landing_pad["landmark_radius_m"]))
+    assert landmarks.shape == (6, 3)
+    half_landmark = 0.5 * float(landing_pad["landmark_diameter_m"])
+    for x, y, _ in landmarks:
+        assert abs(float(x)) + half_landmark <= half_length + 1e-9
+        assert abs(float(y)) + half_landmark <= half_width + 1e-9
+
+    # Landmarks may not touch: overlapping bullseyes would make two of the six
+    # keypoints ambiguous exactly where the encoder has to separate them.
+    for index, first in enumerate(landmarks):
+        for second in landmarks[index + 1:]:
+            separation = float(
+                ((first[0] - second[0]) ** 2 + (first[1] - second[1]) ** 2) ** 0.5)
+            assert separation > 2.0 * half_landmark
 
 
 def test_alias_and_asset_path_are_resolved_from_workspace(tmp_path):

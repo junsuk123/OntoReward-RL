@@ -16,8 +16,8 @@ METRICS = (
     "position_rmse", "velocity_rmse",
     "touchdown_lateral_error", "touchdown_vertical_velocity",
     "touchdown_relative_horizontal_velocity", "touchdown_tilt",
-    "touchdown_angular_rate", "fov_loss_fraction", "longest_visual_loss_s",
-    "visual_loss_estimation_error", "episode_return", "touchdown_time_s",
+    "touchdown_angular_rate", "geometric_fov_loss_fraction", "longest_geometric_fov_loss_s",
+    "geometric_fov_loss_estimation_error", "episode_return", "touchdown_time_s",
     "training_sample_efficiency", "curriculum_level",
 )
 
@@ -109,7 +109,7 @@ def write_benchmark_outputs(records: list[dict], output_dir: str | Path) -> dict
         "training_curves.csv": ("episode", "episode_return", "paper_success",
                                 "training_sample_efficiency", "curriculum_level"),
         "state_estimation_metrics.csv": ("position_rmse", "velocity_rmse",
-                                         "visual_loss_estimation_error"),
+                                         "geometric_fov_loss_estimation_error"),
         "touchdown_metrics.csv": ("paper_success", "strict_success",
                                   "pad_contact", "unsafe_pad_contact",
                                   "landing_gate_contact", "landing_gate_position",
@@ -120,9 +120,9 @@ def write_benchmark_outputs(records: list[dict], output_dir: str | Path) -> dict
                                   "touchdown_lateral_error", "touchdown_vertical_velocity",
                                   "touchdown_relative_horizontal_velocity", "touchdown_tilt",
                                   "touchdown_angular_rate", "touchdown_time_s"),
-        "visual_observability_metrics.csv": ("fov_loss_fraction",
-                                             "longest_visual_loss_s",
-                                             "visual_loss_estimation_error"),
+        "visual_observability_metrics.csv": ("geometric_fov_loss_fraction",
+                                             "longest_geometric_fov_loss_s",
+                                             "geometric_fov_loss_estimation_error"),
     }
     identity = ("method", "scenario", "seed")
     for filename, fields in families.items():
@@ -150,7 +150,7 @@ def _write_publication_table(summary, output_dir: Path) -> None:
             "Success rate": avg("paper_success_mean"),
             "Position RMSE": avg("position_rmse_mean"),
             "Velocity RMSE": avg("velocity_rmse_mean"),
-            "Visual-loss robustness": avg("visual_loss_estimation_error_mean"),
+            "Visual-loss robustness": avg("geometric_fov_loss_estimation_error_mean"),
             "Strict safe-landing rate": avg("strict_success_mean"),
         })
     _write_csv(output_dir / "publication_table.csv", rows)
@@ -171,10 +171,10 @@ def _write_plots(records, output_dir: Path):
         "curriculum_progression.png": ("episode", "curriculum_level"),
         "scenario_success_rates.png": ("seed", "paper_success"),
         "relative_state_estimation.png": ("seed", "position_rmse"),
-        "estimation_error_during_visual_loss.png": ("seed", "visual_loss_estimation_error"),
+        "estimation_error_during_visual_loss.png": ("seed", "geometric_fov_loss_estimation_error"),
         "landing_trajectories.png": ("seed", "touchdown_lateral_error"),
         "touchdown_error_distribution.png": ("seed", "touchdown_vertical_velocity"),
-        "fov_target_heatmap.png": ("seed", "fov_loss_fraction"),
+        "fov_target_heatmap.png": ("seed", "geometric_fov_loss_fraction"),
         "reward_component_breakdown.png": ("seed", "episode_return"),
         "shin_vs_ontoreward_learning_curve.png": ("episode", "paper_success"),
     }

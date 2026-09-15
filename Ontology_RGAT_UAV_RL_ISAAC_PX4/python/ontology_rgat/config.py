@@ -419,30 +419,22 @@ def default_config(mode: str = "quick", target: str = "sitl") -> Config:
         # a landing criterion: cfg.criteria grades the episode and is unchanged.
         "entry_speed_tolerance": 0.60,    # m/s, pad-relative
         # Hand over only once the deck is actually in the camera frame, so
-        # every episode opens on a marker fix rather than on a GNSS estimate
-        # that is tens of metres out in this canyon. The entry pose is drawn
-        # inside the footprint too, but the vehicle only has to hold it to
-        # within entry_tolerance, which is the size of the frame -- so the
-        # detector is asked rather than the geometry trusted.
+        # every episode opens with the landing target visible rather than on a
+        # GNSS estimate that is tens of metres out in this canyon.
         "require_pad_in_view": True,
-        # ArUco solves can drop for an isolated rendered frame during an
-        # otherwise valid hover. Remember a recent positive detection so that
-        # this setup-only gate does not demand an unrealistic uninterrupted
-        # camera solve for the full settle interval.
-        "entry_marker_memory": 2.0,       # s since the most recent detection
-        # The detector is one witness, the simulator's geometry the other:
-        # from the upper Table-I entry altitudes a 0.32 m tag is ~10 px in a
-        # 512x320 frame and cannot be decoded although the pad is centred in
-        # the image. When the pad centre projects inside the landing camera's
-        # frame (bridge.entry_view_margin, computed on the same pad-relative
-        # pose the climb is judged on) the pad is in view. The margin is the
+        # One definition, and only one: the pad centre projects inside the
+        # landing camera's frustum (bridge.entry_view_margin, computed on the
+        # same pad-relative pose the climb is judged on). The margin is the
         # admissible fraction of the half field of view; 0.85 keeps the pad
-        # centre out of the outer 15 % of the frame on every side. The camera
-        # model is copied from the system YAML's vision.camera block by the
-        # live runner so it matches the rendered camera.
-        "entry_view_geometry": True,
+        # centre out of the outer 15 % of the frame on every side. Detector
+        # success is deliberately not consulted -- mixing it in gave the
+        # experiment two incompatible meanings of "visible".
         "entry_view_margin": 0.85,
-        "entry_camera": {
+        # The rendered landing camera. Copied from the system YAML's
+        # vision.camera block by the live runner so the entry gate, the
+        # geometric FOV metric and the R-GAT labels all use the camera Isaac
+        # actually renders with.
+        "landing_camera": {
             "resolution": [512, 320],
             "horizontal_fov_deg": 90.0,
             "pitch_down_deg": 60.0,

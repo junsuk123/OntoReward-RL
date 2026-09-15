@@ -18,6 +18,10 @@ FORBIDDEN_ACTOR_TOKENS = frozenset({
     "deck_position", "deck_velocity", "platform_gnss", "deck_gnss",
     "wheel_odometry", "v2v", "trajectory_parameters", "future_platform_motion",
     "simulator_truth", "ground_truth", "true_relative_state", "critic_observation",
+    # Simulator pad geometry. It supervises keypoints, gates the reset and
+    # labels the future-FOV-loss dataset; none of that may reach the actor.
+    "pad_center", "pad_landmark", "keypoint_label", "geometric_fov",
+    "in_fov", "marker_quality", "marker_pose",
 })
 
 
@@ -123,7 +127,7 @@ class RewardSignals:
     crash: bool = False
     excessive_drift: bool = False
     terminal: bool = False
-    pad_in_fov: bool = True
+    geometric_pad_center_in_fov: bool = True
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "estimated_relative_state",

@@ -10,6 +10,7 @@ from ..bridge import BridgeError, PX4Bridge
 from ..controllers import VelocityYawRateController
 from ..initialization import curriculum_motion_scale
 from ..mathx import quat_to_euler_zyx
+from ..perception.pad_geometry import CameraModel, project_landing_pad
 from .px4_adapter import (ShinPX4Adapter, critic_observation_from_state)
 from .shin2026 import ActorObservation, CriticObservation
 
@@ -28,7 +29,11 @@ class LiveStep:
     terminal: bool
     timeout: bool
     strict_success: bool
-    pad_in_fov: bool
+    # Geometric camera-frustum visibility of the landing-pad centre, from
+    # simulator geometry alone. Evaluation/label use only -- it is never part
+    # of ``actor``, never reaches the online R-GAT, and is deliberately
+    # independent of how well the learned keypoint encoder is doing.
+    geometric_pad_center_in_fov: bool
     landing_metrics: dict
 
 
@@ -38,6 +43,10 @@ class LiveShinEnvironment:
     def __init__(self, cfg, image_source, *, horizon_steps=300):
         self.cfg = cfg
         self.image_source = image_source
+        # The rendered landing camera, so geometric FOV truth is evaluated
+        # against the camera Isaac actually renders with.
+        self.landing_camera = CameraModel.from_mapping(
+            getattr(cfg.external, "landing_camera", None))
         self._connect()
         self.horizon_steps = int(horizon_steps)
         self.steps = 0
@@ -53,6 +62,38 @@ class LiveShinEnvironment:
             self.bridge, self.image_source,
             VelocityYawRateController.from_mapping(
                 self.control, dt=float(self.cfg.sim.dt)))
+
+    def geometric_pad_center_in_fov(self, state) -> bool:
+        """Simulator-geometry field-of-view truth for the landing-pad centre.
+
+        The pad centre is transformed into the camera optical frame, required
+        to have positive depth, projected with the configured intrinsics and
+        tested against the normalized frame bounds.  Neither marker decoding
+        nor learned keypoint confidence takes part: a pad that is blurred,
+        occluded or simply not detected has *not* left the field of view, and
+        reporting it as an FOV loss is exactly the contradiction this replaces.
+
+        Attitude comes from simulator truth when the gateway publishes it, so
+        the quantity is geometric end to end; older recordings without
+        attitude truth fall back to the estimator's attitude, which is
+        reported through ``extra`` rather than hidden.
+        """
+        truth = state.get("truth") if isinstance(state.get("truth"), dict) else {}
+        if not truth.get("valid", False):
+            raise ValueError(
+                "geometric pad-centre FOV requires valid simulator truth")
+        camera = getattr(self, "landing_camera", None)
+        if camera is None:
+            camera = CameraModel.from_mapping(
+                getattr(self.cfg.external, "landing_camera", None)
+                if hasattr(self.cfg, "external") else None)
+            self.landing_camera = camera
+        quaternion = (truth["quaternion_wxyz"]
+                      if truth.get("attitude_valid", False)
+                      else state["quaternion_wxyz"])
+        projection = project_landing_pad(
+            truth["position"], quaternion, camera=camera)
+        return bool(projection.geometric_pad_center_in_fov)
 
     def _classify(self, actor, state, command, *, timeout=False) -> LiveStep:
         critic = critic_observation_from_state(actor, state)
@@ -127,7 +168,7 @@ class LiveShinEnvironment:
             crash=crash, excessive_drift=drift,
             battery_depleted=battery_depleted, terminal=terminal,
             timeout=bool(timeout), strict_success=strict,
-            pad_in_fov=float(state.get("marker_quality", 0.0)) > 0.0,
+            geometric_pad_center_in_fov=self.geometric_pad_center_in_fov(state),
             landing_metrics=landing_metrics)
 
     def reset(self, seed: int, curriculum: float = 1.0,

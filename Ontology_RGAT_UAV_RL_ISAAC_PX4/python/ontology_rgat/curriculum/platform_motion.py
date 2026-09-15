@@ -28,14 +28,14 @@ class PlatformMotionCurriculum:
     minimum_episodes_at_level: int = 20
     success_rate_threshold: float = 0.20
     max_position_rmse_m: float = 2.0
-    max_fov_loss_fraction: float = 0.50
+    max_geometric_fov_loss_fraction: float = 0.50
 
     def __post_init__(self):
         if (self.levels <= 0 or self.episodes_per_update <= 0
                 or self.assessment_window <= 0
                 or self.minimum_episodes_at_level <= 0):
             raise ValueError("curriculum levels and update interval must be positive")
-        for value in (self.success_rate_threshold, self.max_fov_loss_fraction):
+        for value in (self.success_rate_threshold, self.max_geometric_fov_loss_fraction):
             if not 0.0 <= float(value) <= 1.0:
                 raise ValueError("curriculum probability thresholds must be in [0, 1]")
         if float(self.max_position_rmse_m) <= 0:
@@ -69,7 +69,7 @@ class PlatformMotionCurriculum:
             return False
         sample = {
             "success": float(metric.get("paper_success", 0.0)),
-            "fov": float(metric.get("fov_loss_fraction", 1.0)),
+            "fov": float(metric.get("geometric_fov_loss_fraction", 1.0)),
             "position_rmse": (
                 None if metric.get(
                     "relative_position_rmse_m", metric.get("position_rmse"))
@@ -88,7 +88,7 @@ class PlatformMotionCurriculum:
         estimator_ok = (not estimator_values or
                         float(np.mean(estimator_values)) <= self.max_position_rmse_m)
         if (success < self.success_rate_threshold
-                or fov > self.max_fov_loss_fraction or not estimator_ok):
+                or fov > self.max_geometric_fov_loss_fraction or not estimator_ok):
             return False
         self.level += 1
         self._episodes_at_level = 0
@@ -106,7 +106,7 @@ class PlatformMotionCurriculum:
                 "minimum_episodes_at_level": self.minimum_episodes_at_level,
                 "success_rate_threshold": self.success_rate_threshold,
                 "max_position_rmse_m": self.max_position_rmse_m,
-                "max_fov_loss_fraction": self.max_fov_loss_fraction,
+                "max_geometric_fov_loss_fraction": self.max_geometric_fov_loss_fraction,
                 "episodes_at_level": self._episodes_at_level,
                 "recent": list(self._recent)}
 
@@ -118,7 +118,7 @@ class PlatformMotionCurriculum:
         if self.performance_gated:
             for name in ("performance_gated", "assessment_window",
                          "minimum_episodes_at_level", "success_rate_threshold",
-                         "max_position_rmse_m", "max_fov_loss_fraction"):
+                         "max_position_rmse_m", "max_geometric_fov_loss_fraction"):
                 if name in state and state[name] != getattr(self, name):
                     raise ValueError(f"curriculum checkpoint mismatch for {name}")
             self._episodes_at_level = int(state.get("episodes_at_level", 0))

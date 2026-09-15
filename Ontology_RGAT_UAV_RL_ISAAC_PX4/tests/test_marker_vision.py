@@ -187,36 +187,28 @@ def test_invalid_board_geometry_is_rejected(markers, message):
         MarkerBoard(markers)
 
 
-@pytest.mark.parametrize("body_position", [
-    (0.0, 0.0, 4.6),
-    (0.0, 0.0, 0.32),
-    (0.30, 0.00, 0.32),
-    (-0.20, 0.20, 0.32),
-    (0.10, -0.30, 0.32),
-])
-def test_shin_multiscale_board_remains_visible_near_touchdown(body_position):
-    """Exercise the deployed board, camera and dictionary as one system."""
+def test_the_primary_profile_carries_no_aruco_board_or_dictionary():
+    """The deployed policy is keypoint-based, so the pad must not be a tag board.
+
+    ``marker_vision`` itself stays: it is the retained legacy detector path
+    (``vision.mode: aruco`` in config/system.yaml) and the tests above still
+    exercise it on explicitly constructed boards. What must not happen is the
+    primary benchmark profile quietly keeping an ArUco target while claiming a
+    six-keypoint perception method.
+    """
     config = load_config(ROOT / "config" / "shin2026-system.yaml")
-    camera = config["vision"]["camera"]
-    width, height = camera["resolution"]
-    dictionary = config["vision"]["dictionary"]
-    mount = camera["mount_translation_flu_m"]
-    board = MarkerBoard.from_config(config["vision"]["board"])
+    vision = config["vision"]
 
-    image, _ = render_board_view(
-        body_position, board=board, dictionary=dictionary,
-        width=width, height=height,
-        fov_deg=camera["horizontal_fov_deg"], mount=mount)
-    observation = estimator(
-        board=board, dictionary=dictionary, width=width, height=height,
-        fov_deg=camera["horizontal_fov_deg"], mount=mount).detect(image)
+    assert vision["mode"] == "keypoint_fiducial"
+    assert not vision.get("dictionary")
+    assert not vision.get("board")
+    assert vision.get("pose_source_for_policy") is False
+    assert vision["landing_pad"]["layout"] == "hexagonal"
 
-    assert observation.detected, f"nothing seen at {body_position}"
-    np.testing.assert_allclose(
-        observation.position_pad_enu, body_position, atol=0.04)
-    if body_position[2] < 1.0:
-        assert any(board.markers[marker_id].side_m == pytest.approx(0.04)
-                   for marker_id in observation.marker_ids)
+    # The legacy profile is untouched and still describes a detector run.
+    legacy = load_config(ROOT / "config" / "system.yaml")
+    assert legacy["vision"]["mode"] == "aruco"
+    assert MarkerBoard.from_config(legacy["vision"]["board"])
 
 
 def test_the_entry_pose_is_drawn_inside_the_camera_frame():

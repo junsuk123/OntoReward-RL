@@ -509,7 +509,7 @@ class RvizPublisher:
 
     def publish_benchmark_step(self, *, state: dict[str, Any], method: str,
                                scenario: str, step: int, dt: float,
-                               in_fov: bool, status: str,
+                               geometric_in_fov: bool, status: str,
                                reward: float = 0.0,
                                reward_parts: Mapping[str, Any] | None = None,
                                semantic_graph=None, potential=None,
@@ -616,7 +616,7 @@ class RvizPublisher:
         text.text = (f"{method_label} | {scenario}\n"
                      f"t={step * dt:5.1f}s  {status.upper()}\n"
                      f"relative xyz=({relative[0]:+.2f}, {relative[1]:+.2f}, "
-                     f"{relative[2]:+.2f}) m  marker={'ON' if in_fov else 'LOST'}\n"
+                     f"{relative[2]:+.2f}) m  "f"pad in FOV={'YES' if geometric_in_fov else 'NO'}\n"
                      f"{common}\n{branch}")
         array.markers.append(text)
 
@@ -646,7 +646,7 @@ class RvizPublisher:
             "method": str(method), "scenario": str(scenario),
             "step": int(step), "t": float(step * dt), "status": str(status),
             "position_pad": [float(value) for value in relative],
-            "marker_visible": bool(in_fov),
+            "geometric_pad_center_in_fov": bool(geometric_in_fov),
             "reward": float(reward),
             "active_perception_reward": active_reward,
             "ontology_fov_branch_enabled": is_proposed,

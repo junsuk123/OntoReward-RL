@@ -1,4 +1,15 @@
-"""Episode-separated labels for future field-of-view loss."""
+"""Episode-separated labels for future *geometric* field-of-view loss.
+
+The supervised target is whether the landing-pad centre leaves the camera
+frustum within the prediction horizon, as defined once by
+``isaac_sim/keypoint_geometry.geometric_pad_center_in_fov``.  It is deliberately
+not marker-detection success and not learned keypoint confidence: a model
+trained on detector failures would predict future *detector* failures, which is
+a different quantity from the one the proposed reward is meant to discourage.
+
+The labels are simulator truth and are offline-only.  They are never handed to
+R-GAT inference, which sees the eight visual features of ``fov_graph.py``.
+"""
 from __future__ import annotations
 
 import hashlib
@@ -26,8 +37,13 @@ def horizon_steps(horizon_seconds: float, control_hz: float) -> int:
     return max(1, int(round(seconds * frequency)))
 
 
-def future_fov_loss_labels(in_fov, prediction_steps: int) -> np.ndarray:
-    visible = np.asarray(in_fov, dtype=bool).reshape(-1)
+def future_fov_loss_labels(geometric_in_fov, prediction_steps: int) -> np.ndarray:
+    """1 when geometric pad-centre FOV is lost within the next N control steps.
+
+    At 10 Hz control and a 1.0 s horizon, ``prediction_steps`` is 10 and the
+    label covers samples ``t+1 .. t+10``.
+    """
+    visible = np.asarray(geometric_in_fov, dtype=bool).reshape(-1)
     steps = int(prediction_steps)
     if visible.size == 0 or steps < 1:
         raise ValueError("FOV labels require a trajectory and positive horizon")
@@ -46,11 +62,14 @@ def build_fov_risk_dataset(episodes: Sequence[Mapping], *, prediction_steps: int
         samples = list(episode["samples"])
         if not samples:
             raise ValueError("FOV-risk episode cannot be empty")
+        for sample in samples:
+            if set(sample) != {"graph_X", "geometric_in_fov"}:
+                raise ValueError(
+                    "FOV-risk samples accept only graph_X and geometric_in_fov; "
+                    "the label must come from simulator pad-centre geometry")
         episode_labels = future_fov_loss_labels(
-            [sample["in_fov"] for sample in samples], prediction_steps)
+            [sample["geometric_in_fov"] for sample in samples], prediction_steps)
         for time_index, (sample, label) in enumerate(zip(samples, episode_labels)):
-            if set(sample) != {"graph_X", "in_fov"}:
-                raise ValueError("FOV-risk samples accept only graph_X and in_fov")
             matrix = np.asarray(sample["graph_X"], dtype=np.float32)
             if matrix.shape != (FOV_GRAPH_INPUT_DIM, len(FOV_NODE_NAMES)):
                 raise ValueError("FOV-risk graph feature shape mismatch")
@@ -146,7 +165,11 @@ def save_fov_risk_dataset(dataset: Mapping, path: str | Path, *,
         "positive_samples": int(np.sum(y)),
         "dataset_sha256": dataset_digest(dataset),
         "feature_source": "eight visual/keypoint history features only",
-        "forbidden_inputs": ["simulator truth", "relative-state estimate", "critic state"],
+        "label_source": (
+            "geometric pad-centre camera-frustum visibility (simulator truth, "
+            "offline only)"),
+        "forbidden_inputs": ["simulator truth", "relative-state estimate",
+                             "critic state", "marker detection quality"],
     }
     manifest_path = path.with_suffix(".manifest.json")
     temporary_manifest = manifest_path.with_suffix(manifest_path.suffix + ".tmp")

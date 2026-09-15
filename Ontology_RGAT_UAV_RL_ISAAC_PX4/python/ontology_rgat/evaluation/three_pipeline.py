@@ -15,14 +15,14 @@ PHYSICAL_METRICS = (
     "touchdown_lateral_error", "touchdown_vertical_velocity",
     "touchdown_relative_horizontal_velocity", "touchdown_tilt",
     "touchdown_roll", "touchdown_pitch", "touchdown_angular_rate",
-    "collision_rate", "excessive_drift_rate", "fov_loss_fraction",
-    "fov_retention_ratio", "fov_loss_episode_rate",
-    "mean_continuous_fov_loss_duration_s",
-    "maximum_continuous_fov_loss_duration_s",
-    "longest_visual_loss_s", "visual_loss_events",
-    "visual_reacquisition_events", "visual_reacquisition_rate",
-    "mean_visual_reacquisition_time_s", "recovery_climb_fraction",
-    "unsafe_descent_low_visibility_fraction", "recovery_landing_opportunity",
+    "collision_rate", "excessive_drift_rate", "geometric_fov_loss_fraction",
+    "geometric_fov_retention_ratio", "geometric_fov_loss_episode_rate",
+    "mean_continuous_geometric_fov_loss_duration_s",
+    "maximum_continuous_geometric_fov_loss_duration_s",
+    "longest_geometric_fov_loss_s", "geometric_fov_loss_events",
+    "geometric_fov_reacquisition_events", "geometric_fov_reacquisition_rate",
+    "mean_geometric_fov_reacquisition_time_s", "climb_during_geometric_fov_loss_fraction",
+    "descent_during_low_keypoint_visibility_fraction", "recovery_landing_opportunity",
     "successful_recovery_landing", "touchdown_time_s",
     "adaptive_rgat_inference_latency_ms_mean",
     "adaptive_rgat_parameter_count",
@@ -296,13 +296,13 @@ def _publication_table(summary, efficiency):
             "final_lateral_error_m": average("touchdown_lateral_error_mean"),
             "touchdown_vertical_velocity_m_s": average(
                 "touchdown_vertical_velocity_mean"),
-            "fov_loss_fraction": average("fov_loss_fraction_mean"),
-            "visual_reacquisition_rate": average(
-                "visual_reacquisition_rate_mean"),
+            "geometric_fov_loss_fraction": average("geometric_fov_loss_fraction_mean"),
+            "geometric_fov_reacquisition_rate": average(
+                "geometric_fov_reacquisition_rate_mean"),
             "successful_recovery_landing_rate": average(
                 "successful_recovery_landing_mean"),
-            "unsafe_descent_low_visibility_fraction": average(
-                "unsafe_descent_low_visibility_fraction_mean"),
+            "descent_during_low_keypoint_visibility_fraction": average(
+                "descent_during_low_keypoint_visibility_fraction_mean"),
             "landing_time_s": average("touchdown_time_s_mean"),
         }
         row.update({key: value for key, value in costs.get(pipeline, {}).items()
@@ -349,12 +349,12 @@ def _write_figures(records, training_records, figures_dir: Path,
             ("success_rate.png", "paper_success", "Landing success"),
             ("touchdown_lateral_error.png", "touchdown_lateral_error", "Lateral error (m)"),
             ("touchdown_velocity.png", "touchdown_vertical_velocity", "Vertical velocity (m/s)"),
-            ("fov_loss.png", "fov_loss_fraction", "FOV loss fraction"),
-            ("visual_reacquisition_rate.png", "visual_reacquisition_rate",
+            ("fov_loss.png", "geometric_fov_loss_fraction", "FOV loss fraction"),
+            ("geometric_fov_reacquisition_rate.png", "geometric_fov_reacquisition_rate",
              "Reacquisition / visual-loss event"),
             ("successful_recovery_landing.png", "successful_recovery_landing",
              "Loss-reacquisition-landing success"),
-            ("unsafe_blind_descent.png", "unsafe_descent_low_visibility_fraction",
+            ("unsafe_blind_descent.png", "descent_during_low_keypoint_visibility_fraction",
              "Unsafe low-visibility descent fraction"),
             ("landing_time.png", "touchdown_time_s", "Landing time (s)")):
         fig, ax = plt.subplots(figsize=(6.4, 4.0))
@@ -468,8 +468,8 @@ def write_three_pipeline_outputs(records, training_records, output_dir, *,
                 float(row["touchdown_lateral_error_mean"])
                 - float(reference["touchdown_lateral_error_mean"])),
             "fov_loss_increase": (
-                float(row["fov_loss_fraction_mean"])
-                - float(reference["fov_loss_fraction_mean"])),
+                float(row["geometric_fov_loss_fraction_mean"])
+                - float(reference["geometric_fov_loss_fraction_mean"])),
         })
     _write_csv(evaluation_dir / "disturbance_degradation.csv", degradation)
     _write_csv(evaluation_dir / "confidence_intervals.csv", paired)

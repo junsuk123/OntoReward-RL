@@ -49,6 +49,10 @@ FORBIDDEN_SEMANTIC_FIELDS = frozenset({
     "platform_velocity", "simulator_truth", "ground_truth", "critic",
     "pad_position", "pad_velocity", "deck_position", "deck_velocity",
     "gnss_platform", "privileged",
+    # Geometric pad-centre FOV is the *label* the frozen R-GAT is trained to
+    # predict. Letting it into the graph would turn inference into a lookup.
+    "pad_center", "pad_landmark", "keypoint_label", "geometric_fov", "in_fov",
+    "marker_quality", "marker_pose",
 })
 
 

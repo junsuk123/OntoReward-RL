@@ -177,7 +177,7 @@ def _metric_rows(grouped: Mapping[str, Sequence[Mapping[str, Any]]], source: str
         lateral = [_number(row, "touchdown_lateral_error") for row in contact_rows]
         lateral = [value for value in lateral if math.isfinite(value)]
         distributions[method] = lateral
-        fov = [_number(row, "fov_loss_fraction") for row in rows]
+        fov = [_number(row, "geometric_fov_loss_fraction") for row in rows]
         fov = [value for value in fov if math.isfinite(value)]
         unsafe = sum(_number(row, "unsafe_pad_contact", 0.0) >= .5 for row in rows)
         summaries.append({
@@ -195,7 +195,7 @@ def _metric_rows(grouped: Mapping[str, Sequence[Mapping[str, Any]]], source: str
                 float(np.median(lateral)) if lateral else math.nan),
             "touchdown_lateral_error_mean_m": (
                 float(np.mean(lateral)) if lateral else math.nan),
-            "fov_loss_fraction_mean": float(np.mean(fov)) if fov else math.nan,
+            "geometric_fov_loss_fraction_mean": float(np.mean(fov)) if fov else math.nan,
         })
     return summaries, distributions
 
@@ -286,8 +286,8 @@ def _save_performance_figures(output_dir: Path, summaries, distributions,
                 f"{100*row['unsafe_contact_rate']:.1f}%",
                 (f"{row['touchdown_lateral_error_median_m']:.3f} m"
                  if math.isfinite(row["touchdown_lateral_error_median_m"]) else "—"),
-                (f"{100*row['fov_loss_fraction_mean']:.1f}%"
-                 if math.isfinite(row["fov_loss_fraction_mean"]) else "—"),
+                (f"{100*row['geometric_fov_loss_fraction_mean']:.1f}%"
+                 if math.isfinite(row["geometric_fov_loss_fraction_mean"]) else "—"),
             ))
         table = ax.table(cellText=cells, colLabels=columns, cellLoc="center",
                          colLoc="center", bbox=[0, .11, 1, .82],
@@ -636,7 +636,7 @@ def write_presentation_results(results_dir, output_dir=None) -> dict[str, Any]:
         {"slide": 14, "metric": "위험 접촉률", "definition":
          "unsafe_pad_contact 평균", "uncertainty": "표본 수 N 병기"},
         {"slide": 14, "metric": "시야 상실률", "definition":
-         "episode별 fov_loss_fraction 평균", "uncertainty": "표본 수 N 병기"},
+         "episode별 geometric_fov_loss_fraction 평균", "uncertainty": "표본 수 N 병기"},
         {"slide": 15, "metric": "FOV-risk AUROC/F1", "definition":
          "held-out episode의 1초 내 FOV-loss 이진 분류", "uncertainty": "episode 단위 분할"},
         {"slide": 16, "metric": "최근 5회 학습 안전 착륙률", "definition":

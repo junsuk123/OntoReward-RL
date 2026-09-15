@@ -1,5 +1,10 @@
 # LEGACY / ABLATION ONLY: Hybrid Ontology R-GAT Reward
 
+> **Legacy.** 이 문서는 ArUco 검출 기반 프로파일(`config/system.yaml`, `vision.mode: aruco`)에서 수행한 adaptive-weight
+> ablation을 기록한다. 주 2-pipeline 실험은 6-keypoint fiducial 표적과 기하
+> FOV 정의를 쓰며 ArUco에 의존하지 않는다. `docs/TWO_PIPELINE_COMPARISON.md`를 보라.
+
+
 > Adaptive reward weighting과 semantic PBRS는 현재 제안법이 아니다. 현재 제안법은
 > [Ontology-R-GAT 미래 FOV-loss 보상](ONTOLOGY_RGAT_FOV_RISK.md)이다.
 

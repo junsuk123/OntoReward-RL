@@ -34,6 +34,14 @@ isaac:
 # Use the broad plaza/loop beside Gwanggaeto Hall instead of an empty Flat
 # Plane. The benchmark still samples exactly the same pad-relative Table-I
 # initial condition; changing its world-space anchor does not alter the task.
+# The two parallel pairs are separated along the shared route, not by marker
+# identity: the primary landing target is a six-keypoint fiducial, identical on
+# every deck, and each pair's camera only ever sees its own. Clear the legacy
+# ArUco per-pair keys that config/system.yaml is deep-merged from.
+parallel:
+  marker_dictionary: null
+  marker_id_stride: null
+
 metasejong:
   enabled: true
   scenario: gwanggaeto
@@ -68,10 +76,9 @@ benchmark:
   # 0.34 m/s; 0.40 rejects a fly-through but does not wait forever for 0.15.
   entry_speed_tolerance_m_s: 0.40
   entry_settle_s: 1.0
-  # The rendered ArUco solve is intermittent during PX4 settling. A recent
-  # real detection proves visibility without requiring every 20 Hz frame to
-  # detect continuously for the whole one-second hold.
-  entry_marker_memory_s: 2.0
+  # Initial visibility is a single geometric condition: the landing-pad centre
+  # must project inside the rendered camera's frustum. No detector takes part.
+  entry_view_margin: 0.85
   initial_conditions:
     relative_altitude_m: [2.0, 8.0]
     relative_lateral_x_m: [-3.0, 3.0]
@@ -174,64 +181,25 @@ gnss:
   enabled: false
 
 vision:
-  dictionary: DICT_4X4_100
-  mode: aruco
+  # The primary benchmark's perception path is a learned six-keypoint encoder,
+  # so the deck carries six fixed landmarks rather than bit-coded tags. No
+  # ArUco dictionary, marker id or cv2.aruco detector exists on this path; the
+  # legacy detector profile survives only in config/system.yaml.
+  mode: keypoint_fiducial
+  # Explicitly clear the inherited legacy detector settings. config/system.yaml
+  # is deep-merged, so leaving these out would silently re-introduce an ArUco
+  # dictionary and marker board into the primary experiment.
+  dictionary: null
+  board: null
   pose_source_for_policy: false
-  # Multi-scale board for the whole descent. Four large corner tags establish
-  # the far approach, four medium tags bridge the middle altitude, and 37
-  # micro tags cover the complete 0.35 m landing-success disk at 0.10 m pitch.
-  # A close, off-centre camera therefore sees a complete marker rather than
-  # blank deck. All dimensions are the black marker side; the generated white
-  # quiet zone is additional.
-  board:
-    # Far range: four 32 cm tags around the success disk.
-    - {id: 10, side_m: 0.32, center_xy_m: [-0.50, 0.50]}
-    - {id: 11, side_m: 0.32, center_xy_m: [0.50, 0.50]}
-    - {id: 12, side_m: 0.32, center_xy_m: [0.50, -0.50]}
-    - {id: 13, side_m: 0.32, center_xy_m: [-0.50, -0.50]}
-    # Mid range: 12 cm cardinal tags between the corner tags.
-    - {id: 14, side_m: 0.12, center_xy_m: [0.00, 0.50]}
-    - {id: 15, side_m: 0.12, center_xy_m: [0.50, 0.00]}
-    - {id: 16, side_m: 0.12, center_xy_m: [0.00, -0.50]}
-    - {id: 17, side_m: 0.12, center_xy_m: [-0.50, 0.00]}
-    # Near-touchdown field: 4 cm tags on a 10 cm grid in radius <= 0.35 m.
-    - {id: 18, side_m: 0.04, center_xy_m: [-0.10, 0.30]}
-    - {id: 19, side_m: 0.04, center_xy_m: [0.00, 0.30]}
-    - {id: 20, side_m: 0.04, center_xy_m: [0.10, 0.30]}
-    - {id: 21, side_m: 0.04, center_xy_m: [-0.20, 0.20]}
-    - {id: 22, side_m: 0.04, center_xy_m: [-0.10, 0.20]}
-    - {id: 23, side_m: 0.04, center_xy_m: [0.00, 0.20]}
-    - {id: 24, side_m: 0.04, center_xy_m: [0.10, 0.20]}
-    - {id: 25, side_m: 0.04, center_xy_m: [0.20, 0.20]}
-    - {id: 26, side_m: 0.04, center_xy_m: [-0.30, 0.10]}
-    - {id: 27, side_m: 0.04, center_xy_m: [-0.20, 0.10]}
-    - {id: 28, side_m: 0.04, center_xy_m: [-0.10, 0.10]}
-    - {id: 29, side_m: 0.04, center_xy_m: [0.00, 0.10]}
-    - {id: 30, side_m: 0.04, center_xy_m: [0.10, 0.10]}
-    - {id: 31, side_m: 0.04, center_xy_m: [0.20, 0.10]}
-    - {id: 32, side_m: 0.04, center_xy_m: [0.30, 0.10]}
-    - {id: 33, side_m: 0.04, center_xy_m: [-0.30, 0.00]}
-    - {id: 34, side_m: 0.04, center_xy_m: [-0.20, 0.00]}
-    - {id: 35, side_m: 0.04, center_xy_m: [-0.10, 0.00]}
-    - {id: 36, side_m: 0.04, center_xy_m: [0.00, 0.00]}
-    - {id: 37, side_m: 0.04, center_xy_m: [0.10, 0.00]}
-    - {id: 38, side_m: 0.04, center_xy_m: [0.20, 0.00]}
-    - {id: 39, side_m: 0.04, center_xy_m: [0.30, 0.00]}
-    - {id: 40, side_m: 0.04, center_xy_m: [-0.30, -0.10]}
-    - {id: 41, side_m: 0.04, center_xy_m: [-0.20, -0.10]}
-    - {id: 42, side_m: 0.04, center_xy_m: [-0.10, -0.10]}
-    - {id: 43, side_m: 0.04, center_xy_m: [0.00, -0.10]}
-    - {id: 44, side_m: 0.04, center_xy_m: [0.10, -0.10]}
-    - {id: 45, side_m: 0.04, center_xy_m: [0.20, -0.10]}
-    - {id: 46, side_m: 0.04, center_xy_m: [0.30, -0.10]}
-    - {id: 47, side_m: 0.04, center_xy_m: [-0.20, -0.20]}
-    - {id: 48, side_m: 0.04, center_xy_m: [-0.10, -0.20]}
-    - {id: 49, side_m: 0.04, center_xy_m: [0.00, -0.20]}
-    - {id: 50, side_m: 0.04, center_xy_m: [0.10, -0.20]}
-    - {id: 51, side_m: 0.04, center_xy_m: [0.20, -0.20]}
-    - {id: 52, side_m: 0.04, center_xy_m: [-0.10, -0.30]}
-    - {id: 53, side_m: 0.04, center_xy_m: [0.00, -0.30]}
-    - {id: 54, side_m: 0.04, center_xy_m: [0.10, -0.30]}
+  landing_pad:
+    # Six vertices of a pad-centred regular hexagon, first vertex at 30 deg.
+    # isaac_sim/keypoint_geometry.py is the single definition; the painted
+    # texture, the supervised labels and the geometric FOV truth all read it.
+    layout: hexagonal
+    landmark_radius_m: 0.52
+    landmark_diameter_m: 0.22
+    texture_pixels: 2048
   camera:
     model: shin2026_grayscale
     resolution: [512, 320]
@@ -240,7 +208,8 @@ vision:
     rate_hz: 30.0
     mount_translation_flu_m: [0.0, 0.0, -0.16]
     # Condition the Table-I lateral/yaw draw on a conservative inscribed part
-    # of the pitched-camera footprint; the detector remains the final gate.
+    # of the pitched-camera footprint; the geometric pad-centre frustum test
+    # remains the final handover gate.
     entry_visible_footprint_fraction: 0.65
     clipping_range_m: [0.02, 60.0]
 

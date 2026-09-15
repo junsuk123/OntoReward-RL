@@ -133,7 +133,12 @@ class Fake:
                       "position": [self.position[0] + 1.0,
                                    self.position[1] - 0.7,
                                    self.position[2]],
-                      "velocity": list(self.velocity)},
+                      "velocity": list(self.velocity),
+                      # Attitude truth as well, so geometric pad-centre FOV is
+                      # a pure simulator quantity rather than an
+                      # estimator-dependent one.
+                      "attitude_valid": True,
+                      "quaternion_wxyz": [1.0, 0.0, 0.0, 0.0]},
             "quaternion_wxyz": [1.0, 0.0, 0.0, 0.0],
             "angular_velocity": [0.0, 0.0, 0.0], "acceleration": [0.0, 0.0, 0.0],
             "wind": [1.0, 0.2, 0.0], "aero_force": [0.1, 0.0, 0.0],

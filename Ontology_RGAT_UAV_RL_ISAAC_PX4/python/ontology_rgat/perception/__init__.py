@@ -6,9 +6,16 @@ from .keypoint_pretrain import (PRETRAIN_FORMAT, calibrate_keypoint_encoder,
                                 empirical_keypoint_dataset,
                                 prepare_keypoint_encoder,
                                 synthetic_keypoint_dataset)
-from .ros_camera import LatestGrayscaleFrame, RosGrayscaleSource
+from .pad_geometry import (KEYPOINT_LAYOUT_ID, LANDING_PAD_VISUAL_VERSION,
+                          PAD_LANDMARK_COUNT, PAD_LANDMARK_RADIUS_M,
+                          CameraModel, PadKeypointProjection,
+                          geometric_pad_center_in_fov, landing_pad_texture,
+                          pad_landmarks, project_landing_pad)
+from .ros_camera import (LatestGrayscaleFrame, LatestPadRelativeTruthPose,
+                         RosGrayscaleSource)
 from .semantic_observation import (
-    FORBIDDEN_SEMANTIC_FIELDS, SEMANTIC_FEATURE_NAMES,
+    FORBIDDEN_SEMANTIC_FIELDS, POINT_CONFIDENCE_THRESHOLD,
+    SEMANTIC_FEATURE_NAMES,
     SEMANTIC_GRAPH_INPUT_DIM, SEMANTIC_GRAPH_VERSION, SEMANTIC_NODE_NAMES,
     SEMANTIC_RELATION_NAMES, SemanticObservation,
     assert_semantic_payload_safe, semantic_graph, semantic_observation,
@@ -18,7 +25,12 @@ __all__ = ["grayscale_image_tensor", "KeypointEncoderOutput", "ShinKeypointEncod
            "PRETRAIN_FORMAT", "prepare_keypoint_encoder",
            "calibrate_keypoint_encoder", "empirical_keypoint_dataset",
            "synthetic_keypoint_dataset", "LatestGrayscaleFrame",
-           "RosGrayscaleSource", "FORBIDDEN_SEMANTIC_FIELDS",
+           "LatestPadRelativeTruthPose", "RosGrayscaleSource",
+           "KEYPOINT_LAYOUT_ID", "LANDING_PAD_VISUAL_VERSION",
+           "PAD_LANDMARK_COUNT", "PAD_LANDMARK_RADIUS_M", "CameraModel",
+           "PadKeypointProjection", "geometric_pad_center_in_fov",
+           "landing_pad_texture", "pad_landmarks", "project_landing_pad",
+           "FORBIDDEN_SEMANTIC_FIELDS", "POINT_CONFIDENCE_THRESHOLD",
            "SEMANTIC_FEATURE_NAMES", "SEMANTIC_GRAPH_INPUT_DIM",
            "SEMANTIC_GRAPH_VERSION", "SEMANTIC_NODE_NAMES",
            "SEMANTIC_RELATION_NAMES", "SemanticObservation",

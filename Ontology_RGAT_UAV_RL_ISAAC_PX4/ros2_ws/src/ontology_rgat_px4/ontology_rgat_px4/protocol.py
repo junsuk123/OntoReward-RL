@@ -236,6 +236,10 @@ class VehicleSample:
     # would grade the receiver's mistake instead of the landing.
     truth_position_enu: tuple[float, float, float] | None = None
     truth_velocity_enu: tuple[float, float, float] | None = None
+    # Simulator attitude truth, carried so geometric landing-pad field-of-view
+    # can be evaluated from simulator geometry alone rather than from the
+    # estimator's attitude. Scoring/labelling only, like the two above.
+    truth_quaternion_enu_flu_wxyz: tuple[float, float, float, float] | None = None
     armed: bool = False
     nav_state: int = 0
     landed: bool = True
@@ -272,6 +276,10 @@ class VehicleSample:
                 "valid": self.truth_position_enu is not None,
                 "position": list(self.truth_position_enu or self.position_enu),
                 "velocity": list(self.truth_velocity_enu or self.velocity_enu),
+                "quaternion_wxyz": list(
+                    self.truth_quaternion_enu_flu_wxyz
+                    or self.quaternion_enu_flu_wxyz),
+                "attitude_valid": self.truth_quaternion_enu_flu_wxyz is not None,
             },
             "quaternion_wxyz": list(self.quaternion_enu_flu_wxyz),
             "angular_velocity": list(self.angular_velocity_flu),

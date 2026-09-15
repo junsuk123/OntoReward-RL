@@ -25,7 +25,7 @@ def _row(method, success, *, digest=""):
         "strict_success": success, "paper_success": success,
         "pad_contact": 1, "unsafe_pad_contact": 0 if success else 1,
         "touchdown_lateral_error": .2 if success else .5,
-        "fov_loss_fraction": .1, "selected_checkpoint_sha256": digest,
+        "geometric_fov_loss_fraction": .1, "selected_checkpoint_sha256": digest,
     }
 
 

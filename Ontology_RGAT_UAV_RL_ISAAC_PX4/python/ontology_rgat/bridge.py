@@ -71,6 +71,10 @@ class PX4EstimatorInvalid(BridgeError):
     """PX4 temporarily stopped publishing a control-valid local estimate."""
 
 
+# ``marker_quality`` stays in the wire contract for the legacy ArUco profile
+# and recorded fixtures. Nothing on the primary two-pipeline path reads it:
+# field-of-view truth is geometric (LiveShinEnvironment.geometric_pad_center_in_fov)
+# and perception health comes from the keypoint encoder.
 REQUIRED_STATE_FIELDS = (
     "position", "velocity", "quaternion_wxyz", "angular_velocity",
     "acceleration", "wind", "aero_force", "marker_quality", "estimator_valid",
@@ -282,25 +286,6 @@ class PX4Bridge:
         return {"position": position, "frame": frame,
                 "yaw": float(detail.get("entry_yaw_enu_rad", 0.0))}
 
-    def pad_in_view(self, state: dict[str, Any]) -> bool:
-        """Is the deck actually in the camera frame right now?
-
-        Every episode is meant to begin with the pad already seen, so the
-        policy starts from a marker fix instead of opening on GNSS alone --
-        which in this canyon is tens of metres out. Geometry alone cannot
-        promise it: the entry pose is drawn inside the footprint, but the
-        vehicle only has to hold that pose to within the handover tolerance,
-        and the tolerance is the same size as the frame. So this asks the
-        detector rather than the arithmetic.
-
-        Off when the camera is not the pose source -- a run configured without
-        vision has no frame to be in -- and it is a *gate*, not a measurement:
-        the quality it reads is the same number the policy gets.
-        """
-        if not bool(self.cfg.require_pad_in_view):
-            return True
-        return float(state.get("marker_quality", 0.0)) > 0.0
-
     def entry_view_margin(self, state: dict[str, Any],
                           here: np.ndarray) -> float | None:
         """Normalised image position of the pad centre, from simulator geometry.
@@ -308,15 +293,20 @@ class PX4Bridge:
         Below 1 the pad centre is inside the landing camera's frame; ``None``
         when the geometry cannot be evaluated (no attitude in the sample, or a
         world-frame entry whose pad-relative pose is unknown). The camera model
-        is ``cfg.external.entry_camera``, copied from the same ``vision.camera``
-        block Isaac builds the rendered camera from.
+        is ``cfg.external.landing_camera``, copied from the same
+        ``vision.camera`` block Isaac builds the rendered camera from.
+
+        This is the *one* definition of initial pad visibility used by the
+        benchmark, and it is initialization-only simulator truth: it decides
+        when an episode may begin and nothing else. The PPO actor never
+        receives it.
         """
         if str(getattr(self.cfg, "entry_frame", "pad")).lower() != "pad":
             return None
         quaternion = state.get("quaternion_wxyz")
         if quaternion is None:
             return None
-        camera = getattr(self.cfg, "entry_camera", None)
+        camera = getattr(self.cfg, "landing_camera", None)
         params = dict(camera) if isinstance(camera, dict) else {}
         try:
             return float(pad_view_margin(
@@ -363,25 +353,22 @@ class PX4Bridge:
         """Hand over only once PX4 holds the entry pose.
 
         The outer timeout is deliberately wall-clock bounded so a stalled
-        simulator cannot hang the runner. Marker memory and settling are
-        physical-duration requirements, however, and therefore follow PX4's
-        lockstep simulation clock. On a rendered multi-pair stage one second
-        of simulation can take many wall seconds; expiring marker memory on
-        wall time made a perfectly visible pad fail the reset gate.
+        simulator cannot hang the runner. Settling is a physical-duration
+        requirement, however, and therefore follows PX4's lockstep simulation
+        clock. On a rendered multi-pair stage one second of simulation can
+        take many wall seconds.
 
-        "Pad in view" is satisfied by either a recent ArUco fix or by the
-        simulator's own geometry placing the pad centre inside the landing
-        camera's frame (``entry_view_margin``). The detector alone cannot be
-        the gate: from the upper half of the Table-I entry altitude range a
-        0.32 m tag is about ten pixels wide in a 512x320 frame, so it cannot
-        be decoded even though the pad fills the centre of the image, and on
-        a shared multi-pair stage one pair timing out here restarts the
-        simulator under every other pair's episode.
+        "Pad in view" has exactly one meaning here: the simulator's own
+        geometry places the pad centre inside the landing camera's frustum
+        (``entry_view_margin``). The previous "recent ArUco detection OR
+        geometry" gate mixed two incompatible definitions of visibility into
+        one experiment, and from the upper half of the Table-I entry altitude
+        range a small tag cannot be decoded at all even though the pad fills
+        the centre of the image. A detector is in any case no longer part of
+        the primary perception path.
         """
         started = time.monotonic()
         settled_since: float | None = None
-        marker_seen_at: float | None = None
-        detector_ready = False
         view_margin: float | None = None
         state: dict[str, Any] | None = None
         last_arm = float("-inf")
@@ -435,40 +422,22 @@ class PX4Bridge:
                 # a PX4 timestamp. They retain the historical wall-clock
                 # behaviour instead of losing the readiness gate entirely.
                 sample_now = wall_now
-            if float(state.get("marker_quality", 0.0)) > 0.0:
-                marker_seen_at = sample_now
-            detector_ready = (
-                marker_seen_at is not None
-                and sample_now - marker_seen_at <= float(getattr(
-                    self.cfg, "entry_marker_memory", 0.0)))
             view_margin = self.entry_view_margin(state, here)
             geometry_ready = (
-                bool(getattr(self.cfg, "entry_view_geometry", True))
-                and view_margin is not None
+                view_margin is not None
                 and view_margin <= float(getattr(
                     self.cfg, "entry_view_margin", 0.85)))
-            marker_ready = (
-                not bool(self.cfg.require_pad_in_view)
-                or detector_ready or geometry_ready)
+            pad_ready = (
+                not bool(self.cfg.require_pad_in_view) or geometry_ready)
             at_target = (
                 float(np.linalg.norm(here - target)) <= float(self.cfg.entry_tolerance)
                 and speed <= float(self.cfg.entry_speed_tolerance)
-                and marker_ready)
+                and pad_ready)
             if not at_target:
                 settled_since = None
             elif settled_since is None:
                 settled_since = sample_now
             elif sample_now - settled_since >= float(self.cfg.entry_settle):
-                if bool(self.cfg.require_pad_in_view) and not detector_ready:
-                    # Setup-only diagnostic: the episode opens on geometry,
-                    # so the operator can see that the detector could not
-                    # decode the board from this altitude.
-                    print(
-                        "Entry gate: pad centre is inside the landing camera "
-                        f"frame (normalised offset {view_margin:.2f}) at "
-                        f"{float(here[2]):.1f} m but ArUco quality is "
-                        f"{float(state.get('marker_quality', 0.0)):.2f}; "
-                        "handing over on simulator geometry.")
                 return state
             time.sleep(0.02)
         if state is None:
@@ -478,8 +447,7 @@ class PX4Bridge:
             f"PX4 did not hold the entry pose within {float(self.cfg.entry_timeout):.1f} s "
             f"(offset {float(np.linalg.norm(here - target)):.2f} m, "
             f"speed {speed:.2f} m/s, "
-            f"marker quality {float(state.get('marker_quality', 0.0)):.2f}, "
-            "pad view offset "
+            "geometric pad-centre view offset "
             f"{'n/a' if view_margin is None else format(view_margin, '.2f')}).")
 
     # ------------------------------------------------------------------- step

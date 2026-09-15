@@ -97,18 +97,16 @@ def _live_config(mode, results_dir, system_config):
                       cfg.external.entry_speed_tolerance))
     cfg.external.entry_settle = float(
         benchmark.get("entry_settle_s", cfg.external.entry_settle))
-    cfg.external.entry_marker_memory = float(
-        benchmark.get("entry_marker_memory_s",
-                      cfg.external.entry_marker_memory))
-    # The entry gate's geometric pad-in-view test must use the camera Isaac
-    # actually renders with, so copy that model rather than the defaults.
+    # The entry gate, the geometric FOV metric and the future-FOV-loss labels
+    # all project through the camera Isaac actually renders with, so copy that
+    # model rather than relying on the defaults.
     camera = dict((simulator_config.get("vision") or {}).get("camera") or {})
-    entry_camera = dict(cfg.external.entry_camera)
+    landing_camera = dict(cfg.external.landing_camera)
     for key in ("resolution", "horizontal_fov_deg", "pitch_down_deg",
                 "mount_translation_flu_m"):
         if key in camera:
-            entry_camera[key] = camera[key]
-    cfg.external.entry_camera = entry_camera
+            landing_camera[key] = camera[key]
+    cfg.external.landing_camera = landing_camera
     if "entry_view_margin" in benchmark:
         cfg.external.entry_view_margin = float(benchmark["entry_view_margin"])
     cfg.viz.rviz.deck_size_m = list(pad.get("deck_size_m", (1.5, 1.5)))
@@ -477,11 +475,16 @@ def main():
                                else (600.0 if args.headless else 1200.0)))
             owned.start()
             stack_module.current(owned)
-        with RosGrayscaleSource() as camera:
+        with RosGrayscaleSource(
+                # Training-label-only pose stream for keypoint supervision.
+                truth_pose_topic=(
+                    "/landing_uav0/perception/pad_relative_truth_pose")
+        ) as camera:
             monitor.stage("keypoint validation", "live Isaac camera · held-out labels")
             keypoint_pretraining = calibrate_keypoint_encoder(
                 args.results_dir / "models/shin2026_keypoint_encoder.pt",
-                keypoint_pretraining, camera, system=resolved_system_config,
+                keypoint_pretraining, camera.labelled,
+                system=resolved_system_config,
                 experiment=config, mode=args.mode, device=args.device)
             manifest["keypoint_pretraining"] = (
                 None if keypoint_pretraining is None else {
@@ -516,8 +519,8 @@ def main():
                     "success_rate_threshold", 0.20)),
                 "max_position_rmse_m": float(curriculum_raw.get(
                     "max_position_rmse_m", 2.0)),
-                "max_fov_loss_fraction": float(curriculum_raw.get(
-                    "max_fov_loss_fraction", 0.50)),
+                "max_geometric_fov_loss_fraction": float(curriculum_raw.get(
+                    "max_geometric_fov_loss_fraction", 0.50)),
             }
 
             def train_requested(method):

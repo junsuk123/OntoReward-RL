@@ -75,7 +75,7 @@ def test_rviz_group_routes_reset_and_step_by_method():
     group = RvizPublisherGroup({"a": first, "b": second})
     group.clear_trails(method="b")
     group.publish_benchmark_step(method="a", state={}, scenario="x", step=1,
-                                 dt=.1, in_fov=True, status="running")
+                                 dt=.1, geometric_in_fov=True, status="running")
     group.potential = "frozen"
     assert first.cleared == 0 and second.cleared == 1
     assert first.steps[0]["method"] == "a" and not second.steps
@@ -86,7 +86,7 @@ def test_rviz_group_routes_reset_and_step_by_method():
     group.clear_trails(method="b", pair_index=0)
     group.publish_benchmark_step(
         method="b", pair_index=0, state={}, scenario="y", step=2,
-        dt=.1, in_fov=True, status="running")
+        dt=.1, geometric_in_fov=True, status="running")
     assert first.cleared == 1 and second.cleared == 1
     assert first.steps[-1]["method"] == "b"
     assert first.steps[-1]["pair_index"] == 0
@@ -183,7 +183,7 @@ def test_benchmark_scene_and_telemetry_show_proposed_fov_branch():
                "truth": {"valid": True, "position": [0.1, -0.2, 1.3]},
                "quaternion_wxyz": [1.0, 0.0, 0.0, 0.0]},
         method="shin_se_onto_rgat_fov", scenario="circle", step=1, dt=0.1,
-        in_fov=True, status="running", reward=-0.07,
+        geometric_in_fov=True, status="running", reward=-0.07,
         reward_parts={"active_perception": -0.01, "fov_margin": 0.3,
                       "predicted_fov_loss_probability": 0.6,
                       "ontology_fov_reward": -0.06},

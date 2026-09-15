@@ -217,81 +217,27 @@ def test_reset_rejects_invalid_initial_condition_scale_before_transmit():
         bridge.reset(12, initial_condition_scale=2.0)
 
 
-def test_entry_gate_tolerates_brief_marker_dropout(monkeypatch):
-    class Clock:
-        value = -0.2
-
-        def monotonic(self):
-            self.value += 0.2
-            return self.value
-
-    clock = Clock()
-    monkeypatch.setattr(bridge_module.time, "monotonic", clock.monotonic)
-    monkeypatch.setattr(bridge_module.time, "sleep", lambda _seconds: None)
-    states = iter([
-        {"armed": True, "marker_quality": 0.5},
-        {"armed": True, "marker_quality": 0.0},
-        {"armed": True, "marker_quality": 0.0},
-    ])
-    bridge = object.__new__(PX4Bridge)
-    bridge.cfg = SimpleNamespace(
-        entry_timeout=10.0, arm_retry=2.0, entry_tolerance=0.5,
-        entry_speed_tolerance=0.2, require_pad_in_view=True,
-        entry_marker_memory=2.0, entry_settle=1.0)
-    bridge.get_state = lambda: next(states)
-    bridge.entry_state = lambda _state: (np.zeros(3), 0.0)
-
-    state = bridge.wait_at_entry(np.zeros(3))
-
-    assert state["marker_quality"] == 0.0
-
-
-def test_entry_gate_uses_px4_time_for_marker_memory_and_settling(monkeypatch):
-    class SlowRenderedClock:
-        value = -5.0
-
-        def monotonic(self):
-            self.value += 5.0
-            return self.value
-
-    clock = SlowRenderedClock()
-    monkeypatch.setattr(bridge_module.time, "monotonic", clock.monotonic)
-    monkeypatch.setattr(bridge_module.time, "sleep", lambda _seconds: None)
-    states = iter([
-        {"armed": True, "marker_quality": 0.5, "px4_time_us": 0},
-        {"armed": True, "marker_quality": 0.0, "px4_time_us": 250_000},
-        {"armed": True, "marker_quality": 0.0, "px4_time_us": 500_000},
-    ])
-    bridge = object.__new__(PX4Bridge)
-    bridge.cfg = SimpleNamespace(
-        entry_timeout=100.0, arm_retry=2.0, entry_tolerance=0.5,
-        entry_speed_tolerance=0.2, require_pad_in_view=True,
-        entry_marker_memory=2.0, entry_settle=0.5)
-    bridge.get_state = lambda: next(states)
-    bridge.entry_state = lambda _state: (np.zeros(3), 0.0)
-
-    state = bridge.wait_at_entry(np.zeros(3))
-
-    assert state["px4_time_us"] == 500_000
-
-
 def _entry_gate_bridge(states, *, require_pad_in_view=True):
     bridge = object.__new__(PX4Bridge)
     bridge.cfg = SimpleNamespace(
         entry_timeout=10.0, arm_retry=2.0, entry_tolerance=0.5,
         entry_speed_tolerance=0.2, require_pad_in_view=require_pad_in_view,
-        entry_marker_memory=2.0, entry_settle=0.5, entry_frame="pad",
-        entry_view_geometry=True, entry_view_margin=0.85,
-        entry_camera={"resolution": [512, 320], "horizontal_fov_deg": 90.0,
-                      "pitch_down_deg": 60.0,
-                      "mount_translation_flu_m": [0.0, 0.0, -0.16]})
+        entry_settle=0.5, entry_frame="pad", entry_view_margin=0.85,
+        landing_camera={"resolution": [512, 320], "horizontal_fov_deg": 90.0,
+                        "pitch_down_deg": 60.0,
+                        "mount_translation_flu_m": [0.0, 0.0, -0.16]})
     bridge.get_state = lambda: next(states)
     return bridge
 
 
-def test_entry_gate_hands_over_on_simulator_geometry_without_a_marker_fix(
+def test_entry_gate_opens_on_geometry_alone_and_ignores_marker_quality(
         monkeypatch, capsys):
-    """A 0.32 m tag is ~10 px from 7.5 m: the detector never fires there."""
+    """One definition of initial visibility: the pad centre is in the frustum.
+
+    The old gate accepted "a recent ArUco fix OR geometry", which put two
+    incompatible meanings of "visible" into the same experiment. A 0.32 m tag
+    is about ten pixels from 7.5 m, so the detector never fired there anyway.
+    """
     class Clock:
         value = -0.2
 
@@ -314,10 +260,13 @@ def test_entry_gate_hands_over_on_simulator_geometry_without_a_marker_fix(
 
     assert state["marker_quality"] == 0.0
     assert state["px4_time_us"] == 1_000_000
-    assert "handing over on simulator geometry" in capsys.readouterr().out
+    # No detector diagnostic is printed any more: there is no detector.
+    assert "ArUco" not in capsys.readouterr().out
 
 
-def test_entry_gate_geometry_rejects_a_pad_outside_the_camera_frame(monkeypatch):
+def test_entry_gate_rejects_a_recent_marker_fix_outside_the_camera_frame(
+        monkeypatch):
+    """A detection can no longer stand in for geometry, even a perfect one."""
     class Clock:
         value = -1.0
 
@@ -334,7 +283,7 @@ def test_entry_gate_geometry_rejects_a_pad_outside_the_camera_frame(monkeypatch)
         n = 0
         while True:
             n += 1
-            yield {"armed": True, "marker_quality": 0.0,
+            yield {"armed": True, "marker_quality": 1.0,
                    "px4_time_us": 1_000_000 * n, "position": entry.tolist(),
                    "velocity": [0.0, 0.0, 0.0],
                    "quaternion_wxyz": [1.0, 0.0, 0.0, 0.0],
@@ -342,8 +291,35 @@ def test_entry_gate_geometry_rejects_a_pad_outside_the_camera_frame(monkeypatch)
 
     bridge = _entry_gate_bridge(states())
 
-    with pytest.raises(EntryResetError, match="pad view offset 2.11"):
+    with pytest.raises(EntryResetError,
+                       match="geometric pad-centre view offset 2.11"):
         bridge.wait_at_entry(entry)
+
+
+def test_entry_gate_uses_px4_time_for_settling(monkeypatch):
+    class SlowRenderedClock:
+        value = -5.0
+
+        def monotonic(self):
+            self.value += 5.0
+            return self.value
+
+    clock = SlowRenderedClock()
+    monkeypatch.setattr(bridge_module.time, "monotonic", clock.monotonic)
+    monkeypatch.setattr(bridge_module.time, "sleep", lambda _seconds: None)
+    entry = camera_centered_hover_offset(4.5)
+    states = iter([
+        {"armed": True, "marker_quality": 0.0, "px4_time_us": stamp,
+         "position": entry.tolist(), "velocity": [0.0, 0.0, 0.0],
+         "quaternion_wxyz": [1.0, 0.0, 0.0, 0.0], "position_frame": "pad"}
+        for stamp in (0, 250_000, 500_000)
+    ])
+    bridge = _entry_gate_bridge(states)
+    bridge.cfg.entry_timeout = 100.0
+
+    state = bridge.wait_at_entry(entry)
+
+    assert state["px4_time_us"] == 500_000
 
 
 def test_entry_gate_geometry_is_not_consulted_for_world_frame_entries(monkeypatch):
@@ -370,7 +346,8 @@ def test_entry_gate_geometry_is_not_consulted_for_world_frame_entries(monkeypatc
     bridge = _entry_gate_bridge(states())
     bridge.cfg.entry_frame = "world"
 
-    with pytest.raises(EntryResetError, match="pad view offset n/a"):
+    with pytest.raises(EntryResetError,
+                       match="geometric pad-centre view offset n/a"):
         bridge.wait_at_entry(entry)
 
 
@@ -380,7 +357,7 @@ def test_entry_gate_aborts_immediately_after_pad_contact(monkeypatch):
     bridge.cfg = SimpleNamespace(
         entry_timeout=90.0, arm_retry=2.0, entry_tolerance=0.5,
         entry_speed_tolerance=0.2, require_pad_in_view=True,
-        entry_marker_memory=2.0, entry_settle=1.0)
+        entry_settle=1.0)
     bridge.get_state = lambda: {
         "armed": False, "marker_quality": 0.0,
         "extra": {"pad_contact": True},

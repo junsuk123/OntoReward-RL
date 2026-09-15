@@ -207,7 +207,7 @@ const CARDS=[
   series:BENCHMARK_EVAL,x:'evaluation_index',y:'velocity_rmse',smooth:5},
  {id:'benchmark_eval_visual_loss',view:'benchmark',
   title:'[현재 평가] 표적 FOV 소실 구간의 추정 오차',
-  series:BENCHMARK_EVAL,x:'evaluation_index',y:'visual_loss_estimation_error',smooth:5},
+  series:BENCHMARK_EVAL,x:'evaluation_index',y:'geometric_fov_loss_estimation_error',smooth:5},
  {id:'benchmark_success',view:'benchmark',title:'[완료된 학습 기록] 이동 성공률',
   series:BENCHMARK_TRAIN,x:'episode',y:'paper_success',smooth:40,ymin:0,ymax:1},
  {id:'benchmark_return',view:'benchmark',
@@ -249,11 +249,11 @@ const CARDS=[
  {id:'benchmark_battery_depleted',view:'benchmark',title:'배터리 고갈 종료율',
   series:BENCHMARK_TRAIN,x:'episode',y:'battery_depleted',smooth:20,ymin:0,ymax:1},
  {id:'benchmark_reacquisition',view:'benchmark',title:'FOV 소실 후 재관측률',
-  series:BENCHMARK_TRAIN,x:'episode',y:'visual_reacquisition_rate',smooth:12,ymin:0,ymax:1},
+  series:BENCHMARK_TRAIN,x:'episode',y:'geometric_fov_reacquisition_rate',smooth:12,ymin:0,ymax:1},
  {id:'benchmark_recovery_landing',view:'benchmark',title:'소실 → 재관측 → 착륙 성공률',
   series:BENCHMARK_TRAIN,x:'episode',y:'successful_recovery_landing',smooth:20,ymin:0,ymax:1},
  {id:'benchmark_unsafe_blind_descent',view:'benchmark',title:'저시인성 상태의 위험 하강률',
-  series:BENCHMARK_TRAIN,x:'episode',y:'unsafe_descent_low_visibility_fraction',
+  series:BENCHMARK_TRAIN,x:'episode',y:'descent_during_low_keypoint_visibility_fraction',
   smooth:12,ymin:0,ymax:1},
  {id:'graph3d',view:'benchmark',kind:'graph',
   title:'FOV Ontology → R-GAT 미래 소실 확률 모듈'},
@@ -397,17 +397,17 @@ function drawPairPlots(card,state){
       y:['reward','task','active_perception','ontology_fov_reward'],
       labels:['전체','terminal task','Shin active perception','Ontology FOV 추가']};
     else if(card.plot==='flight')spec={
-      y:['uav_speed_m_s','ugv_speed_m_s','in_fov','battery_reserve'],
-      labels:['UAV 속도','UGV 속도','표적 FOV','배터리 여유'],ymin:0};
+      y:['uav_speed_m_s','ugv_speed_m_s','geometric_in_fov','battery_reserve'],
+      labels:['UAV 속도','UGV 속도','기하 FOV(패드 중심)','배터리 여유'],ymin:0};
     else if(method==='shin_se_onto_rgat_fov')spec={
       y:['position_error','estimation_loss','predicted_fov_loss_probability','ontology_fov_reward'],
       labels:['SE 위치 오차','6-state 손실','미래 FOV 소실 확률','추가 FOV 보상']};
     else if(method==='shin_se_fixed')spec={
-      y:['position_error','velocity_error','estimation_loss','in_fov'],
-      labels:['위치 오차','속도 오차','6-state 손실','표적 FOV'],ymin:0};
+      y:['position_error','velocity_error','estimation_loss','geometric_in_fov'],
+      labels:['위치 오차','속도 오차','6-state 손실','기하 FOV(패드 중심)'],ymin:0};
     else spec={
-      y:['in_fov','lateral_progress','vertical_progress','vertical_speed_penalty'],
-      labels:['표적 FOV','수평 progress','수직 progress','수직속도 penalty']};
+      y:['geometric_in_fov','lateral_progress','vertical_progress','vertical_speed_penalty'],
+      labels:['기하 FOV(패드 중심)','수평 progress','수직 progress','수직속도 penalty']};
     draw({...card,...spec,id:`${card.id}-${index}`,
       series:[`benchmark_step_pair_${index}`],x:'step'},state);
   }
@@ -469,8 +469,9 @@ function pairPanel(state){
     const rows=state.series['benchmark_step_pair_'+index]||[];
     const live=rows.length?rows[rows.length-1]:{},xyz=pair.relative_xyz||null;
     const step=pair.step??live.step??0,status=String(pair.status||live.status||'waiting');
-    const marker=pair.marker_visible===null||pair.marker_visible===undefined
-      ?'대기':(pair.marker_visible?'관측':'소실');
+    const geometricFov=pair.geometric_pad_center_in_fov;
+    const marker=geometricFov===null||geometricFov===undefined
+      ?'대기':(geometricFov?'프레임 내':'프레임 이탈');
     const reserve=Number(pair.battery_reserve??live.battery_reserve);
     const activeReward=Number(pair.active_perception??live.active_perception);
     const fovMargin=Number(pair.fov_margin??live.fov_margin);

@@ -103,6 +103,11 @@ from isaacsim.sensors.physics import ContactSensor
 from isaacsim.sensors.camera import Camera
 from pxr import Gf, PhysxSchema, Sdf, Usd, UsdGeom, UsdPhysics, UsdShade
 
+from keypoint_geometry import CameraModel, project_landing_pad
+from landing_pad_visual import LandingPadVisual
+# ``marker_vision`` is the retained legacy ArUco path (``vision.mode: aruco``).
+# The primary two-pipeline benchmark runs ``vision.mode: keypoint_fiducial``
+# and never constructs a detector; see ``docs/TWO_PIPELINE_COMPARISON.md``.
 from marker_vision import (
     nadir_footprint_m,
     R_BODY_FROM_OPTICAL,
@@ -258,8 +263,10 @@ class LandingPadMarkers:
 class DownwardCamera:
     """A downward camera on the vehicle plus the pad-relative pose it yields."""
 
-    def __init__(self, config: dict, board: MarkerBoard, dictionary: str,
-                 runtime_rate_hz: int | None = None):
+    def __init__(self, config: dict, board: MarkerBoard | None = None,
+                 dictionary: str | None = None,
+                 runtime_rate_hz: int | None = None,
+                 landmark_radius_m: float | None = None):
         camera_cfg = config["camera"]
         validate_camera_profile(camera_cfg)
         self.width, self.height = (int(v) for v in camera_cfg["resolution"])
@@ -270,10 +277,21 @@ class DownwardCamera:
         self.mount = np.array([float(v) for v in camera_cfg["mount_translation_flu_m"]])
         self.clipping = tuple(float(v) for v in camera_cfg.get("clipping_range_m", (0.02, 60.0)))
         self.camera_matrix = intrinsics_from_fov(self.width, self.height, self.fov_deg)
-        self.estimator = MarkerPoseEstimator(
-            board, self.camera_matrix, self.mount, dictionary=dictionary,
-            quality_reprojection_px=float(config.get("quality_reprojection_px", 3.0)),
-            quality_full_scale_px=float(config.get("quality_full_scale_px", 120.0)))
+        # Legacy ArUco path only. In the primary keypoint benchmark ``board``
+        # is None, no detector exists, and nothing downstream reads a marker
+        # solve or a marker quality.
+        self.estimator = (
+            None if board is None else MarkerPoseEstimator(
+                board, self.camera_matrix, self.mount, dictionary=dictionary,
+                quality_reprojection_px=float(config.get("quality_reprojection_px", 3.0)),
+                quality_full_scale_px=float(config.get("quality_full_scale_px", 120.0))))
+        self.keypoint_mode = board is None
+        self.landmark_radius_m = landmark_radius_m
+        self.geometry = CameraModel(
+            width=self.width, height=self.height,
+            horizontal_fov_deg=self.fov_deg,
+            pitch_down_deg=self.pitch_down_deg,
+            mount_translation_flu_m=tuple(float(v) for v in self.mount))
         self.camera = None
         self.raw_gray = None
         # Set ONTOLOGY_RGAT_VISION_DEBUG_DIR to dump annotated frames; the only
@@ -325,9 +343,11 @@ class DownwardCamera:
         if float(np.dot(view_in_body, expected_view)) < 0.99:
             carb.log_error(
                 f"Landing camera optical +Z is {view_in_body}, expected "
-                f"{expected_view} in body axes. Marker detection will be unusable.")
-        self.estimator.body_from_optical = body_from_optical
-        self.estimator.mount_translation_body = mount
+                f"{expected_view} in body axes. Landing-pad perception will "
+                "be unusable.")
+        if self.estimator is not None:
+            self.estimator.body_from_optical = body_from_optical
+            self.estimator.mount_translation_body = mount
         carb.log_info(f"[landing-camera] optical axes in body:\n{body_from_optical}\n"
                       f"[landing-camera] mount in body: {mount}")
 
@@ -365,7 +385,8 @@ class DownwardCamera:
         matrix = self.camera.get_intrinsics_matrix()
         if matrix is not None and np.isfinite(matrix).all():
             self.camera_matrix = np.asarray(matrix, dtype=float)
-            self.estimator.camera_matrix = self.camera_matrix
+            if self.estimator is not None:
+                self.estimator.camera_matrix = self.camera_matrix
         fov = 2.0 * math.degrees(math.atan(
             self.width / (2.0 * float(self.camera_matrix[0, 0]))))
         carb.log_info(
@@ -390,11 +411,64 @@ class DownwardCamera:
         # solve or simulator overlay is rendered into this image.
         self.raw_gray = np.ascontiguousarray(
             np.clip(np.mean(image.astype(np.float32), axis=2), 0, 255).astype(np.uint8))
+        if self.estimator is None:
+            # Keypoint benchmark: the actor frame above is the whole
+            # perception output. The overlay below is written later from
+            # simulator geometry for operator diagnostics only.
+            self.annotated_rgb = None
+            self.frames += 1
+            return None
         observation, self.annotated_rgb = self.estimator.detect_annotated(image)
         self.frames += 1
         if self.debug_dir and self.frames % max(1, self.debug_every) == 0:
             self._dump(self.annotated_rgb)
         return observation
+
+    def keypoint_projection(self, position_pad_enu, quaternion_wxyz):
+        """Training/evaluation-only projection of the six pad landmarks."""
+        kwargs = ({} if self.landmark_radius_m is None
+                  else {"landmark_radius_m": float(self.landmark_radius_m)})
+        return project_landing_pad(
+            position_pad_enu, quaternion_wxyz, camera=self.geometry, **kwargs)
+
+    def annotate_keypoints(self, projection) -> None:
+        """Operator overlay of the projected landmarks; consumed by nobody.
+
+        Published on the diagnostics topic only. It cannot influence the actor
+        observation, the reward, the R-GAT input, resets, labels or metrics,
+        all of which are computed from other code paths entirely.
+        """
+        import cv2
+
+        if self.raw_gray is None or self.raw_gray.size == 0:
+            self.annotated_rgb = None
+            return
+        canvas = cv2.cvtColor(self.raw_gray, cv2.COLOR_GRAY2BGR)
+        for index, (pixel, visible) in enumerate(zip(
+                projection.keypoint_pixels, projection.keypoint_visible)):
+            if not visible:
+                continue
+            anchor = (int(round(float(pixel[0]))), int(round(float(pixel[1]))))
+            cv2.circle(canvas, anchor, 7, (60, 220, 60), 2, cv2.LINE_AA)
+            cv2.putText(canvas, str(index), (anchor[0] + 8, anchor[1] - 8),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, (60, 220, 60), 1,
+                        cv2.LINE_AA)
+        in_fov = bool(projection.geometric_pad_center_in_fov)
+        if in_fov:
+            centre = projection.pad_center_pixels
+            cv2.drawMarker(canvas,
+                           (int(round(float(centre[0]))), int(round(float(centre[1])))),
+                           (40, 200, 255), cv2.MARKER_CROSS, 18, 2, cv2.LINE_AA)
+        label = (f"geometric_pad_center_in_fov={in_fov}  "
+                 f"visible_landmarks="
+                 f"{int(np.count_nonzero(projection.keypoint_visible))}/6")
+        cv2.putText(canvas, label, (10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.45,
+                    (0, 0, 0), 3, cv2.LINE_AA)
+        cv2.putText(canvas, label, (10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.45,
+                    (245, 245, 245) if in_fov else (60, 60, 240), 1, cv2.LINE_AA)
+        self.annotated_rgb = cv2.cvtColor(canvas, cv2.COLOR_BGR2RGB)
+        if self.debug_dir and self.frames % max(1, self.debug_every) == 0:
+            self._dump(self.annotated_rgb)
 
     def configure_domain_randomization(self, sample) -> None:
         """Apply Table-II appearance ranges to the actual actor camera stream."""
@@ -1199,10 +1273,31 @@ class LandingWorld:
         )
 
         vision_cfg = CONFIG["vision"]
-        self.vision_enabled = str(vision_cfg.get("mode", "pose_proxy")) == "aruco"
+        vision_mode = str(vision_cfg.get("mode", "pose_proxy"))
+        # ``keypoint_fiducial`` is the primary benchmark target: six fixed
+        # landmarks a learned encoder detects. ``aruco`` is the retained legacy
+        # detector path and is never used by the two primary pipelines.
+        self.keypoint_vision = vision_mode == "keypoint_fiducial"
+        self.vision_enabled = vision_mode in {"aruco", "keypoint_fiducial"}
         self.pad = None
         self.camera = None
-        if self.vision_enabled:
+        if self.keypoint_vision:
+            # Parented to the deck: the target rides the rover for free.
+            self.pad = LandingPadVisual(
+                vision_cfg, WORKSPACE, self.deck.PRIM,
+                deck_size_m=self.deck.cfg.deck_size_m)
+            self.pad.spawn(self.world)
+            self.camera = DownwardCamera(
+                vision_cfg, runtime_rate_hz=self.runtime.camera_rate_hz,
+                landmark_radius_m=self.pad.landmark_radius_m)
+            self.camera.attach(self.vehicle.prim_path)
+            carb.log_info(
+                f"[landing-pad] six-keypoint fiducial target "
+                f"{self.pad.layout_id} on a "
+                f"{self.deck.cfg.deck_size_m[0]:g}x"
+                f"{self.deck.cfg.deck_size_m[1]:g} m deck; no ArUco "
+                "dictionary is loaded")
+        elif self.vision_enabled:
             # Parented to the deck: the tags move with the rover for free.
             marker_cfg = vision_cfg
             if self.parallel:
@@ -1236,8 +1331,16 @@ class LandingWorld:
         self.wind_truth_pub = node.create_publisher(
             Vector3Stamped, ns + "/environment/wind", 10)
         self.force_pub = node.create_publisher(Vector3Stamped, ns + "/environment/aero_force", 10)
+        # Legacy ArUco detector outputs. Published only in ``vision.mode:
+        # aruco``; the primary keypoint benchmark leaves both silent.
         self.marker_pub = node.create_publisher(Float32, ns + "/perception/marker_quality", 10)
         self.pad_pose_pub = node.create_publisher(PoseStamped, ns + "/perception/uav_pose_in_pad", 10)
+        # Training-label-only: the simulator's pad-relative UAV pose, stamped
+        # with the frame it belongs to, so keypoint supervision can project the
+        # known landmarks. Never consumed by the actor, the reward or the
+        # online R-GAT; see python/ontology_rgat/perception/pad_geometry.py.
+        self.pad_truth_pose_pub = node.create_publisher(
+            PoseStamped, ns + "/perception/pad_relative_truth_pose", 10)
         self.pad_contact_pub = node.create_publisher(Bool, ns + "/perception/pad_contact", 1)
         self.pad_contact_force_pub = node.create_publisher(
             Float32, ns + "/perception/pad_contact_force", 1)
@@ -1887,7 +1990,9 @@ class LandingWorld:
             msg.vector.x, msg.vector.y, msg.vector.z = (float(x) for x in vector)
             publisher.publish(msg)
         self._publish_pad_contact()
-        if self.vision_enabled:
+        if self.keypoint_vision:
+            self._publish_keypoint_perception(stamp)
+        elif self.vision_enabled:
             self._publish_marker_detection(stamp)
         else:
             self._publish_marker_proxy()
@@ -1966,6 +2071,56 @@ class LandingWorld:
         pose.pose.orientation.y = float(qy)
         pose.pose.orientation.z = float(qz)
         self.pad_pose_pub.publish(pose)
+
+    def _publish_keypoint_perception(self, stamp) -> None:
+        """Publish the actor frame plus its training-only geometric labels.
+
+        Two strictly separate products come out of one rendered frame:
+
+        * ``perception/landing_camera/image_raw`` -- unannotated mono8 pixels,
+          the complete deployed actor observation.
+        * ``perception/pad_relative_truth_pose`` -- simulator truth stamped
+          with the same frame, used offline to project the six known pad
+          landmarks into keypoint-supervision targets.
+
+        The pose is expressed in the deck's own *yawed* footprint frame, not
+        in gravity-aligned pad ENU, because the six landmarks are painted on
+        the deck and turn with it.  Projecting in the deck-local frame is what
+        makes the labels exact under platform yaw.  Geometric pad-centre FOV
+        is unaffected by that choice: rotating the camera and the pad centre
+        together about the pad's own Z axis cannot move the centre into or out
+        of the frame, so the learner may (and does) evaluate it in pad ENU.
+
+        No detector runs, no marker quality is produced, and no pose derived
+        from the image is published.
+        """
+        self.camera.observe()
+        self._publish_actor_camera(stamp)
+        state = self.vehicle.state
+        position_pad = self.deck.deck_local_from_world(state.position)
+        attitude = np.asarray(state.attitude, dtype=float)   # x, y, z, w
+        deck_local = (Rotation.from_euler("z", -self.deck.yaw)
+                      * Rotation.from_quat(attitude))
+        qx, qy, qz, qw = deck_local.as_quat()
+        quaternion_wxyz = np.array([qw, qx, qy, qz])
+        pose = PoseStamped()
+        pose.header.stamp = stamp
+        pose.header.frame_id = f"landing_deck_local_{self.pair_index}"
+        pose.pose.position.x = float(position_pad[0])
+        pose.pose.position.y = float(position_pad[1])
+        pose.pose.position.z = float(position_pad[2])
+        pose.pose.orientation.w = float(quaternion_wxyz[0])
+        pose.pose.orientation.x = float(quaternion_wxyz[1])
+        pose.pose.orientation.y = float(quaternion_wxyz[2])
+        pose.pose.orientation.z = float(quaternion_wxyz[3])
+        self.pad_truth_pose_pub.publish(pose)
+        try:
+            projection = self.camera.keypoint_projection(
+                position_pad, quaternion_wxyz)
+        except ValueError:
+            return
+        self.camera.annotate_keypoints(projection)
+        self._publish_annotated_camera(stamp)
 
     def _publish_annotated_camera(self, stamp) -> None:
         """Publish the most recent operator view as a standard ROS ``rgb8`` image."""

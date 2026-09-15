@@ -416,6 +416,7 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             self.deck_truth_velocity_enu = np.zeros(3)
             self.uav_truth_position_enu: np.ndarray | None = None
             self.uav_truth_velocity_enu = np.zeros(3)
+            self.uav_truth_quaternion_wxyz: np.ndarray | None = None
             # The drone receiver is normally injected upstream through HIL_GPS.
             # The offset members remain only for legacy telemetry-only runs;
             # `gnss_injected_into_px4` prevents accidental double injection.
@@ -1044,6 +1045,12 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             # stale. Waiting for staleness serves that frozen solve as if it
             # were live, so the policy flies half a second of a pad-relative
             # position that stopped tracking the moment the pad left the frame.
+            # Legacy ArUco path only. The primary keypoint benchmark runs with
+            # ``vision.mode: keypoint_fiducial`` and ``pose_source_for_policy:
+            # false``, so the simulator publishes neither marker quality nor a
+            # detector-solved pose: ``marker_live`` stays False, no marker pose
+            # ever reaches navigation, and field-of-view truth is the separate
+            # geometric quantity computed from pad-relative truth.
             marker_live = self.sample.marker_quality > 0.0
             use_pad_pose = pad_pose_fresh and marker_live and (
                 cfg.target == "hardware" or cfg.marker_pose_drives_policy)
@@ -1676,11 +1683,18 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             """Simulator geometry for scoring only, never policy or control."""
             p = msg.pose.pose.position
             v = msg.twist.twist.linear
+            o = msg.pose.pose.orientation
             position = np.array([p.x, p.y, p.z], dtype=float)
             velocity = np.array([v.x, v.y, v.z], dtype=float)
             if np.isfinite(position).all() and np.isfinite(velocity).all():
                 self.uav_truth_position_enu = position
                 self.uav_truth_velocity_enu = velocity
+            # The attitude half is what makes geometric pad-centre FOV a pure
+            # simulator quantity instead of an estimator-dependent one.
+            quaternion = np.array([o.w, o.x, o.y, o.z], dtype=float)
+            if np.isfinite(quaternion).all() and np.linalg.norm(quaternion) > 1e-9:
+                self.uav_truth_quaternion_wxyz = (
+                    quaternion / np.linalg.norm(quaternion))
 
         def _on_gnss_status(self, msg) -> None:
             """Receive policy-safe observables and scoring-only GNSS truth.
@@ -1820,7 +1834,11 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             if self.deck_truth_position_enu is None:
                 self.sample.truth_position_enu = None
                 self.sample.truth_velocity_enu = None
+                self.sample.truth_quaternion_enu_flu_wxyz = None
                 return
+            self.sample.truth_quaternion_enu_flu_wxyz = (
+                None if self.uav_truth_quaternion_wxyz is None else
+                tuple(float(x) for x in self.uav_truth_quaternion_wxyz))
             if self.uav_truth_position_enu is not None:
                 position = self.uav_truth_position_enu
                 velocity = self.uav_truth_velocity_enu
@@ -1829,6 +1847,7 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                 # longer simulator truth.  Never grade on it as if it were.
                 self.sample.truth_position_enu = None
                 self.sample.truth_velocity_enu = None
+                self.sample.truth_quaternion_enu_flu_wxyz = None
                 return
             self.sample.truth_position_enu = tuple(
                 float(x) for x in position - self.deck_truth_position_enu)

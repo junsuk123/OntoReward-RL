@@ -309,14 +309,14 @@ def test_learning_efficiency_uses_per_pipeline_reward_design_cost():
 
 def test_safe_deployment_checkpoint_outranks_unsafe_contact_and_timeout():
     safe = {"paper_success": 1, "pad_contact": 1,
-            "touchdown_lateral_error": .2, "fov_loss_fraction": .1,
+            "touchdown_lateral_error": .2, "geometric_fov_loss_fraction": .1,
             "touchdown_relative_horizontal_velocity": .1}
     unsafe = {"paper_success": 0, "pad_contact": 1, "unsafe_pad_contact": 1,
               "crash_failure": 1, "touchdown_lateral_error": .1,
-              "fov_loss_fraction": 0.0,
+              "geometric_fov_loss_fraction": 0.0,
               "touchdown_relative_horizontal_velocity": .1}
     timeout = {"paper_success": 0, "pad_contact": 0,
-               "touchdown_lateral_error": .5, "fov_loss_fraction": .2,
+               "touchdown_lateral_error": .5, "geometric_fov_loss_fraction": .2,
                "touchdown_relative_horizontal_velocity": .1}
     assert deployment_checkpoint_score(safe) > deployment_checkpoint_score(timeout)
     assert deployment_checkpoint_score(timeout) > deployment_checkpoint_score(unsafe)
@@ -324,19 +324,19 @@ def test_safe_deployment_checkpoint_outranks_unsafe_contact_and_timeout():
 
 def test_held_out_checkpoint_selection_prioritizes_repeatable_safe_landings():
     lucky = aggregate_deployment_validation([
-        {"paper_success": 1, "pad_contact": 1, "fov_loss_fraction": .1,
+        {"paper_success": 1, "pad_contact": 1, "geometric_fov_loss_fraction": .1,
          "touchdown_lateral_error": .1},
-        {"paper_success": 0, "pad_contact": 0, "fov_loss_fraction": .8,
+        {"paper_success": 0, "pad_contact": 0, "geometric_fov_loss_fraction": .8,
          "touchdown_lateral_error": 2.0},
-        {"paper_success": 0, "pad_contact": 0, "fov_loss_fraction": .8,
+        {"paper_success": 0, "pad_contact": 0, "geometric_fov_loss_fraction": .8,
          "touchdown_lateral_error": 2.0},
     ])
     repeatable = aggregate_deployment_validation([
-        {"paper_success": 1, "pad_contact": 1, "fov_loss_fraction": .2,
+        {"paper_success": 1, "pad_contact": 1, "geometric_fov_loss_fraction": .2,
          "touchdown_lateral_error": .2},
-        {"paper_success": 1, "pad_contact": 1, "fov_loss_fraction": .2,
+        {"paper_success": 1, "pad_contact": 1, "geometric_fov_loss_fraction": .2,
          "touchdown_lateral_error": .2},
-        {"paper_success": 0, "pad_contact": 0, "fov_loss_fraction": .7,
+        {"paper_success": 0, "pad_contact": 0, "geometric_fov_loss_fraction": .7,
          "touchdown_lateral_error": 1.0},
     ])
     assert repeatable["success_rate"] == pytest.approx(2 / 3)
@@ -346,11 +346,11 @@ def test_held_out_checkpoint_selection_prioritizes_repeatable_safe_landings():
 def test_held_out_checkpoint_selection_rejects_unsafe_contact_on_tie():
     safe_miss = aggregate_deployment_validation([
         {"paper_success": 0, "pad_contact": 0, "unsafe_pad_contact": 0,
-         "fov_loss_fraction": .4, "touchdown_lateral_error": .5},
+         "geometric_fov_loss_fraction": .4, "touchdown_lateral_error": .5},
     ])
     collision = aggregate_deployment_validation([
         {"paper_success": 0, "pad_contact": 1, "unsafe_pad_contact": 1,
-         "fov_loss_fraction": .1, "touchdown_lateral_error": .4},
+         "geometric_fov_loss_fraction": .1, "touchdown_lateral_error": .4},
     ])
     assert deployment_validation_key(safe_miss) > deployment_validation_key(collision)
 
@@ -501,12 +501,9 @@ def test_three_pipeline_keeps_all_physical_evaluation_scenarios():
 def test_training_health_gate_reports_independent_learning_failures():
     history = [{
         "episode": episode, "paper_success": 0,
-        "fov_loss_fraction": .2, "battery_depleted": 0,
+        "geometric_fov_loss_fraction": .2, "battery_depleted": 0,
         "position_rmse": 4.0,
         "active_reward_saturation_fraction": 1.0,
-        "visual_loss_events": 1,
-        "visual_reacquisition_events": 0,
-        "unsafe_descent_low_visibility_fraction": .8,
     } for episode in range(1, 41)]
     issue = training_health_issue(history, {
         "health_window_episodes": 20, "health_grace_episodes": 40,
@@ -514,14 +511,56 @@ def test_training_health_gate_reports_independent_learning_failures():
     assert "no landing" in issue
     assert "position RMSE stalled" in issue
     assert "active reward saturation stalled" in issue
-    assert "visual reacquisition" in issue
-    assert "unsafe low-visibility descent" in issue
+
+
+def test_training_health_gate_never_terminates_on_the_compared_fov_metrics():
+    """The Baseline's weakness is the result, not a reason to stop the run.
+
+    Geometric FOV loss, reacquisition rate and low-keypoint-visibility descent
+    are exactly what the proposed FOV-risk reward is meant to improve. A gate
+    that aborted the Baseline for scoring badly on them would delete the very
+    effect the experiment measures.
+    """
+    history = [{
+        "episode": episode, "paper_success": 1,
+        "geometric_fov_loss_fraction": .95, "battery_depleted": 0,
+        "position_rmse": 0.2, "active_reward_saturation_fraction": 0.0,
+        "geometric_fov_loss_events": 4,
+        "geometric_fov_reacquisition_events": 0,
+        "geometric_fov_reacquisition_rate": 0.0,
+        "descent_during_low_keypoint_visibility_fraction": .9,
+        "low_keypoint_visibility_fraction": .9,
+        # The encoder is still working whenever the pad is actually in frame.
+        "blind_perception_while_geometric_fov_fraction": .1,
+        "geometric_fov_scored_step_fraction": .3,
+    } for episode in range(1, 41)]
+
+    assert training_health_issue(history, {
+        "health_window_episodes": 20, "health_grace_episodes": 40,
+    }) is None
+
+
+def test_training_health_gate_still_stops_a_dead_perception_pipeline():
+    """Blind while the pad is geometrically in frame is infrastructure, not policy."""
+    history = [{
+        "episode": episode, "paper_success": 1,
+        "geometric_fov_loss_fraction": .1, "battery_depleted": 0,
+        "position_rmse": 0.2, "active_reward_saturation_fraction": 0.0,
+        "blind_perception_while_geometric_fov_fraction": 1.0,
+        "geometric_fov_scored_step_fraction": .9,
+    } for episode in range(1, 41)]
+
+    issue = training_health_issue(history, {
+        "health_window_episodes": 20, "health_grace_episodes": 40,
+    })
+    assert issue is not None
+    assert "perception-infrastructure failure" in issue
 
 
 def test_training_health_gate_catches_battery_failure_before_learning_grace():
     history = [{
         "episode": episode, "paper_success": 0,
-        "fov_loss_fraction": .1, "battery_depleted": 1,
+        "geometric_fov_loss_fraction": .1, "battery_depleted": 1,
     } for episode in range(1, 21)]
     issue = training_health_issue(history, {
         "health_window_episodes": 20, "health_grace_episodes": 40,
@@ -536,7 +575,7 @@ def test_training_health_gate_ignores_depletion_the_seeded_reserve_forces():
     for episode in range(1, 21):
         short_reserve = episode % 3 != 0          # 13 of 20 episodes
         history.append({
-            "episode": episode, "paper_success": 0, "fov_loss_fraction": .1,
+            "episode": episode, "paper_success": 0, "geometric_fov_loss_fraction": .1,
             "battery_depleted": 1 if short_reserve else 0,
             "battery_energy_initial_j": 3000.0 if short_reserve else 8000.0,
             "battery_energy_used_j": 3000.0 if short_reserve else 5500.0,
@@ -561,10 +600,10 @@ def test_training_health_gate_ignores_depletion_the_seeded_reserve_forces():
 def test_short_live_budget_extends_only_the_no_landing_grace():
     history = [{
         "episode": episode, "paper_success": 0,
-        "fov_loss_fraction": .2, "battery_depleted": 0,
+        "geometric_fov_loss_fraction": .2, "battery_depleted": 0,
         "position_rmse": 1.0,
         "active_reward_saturation_fraction": .1,
-        "visual_loss_events": 0,
+        "geometric_fov_loss_events": 0,
     } for episode in range(1, 41)]
     ppo = {"health_window_episodes": 20, "health_grace_episodes": 40}
     assert training_health_issue(
@@ -572,10 +611,10 @@ def test_short_live_budget_extends_only_the_no_landing_grace():
 
     history.extend({
         "episode": episode, "paper_success": 0,
-        "fov_loss_fraction": .2, "battery_depleted": 0,
+        "geometric_fov_loss_fraction": .2, "battery_depleted": 0,
         "position_rmse": 1.0,
         "active_reward_saturation_fraction": .1,
-        "visual_loss_events": 0,
+        "geometric_fov_loss_events": 0,
     } for episode in range(41, 121))
     issue = training_health_issue(
         history, ppo, planned_policy_episodes=160)
@@ -585,10 +624,10 @@ def test_short_live_budget_extends_only_the_no_landing_grace():
 def test_no_landing_grace_is_capped_for_large_publication_run():
     history = [{
         "episode": episode, "paper_success": 0,
-        "fov_loss_fraction": .2, "battery_depleted": 0,
+        "geometric_fov_loss_fraction": .2, "battery_depleted": 0,
         "position_rmse": 1.0,
         "active_reward_saturation_fraction": .1,
-        "visual_loss_events": 0,
+        "geometric_fov_loss_events": 0,
     } for episode in range(1, 121)]
     issue = training_health_issue(
         history, {}, planned_policy_episodes=40960)
@@ -816,29 +855,47 @@ def test_uninformative_heatmaps_cannot_manufacture_geometry_and_memory_decays():
     assert explicit_absence.image_alignment == 0.0
 
 
-def test_visual_recovery_metrics_measure_climb_reacquisition_and_landing():
+def test_geometric_fov_and_keypoint_metrics_stay_separate_families():
+    """Geometric frustum truth and neural perception quality are not the same.
+
+    Row 2 is geometrically in view while the encoder reports nothing: that is
+    perception degradation, and it must be counted as such rather than as an
+    FOV loss.
+    """
     names = {name: index for index, name in enumerate(SEMANTIC_FEATURE_NAMES)}
     low = np.ones(len(SEMANTIC_FEATURE_NAMES))
     low[names["keypoint_confidence"]] = 0.0
     low[names["visible_keypoint_fraction"]] = 0.0
     high = np.ones(len(SEMANTIC_FEATURE_NAMES))
     rows = [
-        {"in_fov": False, "command": np.array([0, 0, .3, 0]),
+        {"geometric_in_fov": False, "command": np.array([0, 0, .3, 0]),
          "semantic_features": high, "reward_parts": {"phi": .5, "phi_next": .2}},
-        {"in_fov": False, "command": np.array([0, 0, .3, 0]),
+        {"geometric_in_fov": False, "command": np.array([0, 0, .3, 0]),
          "semantic_features": low, "reward_parts": {"phi": .2, "phi_next": .3}},
-        {"in_fov": True, "command": np.array([0, 0, .1, 0]),
+        {"geometric_in_fov": True, "command": np.array([0, 0, .1, 0]),
          "semantic_features": low, "reward_parts": {"phi": .3, "phi_next": .7}},
+        # Geometrically in view, but the encoder sees nothing and the policy
+        # descends anyway: perception degradation, not an FOV loss.
+        {"geometric_in_fov": True, "command": np.array([0, 0, -.2, 0]),
+         "semantic_features": low, "reward_parts": {"phi": .7, "phi_next": .8}},
     ]
     metric = visual_recovery_metrics(
         rows, initial_in_fov=True, success=True, dt=.1)
-    assert metric["visual_loss_events"] == 1
-    assert metric["visual_reacquisition_events"] == 1
-    assert metric["visual_reacquisition_rate"] == 1
-    assert metric["mean_visual_reacquisition_time_s"] == pytest.approx(.2)
-    assert metric["recovery_climb_fraction"] == 1
-    assert metric["unsafe_descent_low_visibility_fraction"] == 0
+    assert metric["geometric_fov_loss_events"] == 1
+    assert metric["geometric_fov_reacquisition_events"] == 1
+    assert metric["geometric_fov_reacquisition_rate"] == 1
+    assert metric["mean_geometric_fov_reacquisition_time_s"] == pytest.approx(.2)
+    assert metric["climb_during_geometric_fov_loss_fraction"] == 1
+    assert metric["descent_during_geometric_fov_loss_fraction"] == 0
     assert metric["successful_recovery_landing"] == 1
+    # Three of the four steps have unusable keypoints; one of those descends.
+    assert metric["low_keypoint_visibility_fraction"] == pytest.approx(.75)
+    assert metric["descent_during_low_keypoint_visibility_fraction"] == pytest.approx(1 / 3)
+    assert metric["keypoint_confidence_mean"] == pytest.approx(.25)
+    assert metric["visible_keypoint_fraction_mean"] == pytest.approx(.25)
+    # The blind-perception witness only counts steps that were in frame.
+    assert metric["blind_perception_while_geometric_fov_fraction"] == pytest.approx(.5)
+    assert metric["geometric_fov_scored_step_fraction"] == pytest.approx(.5)
 
 
 @pytest.mark.parametrize("field", [

@@ -14,8 +14,10 @@ estimator:
   # in physical units; only estimator optimization/reward loss is normalized.
   relative_state_scale: [3.0, 3.0, 8.0, 3.0, 3.0, 2.0]
   # PACMAN weights are not public. Pretrain the executable six-keypoint and
-  # local-descriptor path on projections of this run's actual marker board,
-  # then freeze it before recurrent PPO as in the paper's architecture.
+  # local-descriptor path on projections of this run's actual six-keypoint
+  # fiducial landing target, then freeze it before recurrent PPO as in the
+  # paper's architecture. This is a documented compatible approximation, not a
+  # reproduction of PACMAN.
   keypoint_pretraining:
     enabled: true
     samples_quick: 64
@@ -25,9 +27,11 @@ estimator:
     batch_size: 16
     learning_rate: 0.001
     seed: 41026
-    # Before PPO, label unannotated Isaac frames with the known board-plane
-    # homography, reserve a held-out split, and retain fine-tuning only when it
-    # improves real-render coordinate RMSE.
+    # Before PPO, label unannotated Isaac frames by projecting the six known
+    # pad landmarks through the simulator's training-only pose for that frame,
+    # reserve a held-out split, and retain fine-tuning only when it improves
+    # real-render coordinate RMSE. No detector is involved, so an unreadable
+    # frame still receives correct supervision instead of being discarded.
     empirical_samples_quick: 12
     empirical_samples_full: 48
     minimum_empirical_samples: 8
@@ -86,15 +90,20 @@ ppo:
   # The position-backed PX4 interface makes low-amplitude policy sampling safe;
   # use it during warm-up so both the image target and UAV state are excited.
   perception_warmup_safe_exploration: true
-  # Abort an unattended run when perception remains blind after warm-up.
+  # Abort an unattended run only on genuine failures. Geometric FOV retention,
+  # reacquisition rate and low-keypoint-visibility descent are the dependent
+  # variables of the Baseline-vs-Proposed comparison and are therefore
+  # reported, never fatal: terminating the Baseline for scoring badly on them
+  # would delete the weakness the proposed FOV-risk reward exists to improve.
   health_window_episodes: 20
   health_grace_episodes: 40
-  health_max_fov_loss_fraction: 0.80
   health_max_position_rmse_m: 3.0
   health_max_active_reward_saturation_fraction: 0.80
-  health_min_visual_loss_events: 5
-  health_min_reacquisition_rate: 0.25
-  health_max_unsafe_descent_low_visibility_fraction: 0.50
+  # Perception-infrastructure witness: the pad centre was geometrically inside
+  # the frame and the frozen encoder still reported no landmarks at all. No
+  # policy can cause this, so it remains fatal.
+  health_max_blind_perception_fraction: 0.98
+  health_min_geometric_fov_scored_step_fraction: 0.10
   # The seeded low-reserve battery is an intended state variable; above 60%
   # termination indicates it is overwhelming task learning rather than merely
   # exposing the ontology to energy risk.
@@ -112,7 +121,7 @@ curriculum:
   minimum_episodes_at_level: 20
   success_rate_threshold: 0.20
   max_position_rmse_m: 2.0
-  max_fov_loss_fraction: 0.50
+  max_geometric_fov_loss_fraction: 0.50
 reward:
   terminal: {success: 10.0, failure: -10.0}
   active_perception: {enabled: true, alpha: 0.1, beta: 1.0, tau: 0.01}

@@ -78,7 +78,13 @@ def test_actor_schema_accepts_only_three_onboard_inputs():
     obs = ActorObservation.from_payload(_actor_payload())
     assert obs.proprioception.shape == (7,)
     with pytest.raises(ValueError, match="unknown actor fields"):
-        ActorObservation.from_payload({**_actor_payload(), "marker_quality": 1.0})
+        ActorObservation.from_payload({**_actor_payload(), "altimeter": 1.0})
+    # Detector quality and simulator pad geometry are refused by name, before
+    # the unknown-field check, so neither can arrive under a plausible alias.
+    for privileged in ("marker_quality", "geometric_pad_center_in_fov",
+                       "pad_center_normalized", "keypoint_labels"):
+        with pytest.raises(ValueError, match="privileged actor field"):
+            ActorObservation.from_payload({**_actor_payload(), privileged: 1.0})
 
 
 def test_privileged_critic_data_not_used_by_actor():
@@ -370,16 +376,18 @@ def test_entry_view_margin_grows_towards_the_frame_edge_and_beyond():
         centre + np.array([0.0, 3.0, 0.0]), identity, margin_fraction=0.85)
 
 
-def test_live_config_copies_the_rendered_camera_into_the_entry_gate(tmp_path):
+def test_live_config_copies_the_rendered_camera_into_the_geometric_gate(tmp_path):
     from run_shin2026_pipeline import _live_config
 
     cfg = _live_config("quick", tmp_path, ROOT / "config" / "shin2026-system.yaml")
     camera = load_config(ROOT / "config" / "shin2026-system.yaml")["vision"]["camera"]
-    assert list(cfg.external.entry_camera["resolution"]) == list(camera["resolution"])
-    assert cfg.external.entry_camera["pitch_down_deg"] == camera["pitch_down_deg"]
-    assert cfg.external.entry_camera["horizontal_fov_deg"] == camera["horizontal_fov_deg"]
-    assert cfg.external.entry_view_geometry is True
+    assert list(cfg.external.landing_camera["resolution"]) == list(camera["resolution"])
+    assert cfg.external.landing_camera["pitch_down_deg"] == camera["pitch_down_deg"]
+    assert cfg.external.landing_camera["horizontal_fov_deg"] == camera["horizontal_fov_deg"]
     assert 0.0 < cfg.external.entry_view_margin <= 1.0
+    # The detector-memory gate is gone: there is one geometric definition.
+    assert not hasattr(cfg.external, "entry_marker_memory")
+    assert not hasattr(cfg.external, "entry_view_geometry")
 
 
 def test_keypoint_heatmaps_drive_the_descriptor_embedding():
@@ -467,15 +475,40 @@ def test_beginner_curriculum_keeps_the_ugv_moving_at_a_safe_fraction():
         curriculum_motion_scale(0.0, 1.1)
 
 
-def test_empirical_keypoint_labelling_recovers_deployed_board_homography():
+def test_empirical_keypoint_labelling_projects_known_pad_landmarks():
+    """Empirical labels come from simulator geometry, not from a detector.
+
+    Feeding the synthetic renders back with the poses they were rendered from
+    must reproduce the synthetic supervision exactly. Nothing is decoded from
+    the image, so an unreadable frame still receives correct labels.
+    """
     system = load_config(ROOT / "config/shin2026-system.yaml")
     rendered = synthetic_keypoint_dataset(system, samples=16, seed=91)
-    labelled = empirical_keypoint_dataset(rendered["images"], system)
+    visible_any = rendered["visible"].any(axis=1)
+    samples = list(zip(rendered["images"], rendered["pad_relative_pose"]))
+    labelled = empirical_keypoint_dataset(samples, system)
+
     assert labelled["images"].shape[1:] == (320, 512)
-    assert len(labelled["images"]) >= 12
     assert labelled["coordinates"].shape[1:] == (6, 2)
     assert labelled["heatmaps"].shape[1:] == (6, 20, 32)
-    assert float(labelled["visible"].mean()) > 0.5
+    # Every frame whose pose projects a landmark into the image is labelled,
+    # and the coordinates are identical to the synthetic supervision because
+    # both come from the same projection.
+    assert len(labelled["images"]) == len(rendered["images"])
+    np.testing.assert_allclose(
+        labelled["coordinates"], rendered["coordinates"], atol=1e-5)
+    # Visibility agrees wherever the synthetic generator did not deliberately
+    # replace the frame with a target-absent negative.
+    geometric = np.flatnonzero(visible_any)
+    np.testing.assert_array_equal(
+        labelled["visible"][geometric], rendered["visible"][geometric])
+
+    # A pose payload that is missing or malformed drops the frame instead of
+    # guessing, and a frame with no landmark in view is not labelled at all.
+    assert len(empirical_keypoint_dataset(
+        [(rendered["images"][0], None)], system)["images"]) == 0
+    assert len(empirical_keypoint_dataset(
+        [(rendered["images"][0], np.zeros(7))], system)["images"]) == 0
 
 
 def test_deadline_budget_is_exact_and_preserves_all_curriculum_levels():
@@ -495,14 +528,14 @@ def test_performance_curriculum_holds_failures_and_advances_only_after_competenc
     curriculum = PlatformMotionCurriculum(
         levels=80, performance_gated=True, assessment_window=4,
         minimum_episodes_at_level=4, success_rate_threshold=.5,
-        max_position_rmse_m=2.0, max_fov_loss_fraction=.5)
+        max_position_rmse_m=2.0, max_geometric_fov_loss_fraction=.5)
     failing = {"paper_success": 0, "position_rmse": 4.0,
-               "fov_loss_fraction": .9}
+               "geometric_fov_loss_fraction": .9}
     for _ in range(40):
         assert not curriculum.observe(failing)
     assert curriculum.level == 1 and curriculum.c == 0.0
     passing = {"paper_success": 1, "position_rmse": 1.0,
-               "fov_loss_fraction": .1}
+               "geometric_fov_loss_fraction": .1}
     for _ in range(2):
         assert not curriculum.observe(passing)
     assert curriculum.observe(passing)

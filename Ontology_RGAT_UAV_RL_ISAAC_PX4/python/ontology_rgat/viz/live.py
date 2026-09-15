@@ -563,7 +563,8 @@ class BenchmarkMonitor:
         """
         self._update_pair(
             method, phase=str(phase), seed=int(seed), scenario=str(scenario),
-            step=0, status="entry hover", marker_visible=None,
+            step=0, status="entry hover",
+            geometric_pad_center_in_fov=None,
             success=None, landing_gate=None, pair_index=pair_index)
 
     def reset_episode(self, *, method: str, phase: str, seed: int,
@@ -633,11 +634,12 @@ class BenchmarkMonitor:
             pipeline=pipeline_name, state_estimation=estimation_status,
             curriculum=float(curriculum), motion_scale=float(
                 curriculum if motion_scale is None else motion_scale),
-            action_scale=float(action_scale), marker_visible=None,
+            action_scale=float(action_scale), geometric_pad_center_in_fov=None,
             success=None, landing_gate=None, pair_index=resolved_pair_index)
 
     def step(self, *, index: int, dt: float, method: str, reward: float,
-             reward_parts: dict[str, Any], estimate, truth, in_fov: bool,
+             reward_parts: dict[str, Any], estimate, truth,
+             geometric_in_fov: bool,
              estimation_loss: float | None,
              state: dict[str, Any] | None = None, pipeline_spec=None,
              semantic_features=None, semantic_graph=None,
@@ -647,7 +649,8 @@ class BenchmarkMonitor:
         point = {
             "step": int(index), "t": float(index * dt), "method": str(method),
             "status": str(status),
-            "reward": float(reward), "in_fov": float(bool(in_fov)),
+            "reward": float(reward),
+            "geometric_in_fov": float(bool(geometric_in_fov)),
             "pipeline": str(getattr(pipeline_spec, "name", method)),
             "state_estimation_enabled": bool(
                 getattr(pipeline_spec, "state_estimation_enabled", estimate is not None)),
@@ -725,7 +728,7 @@ class BenchmarkMonitor:
             dtype=float)
         self._update_pair(
             method, step=int(index), status=str(status),
-            marker_visible=bool(in_fov),
+            geometric_pad_center_in_fov=bool(geometric_in_fov),
             uav_speed_m_s=point["uav_speed_m_s"],
             ugv_speed_m_s=point["ugv_speed_m_s"],
             battery_reserve=point["battery_reserve"],
@@ -742,7 +745,7 @@ class BenchmarkMonitor:
         if self.rviz is not None and state is not None:
             self.rviz.publish_benchmark_step(
                 state=state, method=method, scenario=scenario, step=index,
-                dt=dt, in_fov=in_fov, status=status,
+                dt=dt, geometric_in_fov=geometric_in_fov, status=status,
                 reward=float(reward), reward_parts=parts,
                 semantic_graph=semantic_graph,
                 potential=self.potential_for(method),

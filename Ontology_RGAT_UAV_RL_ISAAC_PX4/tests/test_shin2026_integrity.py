@@ -1189,3 +1189,17 @@ def test_the_fov_risk_arm_reads_its_reward_from_the_graph_itself():
     proposed = contract["pipeline_contract"]["shin_se_onto_rgat_recovery"]
     assert proposed["fov_reward_readout"] == "direct_graph_scalar"
     assert proposed["fov_risk_reward"] is True
+
+
+def test_the_launcher_takes_over_a_previous_run_instead_of_refusing():
+    launcher = (ROOT.parent / "run.sh").read_text(encoding="utf-8")
+    # A new run must end the old one: two learners on one Isaac/PX4 resource
+    # steal each other's UDP replies and resets.
+    assert "stop_previous_flight_pipeline" in launcher
+    assert "--no-takeover" in launcher, "the strict refusal must stay available"
+    # Killing the new run's own process group would be suicide, and killing a
+    # shell that merely mentions the flight programs would take out a terminal.
+    assert '"$group" != "$own_group"' in launcher
+    assert '[[ "$second" == "-c" ]] && return 1' in launcher
+    # Signals escalate; SIGKILL alone leaves Isaac's context and PX4 unclean.
+    assert "for signal in INT TERM KILL" in launcher

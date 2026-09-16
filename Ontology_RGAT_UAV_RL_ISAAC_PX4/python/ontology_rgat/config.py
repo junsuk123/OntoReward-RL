@@ -389,6 +389,16 @@ def default_config(mode: str = "quick", target: str = "sitl") -> Config:
         "local_host": "127.0.0.1",
         "local_port": 14651,
         "timeout": 2.0,
+        # Setup traffic only -- first contact after a boot, the episode reset,
+        # and the first entry setpoint. A shared two-pair stack is restarted
+        # under a worker that did nothing wrong, and Isaac then spends minutes
+        # loading the city, the rover and the vehicle before the gateway can
+        # answer at all. At the 2 s control budget that reconnect fails and
+        # burns one of the worker's bounded recovery attempts on a simulator
+        # that is merely still starting. Flight steps keep "timeout": a step
+        # that waits minutes is a stall nobody noticed, and a gap that long
+        # inside an episode is not a trajectory PPO may learn from.
+        "setup_timeout": 120.0,
         "estimator_warmup": 5.0,
         "auto_arm": target == "sitl",
         "start_airborne": True,

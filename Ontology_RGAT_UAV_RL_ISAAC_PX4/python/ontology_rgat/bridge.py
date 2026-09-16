@@ -131,7 +131,13 @@ class PX4Bridge:
         self.socket.bind((self.cfg.local_host, int(self.cfg.local_port)))
         self.socket.settimeout(0.002)
         self._drain()
-        hello = self.transact("hello", {}, ("state",))
+        # First contact after a boot or a restart: Isaac is still loading its
+        # assets and the gateway has nothing to answer with yet. The short
+        # control budget would fail the reconnect here and spend one of the
+        # worker's bounded recovery attempts on a simulator that is merely
+        # still starting.
+        hello = self.transact("hello", {}, ("state",),
+                              timeout=self._setup_timeout())
         self.assert_control_mapping(hello)
 
     # ------------------------------------------------------------- lifecycle
@@ -169,9 +175,31 @@ class PX4Bridge:
             except (socket.timeout, BlockingIOError, OSError):
                 return
 
+    def _setup_timeout(self) -> float:
+        """Budget for a request that may be waiting on a simulator boot.
+
+        Isaac takes minutes to load the city, the rover and the vehicle before
+        the gateway can answer anything. Never shorter than the control
+        budget, so a configuration cannot make setup stricter than flight.
+        """
+        # Looked up lazily: focused protocol tests and hardware adapters build
+        # partial configurations, and asking for a budget must not be what
+        # raises on them.
+        control = float(getattr(self.cfg, "timeout", 2.0))
+        configured = getattr(self.cfg, "setup_timeout", None)
+        return control if configured is None else max(control, float(configured))
+
     def transact(self, kind: str, fields: dict[str, Any],
-                 expected: Sequence[str]) -> dict[str, Any]:
-        """Send one request and wait for the matching reply."""
+                 expected: Sequence[str], *,
+                 timeout: float | None = None) -> dict[str, Any]:
+        """Send one request and wait for the matching reply.
+
+        ``timeout`` overrides the per-request budget for setup traffic that
+        has to outlast a simulator boot. The default stays the short control
+        budget: a step that waits minutes for a reply is a stalled simulator
+        going unnoticed, and a gap that long inside an episode is not a
+        trajectory PPO may learn from.
+        """
         self.sequence += 1
         seq = self.sequence
         message = dict(fields)
@@ -180,7 +208,8 @@ class PX4Bridge:
         payload = json.dumps(message, separators=(",", ":"), allow_nan=False).encode("utf-8")
         self.socket.sendto(payload, (self.cfg.gateway_host, int(self.cfg.gateway_port)))
 
-        deadline = time.monotonic() + float(self.cfg.timeout)
+        budget = float(self.cfg.timeout if timeout is None else timeout)
+        deadline = time.monotonic() + budget
         while time.monotonic() < deadline:
             try:
                 raw = self.socket.recv(65535)
@@ -198,8 +227,7 @@ class PX4Bridge:
             if response.get("ack_seq") == seq and response.get("type") in expected:
                 return response
         raise GatewayTimeout(
-            f"PX4 gateway timeout after {float(self.cfg.timeout):.2f} s "
-            f"({kind} seq={seq}).")
+            f"PX4 gateway timeout after {budget:.2f} s ({kind} seq={seq}).")
 
     def assert_control_mapping(self, state: dict[str, Any]) -> None:
         """Refuse a gateway that scales actions differently.
@@ -248,8 +276,8 @@ class PX4Bridge:
             if not np.isfinite(scale) or not 0.0 <= scale <= 1.0:
                 raise BridgeError("initial-condition curriculum must be in [0, 1]")
             reset_fields["initial_condition_scale"] = scale
-        ack = self.transact("reset", reset_fields,
-                            ("ack",))
+        ack = self.transact("reset", reset_fields, ("ack",),
+                            timeout=self._setup_timeout())
         # Kept whether or not the entry pose is flown: it carries the seeded
         # entry offset and starting energy, which is what makes an episode
         # reproducible from its seed.
@@ -268,13 +296,17 @@ class PX4Bridge:
         prestream_s = (float(self.cfg.prestream_count)
                        / float(self.cfg.control_hz))
         hold_margin_s = max(2.0, prestream_s + float(self.cfg.reset_settle))
-        def send_goto() -> None:
+        def send_goto(timeout: float | None = None) -> None:
             self.transact("goto", {"position": list(entry["position"]),
                                    "yaw": entry["yaw"], "frame": entry["frame"],
                                    "hold_s": (float(self.cfg.entry_timeout)
-                                              + hold_margin_s)}, ("ack",))
+                                              + hold_margin_s)}, ("ack",),
+                          timeout=timeout)
 
-        send_goto()
+        # The first setpoint may still be waiting on a booting stack. The
+        # re-aims below happen inside the entry deadline and keep the short
+        # budget, so one slow reply cannot eat the whole entry window.
+        send_goto(self._setup_timeout())
         # Let the setpoint stream establish offboard before arming.
         time.sleep(prestream_s)
 

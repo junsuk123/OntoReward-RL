@@ -195,15 +195,18 @@ def test_reset_sends_motion_and_initial_condition_scales_separately():
         wind_scale=1.0, pad_scale=.35, gnss_scale=1.0,
         reset_settle=0.0, auto_arm=False)
     sent = []
-    bridge.transact = lambda kind, fields, expected: sent.append(
-        (kind, fields, expected)) or {"status": "reset_complete"}
+    bridge.transact = lambda kind, fields, expected, **kwargs: sent.append(
+        (kind, fields, expected, kwargs)) or {"status": "reset_complete"}
     bridge.wait_valid_state = lambda: {"estimator_valid": True}
     bridge.last_reset_ack = {}
 
     bridge.reset(12, scenario="circle", initial_condition_scale=0.0)
 
-    kind, fields, expected = sent[0]
+    kind, fields, expected, options = sent[0]
     assert kind == "reset" and expected == ("ack",)
+    # The reset may be the first request after a restart, so it is allowed to
+    # outlast a simulator boot.
+    assert options["timeout"] == pytest.approx(2.0)
     assert fields["pad_scale"] == pytest.approx(.35)
     assert fields["initial_condition_scale"] == pytest.approx(0.0)
 
@@ -807,3 +810,78 @@ def test_the_entry_lag_the_feedforward_removes_is_larger_than_the_tolerance():
     tolerance = float(default_config().external["entry_tolerance"])
     mpc_xy_p = 0.95
     assert deck_speed / mpc_xy_p > 0.6 * tolerance
+
+
+# --------------------------------------------------------------------------
+# Setup traffic outlasts a simulator boot; flight steps do not.
+
+class _CountingBridge:
+    """A bridge whose socket never answers, to read back the budget used."""
+
+    def __init__(self, timeout, setup_timeout):
+        self.cfg = SimpleNamespace(timeout=timeout, setup_timeout=setup_timeout,
+                                   protocol_version=1, gateway_host="127.0.0.1",
+                                   gateway_port=1, local_host="127.0.0.1")
+        self.sequence = 0
+        self.sent = []
+
+        class _Socket:
+            def __init__(self, outer):
+                self.outer = outer
+
+            def sendto(self, payload, address):
+                self.outer.sent.append(payload)
+
+            def recv(self, size):
+                raise socket.timeout()
+
+        self.socket = _Socket(self)
+
+    _setup_timeout = PX4Bridge._setup_timeout
+    transact = PX4Bridge.transact
+
+
+def _elapsed_budget(kind, **kwargs):
+    import time as _time
+
+    bridge = _CountingBridge(0.05, 0.4)
+    started = _time.monotonic()
+    with pytest.raises(BridgeError) as excinfo:
+        bridge.transact(kind, {}, ("ack",), **kwargs)
+    return _time.monotonic() - started, str(excinfo.value)
+
+
+def test_a_flight_step_keeps_the_short_control_budget():
+    elapsed, message = _elapsed_budget("action")
+    assert elapsed < 0.3
+    assert "after 0.05 s" in message
+
+
+def test_setup_traffic_waits_out_a_booting_simulator():
+    elapsed, message = _elapsed_budget("reset", timeout=0.4)
+    assert elapsed >= 0.4
+    assert "after 0.40 s" in message
+
+
+def test_setup_timeout_is_never_shorter_than_the_control_budget():
+    bridge = _CountingBridge(3.0, 1.0)
+    assert bridge._setup_timeout() == 3.0
+    bridge = _CountingBridge(2.0, 120.0)
+    assert bridge._setup_timeout() == 120.0
+    # A configuration that predates the setting keeps the old behaviour.
+    bridge.cfg = SimpleNamespace(timeout=2.0)
+    assert bridge._setup_timeout() == 2.0
+
+
+def test_the_reconnect_and_reset_use_the_boot_budget():
+    import inspect
+
+    source = inspect.getsource(bridge_module.PX4Bridge)
+    for call in ('self.transact("hello"', 'self.transact("reset"'):
+        start = source.index(call)
+        assert "_setup_timeout()" in source[start:start + 400], (
+            f"{call} must outlast a simulator boot")
+    # The bounded re-aim inside the entry deadline must not: one slow reply
+    # there would consume the entry window itself.
+    entry = source[source.index("def send_goto"):]
+    assert entry[:entry.index("send_goto(")].count("_setup_timeout") == 0

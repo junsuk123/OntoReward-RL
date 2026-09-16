@@ -1825,8 +1825,12 @@ def main(*, primary_only: bool = False):
         if reward_model is not None:
             monitor.set_potential(name, reward_model)
     dashboard = Dashboard(cfg, STORE).start()
+    # ``--headless`` is about Isaac Sim's own window, not about the operator's
+    # view of the run. RViz 2 is a separate process reading ROS topics that are
+    # published either way, so a headless flight still gets its live view; only
+    # ``--no-rviz`` (or a missing DISPLAY) turns it off.
     rviz_process, rviz_log = _start_rviz(
-        cfg.viz.rviz.enabled and not args.no_rviz and not args.headless,
+        cfg.viz.rviz.enabled and not args.no_rviz,
         parallel_pairs=args.parallel_pairs)
     owned = None
     training_executor = None

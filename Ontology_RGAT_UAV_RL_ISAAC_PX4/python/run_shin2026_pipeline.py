@@ -465,8 +465,10 @@ def main():
         reward_design_id=getattr(potential, "design_id", None),
         reward_design_sha256=getattr(potential, "sha256", None))
     dashboard = Dashboard(cfg, STORE).start()
+    # Headless is Isaac's window, not the operator's: RViz reads ROS topics
+    # that are published in either mode.
     rviz_process, rviz_log = _start_rviz(
-        cfg.viz.rviz.enabled and not args.no_rviz and not args.headless)
+        cfg.viz.rviz.enabled and not args.no_rviz)
     owned = None
     stack_module.current(None)
     try:

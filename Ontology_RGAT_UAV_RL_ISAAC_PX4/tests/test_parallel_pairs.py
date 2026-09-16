@@ -105,3 +105,28 @@ def test_bare_repository_launcher_selects_two_pair_operator_profile():
     assert "--parallel-pairs 2" in launcher
     assert "--pipelines shin_se_fixed shin_se_onto_rgat_recovery" in launcher
     assert "--stay-open" in launcher
+
+
+def test_a_headless_flight_still_opens_the_operator_rviz_view():
+    # ``--headless`` is Isaac Sim's own window. RViz 2 is a separate process
+    # reading ROS topics the run publishes in either mode, so a headless
+    # seminar run must still get its live view; only ``--no-rviz`` or a
+    # missing DISPLAY turns it off.
+    for launcher in ("run_three_pipeline.py", "run_shin2026_pipeline.py"):
+        source = (ROOT / "python" / launcher).read_text(encoding="utf-8")
+        start = source.index("_start_rviz(\n")
+        call = source[start:source.index(")", start)]
+        assert "no_rviz" in call, f"{launcher} must still honour --no-rviz"
+        assert "headless" not in call, (
+            f"{launcher} suppresses RViz when Isaac is headless")
+
+
+def test_rviz_is_still_skipped_without_a_display(monkeypatch, capsys):
+    import sys
+    sys.path.insert(0, str(ROOT / "python"))
+    from run_shin2026_pipeline import _start_rviz
+
+    monkeypatch.delenv("DISPLAY", raising=False)
+    process, stream = _start_rviz(True, parallel_pairs=2)
+    assert (process, stream) == (None, None)
+    assert "DISPLAY is unset" in capsys.readouterr().out

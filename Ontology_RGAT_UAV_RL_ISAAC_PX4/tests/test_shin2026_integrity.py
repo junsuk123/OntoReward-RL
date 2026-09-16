@@ -1134,3 +1134,58 @@ def test_run_pipeline_reads_only_trajectory_fields_that_exist():
             f"{key} is no longer consumed by the run pipeline; drop it here")
     assert consumed <= written, (
         f"rollout rows never carry {sorted(consumed - written)}")
+
+
+def _shipped_configs():
+    return sorted((ROOT / "config").rglob("*.yaml"))
+
+
+def test_every_shipped_config_is_parseable_yaml():
+    # A config typo only surfaced once Isaac Sim, PX4 and the dashboard were
+    # already up, throwing away the whole boot.  Parse every shipped config
+    # here instead.
+    import yaml
+
+    configs = _shipped_configs()
+    assert configs, "no experiment/system configs were found"
+    for path in configs:
+        try:
+            yaml.safe_load(path.read_text(encoding="utf-8"))
+        except yaml.YAMLError as exc:
+            pytest.fail(f"{path.relative_to(ROOT)} is not valid YAML: {exc}")
+
+
+def test_no_shipped_config_declares_a_key_twice():
+    # PyYAML keeps the last duplicate silently, so a stray paste can change a
+    # contract without any error at all.  A repeated key is always a mistake.
+    import yaml
+
+    class _StrictLoader(yaml.SafeLoader):
+        pass
+
+    def _no_duplicates(loader, node, deep=False):
+        seen = set()
+        for key_node, _ in node.value:
+            key = loader.construct_object(key_node, deep=deep)
+            if key in seen:
+                raise yaml.constructor.ConstructorError(
+                    None, None, f"duplicate key {key!r}", key_node.start_mark)
+            seen.add(key)
+        return yaml.SafeLoader.construct_mapping(loader, node, deep=deep)
+
+    _StrictLoader.add_constructor(
+        yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _no_duplicates)
+
+    for path in _shipped_configs():
+        try:
+            yaml.load(path.read_text(encoding="utf-8"), Loader=_StrictLoader)
+        except yaml.YAMLError as exc:
+            pytest.fail(f"{path.relative_to(ROOT)}: {exc}")
+
+
+def test_the_fov_risk_arm_reads_its_reward_from_the_graph_itself():
+    contract = load_experiment(
+        ROOT / "config/experiments/two_pipeline_comparison.yaml")
+    proposed = contract["pipeline_contract"]["shin_se_onto_rgat_recovery"]
+    assert proposed["fov_reward_readout"] == "direct_graph_scalar"
+    assert proposed["fov_risk_reward"] is True

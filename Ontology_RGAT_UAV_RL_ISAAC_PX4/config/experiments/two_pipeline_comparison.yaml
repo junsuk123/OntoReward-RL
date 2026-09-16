@@ -31,10 +31,7 @@ pipeline_contract:
     adaptive_reward_architecture: null
     # The scalar is the FutureFOVUnavailability node of the second relational
     # layer (units=1). No separate readout MLP or linear head.
-    fov_reward_readout: d
     fov_reward_readout: direct_graph_scalar
-    fov_reward_readout: direct_graph_scalar
-    irect_graph_scalar
 
 fov_risk:
   lambda_fov: 0.1

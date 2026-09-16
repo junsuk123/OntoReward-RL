@@ -19,6 +19,24 @@
 같은 실패를 반복하는 데 소모된다. 그 시뮬레이터를 run 바깥에서 직접 종료한 뒤
 다시 시작해야 한다.
 
+## 시뮬레이터가 기동 중에 죽을 때
+
+`WARNING: simulator startup failed (... exited during startup)`은 대부분 Isaac
+Sim 자체의 크래시다. 이 워크스테이션에서 관측된 형태는 항상 같다. 기동 약 20초
+지점, Ranger Mini UGV의 MDL 머티리얼을 RTX 머티리얼 DB에 올리는 중에 Kit이
+자기 assertion(`unlock() called by non-owning thread`,
+`carb/thread/Mutex.h:158`)으로 abort한다. 2026-09-15~16 사이 Isaac 기동 31회 중
+7회(약 23%)가 이 형태였다. 벤치마크 코드 경로가 아니라 Kit 내부의
+fiber/mutex 경쟁이며, 여기서 할 수 있는 대응은 재기동뿐이다. `ExternalStack`은
+`startup_attempts`(기본 3)까지 자동으로 다시 띄운다. 이 시점에는 episode·보상·
+라벨이 하나도 만들어지지 않았으므로 실험 계약에 영향이 없다.
+
+abort한 Kit은 버퍼에 남은 stdout을 버리기 때문에 `/tmp/ontology_rgat_stack/isaac.log`는
+비어 있는 것이 정상이다. 실패 보고는 대신 Kit 자신의 세션 로그
+(`~/.cache/packman/chk/kit-kernel/*/logs/Kit/*/*/kit_*.log`)에서 assertion을 읽어
+콘솔에 출력하고 그 경로를 같이 알려준다. 직전 시도의 로그는
+`isaac.previous.log`로 남는다.
+
 ## 실행 중인 run 상태 확인
 
 브라우저 없이 진행 상황을 보려면 대시보드 API를 그대로 읽는 읽기 전용 도구를 쓴다.

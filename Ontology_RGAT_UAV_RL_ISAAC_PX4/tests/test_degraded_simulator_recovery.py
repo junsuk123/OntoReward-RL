@@ -102,3 +102,99 @@ def test_can_replace_simulator_requires_an_owned_registered_stack():
 def test_arming_refusal_stays_an_entry_reset_error_for_existing_handlers():
     assert issubclass(ArmingRefused, EntryResetError)
     assert issubclass(ArmingRefused, BridgeError)
+
+
+# --------------------------------------------------------------------------
+# An aborted Isaac Sim must name its own crash.
+#
+# Isaac's stdout is buffered, so a Kit abort discards it and the stack log of
+# the failed startup is empty -- which is exactly when the operator needs it.
+# Kit's own session log survives the abort and records the assertion, so the
+# failure report reads that instead of printing an empty tail.
+
+_CRASHED_KIT_LOG = """\
+2026-09-16T09:05:57Z [99ms] [Warning] [carb.crashreporter-breakpad.plugin] [crash]  assertionCausedCrash = '1'
+2026-09-16T09:05:57Z [114ms] [Warning] [carb.crashreporter-breakpad.plugin] [crash]  lastAssertionCondition = 'm_owner == pthread_self()'
+2026-09-16T09:05:57Z [114ms] [Warning] [carb.crashreporter-breakpad.plugin] [crash]  lastAssertionFile = '../../../include/carb/thread/Mutex.h'
+2026-09-16T09:05:57Z [115ms] [Warning] [carb.crashreporter-breakpad.plugin] [crash]  lastAssertionLine = '158'
+2026-09-16T09:05:57Z [116ms] [Warning] [carb.crashreporter-breakpad.plugin] [crash]  lastAssertionMessage = 'unlock() called by non-owning thread'
+"""
+
+
+def test_a_kit_abort_is_reported_from_kit_own_log(tmp_path, monkeypatch):
+    kit_log = tmp_path / "kit_20260916_180537.log"
+    kit_log.write_text(_CRASHED_KIT_LOG, encoding="utf-8")
+    isaac_log = tmp_path / "isaac.log"
+    isaac_log.write_text("", encoding="utf-8")   # the abort lost the buffer
+    monkeypatch.setattr(stack_module, "_kit_session_log", lambda since: kit_log)
+
+    entry = {"name": "isaac", "pid": 4321, "log": isaac_log, "started": 0.0,
+             "process": SimpleNamespace(poll=lambda: -6)}
+    report = stack_module.ExternalStack._startup_failure(
+        "Isaac Sim + PX4 SITL", entry)
+
+    assert "isaac (pid 4321) was killed by SIGABRT" in report
+    assert "unlock() called by non-owning thread" in report
+    assert "Mutex.h:158" in report
+    assert str(kit_log) in report
+    assert "aborted before its stdout was flushed" in report
+    # The operator must not be told a benchmark bug caused an Isaac crash.
+    assert "not a benchmark fault" in report
+
+
+def test_a_clean_startup_exit_is_reported_without_a_kit_assertion(tmp_path,
+                                                                  monkeypatch):
+    kit_log = tmp_path / "kit_20260916_180624.log"
+    kit_log.write_text("2026-09-16T09:06:24Z [1ms] [Info] [carb] all fine\n",
+                       encoding="utf-8")
+    isaac_log = tmp_path / "isaac.log"
+    isaac_log.write_text("Isaac Python not found. Set ISAACSIM_PATH.\n",
+                         encoding="utf-8")
+    monkeypatch.setattr(stack_module, "_kit_session_log", lambda since: kit_log)
+
+    entry = {"name": "isaac", "pid": 99, "log": isaac_log, "started": 0.0,
+             "process": SimpleNamespace(poll=lambda: 1)}
+    report = stack_module.ExternalStack._startup_failure("Isaac Sim + PX4 SITL",
+                                                         entry)
+    assert "exited with status 1" in report
+    assert "Isaac Python not found" in report
+    assert "not a benchmark fault" not in report
+
+
+def test_the_failed_attempt_log_survives_the_relaunch(tmp_path):
+    from ontology_rgat.stack import ExternalStack
+
+    stack = ExternalStack.__new__(ExternalStack)
+    stack.log_dir = tmp_path
+    stack.root = tmp_path
+    stack.managed = []
+    (tmp_path / "isaac.log").write_text("first attempt output\n", encoding="utf-8")
+    stack._launch("isaac", ["true"])
+    assert (tmp_path / "isaac.previous.log").read_text() == "first attempt output\n"
+    # A second relaunch keeps one slot, never an unbounded pile.
+    (tmp_path / "isaac.log").write_text("second attempt output\n", encoding="utf-8")
+    stack._launch("isaac", ["true"])
+    assert (tmp_path / "isaac.previous.log").read_text() == "second attempt output\n"
+    assert not list(tmp_path.glob("isaac.previous.previous*"))
+
+
+def test_the_dead_process_is_named_even_when_another_one_is_waited_on(tmp_path,
+                                                                     monkeypatch):
+    # ``_wait_for`` waits on Isaac's banner, but the agent or a gateway can be
+    # the process that died. Blaming Isaac there sends the operator to the
+    # wrong log.
+    from ontology_rgat.stack import ExternalStack, StackError
+
+    stack = ExternalStack.__new__(ExternalStack)
+    stack.log_dir = tmp_path
+    stack.managed = [{"name": "agent", "pid": 7, "log": tmp_path / "agent.log",
+                      "started": 0.0,
+                      "process": SimpleNamespace(poll=lambda: 2)}]
+    (tmp_path / "agent.log").write_text("agent refused the port\n", encoding="utf-8")
+    monkeypatch.setattr(stack_module, "_kit_session_log", lambda since: None)
+
+    with pytest.raises(StackError) as excinfo:
+        stack._wait_for(lambda: False, 5.0, "Isaac Sim + PX4 SITL",
+                        tmp_path / "isaac.log")
+    assert "agent (pid 7) exited with status 2" in str(excinfo.value)
+    assert "agent refused the port" in str(excinfo.value)

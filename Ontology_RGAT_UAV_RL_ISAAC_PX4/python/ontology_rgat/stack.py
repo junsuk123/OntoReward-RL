@@ -92,6 +92,69 @@ def _tail(path: Path, lines: int = 20) -> str:
         return "(unreadable log)"
 
 
+# Isaac writes its stdout through a buffered stream. An abort discards that
+# buffer, so the stack log of a crashed startup is empty exactly when it is
+# needed. Kit's own session log is written by carb and survives the abort.
+_KIT_LOG_ROOTS = ((Path("~/.cache/packman/chk").expanduser(),
+                   "kit-kernel/*/logs/Kit/*/*/kit_*.log"),
+                  (Path("~/.nvidia-omniverse/logs").expanduser(),
+                   "Kit/*/*/kit_*.log"))
+
+
+def _kit_session_log(since: float) -> "Path | None":
+    """The newest Kit session log belonging to a process started at ``since``."""
+    newest: tuple[float, Path] | None = None
+    for base, pattern in _KIT_LOG_ROOTS:
+        if not base.is_dir():
+            continue
+        for candidate in base.glob(pattern):
+            try:
+                stamp = candidate.stat().st_mtime
+            except OSError:
+                continue
+            # The session that just died, never an older one that is still
+            # sitting in the same directory.
+            if stamp + 1.0 < since:
+                continue
+            if newest is None or stamp > newest[0]:
+                newest = (stamp, candidate)
+    return None if newest is None else newest[1]
+
+
+def _kit_crash_summary(log: Path) -> str:
+    """The assertion Kit recorded before aborting, if it aborted."""
+    keys = ("lastAssertionMessage", "lastAssertionCondition", "lastAssertionFile",
+            "lastAssertionLine")
+    found: dict[str, str] = {}
+    try:
+        with log.open("r", errors="replace") as handle:
+            for line in handle:
+                for key in keys:
+                    if key in line and key not in found and " = '" in line:
+                        found[key] = line.split(" = '", 1)[1].rstrip().rstrip("'")
+                if len(found) == len(keys):
+                    break
+    except OSError:
+        return ""
+    if "lastAssertionMessage" not in found:
+        return ""
+    where = found.get("lastAssertionFile", "?")
+    return (f"Kit aborted on its own assertion "
+            f"{found['lastAssertionMessage']!r} "
+            f"({found.get('lastAssertionCondition', '?')} in {where}:"
+            f"{found.get('lastAssertionLine', '?')})")
+
+
+def _exit_status(code: int | None) -> str:
+    if code is None:
+        return "is still running"
+    if code < 0:
+        name = signal.Signals(-code).name if -code in set(
+            int(member) for member in signal.Signals) else f"signal {-code}"
+        return f"was killed by {name}"
+    return f"exited with status {code}"
+
+
 class StackError(RuntimeError):
     pass
 
@@ -169,9 +232,15 @@ class ExternalStack:
             except StackError as exc:
                 if attempt >= total or self._shutdown_requested:
                     raise
-                first_line = str(exc).splitlines()[0] if str(exc) else exc.__class__.__name__
+                detail = str(exc).splitlines()
+                first_line = detail[0] if detail else exc.__class__.__name__
                 print(f"WARNING: simulator startup failed ({first_line}). "
                       f"Relaunching ({attempt} of {total - 1}).")
+                # The cause belongs in the console too: the operator otherwise
+                # sees a bare "startup failed" and an empty Isaac log.
+                for line in detail[1:]:
+                    if line.startswith(("Kit aborted", "Kit session log:")):
+                        print(f"  {line}")
                 self.stop()
                 time.sleep(5.0)
                 continue
@@ -357,6 +426,15 @@ class ExternalStack:
         Pegasus' PX4 child dies with Isaac instead of holding TCP 4560.
         """
         log = self.log_dir / f"{name}.log"
+        # Each launch truncates its log, so a relaunch used to erase the
+        # evidence of the startup that just failed. Keep exactly one previous
+        # attempt: enough to diagnose the crash, bounded on a long run that
+        # cycles the simulator many times.
+        if log.is_file() and log.stat().st_size:
+            try:
+                log.replace(self.log_dir / f"{name}.previous.log")
+            except OSError:
+                pass
         environment = dict(os.environ)
         environment.update(env or {})
         handle = log.open("wb")
@@ -364,7 +442,8 @@ class ExternalStack:
                                    stdin=subprocess.DEVNULL, env=environment,
                                    start_new_session=True, cwd=str(self.root))
         self.managed.append({"name": name, "pid": process.pid, "log": log,
-                             "process": process, "handle": handle})
+                             "process": process, "handle": handle,
+                             "started": time.time()})
         return log
 
     def _wait_for(self, predicate: Callable[[], bool], timeout: float,
@@ -375,10 +454,32 @@ class ExternalStack:
                 return
             dead = [e for e in self.managed if e["process"].poll() is not None]
             if dead:
-                raise StackError(f"{description} exited during startup. Log:\n{_tail(log)}")
+                raise StackError(self._startup_failure(description, dead[0]))
             time.sleep(0.5)
         raise StackError(f"{description} was not ready within {timeout:.0f} s. "
                          f"Log:\n{_tail(log)}")
+
+    @staticmethod
+    def _startup_failure(description: str, entry: dict[str, Any]) -> str:
+        """Say which process died, how, and what it recorded before dying."""
+        code = entry["process"].poll()
+        parts = [f"{description} failed: {entry['name']} (pid {entry['pid']}) "
+                 f"{_exit_status(code)} during startup."]
+        kit_log = _kit_session_log(entry.get("started", 0.0))
+        summary = _kit_crash_summary(kit_log) if kit_log is not None else ""
+        if summary:
+            # An abort inside Kit is an Isaac Sim fault, not a pipeline fault,
+            # and relaunching is the only cure available here.
+            parts.append(summary + ". This is an Isaac Sim/Kit crash, not a "
+                         "benchmark fault; the relaunch below is the remedy.")
+        if kit_log is not None:
+            parts.append(f"Kit session log: {kit_log}")
+        tail = _tail(entry["log"])
+        # An aborted Kit loses its buffered stdout, so this is routinely empty.
+        parts.append(f"{entry['name']} log ({entry['log']}):\n"
+                     + (tail if tail.strip() else
+                        "(empty: the process aborted before its stdout was flushed)"))
+        return "\n".join(parts)
 
     @staticmethod
     def _kill_group(pid: int) -> None:

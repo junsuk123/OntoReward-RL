@@ -736,6 +736,51 @@ def collect_episode(env, model: PipelineActorCritic, method: str, seed: int,
                 float(np.mean(potential_reacquisition_delta))
                 if potential_reacquisition_delta else 0.0),
         })
+    if model_spec.fov_risk_reward_enabled:
+        # What the added reward actually did this episode, and whether the
+        # frozen readout was right. ``actual_future_fov_unavailability`` is
+        # None on the episode tail, where no H-step future was observed, so
+        # calibration is measured only where both numbers exist.
+        predicted = np.asarray([
+            float(row["reward_parts"].get("predicted_fov_unavailability", 0.0))
+            for row in rows], dtype=float)
+        added = np.asarray([
+            float(row["reward_parts"].get("ontology_fov_reward", 0.0))
+            for row in rows], dtype=float)
+        paired = [(float(row["reward_parts"]["predicted_fov_unavailability"]),
+                   float(row["actual_future_fov_unavailability"]))
+                  for row in rows
+                  if row.get("actual_future_fov_unavailability") is not None
+                  and "predicted_fov_unavailability" in row["reward_parts"]]
+        # Share of the step-reward magnitude carried by the added term. The
+        # denominator is the magnitude of every non-terminal component, so a
+        # small share means the ontology branch barely moved the objective.
+        shaping = np.asarray([
+            sum(abs(float(value)) for key, value in row["reward_parts"].items()
+                if key not in ("task", "ontology_fov_reward",
+                               "predicted_fov_unavailability",
+                               "actual_future_fov_unavailability")
+                and isinstance(value, (int, float)))
+            for row in rows], dtype=float)
+        total_shaping = float(np.sum(shaping))
+        metric.update({
+            "predicted_fov_unavailability_mean": float(np.mean(predicted)),
+            "ontology_fov_reward_sum": float(np.sum(added)),
+            "ontology_fov_reward_mean": float(np.mean(added)),
+            "ontology_fov_reward_share": (
+                float(abs(np.sum(added)) / total_shaping)
+                if total_shaping > 0.0 else 0.0),
+            "fov_prediction_samples": float(len(paired)),
+        })
+        if paired:
+            values = np.asarray(paired, dtype=float)
+            error = values[:, 0] - values[:, 1]
+            metric.update({
+                "fov_prediction_mae": float(np.mean(np.abs(error))),
+                "fov_prediction_bias": float(np.mean(error)),
+                "fov_predicted_mean": float(np.mean(values[:, 0])),
+                "fov_actual_mean": float(np.mean(values[:, 1])),
+            })
     if model_spec.state_estimation_enabled:
         position_error = np.asarray([
             row["estimate"][:3] - row["truth"][:3] for row in rows])

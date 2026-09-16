@@ -92,6 +92,80 @@ border-radius:1px;padding:7px 9px}
 .legend{display:flex;gap:12px;flex-wrap:wrap;font-size:11px;color:var(--muted);margin-top:6px}
 .legend i{display:inline-block;width:18px;height:2px;vertical-align:middle;margin-right:4px}
 .wide{grid-column:1/-1}
+.section{grid-column:1/-1;background:none;border:0;box-shadow:none;padding:9px 0 0}
+.section h2{font-size:14px;margin:0 0 3px;text-align:left;
+border-bottom:2px solid var(--accent);padding-bottom:4px;letter-spacing:.01em}
+.section p{margin:5px 0 0;color:var(--muted);font-size:11px;max-width:105ch}
+.tile.delta{border-top-color:var(--warn)}
+.tile.delta b{font-variant-numeric:tabular-nums}
+.tile small{display:block;color:var(--muted);font-size:9px;margin-top:2px}
+/* run pipeline: a staged track whose state comes from the live stage name */
+.runpipe{display:flex;gap:0;align-items:stretch;flex-wrap:nowrap;overflow-x:auto;
+padding-bottom:4px}
+.runstage{flex:1 1 0;min-width:132px;border:1px solid #b8b8b8;background:#fafafa;
+padding:7px 9px;position:relative;margin-right:13px}
+.runstage:last-child{margin-right:0}
+.runstage::after{content:'';position:absolute;right:-13px;top:50%;width:13px;height:2px;
+background:var(--line)}
+.runstage:last-child::after{display:none}
+.runstage b{display:block;font-size:11.5px;line-height:1.25;padding-right:34px}
+.runstage span{display:block;color:var(--muted);font-size:9.5px;margin-top:3px}
+.runstage em{display:block;font-style:normal;font-size:9.5px;margin-top:4px;
+padding-top:4px;border-top:1px dotted #cfcfcf;color:#4d4d4d}
+.runstage.done{border-left:4px solid var(--good);background:#f4f9ee}
+.runstage.active{border-left:4px solid var(--accent);background:#fff;
+box-shadow:0 0 0 2px rgba(0,114,189,.18)}
+.runstage.pending{border-left:4px solid var(--line);opacity:.62}
+.runstage .kind{position:absolute;top:6px;right:7px;font-size:8px;letter-spacing:.05em;
+text-transform:uppercase;color:#8a8a8a}
+.runstage.active .kind{color:var(--accent);font-weight:700}
+.runnote{margin-top:8px;color:var(--muted);font-size:10.5px}
+/* algorithm pipeline: one scalable diagram, no canvas */
+.algowrap{width:100%;overflow-x:auto}
+.algowrap svg{width:100%;min-width:900px;height:auto;display:block}
+.algolimits{display:flex;gap:14px;flex-wrap:wrap;margin-top:7px;font-size:10.5px;
+color:var(--muted)}
+.algolimits b{color:var(--bad);font-weight:600;margin-right:4px}
+/* MDP: identical rows merge across both arms, the differing one splits */
+.mdp{display:grid;grid-template-columns:150px 1fr 1fr;gap:5px;font-size:11.5px}
+.mdp .hd{font-weight:700;padding:5px 7px;border-bottom:2px solid var(--line);font-size:11px}
+.mdp .hd.a0{border-bottom-color:var(--accent)}
+.mdp .hd.a1{border-bottom-color:var(--warn)}
+.mdp .rk{padding:6px 7px;font-weight:600;background:#fafafa;border:1px solid #e0e0e0}
+.mdp .same{grid-column:2/4;padding:6px 8px;border:1px solid #dcdcdc;background:#fbfbfb}
+.mdp .diff{padding:6px 8px;border:1px solid #d6b08f;background:#fff7f0}
+.mdp .diff.base{border-color:#bcd4e6;background:#f3f8fc}
+.mdp .same .tag{display:inline-block;font-size:9px;color:var(--good);border:1px solid var(--good);
+padding:0 4px;margin-right:6px;vertical-align:1px}
+.mdp .diff .tag{display:inline-block;font-size:9px;color:var(--warn);border:1px solid var(--warn);
+padding:0 4px;margin-right:6px;vertical-align:1px}
+.mdp .nt{display:block;color:var(--muted);font-size:10px;margin-top:3px}
+.mdpsum{margin-top:9px;font-size:11px;color:var(--muted)}
+.mdpsum b{color:var(--warn)}
+/* FOV readout status: three stages of the proposed arm's own preparation */
+.fovwrap{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px}
+.fovbox{border:1px solid #b8b8b8;background:#fafafa;padding:8px 10px;
+border-top:3px solid var(--line)}
+.fovbox.run{border-top-color:var(--accent);background:#fff}
+.fovbox.done{border-top-color:var(--good);background:#f6faf1}
+.fovbox h3{margin:0 0 5px;font-size:11.5px;display:flex;justify-content:space-between;
+align-items:baseline;gap:8px}
+.fovbox h3 i{font-style:normal;font-size:9px;text-transform:uppercase;
+letter-spacing:.05em;color:#8a8a8a}
+.fovbox.run h3 i{color:var(--accent);font-weight:700}
+.fovbox.done h3 i{color:var(--good);font-weight:700}
+.fovrow{display:flex;justify-content:space-between;gap:8px;font-size:11px;
+padding:2px 0;border-bottom:1px dotted #e2e2e2}
+.fovrow:last-child{border-bottom:0}
+.fovrow b{font-variant-numeric:tabular-nums;font-weight:600}
+.fovrow.warn b{color:var(--warn)}
+.fovrow.bad b{color:var(--bad)}
+.fovrow.good b{color:var(--good)}
+.fovbar{height:7px;background:#e6e6e6;margin:5px 0 7px;position:relative}
+.fovbar i{display:block;height:100%;background:var(--accent)}
+.fovbar u{position:absolute;top:-3px;bottom:-3px;width:2px;background:var(--bad);
+text-decoration:none}
+.fovempty{color:var(--muted);font-size:11px;padding:6px 0}
 [hidden]{display:none!important}
 .contract-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:7px}
 .contract-item{border:1px solid #b8b8b8;background:#fafafa;padding:7px 9px;min-height:52px}
@@ -182,84 +256,123 @@ const BENCHMARK_METHODS=['shin_se_fixed','shin_se_onto_rgat_recovery'];
 const BENCHMARK_TRAIN=BENCHMARK_METHODS.map(x=>'benchmark_train_'+x);
 const BENCHMARK_EVAL=BENCHMARK_METHODS.map(x=>'benchmark_eval_'+x);
 const BENCHMARK_STEP=BENCHMARK_METHODS.map(x=>'benchmark_step_'+x);
+const PROPOSED_TRAIN=['benchmark_train_shin_se_onto_rgat_recovery'];
 const CARDS=[
  {id:'tiles',title:null},
  {id:'phase_status',view:'benchmark',kind:'phase'},
- {id:'parallel_pairs',view:'benchmark',kind:'pairs',
-  title:'동시 비행쌍 · 한 Isaac Sim 월드 / 독립 PX4·PPO'},
- {id:'parallel_live_reward',view:'benchmark',kind:'pairplots',plot:'reward',
-  title:'실시간 보상 · pair별 독립 trajectory'},
- {id:'parallel_live_flight',view:'benchmark',kind:'pairplots',plot:'flight',
-  title:'실시간 비행 상태 · pair별 독립 sensor'},
- {id:'parallel_live_perception',view:'benchmark',kind:'pairplots',plot:'perception',
-  title:'기하 FOV(시뮬레이터 기하) 대 keypoint 인지 품질 · 두 arm 동일 정의'},
- {id:'parallel_live_method',view:'benchmark',kind:'pairplots',plot:'method',
-  title:'방법론 고유 신호 · SE 오차 / 시각 관측 / R-GAT 의미 상태'},
- {id:'benchmark_contract',view:'benchmark',kind:'contract',
-  title:'두 방법론의 동일 Shin RL 계약과 추가 FOV 분기'},
- {id:'benchmark_eval_success',view:'benchmark',title:'[현재 평가] 이동 성공률',
+ {id:'run_pipeline',view:'benchmark',kind:'runpipe',
+  title:'시뮬레이션 · 학습 · 검증 파이프라인 (현재 위치 표시)'},
+
+ {id:'head_performance',view:'benchmark',kind:'heading',
+  title:'1 · 두 모델 성능',
+  note:'인식·상태추정·actor·critic·action·제어기·환경·원문 보상항·종료가 동일하고, '
+      +'동일 초기 checkpoint와 동일 PPO 예산을 쓴다. 두 곡선의 차이는 학습 전용 '
+      +'온톨로지-R-GAT 보상 하나뿐이다.'},
+ {id:'benchmark_eval_success',view:'benchmark',title:'[평가] 안전 착륙 성공률',
   series:BENCHMARK_EVAL,x:'evaluation_index',y:'paper_success',smooth:5,ymin:0,ymax:1},
- {id:'benchmark_eval_return',view:'benchmark',title:'[현재 평가] episode 누적 보상',
-  series:BENCHMARK_EVAL,x:'evaluation_index',y:'episode_return',smooth:5},
- {id:'benchmark_eval_position',view:'benchmark',title:'[현재 평가] SE 위치 RMSE',
+ {id:'benchmark_eval_position',view:'benchmark',title:'[평가] 상대 위치 RMSE (m)',
   series:BENCHMARK_EVAL,x:'evaluation_index',y:'position_rmse',smooth:5},
- {id:'benchmark_eval_scenario',view:'benchmark',kind:'evalbars',
-  title:'[현재 평가] Scenario별 성공률'},
- {id:'benchmark_eval_velocity',view:'benchmark',title:'[현재 평가] SE 속도 RMSE',
+ {id:'benchmark_eval_velocity',view:'benchmark',title:'[평가] 상대 속도 RMSE (m/s)',
   series:BENCHMARK_EVAL,x:'evaluation_index',y:'velocity_rmse',smooth:5},
- {id:'benchmark_eval_visual_loss',view:'benchmark',
-  title:'[현재 평가] 표적 FOV 소실 구간의 추정 오차',
-  series:BENCHMARK_EVAL,x:'evaluation_index',y:'geometric_fov_loss_estimation_error',smooth:5},
- {id:'benchmark_success',view:'benchmark',title:'[완료된 학습 기록] 이동 성공률',
+ {id:'benchmark_eval_return',view:'benchmark',title:'[평가] episode 누적 보상',
+  series:BENCHMARK_EVAL,x:'evaluation_index',y:'episode_return',smooth:5},
+ {id:'benchmark_success',view:'benchmark',title:'[학습] 안전 착륙 성공률',
   series:BENCHMARK_TRAIN,x:'episode',y:'paper_success',smooth:40,ymin:0,ymax:1},
- {id:'benchmark_return',view:'benchmark',
-  title:'[완료된 학습 기록] 누적 보상 (진단값)',
+ {id:'benchmark_return',view:'benchmark',title:'[학습] 누적 보상 (진단값)',
   series:BENCHMARK_TRAIN,x:'episode',y:'episode_return',smooth:20},
- {id:'benchmark_curriculum',view:'benchmark',title:'UGV 운동 curriculum c',
-  series:BENCHMARK_TRAIN,x:'episode',y:'curriculum',ymin:0,ymax:1},
- {id:'benchmark_action_scale',view:'benchmark',title:'UAV action-envelope curriculum',
-  series:BENCHMARK_TRAIN,x:'episode',y:'action_envelope_scale',ymin:0,ymax:1},
- {id:'benchmark_position_rmse',view:'benchmark',title:'SE 위치 RMSE',
-  series:BENCHMARK_TRAIN,x:'episode',y:'position_rmse',smooth:12},
- {id:'benchmark_velocity_rmse',view:'benchmark',title:'SE 속도 RMSE',
-  series:BENCHMARK_TRAIN,x:'episode',y:'velocity_rmse',smooth:12},
- {id:'benchmark_aux',view:'benchmark',title:'정규화 6-state 보조 손실',
-  series:BENCHMARK_TRAIN,x:'episode',y:'auxiliary_estimation_loss',smooth:12},
- {id:'benchmark_active_saturation',view:'benchmark',title:'Active reward 포화율',
-  series:BENCHMARK_TRAIN,x:'episode',y:'active_reward_saturation_fraction',
+ {id:'benchmark_eval_scenario',view:'benchmark',kind:'evalbars',
+  title:'[평가] scenario별 성공률'},
+
+ {id:'head_ontology',view:'benchmark',kind:'heading',
+  title:'2 · 온톨로지-R-GAT의 영향력',
+  note:'추가 보상은 비종료 step에서 r_paper(t) − λ·q(G_{t+1}) 하나다. q는 향후 1초 중 '
+      +'패드 중심이 FOV 밖인 시간 비율의 기댓값이며 이진 확률이 아니다. 아래는 그 항이 '
+      +'실제로 무엇을 바꿨는지와, 동결된 readout이 맞았는지를 나눠 본다.'},
+ {id:'fov_status',view:'benchmark',kind:'fovstatus',
+  title:'제안 arm 준비 상태 · FOV 데이터 수집 → readout 학습 → 동결'},
+ {id:'fov_offline_training',view:'benchmark',
+  title:'FOV readout 오프라인 학습 (epoch)',
+  series:['fov_risk_training'],x:'epoch',
+  y:['train_huber','validation_huber','validation_contract'],
+  labels:['학습 Huber','검증 Huber','검증 규약 위반'],smooth:1},
+ {id:'benchmark_fov_loss',view:'benchmark',title:'FOV 소실 시간 비율 (낮을수록 좋음)',
+  series:BENCHMARK_TRAIN,x:'episode',y:'geometric_fov_loss_fraction',
+  smooth:20,ymin:0,ymax:1},
+ {id:'benchmark_reacquisition',view:'benchmark',title:'소실 후 재관측률',
+  series:BENCHMARK_TRAIN,x:'episode',y:'geometric_fov_reacquisition_rate',
   smooth:12,ymin:0,ymax:1},
- {id:'benchmark_fov_risk',view:'benchmark',title:'미래 FOV 소실 확률 / 추가 보상',
-  series:['benchmark_step_shin_se_onto_rgat_recovery'],x:'step',
-  y:['predicted_fov_unavailability','ontology_fov_reward'],
-  labels:['미래 FOV 소실 확률','Ontology-R-GAT FOV 추가 보상'],smooth:3},
- {id:'benchmark_policy_loss',view:'benchmark',title:'Recurrent PPO policy 손실',
-  series:BENCHMARK_TRAIN,x:'episode',y:'ppo_loss',smooth:12},
- {id:'benchmark_value_loss',view:'benchmark',title:'Asymmetric critic value 손실',
-  series:BENCHMARK_TRAIN,x:'episode',y:'value_loss',smooth:12},
- {id:'benchmark_entropy',view:'benchmark',title:'PPO policy entropy',
-  series:BENCHMARK_TRAIN,x:'episode',y:'entropy',smooth:12},
- {id:'benchmark_kl',view:'benchmark',title:'PPO 근사 KL divergence',
-  series:BENCHMARK_TRAIN,x:'episode',y:'kl_divergence',smooth:12},
- {id:'benchmark_lr',view:'benchmark',title:'실효 PPO learning rate',
-  series:BENCHMARK_TRAIN,x:'episode',y:'effective_learning_rate'},
- {id:'benchmark_early_stop',view:'benchmark',title:'PPO KL 조기 종료율',
-  series:BENCHMARK_TRAIN,x:'episode',y:'ppo_early_stop',smooth:12,ymin:0,ymax:1},
- {id:'benchmark_battery_used',view:'benchmark',title:'비행당 실제 pack 사용 에너지 (J)',
-  series:BENCHMARK_TRAIN,x:'episode',y:'battery_energy_used_j',smooth:12},
- {id:'benchmark_battery_final',view:'benchmark',title:'종료 시 정규화 배터리 여유',
-  series:BENCHMARK_TRAIN,x:'episode',y:'battery_reserve_final',smooth:12,ymin:0,ymax:1},
- {id:'benchmark_battery_depleted',view:'benchmark',title:'배터리 고갈 종료율',
-  series:BENCHMARK_TRAIN,x:'episode',y:'battery_depleted',smooth:20,ymin:0,ymax:1},
- {id:'benchmark_reacquisition',view:'benchmark',title:'FOV 소실 후 재관측률',
-  series:BENCHMARK_TRAIN,x:'episode',y:'geometric_fov_reacquisition_rate',smooth:12,ymin:0,ymax:1},
  {id:'benchmark_recovery_landing',view:'benchmark',title:'소실 → 재관측 → 착륙 성공률',
-  series:BENCHMARK_TRAIN,x:'episode',y:'successful_recovery_landing',smooth:20,ymin:0,ymax:1},
+  series:BENCHMARK_TRAIN,x:'episode',y:'successful_recovery_landing',
+  smooth:20,ymin:0,ymax:1},
  {id:'benchmark_unsafe_blind_descent',view:'benchmark',title:'저시인성 상태의 위험 하강률',
   series:BENCHMARK_TRAIN,x:'episode',y:'descent_during_low_keypoint_visibility_fraction',
   smooth:12,ymin:0,ymax:1},
+ {id:'benchmark_eval_visual_loss',view:'benchmark',
+  title:'[평가] FOV 소실 구간의 상태추정 오차',
+  series:BENCHMARK_EVAL,x:'evaluation_index',y:'geometric_fov_loss_estimation_error',smooth:5},
+ {id:'benchmark_fov_calibration',view:'benchmark',
+  title:'readout 보정 · 예측 대 실측 FOV 비가용 비율',
+  series:PROPOSED_TRAIN,x:'episode',y:['fov_predicted_mean','fov_actual_mean'],
+  labels:['예측 q','실측 y'],smooth:12,ymin:0,ymax:1},
+ {id:'benchmark_fov_prediction_error',view:'benchmark',
+  title:'readout 오차 · MAE와 편향 (관측된 미래창만)',
+  series:PROPOSED_TRAIN,x:'episode',y:['fov_prediction_mae','fov_prediction_bias'],
+  labels:['MAE','편향(예측−실측)'],smooth:12},
+ {id:'benchmark_onto_share',view:'benchmark',
+  title:'추가 보상이 차지한 step 보상 크기 비중',
+  series:PROPOSED_TRAIN,x:'episode',y:'ontology_fov_reward_share',smooth:12,ymin:0},
+ {id:'benchmark_onto_sum',view:'benchmark',
+  title:'episode당 추가 보상 합 −λ·Σq (항상 ≤ 0)',
+  series:PROPOSED_TRAIN,x:'episode',y:'ontology_fov_reward_sum',smooth:12},
+ {id:'benchmark_fov_risk',view:'benchmark',
+  title:'현재 episode · 예측 FOV 비가용 비율과 추가 보상',
+  series:['benchmark_step_shin_se_onto_rgat_recovery'],x:'step',
+  y:['predicted_fov_unavailability','ontology_fov_reward'],
+  labels:['예측 q (향후 1s FOV 밖 시간 비율)','추가 보상 −λ·q'],smooth:3},
  {id:'graph3d',view:'benchmark',kind:'graph',
-  title:'FOV Ontology → R-GAT 미래 소실 확률 모듈'},
+  title:'FOV 온톨로지 → R-GAT 비가용 비율 readout'},
+
+ {id:'head_run',view:'benchmark',kind:'heading',
+  title:'3 · 실행 상태',
+  note:'비교 대상이 아니라 실행이 건전한지 보는 값이다. 두 arm에 동일하게 적용되며, '
+      +'여기서의 차이는 결론이 아니라 교란 가능성의 단서로만 읽는다.'},
+ {id:'parallel_pairs',view:'benchmark',kind:'pairs',
+  title:'동시 비행쌍 · 한 Isaac Sim 월드 / 독립 PX4·PPO'},
+ {id:'parallel_live_perception',view:'benchmark',kind:'pairplots',plot:'perception',
+  title:'실시간 기하 FOV 대 keypoint 인지 품질 · 두 arm 동일 정의'},
+ {id:'parallel_live_reward',view:'benchmark',kind:'pairplots',plot:'reward',
+  title:'실시간 보상 분해 · pair별 독립 trajectory'},
+ {id:'benchmark_curriculum',view:'benchmark',title:'curriculum · UGV 운동 c와 action envelope',
+  series:BENCHMARK_TRAIN,x:'episode',y:['curriculum','action_envelope_scale'],
+  labels:['UGV 운동 c','action envelope'],ymin:0,ymax:1},
+ {id:'benchmark_position_rmse',view:'benchmark',title:'[학습] 상대 위치 RMSE (m)',
+  series:BENCHMARK_TRAIN,x:'episode',y:'position_rmse',smooth:12},
+ {id:'benchmark_ppo_loss',view:'benchmark',title:'PPO policy / critic 손실',
+  series:BENCHMARK_TRAIN,x:'episode',y:['ppo_loss','value_loss'],
+  labels:['policy','value'],smooth:12},
+ {id:'benchmark_explore',view:'benchmark',title:'PPO entropy / 근사 KL',
+  series:BENCHMARK_TRAIN,x:'episode',y:['entropy','kl_divergence'],
+  labels:['entropy','KL'],smooth:12},
+ {id:'benchmark_active_saturation',view:'benchmark',
+  title:'공통 active-perception 보상 포화율 (교란 감시)',
+  series:BENCHMARK_TRAIN,x:'episode',y:'active_reward_saturation_fraction',
+  smooth:12,ymin:0,ymax:1},
+ {id:'benchmark_battery_depleted',view:'benchmark',
+  title:'배터리 고갈 종료율 (원문에 없는 이 백엔드의 종료 조건)',
+  series:BENCHMARK_TRAIN,x:'episode',y:'battery_depleted',smooth:20,ymin:0,ymax:1},
+ {id:'benchmark_contract',view:'benchmark',kind:'contract',
+  title:'두 방법론의 동일 Shin RL 계약과 추가 FOV 분기'},
+
+ {id:'head_structure',view:'benchmark',kind:'heading',
+  title:'4 · 알고리즘과 MDP 구조',
+  note:'측정값이 아니라 설계다. 수치는 실행 중인 설정과 코드 상수에서 만들어지므로 '
+      +'그래프 node를 바꾸거나 λ를 바꾸면 이 그림도 함께 바뀐다.'},
+ {id:'algorithm_pipeline',view:'benchmark',kind:'algopipe',
+  title:'제안 알고리즘 · 센서 → 온톨로지/R-GAT 그래프 → 보상 함수'},
+ {id:'mdp_structure',view:'benchmark',kind:'mdp',
+  title:'두 강화학습 에이전트의 State · Action · Environment · Reward'},
 ];
+
 const LABELS={benchmark_step:'current episode',
  benchmark_train_shin_se_fixed:'Baseline · Shin SE fixed',
  benchmark_train_shin_se_onto_rgat_recovery:'Proposed · Shin + Ontology-R-GAT FOV',
@@ -268,13 +381,29 @@ const LABELS={benchmark_step:'current episode',
 const root=document.getElementById('root');
 for(const c of CARDS){
   const el=document.createElement('section');
-  el.className='card'+((c.id==='tiles'||['graph','contract','evalbars','pairs','pairplots','phase'].includes(c.kind))?' wide':'')
+  el.className=(c.kind==='heading'?'card section'
+    :'card'+((c.id==='tiles'||['graph','contract','evalbars','pairs','pairplots','phase',
+      'runpipe','algopipe','mdp','fovstatus']
+      .includes(c.kind))?' wide':''))
     +(c.kind==='graph'?' g3d':'');
   el.id='card-'+c.id;
   el.dataset.view=c.view||'common';
   el.hidden=c.view==='benchmark';
   if(c.id==='tiles'){el.innerHTML='<div class="tiles" id="tiles"></div>';}
+  else if(c.kind==='heading'){el.innerHTML=`<h2>${c.title}</h2>`
+    +(c.note?`<p>${c.note}</p>`:'');}
   else if(c.kind==='phase'){el.innerHTML='<div class="phase-status" id="phase-status"></div>';}
+  else if(c.kind==='fovstatus'){el.innerHTML=`<h2>${c.title}</h2>
+    <div class="fovwrap" id="fov-status"></div>`;}
+  else if(c.kind==='runpipe'){el.innerHTML=`<h2>${c.title}</h2>
+    <div class="runpipe" id="run-pipeline"></div>
+    <div class="runnote" id="run-pipeline-note"></div>`;}
+  else if(c.kind==='algopipe'){el.innerHTML=`<h2>${c.title}</h2>
+    <div class="algowrap" id="algo-pipeline"></div>
+    <div class="algolimits" id="algo-limits"></div>`;}
+  else if(c.kind==='mdp'){el.innerHTML=`<h2>${c.title}</h2>
+    <div class="mdp" id="mdp-grid"></div>
+    <div class="mdpsum" id="mdp-summary"></div>`;}
   else if(c.kind==='pairs'){el.innerHTML=`<h2>${c.title}</h2>
     <div class="pair-grid" id="parallel-pair-grid"></div>`;}
   else if(c.kind==='pairplots'){el.innerHTML=`<h2>${c.title}</h2><div class="pair-plot-grid">`
@@ -336,11 +465,13 @@ function draw(card,state){
         if(!Number.isFinite(yv)||!Number.isFinite(xv))continue;
         xs.push(xv);ys.push(yv);}
       if(!xs.length)continue;
-      const label=(card.kind==='pairplots')
-        ?(card.labels?card.labels[yKeys.indexOf(key)]:key)
+      const named=card.labels?card.labels[yKeys.indexOf(key)]:key;
+      const label=(card.kind==='pairplots')?named
         :(card.labels&&yKeys.length>1)
-        ?`${LABELS[s]||s} ${card.labels[yKeys.indexOf(key)]}`
-        :(yKeys.length>1?(card.labels?card.labels[yKeys.indexOf(key)]:key):(LABELS[s]||s));
+        // Prefix with the method only when more than one method is drawn;
+        // otherwise every legend entry repeats the same long name.
+        ?(sources.length>1?`${LABELS[s]||s} ${named}`:named)
+        :(yKeys.length>1?named:(LABELS[s]||s));
       const benchmarkMethod=s.replace(/^benchmark_(train|eval)_/,'');
       const benchmarkIndex=BENCHMARK_METHODS.indexOf(benchmarkMethod);
       const colorIndex=benchmarkIndex>=0?benchmarkIndex:
@@ -398,19 +529,10 @@ function drawPairPlots(card,state){
     if(card.plot==='reward')spec={
       y:['reward','task','active_perception','ontology_fov_reward'],
       labels:['전체','terminal task','Shin active perception','Ontology FOV 추가']};
-    else if(card.plot==='flight')spec={
-      y:['uav_speed_m_s','ugv_speed_m_s','geometric_in_fov','battery_reserve'],
-      labels:['UAV 속도','UGV 속도','기하 FOV(패드 중심)','배터리 여유'],ymin:0};
     else if(card.plot==='perception')spec={
       y:['geometric_in_fov','keypoint_confidence','visible_keypoint_fraction','fov_margin'],
       labels:['기하 FOV(패드 중심)','keypoint 신뢰도','keypoint 가시 비율','FOV margin'],
       ymin:0,ymax:1};
-    else if(method==='shin_se_onto_rgat_recovery')spec={
-      y:['position_error','estimation_loss','predicted_fov_unavailability','ontology_fov_reward'],
-      labels:['SE 위치 오차','6-state 손실','미래 FOV 소실 확률','추가 FOV 보상']};
-    else if(method==='shin_se_fixed')spec={
-      y:['position_error','velocity_error','estimation_loss','geometric_in_fov'],
-      labels:['위치 오차','속도 오차','6-state 손실','기하 FOV(패드 중심)'],ymin:0};
     else spec={
       y:['geometric_in_fov','lateral_progress','vertical_progress','vertical_speed_penalty'],
       labels:['기하 FOV(패드 중심)','수평 progress','수직 progress','수직속도 penalty']};
@@ -418,30 +540,278 @@ function drawPairPlots(card,state){
       series:[`benchmark_step_pair_${index}`],x:'step'},state);
   }
 }
+function meanOf(rows,key,tail){
+  const use=tail?rows.slice(-tail):rows;
+  const values=use.map(r=>Number(r[key])).filter(Number.isFinite);
+  return values.length?values.reduce((a,b)=>a+b,0)/values.length:null;
+}
+function lastOf(rows,key){
+  for(let i=rows.length-1;i>=0;i--){const v=Number(rows[i][key]);
+    if(Number.isFinite(v))return v;}
+  return null;
+}
+const pctText=v=>v===null?'--':(100*v).toFixed(1)+'%';
+function deltaText(value,digits){
+  if(value===null)return '--';
+  const shown=Math.abs(value)<Math.pow(10,-digits)/2?0:value;
+  return (shown>0?'+':shown<0?'−':'')+Math.abs(shown).toFixed(digits);
+}
 function tiles(state){
-  const s=state.scalars||{};const out=[];
-  const add=(label,value)=>out.push(
-    `<div class="tile"><b>${escapeHTML(value)}</b><span>${escapeHTML(label)}</span></div>`);
-  const methods=s.benchmark_methods||[];
-  const trained=methods.reduce((n,m)=>n+(state.series['benchmark_train_'+m]||[]).length,0);
+  const s=state.scalars||{},out=[];
+  const add=(label,value,note,cls)=>out.push(
+    `<div class="tile ${cls||''}"><b>${escapeHTML(value)}</b>`+
+    `<span>${escapeHTML(label)}</span>`+
+    (note?`<small>${escapeHTML(note)}</small>`:'')+`</div>`);
+  const base='shin_se_fixed',prop='shin_se_onto_rgat_recovery';
+  const evalRows=m=>state.series['benchmark_eval_'+m]||[];
+  const trainRows=m=>state.series['benchmark_train_'+m]||[];
+  const trained=BENCHMARK_METHODS.reduce((n,m)=>n+trainRows(m).length,0);
+
   add('단계',state.stage.name);
   add('실험 phase',s.benchmark_phase||'initializing');
-  add('UAV / UGV pair',Number(s.parallel_pair_count||2));
-  add('실행 모드',s.benchmark_mode||'--');
-  const trainingDone=trained>=Number(s.training_total||0)&&Number(s.training_total||0)>0;
-  add('학습 checkpoint',`${trained} / ${s.training_total||0}${trainingDone?' · 완료':' · 진행'}`);
-  add('현재 평가 진행',`${s.evaluation_completed||0} / ${s.evaluation_total||0}`);
-  methods.forEach(method=>{
-    const rows=state.series['benchmark_eval_'+method]||[];
-    const success=rows.length?rows.reduce((sum,row)=>sum+Number(row.paper_success||0),0)/rows.length:null;
-    add(`${methodLabel(method)} 평가`,`${rows.length}회 · ${success===null?'대기':(100*success).toFixed(1)+'%'}`);
-  });
-  if(s.rgat_dataset_episodes!==undefined){
-    add('R-GAT 실제 비행 데이터',`${s.rgat_dataset_episodes} ep / ${s.rgat_dataset_samples||0}`);
-    add('R-GAT 안전 접촉',`${s.rgat_dataset_successes||0} / ${s.rgat_dataset_episodes}`);}
-  if(s.config_hash)add('설정 hash',String(s.config_hash).slice(0,10));
-  if(s.reward_design_id)add('보상 설계',String(s.reward_design_id).slice(0,16));
+  add('학습 checkpoint',`${trained} / ${s.training_total||0}`,
+      trained>=Number(s.training_total||0)&&Number(s.training_total||0)>0?'완료':'진행 중');
+  add('평가 진행',`${s.evaluation_completed||0} / ${s.evaluation_total||0}`);
+
+  // Head to head. The delta is the whole point of the experiment, so it is a
+  // tile of its own rather than something to read off two other tiles.
+  const baseSuccess=meanOf(evalRows(base),'paper_success');
+  const propSuccess=meanOf(evalRows(prop),'paper_success');
+  add('Baseline 성공률',pctText(baseSuccess),`평가 ${evalRows(base).length}회`);
+  add('Proposed 성공률',pctText(propSuccess),`평가 ${evalRows(prop).length}회`);
+  add('Δ 성공률',
+      baseSuccess===null||propSuccess===null?'--'
+      :deltaText(100*(propSuccess-baseSuccess),1)+'%p',
+      'Proposed − Baseline · 표본이 작으면 해석 금지','delta');
+
+  const baseFov=meanOf(trainRows(base),'geometric_fov_loss_fraction',50);
+  const propFov=meanOf(trainRows(prop),'geometric_fov_loss_fraction',50);
+  add('Baseline FOV 소실률',pctText(baseFov),'최근 50 ep');
+  add('Proposed FOV 소실률',pctText(propFov),'최근 50 ep');
+  add('Δ FOV 소실률',
+      baseFov===null||propFov===null?'--'
+      :deltaText(100*(propFov-baseFov),1)+'%p',
+      'Proposed − Baseline · 음수가 개선','delta');
+
+  // What the added reward is doing, and whether it is believable.
+  const share=lastOf(trainRows(prop),'ontology_fov_reward_share');
+  const mae=lastOf(trainRows(prop),'fov_prediction_mae');
+  const predicted=lastOf(trainRows(prop),'fov_predicted_mean');
+  const actual=lastOf(trainRows(prop),'fov_actual_mean');
+  add('추가 보상 비중',share===null?'--':(100*share).toFixed(1)+'%',
+      'step 보상 크기 대비 −λ·q');
+  add('readout MAE',mae===null?'--':mae.toFixed(3),
+      predicted===null||actual===null?'관측된 미래창만'
+      :`예측 ${predicted.toFixed(2)} / 실측 ${actual.toFixed(2)}`);
+  // Only the FOV readout's own scalar. reward_design_id can still hold a
+  // legacy fixed-reward design restored from disk, which is a different
+  // artifact and must not appear under this label.
+  if(s.fov_risk_design_id)
+    add('FOV readout 설계',String(s.fov_risk_design_id).slice(0,12),'PPO 중 동결');
+  if(s.config_hash)add('설정 hash',String(s.config_hash).slice(0,10),'두 arm 공통');
   document.getElementById('tiles').innerHTML=out.join('');
+}
+const KIND_LABEL={infra:'infra',gate:'검증',train:'학습',data:'데이터',
+  eval:'평가',report:'보고'};
+function fovRow(label,value,cls){
+  return `<div class="fovrow ${cls||''}"><span>${escapeHTML(label)}</span>`
+    +`<b>${escapeHTML(value)}</b></div>`;}
+function fovStatusPanel(state){
+  const box=document.getElementById('fov-status');if(!box)return;
+  const s=state.scalars||{};
+  const data=s.fov_dataset,train=s.fov_training,model=s.fov_model;
+  const num=(v,d)=>Number.isFinite(Number(v))?Number(v).toFixed(d===undefined?3:d):'--';
+  const cards=[];
+
+  // 1. collection. The loop exits on target coverage, not on the episode
+  // count, so the count alone would misreport how far along it is.
+  let cls=data?(data.covered?'done':'run'):'';
+  let body='';
+  if(!data){body='<div class="fovempty">아직 시작하지 않았습니다.</div>';}
+  else{
+    const frac=Math.max(0,Math.min(1,Number(data.episodes)/Math.max(1,Number(data.maximum))));
+    const minMark=Math.max(0,Math.min(1,Number(data.minimum)/Math.max(1,Number(data.maximum))));
+    body=`<div class="fovbar"><i style="width:${(100*frac).toFixed(1)}%"></i>`
+      +`<u style="left:${(100*minMark).toFixed(1)}%" title="최소 episode"></u></div>`
+      +fovRow('episode',`${data.episodes} / 최소 ${data.minimum} · 상한 ${data.maximum}`)
+      +fovRow('두 regime 확보',data.covered?'예':'아직',data.covered?'good':'warn')
+      +fovRow('FOV 소실이 있던 episode',String(data.loss_episodes))
+      +fovRow('지도 가능 sample',String(data.supervised_samples))
+      +fovRow('꼬리 mask',String(data.masked_samples))
+      +fovRow('평균 목표 y',num(data.target_mean))
+      +fovRow('환경 step',String(data.environment_steps))
+      +(data.cached?fovRow('출처','재사용된 캐시'):'');
+  }
+  cards.push(`<div class="fovbox ${cls}"><h3>1. 데이터 수집<i>`
+    +(data?(data.covered?'완료':'진행'):'대기')+`</i></h3>${body}</div>`);
+
+  // 2. offline training
+  cls=model?'done':(train?'run':'');
+  if(model)body=fovRow('epoch','완료')
+      +fovRow('최종 검증 손실',num(train&&train.best_validation_loss,5))
+      +fovRow('규약 위반',num(model.contract_violation,5),
+        Number(model.contract_violation)>0.01?'warn':'good')
+      +fovRow('학습/검증 episode',
+        `${model.train_episodes} / ${model.validation_episodes}`)
+      +fovRow('목적함수',String(model.loss||'--'));
+  else if(train)body=`<div class="fovbar"><i style="width:`
+      +`${(100*Math.max(0,Math.min(1,Number(train.epoch)/Math.max(1,Number(train.total_epochs))))).toFixed(1)}%"></i></div>`
+      +fovRow('epoch',`${train.epoch} / ${train.total_epochs}`)
+      +fovRow('검증 손실',num(train.validation_loss,5))
+      +fovRow('최저 검증 손실',num(train.best_validation_loss,5),
+        train.improved?'good':'')
+      +fovRow('규약 위반',num(train.validation_contract,5));
+  else body='<div class="fovempty">데이터 수집이 끝나면 시작합니다.</div>';
+  cards.push(`<div class="fovbox ${cls}"><h3>2. readout 학습<i>`
+    +(model?'동결됨':(train?'진행':'대기'))+`</i></h3>${body}</div>`);
+
+  // 3. what the frozen readout is worth. The constant predictor sits next to
+  // the RMSE because an error alone cannot say the model beat the mean.
+  cls=model?'done':'';
+  if(!model)body='<div class="fovempty">학습이 끝나면 표시합니다.</div>';
+  else{
+    const rmse=Number(model.rmse),base=Number(model.constant_predictor_rmse);
+    const beats=Number.isFinite(rmse)&&Number.isFinite(base)&&rmse<base;
+    body=fovRow('MAE',num(model.mae))
+      +fovRow('RMSE',num(rmse))
+      +fovRow('상수 예측기 RMSE',num(base))
+      +fovRow('상수 예측기보다 나은가',
+        Number.isFinite(rmse)&&Number.isFinite(base)?(beats?'예':'아니오'):'--',
+        beats?'good':'bad')
+      +fovRow('편향',num(model.bias))
+      +fovRow('예측 / 실측 평균',
+        `${num(model.prediction_mean,3)} / ${num(model.target_mean,3)}`)
+      +fovRow('PPO 중 동결',model.frozen?'예':'아니오',model.frozen?'good':'bad')
+      +fovRow('설계 id',String(model.design_id||'--').slice(0,16));
+  }
+  cards.push(`<div class="fovbox ${cls}"><h3>3. 동결 readout 검증<i>`
+    +(model?'확정':'대기')+`</i></h3>${body}</div>`);
+  box.innerHTML=cards.join('');
+}
+function runPipelinePanel(state){
+  const box=document.getElementById('run-pipeline');if(!box)return;
+  const spec=(state.scalars||{}).run_pipeline;
+  if(!spec){box.innerHTML='';return;}
+  const stages=spec.stages||[],aliases=spec.aliases||{};
+  const raw=String(state.stage.name||'');
+  const name=aliases[raw]||raw;
+  let active=stages.findIndex(s=>s.id===name);
+  if(active<0)active=stages.findIndex(s=>name&&(name.startsWith(s.id)||s.id.startsWith(name)));
+  // The evaluation phase is authoritative even when a worker thread is
+  // reporting its own per-pair stage name.
+  if(String((state.scalars||{}).benchmark_phase||'')==='evaluation')
+    active=stages.findIndex(s=>s.id==='paired evaluation');
+  box.innerHTML=stages.map((stage,index)=>{
+    const cls=active<0?'pending':index<active?'done':index===active?'active':'pending';
+    return `<div class="runstage ${cls}">`
+      +`<i class="kind">${escapeHTML(KIND_LABEL[stage.kind]||stage.kind)}</i>`
+      +`<b>${index+1}. ${escapeHTML(stage.title)}`
+      +(stage.optional?' <small style="color:#8a8a8a">(선택)</small>':'')+`</b>`
+      +`<span>${escapeHTML(stage.detail)}</span>`
+      +`<em>→ ${escapeHTML(stage.produces)}</em></div>`;}).join('');
+  const note=document.getElementById('run-pipeline-note');
+  if(note)note.textContent=spec.note||'';
+}
+function algoPipelinePanel(state){
+  const box=document.getElementById('algo-pipeline');if(!box)return;
+  const spec=(state.scalars||{}).algorithm_pipeline;
+  if(!spec){box.innerHTML='<span style="color:#666">제안 파이프라인이 구성되면 표시됩니다.</span>';
+    const empty=document.getElementById('algo-limits');if(empty)empty.innerHTML='';return;}
+  const chain=spec.chain||[];
+  const W=176,GAP=28,H=118,X0=14,Y=54;
+  const width=X0*2+chain.length*W+(chain.length-1)*GAP;
+  const offY=Y+H+74,OFFH=84,total=offY+OFFH+42;
+  const parts=[];
+  parts.push(`<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5"
+    markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0,0 L10,5 L0,10 z" fill="#5a5a5a"/></marker>
+    <marker id="ahd" viewBox="0 0 10 10" refX="9" refY="5"
+    markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0,0 L10,5 L0,10 z" fill="#D95319"/></marker></defs>`);
+  const kept=spec.deployed_stages??2;
+  parts.push(`<rect x="${X0}" y="12" width="11" height="11" fill="#0072BD"/>`);
+  parts.push(`<text x="${X0+17}" y="22" font-size="11" fill="#262626">`
+    +`배포에 남음 (앞 ${kept}단계)</text>`);
+  parts.push(`<rect x="${X0+178}" y="12" width="11" height="11" fill="#D95319"/>`);
+  parts.push(`<text x="${X0+195}" y="22" font-size="11" fill="#262626">`
+    +`학습 전용 · 배포 시 제거</text>`);
+  chain.forEach((node,index)=>{
+    const x=X0+index*(W+GAP);
+    const online=index<(spec.deployed_stages??2);
+    const accent=online?'#0072BD':'#D95319';
+    const faded=online?'#f3f8fc':'#fff7f0';
+    parts.push(`<rect x="${x}" y="${Y}" width="${W}" height="${H}" rx="2"
+      fill="${faded}" stroke="${accent}" stroke-width="1.2"/>`);
+    parts.push(`<rect x="${x}" y="${Y}" width="${W}" height="4" fill="${accent}"/>`);
+    parts.push(`<text x="${x+11}" y="${Y+24}" font-size="12.5" font-weight="700"
+      fill="#262626">${escapeHTML(node.title)}</text>`);
+    (node.lines||[]).forEach((line,li)=>parts.push(
+      `<text x="${x+11}" y="${Y+43+li*16}" font-size="10.5" fill="#4d4d4d">`
+      +`${escapeHTML(line)}</text>`));
+    if(index<chain.length-1)parts.push(`<line x1="${x+W}" y1="${Y+H/2}"
+      x2="${x+W+GAP-4}" y2="${Y+H/2}" stroke="#5a5a5a" stroke-width="1.4"
+      marker-end="url(#ah)"/>`);
+  });
+  const offline=spec.offline||{};
+  const target=Math.max(0,chain.findIndex(n=>n.id===(offline.into||'rgat')));
+  const ox=X0,ow=X0+target*(W+GAP)+W-X0;
+  parts.push(`<rect x="${ox}" y="${offY}" width="${ow}" height="${OFFH}" rx="2"
+    fill="#fdf6ef" stroke="#D95319" stroke-width="1.2" stroke-dasharray="6 4"/>`);
+  parts.push(`<text x="${ox+12}" y="${offY+22}" font-size="12" font-weight="700"
+    fill="#8a3b12">${escapeHTML(offline.title||'오프라인 지도')}</text>`);
+  (offline.lines||[]).forEach((line,li)=>parts.push(
+    `<text x="${ox+12}" y="${offY+42+li*16}" font-size="10.5" fill="#6b4226">`
+    +`${escapeHTML(line)}</text>`));
+  const jx=X0+target*(W+GAP)+W/2;
+  parts.push(`<line x1="${jx}" y1="${offY}" x2="${jx}" y2="${Y+H+6}"
+    stroke="#D95319" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#ahd)"/>`);
+  parts.push(`<text x="${jx+8}" y="${offY-8}" font-size="10" fill="#8a3b12">`
+    +`학습 시에만 · 추론에는 들어가지 않음</text>`);
+  const dep=spec.deployment||{};
+  const depY=offY+OFFH+28;
+  parts.push(`<text x="${X0}" y="${depY}" font-size="11" fill="#262626">`
+    +`<tspan font-weight="700" fill="#77AC30">배포 유지</tspan>`
+    +`<tspan dx="8">${escapeHTML((dep.keeps||[]).join(' · '))}</tspan></text>`);
+  parts.push(`<text x="${X0+430}" y="${depY}" font-size="11" fill="#262626">`
+    +`<tspan font-weight="700" fill="#A2142F">배포 제거</tspan>`
+    +`<tspan dx="8">${escapeHTML((dep.drops||[]).join(' · '))}</tspan></text>`);
+  box.innerHTML=`<svg viewBox="0 0 ${width} ${total}" role="img"
+    aria-label="제안 알고리즘 파이프라인">${parts.join('')}</svg>`;
+  const limits=document.getElementById('algo-limits');
+  if(limits)limits.innerHTML=(spec.limits||[]).map(text=>
+    `<span><b>주의</b>${escapeHTML(text)}</span>`).join('');
+}
+function mdpPanel(state){
+  const box=document.getElementById('mdp-grid');if(!box)return;
+  const spec=(state.scalars||{}).mdp_contract;
+  if(!spec){box.innerHTML='';const s0=document.getElementById('mdp-summary');
+    if(s0)s0.textContent='';return;}
+  const arms=spec.arms||[],rows=spec.rows||[];
+  const out=[`<div class="hd"></div>`];
+  arms.forEach((arm,index)=>out.push(
+    `<div class="hd a${index}">${escapeHTML(arm.label)}`
+    +`<span class="nt">${escapeHTML(arm.role||'')}</span></div>`));
+  rows.forEach(row=>{
+    out.push(`<div class="rk">${escapeHTML(row.label)}</div>`);
+    if(row.identical){
+      // One cell spanning both arms: the claim is that there is nothing to
+      // compare here, and a split cell would invite comparing it anyway.
+      out.push(`<div class="same"><span class="tag">동일</span>`
+        +`${escapeHTML(row.value)}`
+        +(row.note?`<span class="nt">${escapeHTML(row.note)}</span>`:'')+`</div>`);
+    }else{
+      out.push(`<div class="diff base">${escapeHTML(row.value)}`
+        +(row.note?`<span class="nt">${escapeHTML(row.note)}</span>`:'')+`</div>`);
+      out.push(`<div class="diff"><span class="tag">차이</span>`
+        +`${escapeHTML(row.value)}`
+        +`<span class="nt">+ ${escapeHTML(row.delta||'')}</span></div>`);
+    }
+  });
+  box.innerHTML=out.join('');
+  const summary=document.getElementById('mdp-summary');
+  if(summary)summary.innerHTML=
+    `${spec.total_count}개 구조 항목 중 <b>${spec.total_count-spec.identical_count}개</b>만 다르다.`
+    +' 나머지는 두 arm에서 같은 코드 경로를 쓴다.';
 }
 function phasePanel(state){
   const s=state.scalars||{},phase=String(s.benchmark_phase||'initializing');
@@ -513,7 +883,7 @@ function pairPanel(state){
       +`<div class="pair-rewards"><div class="pair-reward"><b>${Number.isFinite(activeReward)?activeReward.toFixed(3):'--'}</b>`
       +`<small>공통 Shin active-perception reward</small></div>`
       +(proposed
-        ?`<div class="pair-reward added"><b>margin ${Number.isFinite(fovMargin)?fovMargin.toFixed(2):'--'} · P(loss≤1s) ${Number.isFinite(fovRisk)?fovRisk.toFixed(2):'--'} · r ${Number.isFinite(ontoReward)?ontoReward.toFixed(3):'--'}</b>`
+        ?`<div class="pair-reward added"><b>margin ${Number.isFinite(fovMargin)?fovMargin.toFixed(2):'--'} · q(1s 비가용 비율) ${Number.isFinite(fovRisk)?fovRisk.toFixed(2):'--'} · r ${Number.isFinite(ontoReward)?ontoReward.toFixed(3):'--'}</b>`
           +`<small>제안 모델에만 추가된 Ontology-R-GAT FOV-risk reward</small></div>`
         :`<div class="pair-reward added off"><b>OFF</b><small>Ontology-R-GAT FOV-risk 추가 분기</small></div>`)
       +`</div>`
@@ -908,17 +1278,18 @@ function applyProfile(state){
   document.body.dataset.profile=profile;
   document.getElementById('page-title').textContent=
     '2쌍 Shin baseline / Ontology-R-GAT FOV 비교';
+  const hasGraph=Boolean(state.graph)||Object.keys(state.graphs||{}).length>0;
   for(const c of CARDS){
     const el=document.getElementById('card-'+c.id);
-    el.hidden=Boolean(c.view&&c.view!=='common'&&c.view!==profile);
+    el.hidden=Boolean(c.view&&c.view!=='common'&&c.view!==profile)
+      ||(c.kind==='graph'&&!hasGraph);
   }
   if(profile==='benchmark'){
     const pipeline=state.scalars.current_pipeline||state.scalars.current_method||'';
     const active=Number(state.scalars.parallel_pair_count||1)>1
       ?(state.scalars.benchmark_methods||[]):[pipeline];
     const estimator=active.some(x=>x.startsWith('shin_se')||x==='shin2026');
-    for(const id of ['benchmark_position_rmse','benchmark_velocity_rmse','benchmark_aux',
-                     'benchmark_active_saturation',
+    for(const id of ['benchmark_position_rmse','benchmark_active_saturation',
                      'benchmark_eval_position','benchmark_eval_velocity',
                      'benchmark_eval_visual_loss']){
       const el=document.getElementById('card-'+id);if(el)el.hidden=!estimator;
@@ -938,10 +1309,16 @@ async function tick(){
       const profile=applyProfile(state);
       tiles(state);
       phasePanel(state);
+      runPipelinePanel(state);
+      fovStatusPanel(state);
+      algoPipelinePanel(state);
+      mdpPanel(state);
       if(profile==='benchmark')pairPanel(state);
       for(const c of CARDS){
         if(c.id==='tiles'||c.kind==='graph'||c.kind==='contract'||c.kind==='pairs'||
-           c.kind==='phase'||
+           c.kind==='phase'||c.kind==='heading'||c.kind==='runpipe'||
+           c.kind==='fovstatus'||
+           c.kind==='algopipe'||c.kind==='mdp'||
            c.kind==='pairplots'||
            (c.view&&c.view!=='common'&&c.view!==profile))continue;
         c.kind==='evalbars'?drawEvaluationBars(c,state):draw(c,state);

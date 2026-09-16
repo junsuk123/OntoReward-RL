@@ -281,48 +281,83 @@ def test_pair_status_routes_by_physical_index_during_crossover():
     assert pairs[1]["step"] == 0
 
 
-def test_dashboard_has_self_contained_matlab_style_benchmark_view():
-    assert "두 방법론의 동일 Shin RL 계약과 추가 FOV 분기" in PAGE
+def test_dashboard_is_organised_as_comparison_then_ontology_then_run_state():
+    """Three questions, in order, and nothing that answers none of them."""
+    # 1. the two models against each other
+    assert "1 · 두 모델 성능" in PAGE
+    assert "[평가] 안전 착륙 성공률" in PAGE
+    assert "[평가] scenario별 성공률" in PAGE
+    assert "[평가] 상대 위치 RMSE (m)" in PAGE
+    assert "[평가] 상대 속도 RMSE (m/s)" in PAGE
+    assert "[학습] 안전 착륙 성공률" in PAGE
     assert "benchmark_eval_scenario" in PAGE
+    # The head-to-head difference is its own tile, not something to subtract
+    # by eye from two other tiles.
+    assert "Δ 성공률" in PAGE
+    assert "Δ FOV 소실률" in PAGE
+    assert "Proposed − Baseline · 표본이 작으면 해석 금지" in PAGE
+    assert "Proposed − Baseline · 음수가 개선" in PAGE
+
+    # 2. what the ontology branch actually did, and whether it was right
+    assert "2 · 온톨로지-R-GAT의 영향력" in PAGE
+    assert "FOV 소실 시간 비율 (낮을수록 좋음)" in PAGE
+    assert "readout 보정 · 예측 대 실측 FOV 비가용 비율" in PAGE
+    assert "fov_predicted_mean" in PAGE and "fov_actual_mean" in PAGE
+    assert "fov_prediction_mae" in PAGE and "fov_prediction_bias" in PAGE
+    assert "ontology_fov_reward_share" in PAGE
+    assert "ontology_fov_reward_sum" in PAGE
+    assert "series:PROPOSED_TRAIN" in PAGE
+    assert "FOV 온톨로지 → R-GAT 비가용 비율 readout" in PAGE
+
+    # 3. run state, explicitly framed as not being the comparison
+    assert "3 · 실행 상태" in PAGE
+    assert "비교 대상이 아니라" in PAGE
+    assert "두 방법론의 동일 Shin RL 계약과 추가 FOV 분기" in PAGE
     assert "Hard information boundary" in PAGE
-    assert "parallel_live_method" in PAGE
+    assert "배터리 고갈 종료율 (원문에 없는 이 백엔드의 종료 조건)" in PAGE
+
+    # the live two-pair view survives, the redundant duplicates do not
     assert "pair-plot-grid" in PAGE
+    assert "parallel-pair-grid" in PAGE
     assert "benchmark_step_pair_${index}" in PAGE
-    assert "UAV action-envelope curriculum" in PAGE
-    assert "실시간 비행 상태 · pair별 독립 sensor" in PAGE
-    assert "배터리 고갈 종료율" in PAGE
-    assert "학습 checkpoint" in PAGE
-    assert "학습 완료 · 현재 crossover paired evaluation 갱신 중" in PAGE
     assert "물리 Pair ${index+1} · 현재 정책:" in PAGE
     assert "학습 배정:" in PAGE
     assert "Crossover 평가에서는 정책이 물리 pair를 seed마다 순환" in PAGE
-    assert "“현재 정책”으로 표시된 방법에 귀속" in PAGE
-    assert "add(`${methodLabel(method)} 평가`" in PAGE
     assert "border-top-color:${activeColor}" in PAGE
-    assert "[현재 평가] 이동 성공률" in PAGE
-    assert "[완료된 학습 기록] 이동 성공률" in PAGE
-    assert "rows.length+' completed'" in PAGE
-    assert "training_total||0)/" not in PAGE
-    assert "parallel-pair-grid" in PAGE
-    assert "2쌍 Shin baseline / Ontology-R-GAT FOV 비교" in PAGE
-    assert "FOV Ontology → R-GAT 미래 소실 확률 모듈" in PAGE
-    assert "공통 Shin active-perception reward" in PAGE
-    assert "제안 모델에만 추가된 Ontology-R-GAT FOV-risk reward" in PAGE
-    assert "P(loss≤1s)" in PAGE
-    assert "series:['benchmark_step_shin_se_onto_rgat_recovery']" in PAGE
+    assert "graphSnapshots" in PAGE and "state.graphs" in PAGE
     assert "모든 node 값" in PAGE
     assert "모든 edge · attention-head 값" in PAGE
-    assert "모든 MLP 출력 head 값" in PAGE
-    assert "state.graphs" in PAGE
-    assert "graphSnapshots" in PAGE
-    assert "view:'urban'" not in PAGE
-    assert "rewardPanel" not in PAGE
-    assert "debug only" not in PAGE
-    assert "No SE 행동 정책" not in PAGE
-    assert "[0,1,2].map" not in PAGE
-    assert "prefers-color-scheme:dark" not in PAGE
     for color in MATLAB_COLORS:
         assert color in PAGE
+
+
+def test_the_dashboard_drops_cards_that_answer_none_of_the_three_questions():
+    for removed in (
+            "parallel_live_flight",            # duplicate of the pair panel
+            "parallel_live_method",            # superseded by section 2
+            "benchmark_aux",                   # covered by the RMSE cards
+            "benchmark_lr",                    # PPO plumbing
+            "benchmark_early_stop",
+            "benchmark_battery_used",          # battery is a declared deviation
+            "benchmark_battery_final",
+            "benchmark_action_scale",          # merged into the curriculum card
+            "UAV action-envelope curriculum",
+            "실시간 비행 상태 · pair별 독립 sensor"):
+        assert removed not in PAGE, removed
+    # Stale vocabulary from the retired binary readout must not survive either.
+    assert "P(loss≤1s)" not in PAGE
+    assert "미래 FOV 소실 확률" not in PAGE
+    assert "소실 확률" not in PAGE
+    assert "view:'urban'" not in PAGE
+    assert "rewardPanel" not in PAGE
+    assert "prefers-color-scheme:dark" not in PAGE
+
+
+def test_the_dashboard_calls_the_readout_a_time_fraction_not_a_probability():
+    assert "q(1s 비가용 비율)" in PAGE
+    assert "예측 q (향후 1s FOV 밖 시간 비율)" in PAGE
+    assert "이진 확률이 아니다" in PAGE
+    assert "추가 보상 −λ·q" in PAGE
 
 
 def test_baseline_reports_keypoint_quality_from_the_shared_visual_features():
@@ -395,3 +430,51 @@ def test_rviz_receives_geometric_fov_and_keypoint_quality_separately():
     assert published["geometric_in_fov"] is False
     assert published["keypoint_confidence"] == pytest.approx(0.8)
     assert published["visible_keypoint_fraction"] == pytest.approx(1.0)
+
+
+def test_every_dashboard_series_key_is_actually_emitted_somewhere():
+    """A renamed metric must break a test, not silently blank a card.
+
+    Cards read keys out of the telemetry by name. If a producer renames one,
+    the card keeps rendering and just says "no data yet" forever, which is
+    indistinguishable from a run that has not started.
+    """
+    import re
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1] / "python/ontology_rgat"
+    produced = "\n".join(
+        (root / name).read_text(encoding="utf-8")
+        for name in ("ppo/recurrent_train.py", "viz/live.py"))
+
+    keys = set()
+    for match in re.finditer(r"y:'([a-z0-9_]+)'", PAGE):
+        keys.add(match.group(1))
+    for match in re.finditer(r"y:\[([^\]]+)\]", PAGE):
+        keys.update(re.findall(r"'([a-z0-9_]+)'", match.group(1)))
+    # Sanity: the parse has to find the cards, not an empty set.
+    assert "paper_success" in keys and "fov_prediction_mae" in keys
+    assert len(keys) >= 20
+
+    missing = sorted(key for key in keys if f'"{key}"' not in produced)
+    assert missing == [], f"dashboard reads keys nothing emits: {missing}"
+
+
+def test_the_fov_readout_id_is_not_taken_from_a_legacy_reward_design():
+    """``Dashboard.start()`` restores a legacy fixed-reward design from disk
+    into ``reward_design_id``. Labelling that as the FOV readout would credit
+    a PBRS artifact for the proposed method's frozen scalar."""
+    monitor, store, _ = _monitor(["shin_se_fixed", "shin_se_onto_rgat_recovery"])
+    assert store.snapshot()["scalars"]["fov_risk_design_id"] is None
+    monitor.configure(
+        methods=["shin_se_fixed", "shin_se_onto_rgat_recovery"], mode="full",
+        config_hash="cfg", training_total=4, evaluation_total=2,
+        reward_design_id="legacy-pbrs-000", fov_risk_design_id="fov-risk-abc123",
+        pair_layout=[{"index": 0, "method": "shin_se_fixed"},
+                     {"index": 1, "method": "shin_se_onto_rgat_recovery"}])
+    scalars = store.snapshot()["scalars"]
+    assert scalars["fov_risk_design_id"] == "fov-risk-abc123"
+    assert scalars["reward_design_id"] == "legacy-pbrs-000"
+    # The tile reads only the dedicated key.
+    assert "s.fov_risk_design_id" in PAGE
+    assert "add('FOV readout 설계',String(s.reward_design_id)" not in PAGE

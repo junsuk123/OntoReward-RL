@@ -25,7 +25,7 @@ def test_reward_monitor_publishes_rgat_pbrs_decomposition():
 
 def test_dashboard_uses_pair_specific_reward_charts_without_legacy_panel():
     assert "parallel_live_reward" in PAGE
-    assert "실시간 보상 · pair별 독립 trajectory" in PAGE
+    assert "실시간 보상 분해 · pair별 독립 trajectory" in PAGE
     assert "benchmark_step_pair_${index}" in PAGE
     assert "Shin active perception" in PAGE
     assert "Ontology FOV 추가" in PAGE

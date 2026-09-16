@@ -60,6 +60,8 @@ from ontology_rgat.rgat import (
     load_fov_risk_dataset, prepare_fov_risk_artifact,
     save_fov_risk_dataset)
 from ontology_rgat.stack import ExternalStack
+from ontology_rgat.viz.contracts import (algorithm_pipeline_contract,
+                                          mdp_contract)
 from ontology_rgat.viz.dashboard import Dashboard
 from ontology_rgat.viz.live import BenchmarkMonitor, STORE
 from ontology_rgat.viz.rviz import RvizPublisher
@@ -953,6 +955,19 @@ def _fov_target_coverage(dataset) -> bool:
     return bool(np.any(supervised <= 0.0) and np.any(supervised > 0.0))
 
 
+def _fov_dataset_progress(dataset) -> dict:
+    """Counts the collection loop already has, in one place for telemetry."""
+    y = np.asarray(dataset["y"], dtype=np.float64)
+    valid = np.asarray(dataset["valid"], dtype=bool)
+    supervised = y[valid]
+    return {
+        "supervised_samples": int(valid.sum()),
+        "masked_samples": int((~valid).sum()),
+        "target_mean": (float(np.mean(supervised)) if supervised.size else None),
+        "covered": _fov_target_coverage(dataset),
+    }
+
+
 def _collect_fov_risk_data(*, cfg, camera, model, config, config_hash,
                            checkpoint_path, results_dir, mode, monitor,
                            episodes_override=None, max_episodes_override=None,
@@ -976,15 +991,21 @@ def _collect_fov_risk_data(*, cfg, camera, model, config, config_hash,
                 dataset_path, config_hash=config_hash)
             if (int(cached_manifest.get("episodes", 0)) >= minimum
                     and _fov_target_coverage(cached)):
-                return (cached, cached_manifest, dataset_path,
-                        int(cached_manifest.get(
-                            "environment_steps", cached_manifest["samples"])))
+                steps = int(cached_manifest.get(
+                    "environment_steps", cached_manifest["samples"]))
+                monitor.fov_dataset(
+                    episodes=int(cached_manifest.get("episodes", 0)),
+                    minimum=minimum, maximum=maximum,
+                    loss_episodes=0, environment_steps=steps, cached=True,
+                    **_fov_dataset_progress(cached))
+                return cached, cached_manifest, dataset_path, steps
         except (OSError, ValueError, KeyError, json.JSONDecodeError) as exc:
             print(f"Ignoring incompatible FOV-risk rollout cache: {exc}")
 
     seed0 = int((config.get("seeds") or {}).get("fov_risk_dataset_start", 70000))
     episodes = []
     total_steps = 0
+    loss_episodes = 0
     monitor.stage("FOV-risk data", "visual-only graph · future visibility labels")
     with LiveShinEnvironment(
             cfg, camera, horizon_steps=int(cfg.sim.max_steps)) as environment:
@@ -1006,9 +1027,15 @@ def _collect_fov_risk_data(*, cfg, camera, model, config, config_hash,
                                if rows else [])),
             })
             total_steps += len(rows)
+            loss_episodes += int(metric["geometric_fov_loss_episode_rate"])
             dataset = build_fov_risk_dataset(
                 episodes, prediction_steps=prediction_steps)
-            if episode_id >= minimum and _fov_target_coverage(dataset):
+            progress = _fov_dataset_progress(dataset)
+            monitor.fov_dataset(
+                episodes=episode_id, minimum=minimum, maximum=maximum,
+                loss_episodes=loss_episodes, environment_steps=total_steps,
+                **progress)
+            if episode_id >= minimum and progress["covered"]:
                 break
             print(f"FOV-risk data {episode_id}/{minimum} minimum "
                   f"(cap {maximum}): loss_episode={int(metric['geometric_fov_loss_episode_rate'])}")
@@ -1748,6 +1775,26 @@ def main(*, primary_only: bool = False):
             fov_risk_model if needs_fov_risk else potential, "design_id", None),
         reward_design_sha256=getattr(
             fov_risk_model if needs_fov_risk else potential, "sha256", None),
+        fov_risk_design_id=getattr(fov_risk_model, "design_id", None),
+        algorithm_pipeline=algorithm_pipeline_contract(
+            lambda_fov=float((config.get("fov_risk") or {}).get("lambda_fov", 0.1)),
+            horizon_seconds=float((config.get("fov_risk") or {}).get(
+                "prediction_horizon_seconds", 1.0)),
+            control_hz=1.0 / float((config.get("control") or {}).get(
+                "dt_seconds", 0.1)),
+            hidden_dim=int((config.get("fov_risk_design") or {}).get(
+                "hidden_dim", 24)),
+            camera=(system.get("vision") or {}).get("camera"),
+        ) if needs_fov_risk else None,
+        mdp_contract=mdp_contract(
+            control=config.get("control") or {},
+            reward=config.get("reward") or {},
+            lambda_fov=float((config.get("fov_risk") or {}).get("lambda_fov", 0.1)),
+            horizon_seconds=float((config.get("fov_risk") or {}).get(
+                "prediction_horizon_seconds", 1.0)),
+            pad_speed_range=tuple(
+                (system.get("pad") or {}).get("speed_range_m_s", ()) or ()) or None,
+        ),
         pair_layout=[{
             "index": index,
             "method": name,
@@ -2069,10 +2116,21 @@ def main(*, primary_only: bool = False):
                 settings["device"] = args.device
                 monitor.stage("R-GAT training",
                               "future FOV-unavailability scalar readout")
+
+                def _fov_epoch(row, _total=int(settings["epochs"])):
+                    monitor.fov_training(row)
+                    if int(row["epoch"]) % 10 == 0 or int(row["epoch"]) == _total:
+                        print(f"FOV readout epoch {int(row['epoch'])}/{_total} "
+                              f"val={float(row['validation_loss']):.5f} "
+                              f"best={float(row['best_validation_loss']):.5f}")
+                    refresh_presentation_results()
+
                 fov_risk_model, fov_metadata = prepare_fov_risk_artifact(
                     args.fov_risk_model, fov_dataset,
                     dataset_manifest=fov_manifest, config_hash=config_hash,
-                    seed=model_seed, settings=settings)
+                    seed=model_seed, settings=settings, progress=_fov_epoch)
+                monitor.fov_model(design_id=fov_risk_model.design_id,
+                                  metadata=fov_metadata)
                 manifest.update({
                     "fov_risk_design_id": fov_risk_model.design_id,
                     "fov_risk_design_sha256": fov_risk_model.sha256,
@@ -2086,6 +2144,11 @@ def main(*, primary_only: bool = False):
                 fov_manifest = dict(fov_risk_model.metadata)
                 fov_design_episodes = int((fov_manifest.get(
                     "dataset_manifest") or {}).get("episodes", 0))
+                # A resumed run skips collection and training entirely; without
+                # this the FOV panel would stay blank for the whole run even
+                # though a validated readout is driving the proposed reward.
+                monitor.fov_model(design_id=fov_risk_model.design_id,
+                                  metadata=fov_manifest)
 
             if needs_potential and potential is None:
                 preferred_source = str((config.get("rgat_design") or {}).get(

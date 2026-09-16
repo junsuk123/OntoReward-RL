@@ -21,9 +21,11 @@ import threading
 import time
 from collections import deque
 from pathlib import Path
-from typing import Any, Iterable, Sequence
+from typing import Any, Iterable, Mapping, Sequence
 
 import numpy as np
+
+from .contracts import run_pipeline_contract
 
 __all__ = ["LiveStore", "DatasetMonitor", "RGATMonitor", "PPOMonitor",
            "RewardMonitor", "BenchmarkMonitor", "EpisodeMonitor", "STORE",
@@ -505,6 +507,9 @@ class BenchmarkMonitor:
                   training_total: int, evaluation_total: int,
                   reward_design_id: str | None = None,
                   reward_design_sha256: str | None = None,
+                  fov_risk_design_id: str | None = None,
+                  algorithm_pipeline: Mapping[str, Any] | None = None,
+                  mdp_contract: Mapping[str, Any] | None = None,
                   pair_layout: Sequence[dict[str, Any]] | None = None) -> None:
         self.methods = tuple(str(method) for method in methods)
         self.training_total = int(training_total)
@@ -528,6 +533,17 @@ class BenchmarkMonitor:
             evaluation_total=self.evaluation_total,
             reward_design_id=reward_design_id,
             reward_design_sha256=reward_design_sha256,
+            # Distinct from reward_design_id: Dashboard.start() restores a
+            # legacy fixed-reward design from disk into that key, and showing
+            # a PBRS artifact under a FOV-readout label would misattribute it.
+            fov_risk_design_id=fov_risk_design_id,
+            # Structural explanations of the run, the proposed algorithm and
+            # the two MDPs. Built from executable constants by
+            # ``viz.contracts`` so a panel cannot drift from the code.
+            run_pipeline=run_pipeline_contract(),
+            algorithm_pipeline=(dict(algorithm_pipeline)
+                                if algorithm_pipeline else None),
+            mdp_contract=dict(mdp_contract) if mdp_contract else None,
             parallel_pair_count=max(1, len(self.pair_layout)),
             parallel_pair_layout=self.pair_layout,
             parallel_pair_status=sorted(
@@ -540,7 +556,9 @@ class BenchmarkMonitor:
                 "actor": "y[6:256] + proprioception -> action[4]",
                 "critic": "training only: proprioception[7] + truth[6]",
                 "reward_side": ("both: unchanged Shin Table III + active perception; "
-                                "proposed only: -lambda_fov * P(future FOV loss)"),
+                                "proposed only: -lambda_fov * q(G'), the expected "
+                                "fraction of the next H steps with the pad centre "
+                                "outside the FOV"),
                 "state_estimation": ("both: unbounded y[0:6] decoded to physical "
                                      "units; identical scale-normalized auxiliary loss"),
                 "forbidden": ("deployed actor: platform/GNSS/truth; onto graph: "
@@ -550,6 +568,75 @@ class BenchmarkMonitor:
 
     def stage(self, name: str, detail: str = "") -> None:
         self.store.stage(name, detail)
+
+    # ------------------------------------------------ proposed-arm progress
+    def fov_dataset(self, *, episodes: int, minimum: int, maximum: int,
+                    supervised_samples: int, masked_samples: int,
+                    target_mean: float | None, loss_episodes: int,
+                    covered: bool, environment_steps: int,
+                    cached: bool = False) -> None:
+        """Offline FOV data collection, which is otherwise a silent phase.
+
+        ``covered`` is the loop's actual exit condition: both target regimes
+        present. Showing only an episode count would suggest the phase ends at
+        ``minimum`` when it can keep flying to ``maximum``.
+        """
+        self.store.set(fov_dataset={
+            "episodes": int(episodes), "minimum": int(minimum),
+            "maximum": int(maximum),
+            "supervised_samples": int(supervised_samples),
+            "masked_samples": int(masked_samples),
+            "target_mean": (None if target_mean is None else float(target_mean)),
+            "loss_episodes": int(loss_episodes),
+            "covered": bool(covered),
+            "environment_steps": int(environment_steps),
+            "cached": bool(cached),
+        })
+
+    def fov_training(self, row: Mapping[str, Any]) -> None:
+        """One offline epoch of the frozen readout."""
+        point = {key: float(row[key]) for key in (
+            "epoch", "train_loss", "train_huber", "train_contract",
+            "validation_loss", "validation_huber", "validation_contract")
+            if key in row}
+        if point:
+            self.store.append("fov_risk_training", point)
+        self.store.set(fov_training={
+            "epoch": int(row.get("epoch", 0)),
+            "total_epochs": int(row.get("total_epochs", 0)),
+            "validation_loss": float(row.get("validation_loss", float("nan"))),
+            "best_validation_loss": float(
+                row.get("best_validation_loss", float("nan"))),
+            "validation_contract": float(row.get("validation_contract", 0.0)),
+            "improved": bool(row.get("improved", False)),
+        })
+
+    def fov_model(self, *, design_id: str | None, metadata: Mapping[str, Any]
+                  ) -> None:
+        """Final validation of the readout, next to the constant predictor.
+
+        The baseline comparison travels with the metrics on purpose: an RMSE
+        alone cannot say whether the model learned anything beyond the mean.
+        """
+        metrics = dict((metadata or {}).get("validation_metrics") or {})
+        self.store.set(fov_model={
+            "design_id": design_id,
+            "frozen": bool((metadata or {}).get("frozen", False)),
+            "loss": str((metadata or {}).get("loss", "")),
+            "mae": metrics.get("mae"),
+            "rmse": metrics.get("rmse"),
+            "constant_predictor_rmse": metrics.get("constant_predictor_rmse"),
+            "bias": metrics.get("bias"),
+            "r2": metrics.get("r2"),
+            "target_mean": metrics.get("target_mean"),
+            "prediction_mean": metrics.get("prediction_mean"),
+            "contract_violation": metrics.get("validation_contract_violation"),
+            "supervised_samples": metrics.get("supervised_samples"),
+            "masked_tail_samples": metrics.get("masked_tail_samples"),
+            "train_episodes": len(metrics.get("train_episode_ids") or ()),
+            "validation_episodes": len(
+                metrics.get("validation_episode_ids") or ()),
+        })
 
     def reset_started(self, *, method: str, phase: str, seed: int,
                       scenario: str, pair_index: int | None = None) -> None:

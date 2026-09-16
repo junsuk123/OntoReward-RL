@@ -81,8 +81,13 @@ def train_fov_risk_model(dataset, *, seed=42, validation_fraction=0.2,
                          epochs=80, batch_size=64, learning_rate=5e-4,
                          hidden_dim=24, relation_dim=6, heads=1,
                          huber_delta=0.1, contract_weight=0.1,
-                         contract_delta=0.25, device="cpu"):
-    """Huber regression of the unavailability fraction plus rule R-04."""
+                         contract_delta=0.25, device="cpu", progress=None):
+    """Huber regression of the unavailability fraction plus rule R-04.
+
+    ``progress`` is called with each epoch's history row and the running best
+    validation loss. Offline training is minutes of otherwise silent work in
+    the middle of a long flight run, so a caller that wants to show it can.
+    """
     X, y, valid, meta = validate_fov_risk_dataset(dataset)
     training, validation = split_by_episode(
         dataset, validation_fraction=validation_fraction, seed=seed)
@@ -133,7 +138,7 @@ def train_fov_risk_model(dataset, *, seed=42, validation_fraction=0.2,
             validation_rule = float(contract_loss(
                 model, val_X, delta=contract_delta).item())
         validation_loss = validation_fit + weight * validation_rule
-        history.append({
+        row = {
             "epoch": epoch,
             "train_loss": totals[0] / max(seen, 1),
             "train_huber": totals[1] / max(seen, 1),
@@ -141,10 +146,16 @@ def train_fov_risk_model(dataset, *, seed=42, validation_fraction=0.2,
             "validation_loss": validation_loss,
             "validation_huber": validation_fit,
             "validation_contract": validation_rule,
-        })
-        if validation_loss < best_loss:
+        }
+        history.append(row)
+        improved = validation_loss < best_loss
+        if improved:
             best_loss = validation_loss
             best_state = copy.deepcopy(model.state_dict())
+        if progress is not None:
+            progress({**row, "total_epochs": int(max(1, int(epochs))),
+                      "best_validation_loss": float(best_loss),
+                      "improved": bool(improved)})
     if best_state is None:
         raise RuntimeError("FOV-risk training did not produce a validation checkpoint")
     model.load_state_dict(best_state)
@@ -181,7 +192,7 @@ _TRAINING_DEFAULTS = (
 
 def prepare_fov_risk_artifact(path: str | Path, dataset, *,
                               dataset_manifest: dict, config_hash: str,
-                              seed=42, settings=None):
+                              seed=42, settings=None, progress=None):
     settings = dict(settings or {})
     model, history, metrics = train_fov_risk_model(
         dataset,
@@ -197,6 +208,7 @@ def prepare_fov_risk_artifact(path: str | Path, dataset, *,
         contract_weight=float(settings.get("contract_weight", 0.1)),
         contract_delta=float(settings.get("contract_delta", 0.25)),
         device=str(settings.get("device", "cpu")),
+        progress=progress,
     )
     metadata = {
         "frozen": True,

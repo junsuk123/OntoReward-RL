@@ -3,7 +3,7 @@
 활성 연구 경로는 다음 두 agent뿐이다.
 
 - `shin_se_fixed`: Shin et al. 기반 전체 baseline.
-- `shin_se_onto_rgat_fov`: 동일 baseline + visual ontology + frozen R-GAT 미래 FOV-loss 예측 + `-lambda_fov * p_fov_loss`.
+- `shin_se_onto_rgat_recovery`: 동일 baseline + visual ontology + frozen R-GAT 미래 FOV-loss 예측 + `-lambda_fov * p_fov_loss`.
 
 두 agent는 카메라, Isaac/Pegasus/PX4 환경, 초기조건, UGV 궤적, 6-keypoint encoder와
 checkpoint, LSTM과 6-D 상대상태 추정기, auxiliary loss, actor/critic, observation/action,
@@ -15,7 +15,7 @@ PPO hyperparameter, curriculum, 고정 5개 shaping 항과 가중치, active-per
 저장소 상위 디렉터리에서 실행한다.
 
 ```bash
-./run.sh --pipelines shin_se_fixed shin_se_onto_rgat_fov --parallel-pairs 2
+./run.sh --pipelines shin_se_fixed shin_se_onto_rgat_recovery --parallel-pairs 2
 ```
 
 각 pair는 PX4 instance, ROS namespace, UDP gateway/learner port, reset/controller state,
@@ -46,7 +46,7 @@ python -m pytest -q tests/test_two_pipeline_fov.py
 | `python/ontology_rgat/rgat/fov_graph.py` | 엄격한 8-feature, 13-node ontology |
 | `python/ontology_rgat/rgat/fov_risk_dataset.py` | 1초 horizon 미래 FOV-loss label과 episode split |
 | `python/ontology_rgat/rgat/fov_risk_model.py` | sigmoid R-GAT classifier와 frozen loader |
-| `python/ontology_rgat/rgat/fov_risk_train.py` | BCE-only offline 학습과 validation-best 저장 |
+| `python/ontology_rgat/rgat/fov_risk_train.py` | Huber regression + contract rule `R-04` offline 학습과 validation-best 저장 |
 | `python/ontology_rgat/reward_modes/fov_risk.py` | 비양수 가산 보상 |
 | `python/ontology_rgat/ppo/recurrent_train.py` | 공통 PPO rollout과 additive reward dispatch |
 | `python/ontology_rgat/evaluation/two_pipeline.py` | 주 비교 metric 집계 |
@@ -63,7 +63,8 @@ python -m pytest -q tests/test_two_pipeline_fov.py
 설정 horizon 안에 target이 unavailable/FOV criterion 미달이 되면 1이다.
 
 `rgat/fov_risk_model.pt`에는 dataset version/hash, seed, graph version, horizon,
-train/validation episode ID, AUROC, F1, precision, recall, confusion matrix와 model checksum이
+train/validation episode ID, MAE, RMSE, bias, R², 상수 예측기 RMSE 기준선,
+contract 위반량과 model checksum이
 저장된다. R-GAT은 PPO optimizer에 포함되지 않으며 매 episode 뒤 동결 상태와 checksum을
 검사한다.
 
@@ -72,7 +73,7 @@ train/validation episode ID, AUROC, F1, precision, recall, confusion matrix와 m
 - Landing Success Rate
 - FOV Loss Episode Rate와 FOV Retention Ratio
 - Mean/Maximum Continuous FOV Loss Duration
-- R-GAT AUROC, F1, Precision, Recall, Confusion Matrix
+- R-GAT MAE, RMSE, bias, R², 상수 예측기 RMSE 기준선, contract 위반량
 - 공통 진단값: 위치/속도 추정 오차와 loss, return, landing error, touchdown vertical velocity
 
 기본 결과 디렉터리에는 `manifest.json`, `rgat/fov_risk_rollouts.npz`,

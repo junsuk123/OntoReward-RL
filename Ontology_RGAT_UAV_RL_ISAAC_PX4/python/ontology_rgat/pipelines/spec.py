@@ -20,6 +20,15 @@ GEOMETRIC_FOV_CRITERION = "geometric_pad_center_in_fov"
 # never appear in the primary two-pipeline experiment.
 FORBIDDEN_PRIMARY_VISION_KEYS = ("dictionary", "board")
 
+# How the additive FOV reward reads its scalar out of the ontology graph.
+# ``direct_graph_scalar`` is the current method: the second relational layer
+# has one unit and the FutureFOVUnavailability node of that layer IS the
+# output. ``binary_classifier_linear_head`` is the retired readout that put an
+# nn.Linear on the goal embedding and regressed a binary loss indicator; it is
+# kept as a distinct ID so no old run silently reads as the current method.
+FOV_REWARD_READOUTS = ("direct_graph_scalar", "binary_classifier_linear_head")
+RETIRED_FOV_REWARD_READOUTS = ("binary_classifier_linear_head",)
+
 
 @dataclass(frozen=True)
 class PipelineSpec:
@@ -35,6 +44,7 @@ class PipelineSpec:
     reserved_latent_dimensions: int = 6
     use_adaptive_reward_weights: bool = False
     adaptive_reward_architecture: str | None = None
+    fov_reward_readout: str | None = None
 
     def __post_init__(self) -> None:
         if not self.name:
@@ -59,6 +69,8 @@ class PipelineSpec:
                      != self.active_perception_enabled)):
             raise ValueError(
                 "shin_table_active reward and active perception must agree")
+        if not self.fov_risk_reward_enabled and self.fov_reward_readout is not None:
+            raise ValueError("only the FOV-risk reward declares a readout")
         if self.fov_risk_reward_enabled:
             if not (self.ontology_enabled and self.state_estimation_enabled
                     and self.auxiliary_estimation_loss_enabled
@@ -70,6 +82,10 @@ class PipelineSpec:
                 raise ValueError("FOV-risk reward requires the strict visual ontology input")
             if self.use_direct_rgat_potential or self.use_adaptive_reward_weights:
                 raise ValueError("FOV-risk reward cannot use PBRS or adaptive weights")
+            if self.fov_reward_readout not in FOV_REWARD_READOUTS:
+                raise ValueError(
+                    "FOV-risk reward must declare its readout: "
+                    f"one of {FOV_REWARD_READOUTS}")
         elif self.ontology_enabled:
             if self.ontology_input_mode != "semantic_observation":
                 raise ValueError("legacy ontology pipelines require semantic_observation input")
@@ -112,6 +128,28 @@ PIPELINES = {
         ontology_input_mode=None,
         use_direct_rgat_potential=False,
     ),
+    "shin_se_onto_rgat_recovery": PipelineSpec(
+        name="shin_se_onto_rgat_recovery",
+        state_estimation_enabled=True,
+        auxiliary_estimation_loss_enabled=True,
+        active_perception_enabled=True,
+        reward_mode="shin_table_active",
+        ontology_enabled=True,
+        ontology_input_mode="fov_semantic_observation",
+        use_direct_rgat_potential=False,
+        fov_risk_reward_enabled=True,
+        fov_reward_readout="direct_graph_scalar",
+    ),
+}
+
+# Historical and ablation-only definitions are intentionally absent from the
+# primary runner. They retain their exact IDs so no old method silently aliases
+# to either final scientific pipeline.
+LEGACY_PIPELINES = {
+    # Retired readout: an nn.Linear head on the goal embedding predicting a
+    # binary "FOV lost within H" indicator. Kept under its original ID so its
+    # checkpoints and results stay attributable to the method that produced
+    # them; it is not runnable in the primary experiment.
     "shin_se_onto_rgat_fov": PipelineSpec(
         name="shin_se_onto_rgat_fov",
         state_estimation_enabled=True,
@@ -122,13 +160,8 @@ PIPELINES = {
         ontology_input_mode="fov_semantic_observation",
         use_direct_rgat_potential=False,
         fov_risk_reward_enabled=True,
+        fov_reward_readout="binary_classifier_linear_head",
     ),
-}
-
-# Historical and ablation-only definitions are intentionally absent from the
-# primary runner. They retain their exact IDs so no old method silently aliases
-# to either final scientific pipeline.
-LEGACY_PIPELINES = {
     "shin_se": PipelineSpec(
         name="shin_se",
         state_estimation_enabled=True,
@@ -239,7 +272,7 @@ _BASELINE_SPEC_FIELDS = (
 def assert_primary_baseline_equivalence() -> None:
     """Fail fast if the proposed pipeline changes any baseline contract flag."""
     baseline = PIPELINES["shin_se_fixed"]
-    proposed = PIPELINES["shin_se_onto_rgat_fov"]
+    proposed = PIPELINES["shin_se_onto_rgat_recovery"]
     mismatches = [name for name in _BASELINE_SPEC_FIELDS
                   if getattr(baseline, name) != getattr(proposed, name)]
     if mismatches:
@@ -251,6 +284,9 @@ def assert_primary_baseline_equivalence() -> None:
         raise RuntimeError("proposed pipeline must add the FOV-risk ontology branch")
     if proposed.use_direct_rgat_potential or proposed.use_adaptive_reward_weights:
         raise RuntimeError("primary proposed pipeline cannot use PBRS/adaptive weights")
+    if proposed.fov_reward_readout != "direct_graph_scalar":
+        raise RuntimeError(
+            "the proposed reward must read its scalar from the graph itself")
 
 
 def validate_pipeline_configuration(config: dict) -> None:
@@ -261,6 +297,13 @@ def validate_pipeline_configuration(config: dict) -> None:
     unknown = set(configured) - set(ALL_PIPELINES)
     if unknown:
         raise ValueError(f"unknown configured pipelines: {sorted(unknown)}")
+    retired = sorted(name for name in configured
+                     if ALL_PIPELINES[name].fov_reward_readout
+                     in RETIRED_FOV_REWARD_READOUTS)
+    if retired:
+        raise ValueError(
+            f"pipelines {retired} declare a retired FOV reward readout; their "
+            "IDs are kept for attribution only and cannot be run")
     contracts = config.get("pipeline_contract") or {}
     for name in configured:
         spec = ALL_PIPELINES[name]
@@ -282,6 +325,7 @@ def validate_pipeline_configuration(config: dict) -> None:
             "fov_risk_reward": spec.fov_risk_reward_enabled,
             "use_adaptive_reward_weights": spec.use_adaptive_reward_weights,
             "adaptive_reward_architecture": spec.adaptive_reward_architecture,
+            "fov_reward_readout": spec.fov_reward_readout,
         }
         for key, value in optional_expected.items():
             if key in declared and declared[key] != value:

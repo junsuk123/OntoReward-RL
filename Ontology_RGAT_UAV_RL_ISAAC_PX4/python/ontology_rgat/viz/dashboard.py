@@ -178,7 +178,7 @@ grid-template-columns:1fr}.graph-audit{grid-template-columns:1fr}}
 <script>
 // MATLAB default color order (R2025a), shared with the PNG exporters.
 const PALETTE=['#0072BD','#D95319','#EDB120','#7E2F8E','#77AC30','#4DBEEE','#A2142F'];
-const BENCHMARK_METHODS=['shin_se_fixed','shin_se_onto_rgat_fov'];
+const BENCHMARK_METHODS=['shin_se_fixed','shin_se_onto_rgat_recovery'];
 const BENCHMARK_TRAIN=BENCHMARK_METHODS.map(x=>'benchmark_train_'+x);
 const BENCHMARK_EVAL=BENCHMARK_METHODS.map(x=>'benchmark_eval_'+x);
 const BENCHMARK_STEP=BENCHMARK_METHODS.map(x=>'benchmark_step_'+x);
@@ -191,6 +191,8 @@ const CARDS=[
   title:'실시간 보상 · pair별 독립 trajectory'},
  {id:'parallel_live_flight',view:'benchmark',kind:'pairplots',plot:'flight',
   title:'실시간 비행 상태 · pair별 독립 sensor'},
+ {id:'parallel_live_perception',view:'benchmark',kind:'pairplots',plot:'perception',
+  title:'기하 FOV(시뮬레이터 기하) 대 keypoint 인지 품질 · 두 arm 동일 정의'},
  {id:'parallel_live_method',view:'benchmark',kind:'pairplots',plot:'method',
   title:'방법론 고유 신호 · SE 오차 / 시각 관측 / R-GAT 의미 상태'},
  {id:'benchmark_contract',view:'benchmark',kind:'contract',
@@ -227,8 +229,8 @@ const CARDS=[
   series:BENCHMARK_TRAIN,x:'episode',y:'active_reward_saturation_fraction',
   smooth:12,ymin:0,ymax:1},
  {id:'benchmark_fov_risk',view:'benchmark',title:'미래 FOV 소실 확률 / 추가 보상',
-  series:['benchmark_step_shin_se_onto_rgat_fov'],x:'step',
-  y:['predicted_fov_loss_probability','ontology_fov_reward'],
+  series:['benchmark_step_shin_se_onto_rgat_recovery'],x:'step',
+  y:['predicted_fov_unavailability','ontology_fov_reward'],
   labels:['미래 FOV 소실 확률','Ontology-R-GAT FOV 추가 보상'],smooth:3},
  {id:'benchmark_policy_loss',view:'benchmark',title:'Recurrent PPO policy 손실',
   series:BENCHMARK_TRAIN,x:'episode',y:'ppo_loss',smooth:12},
@@ -260,9 +262,9 @@ const CARDS=[
 ];
 const LABELS={benchmark_step:'current episode',
  benchmark_train_shin_se_fixed:'Baseline · Shin SE fixed',
- benchmark_train_shin_se_onto_rgat_fov:'Proposed · Shin + Ontology-R-GAT FOV',
+ benchmark_train_shin_se_onto_rgat_recovery:'Proposed · Shin + Ontology-R-GAT FOV',
  benchmark_eval_shin_se_fixed:'Baseline · Shin SE fixed',
- benchmark_eval_shin_se_onto_rgat_fov:'Proposed · Shin + Ontology-R-GAT FOV'};
+ benchmark_eval_shin_se_onto_rgat_recovery:'Proposed · Shin + Ontology-R-GAT FOV'};
 const root=document.getElementById('root');
 for(const c of CARDS){
   const el=document.createElement('section');
@@ -399,8 +401,12 @@ function drawPairPlots(card,state){
     else if(card.plot==='flight')spec={
       y:['uav_speed_m_s','ugv_speed_m_s','geometric_in_fov','battery_reserve'],
       labels:['UAV 속도','UGV 속도','기하 FOV(패드 중심)','배터리 여유'],ymin:0};
-    else if(method==='shin_se_onto_rgat_fov')spec={
-      y:['position_error','estimation_loss','predicted_fov_loss_probability','ontology_fov_reward'],
+    else if(card.plot==='perception')spec={
+      y:['geometric_in_fov','keypoint_confidence','visible_keypoint_fraction','fov_margin'],
+      labels:['기하 FOV(패드 중심)','keypoint 신뢰도','keypoint 가시 비율','FOV margin'],
+      ymin:0,ymax:1};
+    else if(method==='shin_se_onto_rgat_recovery')spec={
+      y:['position_error','estimation_loss','predicted_fov_unavailability','ontology_fov_reward'],
       labels:['SE 위치 오차','6-state 손실','미래 FOV 소실 확률','추가 FOV 보상']};
     else if(method==='shin_se_fixed')spec={
       y:['position_error','velocity_error','estimation_loss','geometric_in_fov'],
@@ -470,15 +476,23 @@ function pairPanel(state){
     const live=rows.length?rows[rows.length-1]:{},xyz=pair.relative_xyz||null;
     const step=pair.step??live.step??0,status=String(pair.status||live.status||'waiting');
     const geometricFov=pair.geometric_pad_center_in_fov;
-    const marker=geometricFov===null||geometricFov===undefined
+    // Geometric frustum truth and neural perception quality are different
+    // variables and are shown as such: a pad in frame that the encoder cannot
+    // resolve is perception degradation, not an FOV loss.
+    const fovLabel=geometricFov===null||geometricFov===undefined
       ?'대기':(geometricFov?'프레임 내':'프레임 이탈');
+    const keypointConfidence=Number(
+      pair.keypoint_confidence??live.keypoint_confidence);
+    const visibleKeypoints=Number(
+      pair.visible_keypoint_fraction??live.visible_keypoint_fraction);
+    const pct=value=>Number.isFinite(value)?(100*value).toFixed(0)+'%':'--';
     const reserve=Number(pair.battery_reserve??live.battery_reserve);
     const activeReward=Number(pair.active_perception??live.active_perception);
     const fovMargin=Number(pair.fov_margin??live.fov_margin);
-    const fovRisk=Number(pair.predicted_fov_loss_probability??
-      live.predicted_fov_loss_probability);
+    const fovRisk=Number(pair.predicted_fov_unavailability??
+      live.predicted_fov_unavailability);
     const ontoReward=Number(pair.ontology_fov_reward??live.ontology_fov_reward);
-    const proposed=method==='shin_se_onto_rgat_fov';
+    const proposed=method==='shin_se_onto_rgat_recovery';
     const gate=pair.landing_gate||null;
     const pos=xyz&&xyz.length===3
       ?`${Number(xyz[0]).toFixed(2)}, ${Number(xyz[1]).toFixed(2)}, ${Number(xyz[2]).toFixed(2)}`:'--';
@@ -489,7 +503,9 @@ function pairPanel(state){
       +`학습 배정: ${escapeHTML(assignedLabel)}`
       +(String(pair.phase)==='evaluation'?' · crossover 평가로 정책 순환 중':'')+`</div>`
       +`<div class="pair-metrics"><div><b>${escapeHTML(pair.episode??0)} / ${escapeHTML(step)}</b><small>${escapeHTML(pair.episode_kind||'episode')} / 스텝</small></div>`
-      +`<div><b>${escapeHTML(marker)}</b><small>마커</small></div>`
+      +`<div><b>${escapeHTML(fovLabel)}</b><small>기하 FOV (패드 중심)</small></div>`
+      +`<div><b>${escapeHTML(pct(keypointConfidence))} / ${escapeHTML(pct(visibleKeypoints))}</b>`
+      +`<small>keypoint 신뢰도 / 가시 비율</small></div>`
       +`<div><b>${Number(pair.ugv_speed_m_s??live.ugv_speed_m_s??0).toFixed(2)} m/s</b><small>UGV 속도</small></div>`
       +`<div><b>${Number(pair.uav_speed_m_s??live.uav_speed_m_s??0).toFixed(2)} m/s</b><small>UAV 속도</small></div>`
       +`<div><b>${Number.isFinite(reserve)?(100*reserve).toFixed(1)+'%':'--'}</b><small>배터리 잔량</small></div>`

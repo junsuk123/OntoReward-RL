@@ -36,18 +36,19 @@ from .reward_design import (FixedRewardDesign, distill_reward_design,
 from .topology import Topology
 from .fov_graph import (
     FOV_FEATURE_NAMES, FOV_GOAL_NODE, FOV_GRAPH_INPUT_DIM, FOV_GRAPH_VERSION,
-    FOV_NODE_NAMES, FOV_RELATION_NAMES, FOVSemanticObservation,
-    build_fov_graph, empty_fov_graph, fov_margin,
-    fov_observation_from_visual_semantics)
+    FOV_GRAPH_EDGES, FOV_NODE_NAMES, FOV_RELATION_NAMES,
+    FOVSemanticObservation, build_fov_graph, derived_node_values,
+    empty_fov_graph, fov_margin, fov_observation_from_visual_semantics,
+    unreachable_input_nodes)
 from .fov_risk_model import (FOV_RISK_MODEL_FORMAT, FOVRiskModel,
                              FrozenFOVRiskPredictor, save_fov_risk_model,
                              state_dict_digest)
 from .fov_risk_dataset import (
     FOV_RISK_DATASET_FORMAT, build_fov_risk_dataset, dataset_digest,
-    future_fov_loss_labels, horizon_steps, load_fov_risk_dataset,
+    future_fov_unavailability_targets, horizon_steps, load_fov_risk_dataset,
     save_fov_risk_dataset, split_by_episode, validate_fov_risk_dataset)
-from .fov_risk_train import (binary_classification_metrics,
-                             prepare_fov_risk_artifact,
+from .fov_risk_train import (CONTRACT_RULE_ID, contract_loss,
+                             prepare_fov_risk_artifact, regression_metrics,
                              train_fov_risk_model)
 
 __all__ = ["RGAT", "RelationalGraphAttention", "RGATEncoder", "PotentialHead",
@@ -75,13 +76,14 @@ __all__ = ["RGAT", "RelationalGraphAttention", "RGATEncoder", "PotentialHead",
            "train_adaptive_reward_weights",
            "FOV_FEATURE_NAMES", "FOV_GOAL_NODE", "FOV_GRAPH_INPUT_DIM",
            "FOV_GRAPH_VERSION", "FOV_NODE_NAMES", "FOV_RELATION_NAMES",
-           "FOVSemanticObservation", "build_fov_graph", "empty_fov_graph",
-           "fov_margin", "fov_observation_from_visual_semantics",
+           "FOV_GRAPH_EDGES", "FOVSemanticObservation", "build_fov_graph",
+           "derived_node_values", "empty_fov_graph", "fov_margin",
+           "fov_observation_from_visual_semantics", "unreachable_input_nodes",
            "FOV_RISK_MODEL_FORMAT", "FOVRiskModel", "FrozenFOVRiskPredictor",
            "save_fov_risk_model", "state_dict_digest",
            "FOV_RISK_DATASET_FORMAT", "build_fov_risk_dataset",
-           "dataset_digest", "future_fov_loss_labels", "horizon_steps",
+           "dataset_digest", "future_fov_unavailability_targets", "horizon_steps",
            "load_fov_risk_dataset", "save_fov_risk_dataset",
            "split_by_episode", "validate_fov_risk_dataset",
-           "binary_classification_metrics", "prepare_fov_risk_artifact",
-           "train_fov_risk_model"]
+           "CONTRACT_RULE_ID", "contract_loss", "regression_metrics",
+           "prepare_fov_risk_artifact", "train_fov_risk_model"]

@@ -558,3 +558,69 @@ def test_goto_refuses_positions_outside_the_city(position):
 def test_goto_hold_is_bounded(hold_s):
     with pytest.raises(ProtocolError):
         validate_goto({"position": [0.0, 0.0, 4.0], "hold_s": hold_s})
+
+
+def test_the_entry_timeout_names_the_condition_that_blocked_the_streak(
+        monkeypatch):
+    """A flickering limit cycle must not be reported as a compliant sample.
+
+    The vehicle sits exactly on the entry pose and the pad is centred, but its
+    speed alternates either side of the tolerance. Every individual bound is
+    met at some point and the final sample looks healthy, yet the settle streak
+    never completes -- which is what the operator has to be told.
+    """
+    class Clock:
+        value = -0.2
+
+        def monotonic(self):
+            self.value += 0.2
+            return self.value
+
+    monkeypatch.setattr(bridge_module.time, "monotonic", Clock().monotonic)
+    monkeypatch.setattr(bridge_module.time, "sleep", lambda _seconds: None)
+    entry = camera_centered_hover_offset(7.55)
+
+    def states():
+        index = 0
+        while True:
+            index += 1
+            # 0.5 s of simulated time per sample, so a 0.5 s settle would close
+            # on two consecutive compliant samples if the speed ever allowed it.
+            yield {"armed": True, "px4_time_us": 500_000 * index,
+                   "position": entry.tolist(),
+                   "velocity": [0.0, 0.0, 0.0 if index % 2 else 0.9],
+                   "quaternion_wxyz": [1.0, 0.0, 0.0, 0.0],
+                   "position_frame": "pad"}
+
+    bridge = _entry_gate_bridge(states())
+    bridge.cfg.entry_timeout = 3.0
+    with pytest.raises(EntryResetError) as excinfo:
+        bridge.wait_at_entry(entry)
+    message = str(excinfo.value)
+    assert "last sample" in message
+    assert "longest hold" in message
+    assert "speed was out of tolerance" in message
+    assert "worst speed 0.90 m/s" in message
+    # The last sample itself is compliant, so the old message would have shown
+    # three healthy numbers and no cause at all.
+    assert "speed 0.00 m/s" in message
+
+
+def test_a_genuinely_settled_entry_reports_no_blocking_condition(monkeypatch):
+    class Clock:
+        value = -0.2
+
+        def monotonic(self):
+            self.value += 0.2
+            return self.value
+
+    monkeypatch.setattr(bridge_module.time, "monotonic", Clock().monotonic)
+    monkeypatch.setattr(bridge_module.time, "sleep", lambda _seconds: None)
+    entry = camera_centered_hover_offset(7.55)
+    states = iter([
+        {"armed": True, "px4_time_us": 1_000_000 * n, "position": entry.tolist(),
+         "velocity": [0.0, 0.0, 0.0], "quaternion_wxyz": [1.0, 0.0, 0.0, 0.0],
+         "position_frame": "pad"}
+        for n in range(6)])
+    bridge = _entry_gate_bridge(states)
+    assert bridge.wait_at_entry(entry)["px4_time_us"] == 1_000_000

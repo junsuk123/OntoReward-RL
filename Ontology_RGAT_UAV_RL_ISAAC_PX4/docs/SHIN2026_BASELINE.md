@@ -10,6 +10,12 @@ and Automation Letters 11(5), 2026, DOI `10.1109/LRA.2026.3674011`이다.
 이 저장소의 `shin_se_fixed`는 논문의 방법론적 interface를 Isaac Sim/Pegasus/PX4에
 구현한 비교군이다.
 
+
+원문 값의 단일 전사본은 `config/paper/shin2026_reference.yaml`이고,
+`tests/test_shin2026_paper_fidelity.py`가 resolved config·보상 구현과
+대조한다. 원문이 말하지 않는 항목과 px4_transfer 백엔드의 선언된 이탈은
+`REFRACTOR_GUIDE_KO.md` §4-1, §4-2에 있다.
+
 ## 강화학습 구성
 
 | 요소 | 논문 기반 구현 |
@@ -98,9 +104,9 @@ $$
 
 ## 제안법과의 관계
 
-`shin_se_onto_rgat_fov`는 위의 보조 상태추정, active-perception reward,
+`shin_se_onto_rgat_recovery`는 위의 보조 상태추정, active-perception reward,
 다섯 shaping 항과 가중치를 모두 그대로 사용한다. 유일한 추가는 영상 관측성
-cue의 ontology graph와 동결 R-GAT 미래 FOV-loss 확률 보상이다.
+cue의 ontology graph와 동결 R-GAT 미래 FOV 비가용 시간 비율 보상이다.
 
 $$
 r_{proposed}=r_{Shin}-\lambda_{fov}p_{fov__loss}.

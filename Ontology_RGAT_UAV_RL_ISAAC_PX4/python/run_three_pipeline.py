@@ -938,6 +938,21 @@ def _collect_semantic_data(*, cfg, camera, model, config, config_hash,
     return dataset, manifest, dataset_path, total_steps
 
 
+def _fov_target_coverage(dataset) -> bool:
+    """Both regimes present: some windows fully visible, some with loss.
+
+    The target is a time fraction, so the old two-class check no longer
+    applies. Coverage means the supervised targets are not all identical --
+    a dataset of only zeros would train a constant predictor.
+    """
+    y = np.asarray(dataset["y"], dtype=np.float64)
+    valid = np.asarray(dataset["valid"], dtype=bool)
+    supervised = y[valid]
+    if supervised.size == 0:
+        return False
+    return bool(np.any(supervised <= 0.0) and np.any(supervised > 0.0))
+
+
 def _collect_fov_risk_data(*, cfg, camera, model, config, config_hash,
                            checkpoint_path, results_dir, mode, monitor,
                            episodes_override=None, max_episodes_override=None,
@@ -960,7 +975,7 @@ def _collect_fov_risk_data(*, cfg, camera, model, config, config_hash,
             cached, cached_manifest = load_fov_risk_dataset(
                 dataset_path, config_hash=config_hash)
             if (int(cached_manifest.get("episodes", 0)) >= minimum
-                    and set(np.unique(cached["y"]).tolist()) == {0.0, 1.0}):
+                    and _fov_target_coverage(cached)):
                 return (cached, cached_manifest, dataset_path,
                         int(cached_manifest.get(
                             "environment_steps", cached_manifest["samples"])))
@@ -993,14 +1008,13 @@ def _collect_fov_risk_data(*, cfg, camera, model, config, config_hash,
             total_steps += len(rows)
             dataset = build_fov_risk_dataset(
                 episodes, prediction_steps=prediction_steps)
-            classes = set(np.unique(dataset["y"]).tolist())
-            if episode_id >= minimum and classes == {0.0, 1.0}:
+            if episode_id >= minimum and _fov_target_coverage(dataset):
                 break
             print(f"FOV-risk data {episode_id}/{minimum} minimum "
                   f"(cap {maximum}): loss_episode={int(metric['geometric_fov_loss_episode_rate'])}")
-    if set(np.unique(dataset["y"]).tolist()) != {0.0, 1.0}:
+    if not _fov_target_coverage(dataset):
         raise RuntimeError(
-            f"FOV-risk data has one label class after {maximum} episodes; "
+            f"FOV-risk data covers one target regime after {maximum} episodes; "
             "increase --rgat-max-data-episodes")
     manifest = save_fov_risk_dataset(
         dataset, dataset_path, config_hash=config_hash, seed=seed0,
@@ -1531,7 +1545,8 @@ def main(*, primary_only: bool = False):
             fov_risk_model = FrozenFOVRiskPredictor(
                 args.fov_risk_model, expected_config_hash=config_hash,
                 device=args.device)
-            print(f"Using frozen future-FOV-loss R-GAT {fov_risk_model.design_id}.")
+            print("Using frozen future-FOV-unavailability R-GAT "
+                  f"{fov_risk_model.design_id}.")
         except (OSError, ValueError, KeyError) as exc:
             fov_risk_error = str(exc)
             print(f"Existing FOV-risk R-GAT is not reusable: {exc}")
@@ -2052,7 +2067,8 @@ def main(*, primary_only: bool = False):
                     args.rgat_epochs or settings.get(
                         f"epochs_{args.mode}", 10 if args.mode == "quick" else 80))
                 settings["device"] = args.device
-                monitor.stage("R-GAT training", "future FOV-loss BCE classifier")
+                monitor.stage("R-GAT training",
+                              "future FOV-unavailability scalar readout")
                 fov_risk_model, fov_metadata = prepare_fov_risk_artifact(
                     args.fov_risk_model, fov_dataset,
                     dataset_manifest=fov_manifest, config_hash=config_hash,

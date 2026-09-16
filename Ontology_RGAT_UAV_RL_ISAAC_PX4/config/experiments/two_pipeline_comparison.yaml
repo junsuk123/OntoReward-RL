@@ -1,6 +1,6 @@
 extends: shin2026_baseline.yaml
 experiment: two_pipeline_fov_risk
-pipelines: [shin_se_fixed, shin_se_onto_rgat_fov]
+pipelines: [shin_se_fixed, shin_se_onto_rgat_recovery]
 paired_seeds: true
 
 # The two declarations are deliberately identical through the complete Shin
@@ -17,7 +17,8 @@ pipeline_contract:
     fov_risk_reward: false
     use_adaptive_reward_weights: false
     adaptive_reward_architecture: null
-  shin_se_onto_rgat_fov:
+    fov_reward_readout: null
+  shin_se_onto_rgat_recovery:
     state_estimation: true
     auxiliary_estimation_loss: true
     active_perception: true
@@ -28,6 +29,9 @@ pipeline_contract:
     fov_risk_reward: true
     use_adaptive_reward_weights: false
     adaptive_reward_architecture: null
+    # The scalar is the FutureFOVUnavailability node of the second relational
+    # layer (units=1). No separate readout MLP or linear head.
+    fov_reward_readout: direct_graph_scalar
 
 fov_risk:
   lambda_fov: 0.1

@@ -273,6 +273,14 @@ class RvizPublisher:
 
     # ---------------------------------------------------------------- scene
     def _publish_scene(self, log, cur, info: dict[str, Any]) -> None:
+        """Legacy ``EpisodeLog`` scene for the retained ArUco/ontology arms.
+
+        The primary two-pipeline benchmark does not build an ``EpisodeLog``
+        and publishes through ``publish_benchmark_step`` instead, where
+        visibility is the geometric pad-centre quantity and perception health
+        is the keypoint encoder's own output. The ``marker=`` readout below
+        therefore belongs to the legacy detector profile only.
+        """
         Marker = self.m["Marker"]
         pad_frame = self.opt.pad_frame
         array = self.m["MarkerArray"]()
@@ -512,6 +520,8 @@ class RvizPublisher:
                                geometric_in_fov: bool, status: str,
                                reward: float = 0.0,
                                reward_parts: Mapping[str, Any] | None = None,
+                               keypoint_confidence: float = 0.0,
+                               visible_keypoint_fraction: float = 0.0,
                                semantic_graph=None, potential=None,
                                pair_index: int | None = None) -> None:
         """Publish the recurrent Shin benchmark without its legacy log type.
@@ -559,11 +569,11 @@ class RvizPublisher:
             self.pad_path_pub, self.opt.pad_frame, pad_relative_trail)
 
         parts = reward_parts or {}
-        is_proposed = str(method) == "shin_se_onto_rgat_fov"
+        is_proposed = str(method) == "shin_se_onto_rgat_recovery"
         active_reward = float(parts.get("active_perception", 0.0))
         onto_reward = float(parts.get("ontology_fov_reward", 0.0))
         fov_risk = float(np.clip(
-            parts.get("predicted_fov_loss_probability", 0.0), 0.0, 1.0))
+            parts.get("predicted_fov_unavailability", 0.0), 0.0, 1.0))
         fov_margin = float(np.clip(parts.get("fov_margin", 0.0), 0.0, 1.0))
 
         Marker = self.m["Marker"]
@@ -610,14 +620,21 @@ class RvizPublisher:
                         if is_proposed else "BASELINE · Shin SE fixed")
         common = (f"COMMON Shin: r={float(reward):+.3f}  "
                   f"r_active={active_reward:+.3f}")
+        # Geometric FOV and perception quality are separate variables, so show
+        # them on separate lines. A pad in frame that the encoder cannot see is
+        # perception degradation, not an FOV loss.
+        perception = (f"KEYPOINTS: conf={float(keypoint_confidence):.2f}  "
+                      f"visible={float(visible_keypoint_fraction):.2f}")
         branch = (f"ADDED FOV: margin={fov_margin:.2f}  "
                   f"P(loss<=1s)={fov_risk:.2f}  r_onto={onto_reward:+.3f}"
                   if is_proposed else "ADDED FOV branch: OFF")
         text.text = (f"{method_label} | {scenario}\n"
                      f"t={step * dt:5.1f}s  {status.upper()}\n"
                      f"relative xyz=({relative[0]:+.2f}, {relative[1]:+.2f}, "
-                     f"{relative[2]:+.2f}) m  "f"pad in FOV={'YES' if geometric_in_fov else 'NO'}\n"
-                     f"{common}\n{branch}")
+                     f"{relative[2]:+.2f}) m\n"
+                     f"GEOMETRIC pad centre in FOV: "
+                     f"{'YES' if geometric_in_fov else 'NO'}\n"
+                     f"{perception}\n{common}\n{branch}")
         array.markers.append(text)
 
         route_points = tuple(getattr(self.opt, "route_waypoints_enu_m", ()))
@@ -647,11 +664,13 @@ class RvizPublisher:
             "step": int(step), "t": float(step * dt), "status": str(status),
             "position_pad": [float(value) for value in relative],
             "geometric_pad_center_in_fov": bool(geometric_in_fov),
+            "keypoint_confidence": float(keypoint_confidence),
+            "visible_keypoint_fraction": float(visible_keypoint_fraction),
             "reward": float(reward),
             "active_perception_reward": active_reward,
             "ontology_fov_branch_enabled": is_proposed,
             "fov_margin": fov_margin if is_proposed else None,
-            "predicted_fov_loss_probability": fov_risk if is_proposed else None,
+            "predicted_fov_unavailability": fov_risk if is_proposed else None,
             "ontology_fov_reward": onto_reward if is_proposed else None,
         }, allow_nan=False)
         self.telemetry_pub.publish(message)

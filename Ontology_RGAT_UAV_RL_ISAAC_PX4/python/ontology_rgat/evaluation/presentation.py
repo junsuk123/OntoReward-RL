@@ -18,15 +18,15 @@ import numpy as np
 
 METHODS = (
     "shin_se_fixed",
-    "shin_se_onto_rgat_fov",
+    "shin_se_onto_rgat_recovery",
 )
 METHOD_LABELS = {
     "shin_se_fixed": "Baseline · Shin SE fixed",
-    "shin_se_onto_rgat_fov": "Proposed · Shin + Ontology-R-GAT FOV",
+    "shin_se_onto_rgat_recovery": "Proposed · Shin + Ontology-R-GAT FOV",
 }
 METHOD_COLORS = {
     "shin_se_fixed": "#D95319",
-    "shin_se_onto_rgat_fov": "#77AC30",
+    "shin_se_onto_rgat_recovery": "#77AC30",
 }
 COMPONENT_LABELS = ("수평 접근", "수직 접근", "하강 안전", "미달 방지", "요 안정")
 COMPONENT_COLORS = ("#0072BD", "#D95319", "#EDB120", "#7E2F8E", "#77AC30")
@@ -485,7 +485,8 @@ def _save_reward_diagnostics(output_dir: Path, results_dir: Path,
         for key, label, color in (
                 ("total_loss", "학습 총손실", "#0072BD"),
                 ("validation_objective", "검증 목적함수", "#D95319"),
-                ("validation_bce", "검증 BCE", "#7E2F8E")):
+                ("validation_huber", "검증 Huber", "#7E2F8E"),
+                ("validation_contract", "검증 규약 위반", "#77AC30")):
             values = [_number(row, key) for row in history]
             if np.isfinite(values).any():
                 ax.plot(epochs, values, color=color, linewidth=1.8, label=label)
@@ -572,36 +573,39 @@ def _save_reward_diagnostics(output_dir: Path, results_dir: Path,
 def _save_fov_risk_diagnostics(output_dir: Path, manifest: Mapping[str, Any]):
     model = dict(manifest.get("fov_risk_model") or {})
     validation = dict(model.get("validation_metrics") or {})
+    # Regression diagnostics for a time-fraction target. The constant
+    # predictor RMSE is reported next to the model RMSE so a model that only
+    # learned the mean cannot be presented as skilful.
     rows = [{
         "metric": key,
         "value": validation.get(key),
         "split": "whole held-out episodes",
-    } for key in ("auroc", "f1", "precision", "recall", "best_validation_bce")]
-    confusion = validation.get("confusion_matrix")
-    if confusion:
-        rows.append({"metric": "confusion_matrix", "value": str(confusion),
-                     "split": "whole held-out episodes"})
+    } for key in ("mae", "rmse", "constant_predictor_rmse", "bias", "r2",
+                  "validation_contract_violation", "best_validation_loss")]
     _write_csv(output_dir / "fov_risk_validation.csv", rows)
-    status = ("validation-best frozen classifier" if model.get("frozen")
+    status = ("validation-best frozen scalar readout" if model.get("frozen")
               else "FOV-risk model training pending")
     figures = []
     finite = [(row["metric"], float(row["value"])) for row in rows
-              if row["metric"] != "confusion_matrix"
-              and row["value"] is not None
+              if row["value"] is not None
               and math.isfinite(float(row["value"]))]
     plt = _configure_matplotlib()
     fig, ax = plt.subplots(figsize=(7.2, 4.15))
     if finite:
         names, values = zip(*finite)
         ax.bar(names, values, color="#77AC30")
-        ax.set_ylim(0, max(1.0, max(values) * 1.1))
+        # bias and r2 can be negative; clipping them at zero would hide a
+        # model that is worse than the constant predictor.
+        ax.set_ylim(min(0.0, min(values) * 1.1), max(1.0, max(values) * 1.1))
+        ax.axhline(0.0, color="#444444", linewidth=.8)
         ax.set_ylabel("Metric value")
+        ax.tick_params(axis="x", labelrotation=30)
     else:
         ax.text(.5, .5, "FOV-risk model training pending", ha="center",
                 va="center", transform=ax.transAxes, color="#777777")
         ax.set_xticks([])
         ax.set_yticks([])
-    ax.set_title("Future FOV-loss R-GAT validation")
+    ax.set_title("Future FOV-unavailability R-GAT validation")
     fig.tight_layout()
     path = output_dir / "fov_risk_model_validation.png"
     composite_path = output_dir / "slide14_rgat_reward_validation.png"
@@ -637,8 +641,9 @@ def write_presentation_results(results_dir, output_dir=None) -> dict[str, Any]:
          "unsafe_pad_contact 평균", "uncertainty": "표본 수 N 병기"},
         {"slide": 14, "metric": "시야 상실률", "definition":
          "episode별 geometric_fov_loss_fraction 평균", "uncertainty": "표본 수 N 병기"},
-        {"slide": 15, "metric": "FOV-risk AUROC/F1", "definition":
-         "held-out episode의 1초 내 FOV-loss 이진 분류", "uncertainty": "episode 단위 분할"},
+        {"slide": 15, "metric": "FOV 비가용 회귀 RMSE/MAE", "definition":
+         "held-out episode에서 향후 1초 중 패드 중심이 FOV 밖인 시간 비율의 회귀 오차 "
+         "(상수 예측기 RMSE 병기)", "uncertainty": "episode 단위 분할"},
         {"slide": 16, "metric": "최근 5회 학습 안전 착륙률", "definition":
          "방법별 PPO training checkpoint에 기록된 strict_success의 5-episode 이동평균", "uncertainty": "학습 추세 진단"},
     )

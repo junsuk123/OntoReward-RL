@@ -27,7 +27,7 @@ PHYSICAL_METRICS = (
     "adaptive_rgat_inference_latency_ms_mean",
     "adaptive_rgat_parameter_count",
 )
-PRIMARY_PIPELINES = ("shin_se_fixed", "shin_se_onto_rgat_fov")
+PRIMARY_PIPELINES = ("shin_se_fixed", "shin_se_onto_rgat_recovery")
 
 
 def _replicate(row) -> str:
@@ -121,8 +121,8 @@ def paired_differences(records):
     index = {(_replicate(row), row["pipeline"], row["scenario"], int(row["seed"])): row
              for row in records}
     present = {row["pipeline"] for row in records}
-    if "shin_se_onto_rgat_fov" in present:
-        comparisons = (("shin_se_onto_rgat_fov", "shin_se_fixed"),)
+    if "shin_se_onto_rgat_recovery" in present:
+        comparisons = (("shin_se_onto_rgat_recovery", "shin_se_fixed"),)
     elif "onto_rgat_adaptive_weight_no_se" in present:
         proposed = "onto_rgat_adaptive_weight_no_se"
         baselines = [name for name in (
@@ -400,10 +400,10 @@ def _write_figures(records, training_records, figures_dir: Path,
     index = {(_replicate(row), row["pipeline"], row["scenario"], int(row["seed"])): row
              for row in records}
     labels, values = [], []
-    proposed = ("shin_se_onto_rgat_fov" if "shin_se_onto_rgat_fov" in pipelines
+    proposed = ("shin_se_onto_rgat_recovery" if "shin_se_onto_rgat_recovery" in pipelines
                 else "onto_rgat_adaptive_weight_no_se"
                 if "onto_rgat_adaptive_weight_no_se" in pipelines else "onto_no_se")
-    baselines = (["shin_se_fixed"] if proposed == "shin_se_onto_rgat_fov" else
+    baselines = (["shin_se_fixed"] if proposed == "shin_se_onto_rgat_recovery" else
         [name for name in (
             "shin_se_fixed", "shin_se_rgat_weight", "no_se_fixed",
             "onto_rgat_potential_pbrs_no_se") if name in pipelines]

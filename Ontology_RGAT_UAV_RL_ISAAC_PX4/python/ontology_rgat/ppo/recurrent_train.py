@@ -22,7 +22,7 @@ from ..pipelines import (available_pipeline_ids, get_pipeline,
 from ..rgat.adaptive_model import adaptive_reward_graph
 from ..rgat.fov_graph import (build_fov_graph,
                               fov_observation_from_visual_semantics)
-from ..rgat.fov_risk_dataset import future_fov_loss_labels
+from ..rgat.fov_risk_dataset import future_fov_unavailability_targets
 from ..reward_modes import (AdaptiveRewardConfig, AdaptiveWeightReward,
                             FixedBaselineRewardWeights,
                             OntoRewardPBRS, ShinReward, ShinRewardConfig,
@@ -109,7 +109,7 @@ def _reward(method, previous, following, estimate, next_estimate, potential,
         value = sparse_terminal_reward(**terminal.as_kwargs())
         return value, {"task": value}, next_loss
     if (spec is not None and spec.name in {
-            "shin_se_fixed", "shin_se_onto_rgat_fov", "no_se_fixed"}
+            "shin_se_fixed", "shin_se_onto_rgat_recovery", "no_se_fixed"}
             and reward_normalizer is not None):
         if current_adaptive_graph is None:
             raise ValueError("normalized fixed reward requires current adaptive graph")
@@ -134,7 +134,7 @@ def _reward(method, previous, following, estimate, next_estimate, potential,
             probability = float(potential.predict(current_fov_graph))
             addition = ontology_fov_reward(probability, fov_risk_lambda)
             value += addition
-            parts["predicted_fov_loss_probability"] = probability
+            parts["predicted_fov_unavailability"] = probability
             parts["ontology_fov_reward"] = addition
         return value, parts, next_loss
     if spec is not None and spec.reward_mode in {
@@ -172,7 +172,7 @@ def _reward(method, previous, following, estimate, next_estimate, potential,
             probability = float(potential.predict(current_fov_graph))
             addition = ontology_fov_reward(probability, fov_risk_lambda)
             value += addition
-            parts["predicted_fov_loss_probability"] = probability
+            parts["predicted_fov_unavailability"] = probability
             parts["ontology_fov_reward"] = addition
         return value, parts, next_loss
     if spec is not None and spec.reward_mode == "adaptive_weight":
@@ -556,6 +556,11 @@ def collect_episode(env, model: PipelineActorCritic, method: str, seed: int,
                     estimation_loss=estimation_loss, state=following.state,
                     pipeline_spec=model_spec,
                     semantic_features=next_semantic.feature_vector,
+                    # The eight visual FOV features are computed for both arms
+                    # and published for both, so the operator compares
+                    # perception quality on identical terms. Only the proposed
+                    # arm's *reward* consumes them.
+                    fov_semantic_features=next_fov_semantic.feature_vector,
                     # Adaptive weighting consumes the extended ontology with
                     # five reward-term nodes. Publish that exact graph so the
                     # dashboard traces the model's real input, not the smaller
@@ -582,11 +587,14 @@ def collect_episode(env, model: PipelineActorCritic, method: str, seed: int,
     # passing only the post-action row flags would skip that immediate state.
     fov_timeline = ([row["fov_graph_geometric_in_fov"] for row in rows]
                     + [bool(rows[-1]["geometric_in_fov"])])
-    future_labels = future_fov_loss_labels(
-        fov_timeline, prediction_steps)[:-1]
-    for row, label in zip(rows, future_labels):
-        row["actual_future_fov_loss_label"] = float(label)
-        row["reward_parts"]["actual_future_fov_loss_label"] = float(label)
+    future_targets, future_valid = future_fov_unavailability_targets(
+        fov_timeline, prediction_steps)
+    # The episode tail has no observed H-step future.  Those rows report None,
+    # never 0.0: an unobserved future is not evidence the pad stayed visible.
+    for row, target, valid in zip(rows, future_targets[:-1], future_valid[:-1]):
+        measured = float(target) if bool(valid) else None
+        row["actual_future_fov_unavailability"] = measured
+        row["reward_parts"]["actual_future_fov_unavailability"] = measured
     loss_runs = []
     run = 0
     for row in rows:

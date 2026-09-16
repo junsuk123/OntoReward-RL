@@ -447,7 +447,7 @@ def test_excessive_post_update_kl_rolls_back_the_ppo_epoch():
 
 def test_primary_specs_encode_the_intended_information_boundaries():
     baseline = PIPELINES["shin_se_fixed"]
-    proposed = PIPELINES["shin_se_onto_rgat_fov"]
+    proposed = PIPELINES["shin_se_onto_rgat_recovery"]
     for spec in (baseline, proposed):
         assert spec.state_estimation_enabled
         assert spec.auxiliary_estimation_loss_enabled
@@ -1032,8 +1032,8 @@ def test_pipeline_hash_changes_with_information_boundary_configuration():
     config = load_experiment(
         ROOT / "config/experiments/two_pipeline_comparison.yaml")
     altered = {**config, "pipeline_contract": {
-        **config["pipeline_contract"], "shin_se_onto_rgat_fov": {
-            **config["pipeline_contract"]["shin_se_onto_rgat_fov"],
+        **config["pipeline_contract"], "shin_se_onto_rgat_recovery": {
+            **config["pipeline_contract"]["shin_se_onto_rgat_recovery"],
             "reward": "illegal_changed_reward"}}}
     assert configuration_hash(config) != configuration_hash(altered)
     assert tuple(config["pipelines"]) == tuple(PIPELINES)

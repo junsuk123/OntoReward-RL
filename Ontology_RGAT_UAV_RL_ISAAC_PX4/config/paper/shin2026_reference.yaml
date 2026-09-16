@@ -1,0 +1,226 @@
+# Verbatim transcription of Shin et al., "Vision-Based Autonomous Drone Landing
+# on Moving Platforms With Uncertain Motion via Deep Reinforcement Learning",
+# IEEE RA-L vol. 11 no. 5, May 2026, pp. 5542-5549. DOI 10.1109/LRA.2026.3674011.
+#
+# Every entry carries the place in the paper it came from. Nothing in this file
+# is a design choice of this repository: values this repository had to pick are
+# in `unreported`, and readings of ambiguous printed values are in
+# `interpretations`. Table IV and Table V are the reproduction *targets*; they
+# are not results of this repository and must never be reported as such.
+schema_version: ontoreward.shin2026_paper_reference/1
+paper:
+  doi: 10.1109/LRA.2026.3674011
+  venue: IEEE Robotics and Automation Letters, vol. 11, no. 5, May 2026
+  pages: 5542-5549
+  transcribed_on: 2026-09-16
+
+observation:
+  source: "Sec. II-A"
+  image: grayscale
+  camera_mount: "60 deg downward pitch to the forward axis"
+  proprioception: "body-frame velocity v in R^3 and quaternion attitude q in R^4"
+  action: "[vx, vy, vz, wz] velocity commands in the drone's heading frame"
+
+simulation:
+  source: "Sec. IV-A"
+  simulator: "AerialGym"
+  low_level_controller: "geometric controller tracking body-frame velocity and yaw-rate commands"
+  image_width: 512
+  image_height: 320
+  horizontal_fov_deg: 90
+  grayscale: true
+  body_velocity_noise_m_s: 0.05        # Gaussian
+  attitude_noise_deg: 0.5              # small-angle
+  pad_size_m: [1.5, 1.5]
+  policy_dt_seconds: 0.1
+  horizon_steps: 300
+  success_definition: "contact with the pad upper surface"
+  termination: ["touchdown", "exits the workspace", "horizon"]
+  training_hardware: "Nvidia RTX 4090"
+  training_wall_clock_hours: 3.5
+
+network:
+  source: "Sec. III-B and Fig. 4"
+  image_embedding_dim: 512             # l_t
+  lstm_hidden_dim: 512                 # h_t
+  latent_dim: 256                      # y_t, N = 256
+  relative_state_dim: 6                # s_rel = [dx^b, dv^b]
+  actor_latent_slice_start: 6          # decision layer consumes y_{6:N} and u_t
+  critic_input: "privileged o_priv = [u_t, s_rel_t]"
+  perception: "pre-trained, frozen keypoint encoder of Park et al. [17] (PACMAN)"
+  keypoint_layout: hexagonal
+  keypoint_count: 6
+  keypoints_required_for_classical_localization: 4
+
+# Table I: initial conditions for the landing scenario.
+initial_conditions:
+  source: "Table I"
+  altitude_offset_m: {distribution: uniform, low: 2.0, high: 8.0}
+  lateral_offset_m: {distribution: uniform, low: -3.0, high: 3.0}
+  platform_yaw_misalignment_deg: {distribution: uniform, low: -60.0, high: 60.0}
+  initial_platform_speed_m_s: {distribution: uniform, low: 0.0, high: 8.0}
+  initial_platform_yaw_rate_deg_s: {constant: 0.0}
+  platform_speed_perturbation_m_s: {distribution: uniform, low: -0.5, high: 0.5}
+  platform_yaw_rate_perturbation_deg_s: {distribution: uniform, low: -3.0, high: 3.0}
+
+platform_motion:
+  source: "Sec. II-B"
+  model: "v_{t+1} = v_t + dv, w_{t+1} = w_t + dw on a planar surface"
+  control_step_seconds: 0.1
+
+# Table II: domain-randomization parameters.
+domain_randomization:
+  source: "Table II"
+  velocity_gain_xy: {low: 2.7, high: 3.3, randomized_at: env_init}
+  velocity_gain_z: {low: 1.3, high: 1.7, randomized_at: env_init}
+  attitude_gain_roll_pitch: {low: 1.6, high: 1.85, randomized_at: env_init}
+  attitude_gain_yaw: {low: 0.25, high: 0.4, randomized_at: env_init}
+  external_force_n: {low: -0.75, high: 0.75, randomized_at: each_step}
+  external_torque_nm: {low: -4.0e-3, high: 4.0e-3, randomized_at: each_step}
+  initial_velocity_m_s: {low: -1.0, high: 1.0, randomized_at: episode_start}
+  initial_angular_rate_deg_s: {low: -10.0, high: 10.0, randomized_at: episode_start}
+  ground_texture_id: {low: 1, high: 50, randomized_at: episode_start}
+  ground_texture_scale: {low: 0.4, high: 1.2, randomized_at: episode_start}
+  ground_brightness_factor: {low: 0.5, high: 1.0, randomized_at: episode_start}
+  rgb_scaling: {low: 0.5, high: 1.0, randomized_at: episode_start}
+  light_direction_deg: {low: 45.0, high: 135.0, randomized_at: episode_start}
+
+# Table III: shaping reward, r_shaping = sum_i w_i r_i.
+reward_shaping:
+  source: "Table III"
+  lateral_progress:
+    equation: "[d_xy,t-1 - d_xy,t] clipped to [-1, 1]"
+    weight: 1.0
+  vertical_progress:
+    equation: "([|dz_{t-1}| - |dz_t|] clipped to [-1, 1]) / max(d_xy,t, 1)"
+    weight: 1.0
+  vertical_speed_penalty:
+    equation: "-[v_z + 0.5] clipped to [0, inf)"
+    weight: 0.5
+  undershoot_penalty:
+    equation: "-I[dz_t > 0] * dz_t"
+    weight: 1.0
+  yaw_rate_penalty:
+    equation: "-|w_z|"
+    weight: 2.0
+
+active_perception_reward:
+  source: "Sec. III-C"
+  equation: "r_active_t = -alpha * [beta * (L_est_{t+1} - tau)] clipped to [0, 1]"
+  alpha: 0.1
+  beta: 1.0
+  tau: 0.01
+  auxiliary_loss: "L_est_t = (1/6) * sum_{i=1..6} (s_rel_{t,i} - s~_rel_{t,i})^2  (Eq. 1)"
+
+terminal_reward:
+  source: "Sec. III-D-4"
+  successful_landing: 10.0
+  crash_or_excessive_drift: -10.0
+  piecewise: >-
+    The printed reward is a three-way case split: terminal outcomes REPLACE the
+    shaping and active-perception terms rather than adding to them
+    ("ensuring that terminal outcomes dominate").
+
+curriculum:
+  source: "Sec. III-D-2 and Fig. 3"
+  variable: "scalar c in [0, 1] scaling platform-motion magnitude"
+  levels_shown_in_figure: [10, 80]
+  level_update_every_episodes: 512
+  full_task_at: "c = 1"
+
+training_algorithm:
+  source: "Sec. III-D"
+  algorithm: PPO
+  critic: "asymmetric / privileged, removed at deployment"
+  auxiliary: "state-estimation regression loss optimized in the same PPO minibatch"
+
+# Table IV: reproduction TARGET. Not a result of this repository.
+table_iv:
+  source: "Table IV, evaluated over 10,000 episodes in the training scenario"
+  evaluation_episodes: 10000
+  scenario: "training scenario, platform random-walk dynamics of Sec. II-B"
+  units: {success_rate: percent, pos_rmse: m, vel_rmse: m_per_s}
+  table_values_are_rounded_to_integer_percent: true
+  rows:
+    - {approach: Proposed, variant: null, success_rate: 97, pos_rmse: 0.474, vel_rmse: 0.589}
+    - {approach: Proposed, variant: "w/o keypoint encoder", success_rate: 91, pos_rmse: 0.953, vel_rmse: 1.063}
+    - {approach: Proposed, variant: "w/o active-perception reward", success_rate: 91, pos_rmse: 1.048, vel_rmse: 0.695}
+    - {approach: Proposed, variant: "w/o state estimation", success_rate: 73, pos_rmse: null, vel_rmse: null}
+    - {approach: "RL [16]", variant: null, success_rate: 3, pos_rmse: null, vel_rmse: null}
+    - {approach: "RL [16]", variant: "proposed perception backbone", success_rate: 69, pos_rmse: null, vel_rmse: null}
+    - {approach: "FF-PBVS [27]", variant: "w/o GPS error", success_rate: 67, pos_rmse: 1.678, vel_rmse: 0.883}
+    - {approach: "FF-PBVS [27]", variant: "w/ GPS error", success_rate: 23, pos_rmse: 2.892, vel_rmse: 0.846}
+    - {approach: Hybrid, variant: "EKF + RL", success_rate: 59, pos_rmse: 1.331, vel_rmse: 1.501}
+  # Sec. V-A quotes two decimals for some rows; the table itself is rounded.
+  body_text_success_rates:
+    proposed_wo_state_estimation: 73.99
+    rl16: 3.82
+    rl16_with_proposed_backbone: 69.89
+    hybrid_ekf_rl: 59.77
+    ff_pbvs_ideal: 67.81
+    ff_pbvs_with_gps_error: 23.66
+
+# Table V: generalization TARGET. Not a result of this repository.
+table_v:
+  source: "Table V"
+  evaluation_episodes_per_scenario: 1000
+  policy: "a single trained policy, no retraining or tuning"
+  success_rate_percent:
+    "8m/s": 98.8
+    "lin_accel": 79.1
+    "circle": 79.6
+    "zigzag": 69.7
+    "u_turn": 55.0
+    "boat": 99.5
+
+real_world:
+  source: "Sec. V-D"
+  platform_speed_m_s: [3.0, 4.0]
+  trials: 10
+  successful_touchdowns: 8
+  onboard_computer: "Nvidia Orin NX"
+  actor_rate_hz: 10
+  geometric_controller_rate_hz: 50
+  px4_rate_hz: 250
+  gps_imu_odometry_rate_hz: 20
+
+# Printed values whose literal reading is not physically usable, with the
+# reading this repository adopts. Each one is a judgement, not a paper value.
+interpretations:
+  - item: domain_randomization.external_torque_nm
+    printed: "-4e3, 4e3 [N.m]"
+    adopted: "-4e-3, 4e-3 N.m"
+    rationale: >-
+      4000 N.m on a sub-kilogram-inertia quadrotor is not a perturbation, it is
+      an instant tumble; the neighbouring force entry is +-0.75 N. The adopted
+      reading treats the exponent sign as a typesetting loss.
+
+# Everything the paper does not state. These are this repository's choices and
+# may not be described as reproduced. Each must name where it is set.
+unreported:
+  - item: "PPO hyperparameters (clip, learning rate, epochs, minibatch, gamma, GAE lambda, entropy coefficient, target KL)"
+    repo_location: "config/experiments/shin2026_baseline.yaml: ppo"
+  - item: "Layer widths/depths of the state-estimation MLP and the decision-making MLP (only input/output dimensions are given)"
+    repo_location: "python/ontology_rgat/ppo/recurrent.py"
+  - item: "CNN encoder architecture between the frozen keypoint encoder and l_t"
+    repo_location: "python/ontology_rgat/ppo/temporal_backbone.py"
+  - item: "Action scaling and command limits (max commanded velocity and yaw rate)"
+    repo_location: "config/experiments/shin2026_baseline.yaml: control"
+  - item: "Definitions/thresholds of 'exits the workspace' and 'excessive drift'"
+    repo_location: "config/shin2026-system.yaml: landing.world_xy_limit_m"
+  - item: "Number of parallel environments and total training steps/episodes (Fig. 5 abscissa reaches 120,000 episodes)"
+    repo_location: "config/experiments/shin2026_baseline.yaml: training"
+  - item: "Mapping from curriculum level to c, and the level schedule beyond 'updated every 512 episodes'"
+    repo_location: "config/experiments/shin2026_baseline.yaml: curriculum"
+  - item: "Camera extrinsic translation and intrinsics beyond resolution and horizontal FOV"
+    repo_location: "config/shin2026-system.yaml: vision.camera"
+  - item: "PACMAN keypoint-encoder pre-training dataset and procedure; its weights are not public"
+    repo_location: "config/experiments/shin2026_baseline.yaml: estimator.keypoint_pretraining"
+  - item: "AerialGym / Isaac Gym versions and the geometric controller's gains"
+    repo_location: "not set"
+  - item: "Number of training seeds behind the one-standard-deviation band in Fig. 5"
+    repo_location: "config/experiments/shin2026_baseline.yaml: seeds"
+  - item: "Interval over which the Table IV position/velocity RMSE is accumulated, and whether it is pooled or per-seed"
+    repo_location: "not set"
+  - item: "Whether the reported success rate is pooled over 10,000 episodes or averaged over seeds"
+    repo_location: "not set"

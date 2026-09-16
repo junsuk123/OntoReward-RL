@@ -79,7 +79,9 @@ def test_shin_profile_uses_campus_plaza_and_fitted_platform():
         pad.route_waypoints_enu_m[0])
     assert (ROOT / pad.vehicle_visual_usd).is_file()
     assert config["isaac"]["start_airborne"] is True
-    assert config["benchmark"]["entry_speed_tolerance_m_s"] == pytest.approx(.40)
+    # At or above Table II's per-axis initial-velocity randomization, so the
+    # handover gate is never stricter than the paper's own initial condition.
+    assert config["benchmark"]["entry_speed_tolerance_m_s"] == pytest.approx(1.0)
     assert config["benchmark"]["entry_settle_s"] == pytest.approx(1.0)
     assert config["isaac"]["viewport_follow"]["focus"] == "pair"
     operator_view = config["parallel"]["operator_view"]

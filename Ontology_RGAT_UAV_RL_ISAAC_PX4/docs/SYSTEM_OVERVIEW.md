@@ -5,7 +5,7 @@ Isaac Sim/Pegasus가 물리·카메라·UGV를, PX4 SITL이 저수준 비행제�
 critic을 사용한다. Actor observation은 영상과 UAV proprioception이며 critic truth는
 학습 value 함수에만 제공된다.
 
-`shin_se_fixed`는 기존 Shin 보상 전체를 사용한다. `shin_se_onto_rgat_fov`도 같은
+`shin_se_fixed`는 기존 Shin 보상 전체를 사용한다. `shin_se_onto_rgat_recovery`도 같은
 forward/loss/reward를 실행한 후 visual-only graph에서 동결 R-GAT 확률을 계산해
 `-lambda_fov * probability`를 한 번 더한다.
 

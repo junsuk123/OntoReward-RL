@@ -71,10 +71,22 @@ benchmark:
   # toward the Table-I draw; at every level the horizontal draw is conditioned
   # on the paper's requirement that the pad starts inside the camera FOV.
   initial_condition_curriculum_min_scale: 0.0
-  # Setup-only handover gate, not the touchdown-success threshold. The real
-  # PX4/Pegasus hover limit cycle observed in this rendered scene is about
-  # 0.34 m/s; 0.40 rejects a fly-through but does not wait forever for 0.15.
-  entry_speed_tolerance_m_s: 0.40
+  # Setup-only handover gate, not the touchdown-success threshold, and the
+  # pad-relative speed the vehicle actually has.
+  #
+  # 0.40 was set from a claimed 0.34 m/s hover limit cycle. On this rendered
+  # two-pair stage the observed cycle reaches 0.49 m/s while station-keeping on
+  # the moving deck, so the gate sat on top of the noise: compliance flickered,
+  # the entry_settle_s streak restarted every few samples, and the 90 s budget
+  # expired with the vehicle *inside* every tolerance at the final sample.
+  #
+  # The bound is now taken from the paper instead of from PX4 convenience.
+  # Table II randomizes the drone's own initial velocity to U(-1, 1) m/s per
+  # axis, so the paper's episodes begin with more body velocity than this gate
+  # ever admits. Demanding an entry hover quieter than the paper's own initial
+  # condition constrains nothing scientific; 1.0 m/s still rejects a
+  # fly-through and sits clear of the observed cycle. Identical for both arms.
+  entry_speed_tolerance_m_s: 1.00
   entry_settle_s: 1.0
   # Initial visibility is a single geometric condition: the landing-pad centre
   # must project inside the rendered camera's frustum. No detector takes part.

@@ -6,7 +6,7 @@
 | Pipeline | 공통 Shin 구성 | 유일한 차이 |
 |---|---|---|
 | `shin_se_fixed` | 6-keypoint encoder, LSTM, 6-D 상대상태 추정과 auxiliary loss, PPO actor, asymmetric critic, 고정 5성분 보상, active-perception 보상 | 없음 |
-| `shin_se_onto_rgat_fov` | 위 구성을 모두 동일하게 유지 | 시각 ontology와 동결 R-GAT의 미래 FOV-loss 확률에 따른 추가 보상 |
+| `shin_se_onto_rgat_recovery` | 위 구성을 모두 동일하게 유지 | 시각 ontology와 동결 R-GAT의 향후 H step 동안 패드 중심이 FOV 밖인 시간 비율에 따른 추가 보상 |
 
 제안법은 Shin et al.의 상태추정기나 active-perception 보상을 대체하지 않는다.
 고정 가중치도 변경하지 않는다.
@@ -29,7 +29,7 @@ critic privileged state는 입력할 수 없다.
 ## 현재 실행 경로
 
 현재 기본 연구 경로는 `config/experiments/two_pipeline_comparison.yaml`의 두
-pipeline 비교다. `shin_se_fixed`와 `shin_se_onto_rgat_fov`는 Shin baseline을
+pipeline 비교다. `shin_se_fixed`와 `shin_se_onto_rgat_recovery`는 Shin baseline을
 공유하고, 후자만 동결된 visual-only R-GAT의 1초 미래 FOV-loss 보상을 추가한다.
 Estimator-free, adaptive-weight, PBRS 실험은 legacy/ablation 경로다.
 
@@ -38,7 +38,7 @@ Estimator-free, adaptive-weight, PBRS 실험은 legacy/ablation 경로다.
 기본 실행은 두 개의 독립 UAV/UGV·PX4·namespace·port·learner·buffer·optimizer를 쓴다.
 
 ```bash
-./run.sh --pipelines shin_se_fixed shin_se_onto_rgat_fov --parallel-pairs 2
+./run.sh --pipelines shin_se_fixed shin_se_onto_rgat_recovery --parallel-pairs 2
 ```
 
 인자 없는 `./run.sh`는 `seminar_10h_two_pipeline.yaml`을 자동 선택하는 재현 가능한

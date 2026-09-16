@@ -7,7 +7,7 @@
 
 ## Pipeline
 
-| 계약 | `shin_se_fixed` | `shin_se_onto_rgat_fov` |
+| 계약 | `shin_se_fixed` | `shin_se_onto_rgat_recovery` |
 |---|---:|---:|
 | 6-keypoint fiducial 착륙 표적 | 동일 | 동일 |
 | 6-keypoint encoder | 동일 | 동일 |
@@ -38,7 +38,7 @@ $$r_{proposed}(t)=r_{base}(t)-\lambda_{fov}p_{fov\_loss}(t)$$
 FOV-risk label의 기본 prediction horizon은 1.0초이며, 실제 control frequency에
 맞춰 step 수로 변환한다(10 Hz면 10 step). `visibility_criterion`은
 `geometric_pad_center_in_fov`이고, 제안 branch는 `freeze_during_ppo: true`로
-설정된다. R-GAT은 BCE-only offline 학습의 validation-best checkpoint로 고정되며
+설정된다. R-GAT은 Huber regression + contract rule `R-04` offline 학습의 validation-best checkpoint로 고정되며
 PPO optimizer에 들어가지 않는다.
 
 ## 인지(perception)와 기하 FOV의 분리
@@ -87,7 +87,7 @@ Duration이다. 참고로 baseline 논문의 접촉 기준 성공률은 `paper_c
 별도 병기하며 엄격 기준을 대체하지 않는다. 인지 품질은
 `low_keypoint_visibility_fraction`, `keypoint_confidence_mean`,
 `visible_keypoint_fraction_mean`로 따로 보고한다. 이 지표들은 비교의 종속변수이므로
-학습 health gate가 이를 이유로 실행을 중단하지 않는다. R-GAT은 AUROC, F1, precision, recall,
+학습 health gate가 이를 이유로 실행을 중단하지 않는다. R-GAT은 MAE, RMSE, bias, R², 상수 예측기 RMSE 기준선,
 confusion matrix를 보고한다. 상태추정 오차와 loss는 양쪽 공통 진단값이며 제안 기여로
 해석하지 않는다.
 

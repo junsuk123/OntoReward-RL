@@ -94,7 +94,8 @@ class ExternalStack:
                  log_dir: str | Path | None = None,
                  agent_timeout: float = 30.0, isaac_timeout: float = 600.0,
                  gateway_timeout: float = 60.0,
-                 parallel_pairs: int = 1):
+                 parallel_pairs: int = 1,
+                 startup_attempts: int = 3):
         self.root = Path(cfg.paths.root)
         if not (self.root / "scripts").is_dir():
             raise StackError(f"No scripts/ directory under {self.root}.")
@@ -113,6 +114,13 @@ class ExternalStack:
         self.log_dir.mkdir(parents=True, exist_ok=True)
         self.timeouts = {"agent": agent_timeout, "isaac": isaac_timeout,
                          "gateway": gateway_timeout}
+        # Isaac's carb tasking/assets threads intermittently abort during
+        # startup on this class of machine (a "unlock() called by non-owning
+        # thread" mutex assertion, recorded in crash dumps well before this
+        # benchmark's perception refactor). Nothing has been collected at that
+        # point, so a bounded relaunch costs a boot and loses no data, whereas
+        # failing out discards a queued multi-hour run.
+        self.startup_attempts = max(1, int(startup_attempts))
         self.managed: list[dict[str, Any]] = []
         self.generation = 0
         self._restart_lock = threading.RLock()
@@ -128,11 +136,31 @@ class ExternalStack:
         raise StackError("headless must be True, False or 'auto'")
 
     # ------------------------------------------------------------- lifecycle
-    def start(self) -> None:
-        self.start_agent()
-        self.start_isaac()
-        self.start_gateway()
-        print(f"External stack ready (logs in {self.log_dir}).")
+    def start(self, attempts: int | None = None) -> None:
+        """Bring the stack up, relaunching after a crashed startup.
+
+        Only *startup* is retried, and only for a bounded number of attempts:
+        a simulator that cannot boot at all still fails the run rather than
+        looping. This changes no experiment contract -- no episode, reward or
+        label exists yet when it fires.
+        """
+        total = self.startup_attempts if attempts is None else max(1, int(attempts))
+        for attempt in range(1, total + 1):
+            try:
+                self.start_agent()
+                self.start_isaac()
+                self.start_gateway()
+            except StackError as exc:
+                if attempt >= total or self._shutdown_requested:
+                    raise
+                first_line = str(exc).splitlines()[0] if str(exc) else exc.__class__.__name__
+                print(f"WARNING: simulator startup failed ({first_line}). "
+                      f"Relaunching ({attempt} of {total - 1}).")
+                self.stop()
+                time.sleep(5.0)
+                continue
+            print(f"External stack ready (logs in {self.log_dir}).")
+            return
 
     def start_agent(self) -> None:
         if _udp_port_bound(AGENT_PORT):

@@ -103,5 +103,5 @@ def test_bare_repository_launcher_selects_two_pair_operator_profile():
     assert "if [[ $# -eq 0 ]]" in launcher
     assert "seminar_fast=true" in launcher
     assert "--parallel-pairs 2" in launcher
-    assert "--pipelines shin_se_fixed shin_se_onto_rgat_fov" in launcher
+    assert "--pipelines shin_se_fixed shin_se_onto_rgat_recovery" in launcher
     assert "--stay-open" in launcher

@@ -1,0 +1,172 @@
+# Ontology contract for the proposed learning-only FOV-recovery reward.
+#
+# Scope and limitation. The named output node gives the design traceability:
+# one graph node carries the quantity the reward reads. It is not a causal
+# explanation of the policy's decisions, and nothing here guarantees the
+# trained model enforces a rule. Only rules whose `loss_or_validation` names a
+# loss term or a test are enforced at all; the rest are declared priors.
+#
+# Relation names (`indicates`, `supports`, `constrains`, `self`) are structural
+# edge types consumed by the relational kernel. They are NOT enforced
+# monotonicity constraints and no sign should be read into them.
+schema_version: ontology_rgat.fov_recovery_contract/1
+graph_version: ontology_rgat.future_fov_unavailability/2
+output_node: FutureFOVUnavailability
+output_interpretation: >-
+  E[y_t | graph of current and past observations], where
+  y_t = sum(1 - V_centre[t+k] for k in 1..H) / H is the fraction of the next H
+  control steps in which the geometric pad centre is outside the camera
+  frustum. It is a time fraction, not a binary loss probability.
+
+relation_names_are: >-
+  structural edge types consumed by the relational kernel, not enforced
+  monotonicity constraints; no sign may be read into an edge name, and only a
+  rule whose loss_or_validation names a loss term or a test is enforced.
+
+allowed_inputs:
+  description: >-
+    Features, missingness and age derived only from the actual keypoint/image
+    history up to the current step. No privileged input is added for the
+    proposed arm.
+  forbidden:
+    - simulator truth of any kind at inference time
+    - the six-dimensional relative-state estimate
+    - critic state
+    - event triggers, true acceleration, future trajectory
+    - geometric visibility labels
+    - marker detection quality
+
+features:
+  - name: keypoint_confidence
+    node: KeypointConfidence
+    provenance: heatmap entropy and per-point presence of the current frame
+  - name: visible_keypoint_fraction
+    node: VisibleKeypointFraction
+    provenance: count of keypoints above the visibility threshold
+  - name: fov_margin
+    node: FOVMargin
+    provenance: >-
+      1 - max|centroid| of the last trustworthy normalized centroid. Stale
+      while the measurement is missing; see rule R-03.
+  - name: apparent_target_scale
+    node: ApparentTargetScale
+    provenance: reliability-weighted RMS keypoint spread of the current frame
+  - name: image_plane_motion
+    node: ImagePlaneMotion
+    provenance: 1 - image_plane_motion_safety (centroid rate between frames)
+  - name: scale_rate
+    node: ScaleRate
+    provenance: 1 - scale_rate_safety (apparent-scale rate between frames)
+  - name: visibility_memory
+    node: VisibilityMemory
+    provenance: exponentially decayed history of measurement reliability
+  - name: reacquisition_trend
+    node: ReacquisitionTrend
+    provenance: change in keypoint confidence relative to the previous frame
+  - name: measurement_validity
+    node: MeasurementValidity
+    provenance: >-
+      1 when the current frame produced a usable pad geometry, else 0. Derived
+      from visual_loss_duration_s of the same keypoint history.
+  - name: measurement_age
+    node: MeasurementAge
+    provenance: >-
+      bounded time since the last usable measurement (visual_loss_risk), from
+      the same keypoint history.
+
+rules:
+  - rule_id: R-01
+    condition: >-
+      Every declared input node has a non-self path to FutureFOVUnavailability.
+    rationale: >-
+      A declared feature that cannot reach the output is decorative; the
+      schema would claim an input it structurally ignores.
+    input_provenance: graph topology only
+    exceptions: none
+    loss_or_validation: >-
+      enforced: rgat.fov_graph.unreachable_input_nodes() must be empty
+      (test_every_declared_fov_input_reaches_the_output_node).
+
+  - rule_id: R-02
+    condition: >-
+      The scalar is read from the FutureFOVUnavailability node of the second
+      relational layer (units=1), with no separate readout MLP, no separate
+      linear head and no residual from the 24-dimensional first layer.
+    rationale: >-
+      The method's claim is that the graph itself produces the reward signal.
+      A separate head would make the graph an optional feature extractor.
+    input_provenance: model architecture
+    exceptions: >-
+      The PPO actor/critic MLPs and the relation transforms inside the R-GAT
+      layers are untouched; this rule constrains the reward readout only.
+    loss_or_validation: >-
+      enforced: the model declares no nn.Linear module and the frozen loader
+      rejects a checkpoint whose architecture record claims a separate head
+      (test_fov_readout_comes_from_the_graph_without_a_separate_head).
+
+  - rule_id: R-03
+    condition: >-
+      A missing measurement must not enter the graph as a currently high
+      boundary margin. BoundarySafety is seeded as fov_margin *
+      measurement_validity, and measurement_validity/measurement_age both have
+      non-self paths to the output.
+    rationale: >-
+      fov_margin is the margin of the last trustworthy centroid. If the pad was
+      last seen centred and then disappeared, the raw margin reads ~1.0 at the
+      exact moment visibility is worst.
+    input_provenance: keypoint history only
+    exceptions: >-
+      The raw fov_margin value is still published on its own node, so the model
+      can use it where validity is 1.
+    loss_or_validation: >-
+      enforced: identical stale margins with different validity must produce
+      different graphs and different predictions
+      (test_a_missing_measurement_is_not_a_comfortable_margin).
+
+  - rule_id: R-04
+    condition: >-
+      Raising MeasurementAge while nothing else changes must not decrease the
+      predicted unavailability.
+    rationale: >-
+      A staler last-known pad location is weaker evidence that the pad is still
+      in view; a model that treated age as reassuring would invert the signal.
+    input_provenance: node-local perturbation of MeasurementAge
+    exceptions: >-
+      The perturbation is node-local: derived-node seeds are not recomputed, so
+      the rule constrains the model's response to the age node alone.
+    loss_or_validation: >-
+      enforced as a training penalty: rgat.fov_risk_train.contract_loss, a
+      one-sided hinge weighted by contract_weight (default 0.1) and reported as
+      validation_contract_violation
+      (test_the_contract_loss_penalises_a_staler_measurement_looking_safer).
+
+  - rule_id: R-05
+    condition: >-
+      A sample whose full H-step future was not observed carries no target.
+    rationale: >-
+      Filling the tail with 0 would teach the model that the end of every
+      episode is safe, including episodes truncated by the horizon.
+    input_provenance: offline labelling only
+    exceptions: none
+    loss_or_validation: >-
+      enforced: masked targets are NaN, validation rejects a finite masked
+      target, and training/metrics use the valid mask
+      (test_unobserved_future_windows_are_masked_not_zero_filled).
+
+  - rule_id: R-06
+    condition: >-
+      No outward-direction rule is asserted without a signed motion feature.
+    rationale: >-
+      The graph carries only unsigned image-plane motion magnitude, so it
+      cannot tell "drifting towards the boundary" from "drifting inwards".
+    input_provenance: n/a
+    exceptions: none
+    loss_or_validation: >-
+      declared only: ImagePlaneMotion and ScaleRate are magnitudes. No rule,
+      loss or edge in this contract claims a direction.
+
+not_claimed:
+  - potential-based shaping or optimal-policy invariance
+  - operational safety guarantee
+  - attention weights as causal evidence
+  - relation importance as a directly supervised learning target

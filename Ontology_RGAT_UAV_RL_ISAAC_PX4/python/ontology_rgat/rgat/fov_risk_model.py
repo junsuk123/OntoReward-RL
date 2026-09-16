@@ -1,4 +1,15 @@
-"""R-GAT binary classifier for near-future field-of-view loss."""
+"""Direct R-GAT scalar readout of near-future field-of-view unavailability.
+
+The regression target is the fraction of the next ``H`` control steps in which
+the geometric pad centre is outside the camera frustum.  It is a conditional
+expectation, not a binary-loss probability.
+
+The scalar is produced by the graph itself: the second relational layer has
+``units=1`` and the ``FutureFOVUnavailability`` node of that layer is the
+output.  There is no separate readout MLP, no separate linear head, and no
+residual adding the 24-dimensional first-layer state to the 1-dimensional
+output.
+"""
 from __future__ import annotations
 
 import hashlib
@@ -10,13 +21,21 @@ import numpy as np
 import torch
 from torch import nn
 
-from .fov_graph import (FOV_GRAPH_INPUT_DIM, FOV_GRAPH_VERSION,
+from .fov_graph import (FOV_GOAL_NODE, FOV_GRAPH_INPUT_DIM, FOV_GRAPH_VERSION,
                         FOV_NODE_NAMES, FOV_RELATION_NAMES, empty_fov_graph)
-from .model import RGATEncoder
+from .layers import RelationalGraphAttention
 from .topology import Topology
 
 
-FOV_RISK_MODEL_FORMAT = "ontology_rgat.future_fov_loss_classifier/1"
+FOV_RISK_MODEL_FORMAT = "ontology_rgat.future_fov_unavailability_readout/2"
+
+# Layer settings shared by both relational layers. They are fixed here rather
+# than exposed, so a checkpoint cannot silently change the attention kernel.
+_LAYER_KWARGS = dict(
+    head_aggregation="mean", attention_mode="wirgat", attention_style="dot",
+    attention_units=8, leaky_relu_slope=0.2, kernel_basis_size=0,
+    attn_kernel_basis_size=0, feature_dropout=0.0, support_dropout=0.0,
+    softmax_floor=1e-12, stable_softmax=True)
 
 
 def state_dict_digest(state_dict) -> str:
@@ -31,38 +50,57 @@ def state_dict_digest(state_dict) -> str:
 
 
 class FOVRiskModel(nn.Module):
-    """Two-layer relation-aware graph encoder with one sigmoid risk head."""
+    """Two relational layers whose second layer emits the scalar directly."""
 
     def __init__(self, *, hidden_dim: int = 24, relation_dim: int = 6,
                  heads: int = 1, seed: int = 42):
         super().__init__()
         graph = empty_fov_graph()
-        topology = Topology.from_graph(graph, len(FOV_RELATION_NAMES))
-        self.encoder = RGATEncoder(
-            topology, FOV_GRAPH_INPUT_DIM, int(hidden_dim),
-            relation_dim=int(relation_dim), residual=True, heads=int(heads),
-            head_aggregation="mean", attention_mode="wirgat",
-            attention_style="dot", attention_units=8,
-            leaky_relu_slope=0.2, kernel_basis_size=0,
-            attn_kernel_basis_size=0, feature_dropout=0.0,
-            support_dropout=0.0, softmax_floor=1e-12,
-            stable_softmax=True)
-        self.risk_head = nn.Linear(self.encoder.out_dim, 1)
+        self.topology = Topology.from_graph(graph, len(FOV_RELATION_NAMES))
+        self.hidden_dim = int(hidden_dim)
+        self.layer1 = RelationalGraphAttention(
+            FOV_GRAPH_INPUT_DIM, self.hidden_dim, self.topology,
+            relation_dim=int(relation_dim), heads=int(heads), **_LAYER_KWARGS)
+        self.layer2 = RelationalGraphAttention(
+            self.layer1.out_dim, 1, self.topology,
+            relation_dim=int(relation_dim), heads=int(heads), **_LAYER_KWARGS)
+        if self.layer2.out_dim != 1:
+            raise ValueError("the FOV readout layer must return one unit per node")
         generator = torch.Generator(device="cpu").manual_seed(int(seed))
-        self.encoder.reset_encoder_parameters(generator)
-        with torch.no_grad():
-            bound = (6.0 / (self.encoder.out_dim + 1)) ** 0.5
-            self.risk_head.weight.uniform_(-bound, bound, generator=generator)
-            self.risk_head.bias.zero_()
+        self.layer1.reset_parameters(generator, scheme="matlab", scale=0.12)
+        self.layer2.reset_parameters(generator, scheme="matlab", scale=0.12)
 
     @property
-    def topology(self):
-        return self.encoder.topology
+    def goal_node(self) -> int:
+        return int(self.topology.goal_node)
+
+    def module_description(self) -> dict[str, Any]:
+        return {
+            "name": type(self).__name__,
+            "kind": "direct R-GAT scalar readout",
+            "output_node": FOV_GOAL_NODE,
+            "output_activation": "sigmoid",
+            "separate_output_mlp": False,
+            "separate_linear_readout": False,
+            "last_layer_residual": False,
+            "layers": [{
+                "name": f"R-GAT layer {index}",
+                "input_dim": int(layer.in_dim),
+                "units": int(layer.units),
+                "output_dim": int(layer.out_dim),
+                "attention_heads": int(layer.heads),
+                "head_aggregation": str(layer.head_aggregation),
+            } for index, layer in enumerate((self.layer1, self.layer2), start=1)],
+        }
 
     def forward_logits(self, X: torch.Tensor) -> torch.Tensor:
-        encoded = self.encoder(X)
-        goal = encoded[:, self.topology.goal_node, :]
-        return self.risk_head(goal).squeeze(-1)
+        if X.dim() == 2:
+            X = X.unsqueeze(0)
+        hidden = torch.tanh(self.layer1(X))
+        # No residual here: the first layer is 24-wide and the readout is a
+        # single unit, so there is nothing to add without reintroducing a
+        # projection outside the graph.
+        return self.layer2(hidden)[:, self.goal_node, 0]
 
     def forward(self, X: torch.Tensor) -> torch.Tensor:
         return torch.sigmoid(self.forward_logits(X))
@@ -94,9 +132,9 @@ class FOVRiskModel(nn.Module):
 
 def model_config(model: FOVRiskModel) -> dict[str, int]:
     return {
-        "hidden_dim": int(model.encoder.hidden_dim),
-        "relation_dim": int(model.encoder.layer1.relation_dim),
-        "heads": int(model.encoder.layer1.heads),
+        "hidden_dim": int(model.hidden_dim),
+        "relation_dim": int(model.layer1.relation_dim),
+        "heads": int(model.layer1.heads),
     }
 
 
@@ -110,6 +148,7 @@ def save_fov_risk_model(model: FOVRiskModel, path: str | Path, *, metadata: dict
         "node_names": list(FOV_NODE_NAMES),
         "relation_names": list(FOV_RELATION_NAMES),
         "model_config": model_config(model),
+        "architecture": model.module_description(),
         "model_checksum": state_dict_digest(state),
         "metadata": dict(metadata),
         "state_dict": state,
@@ -121,7 +160,7 @@ def save_fov_risk_model(model: FOVRiskModel, path: str | Path, *, metadata: dict
 
 
 class FrozenFOVRiskPredictor:
-    """Validated immutable classifier used during PPO and evaluation."""
+    """Validated immutable scalar readout used during PPO and evaluation."""
 
     def __init__(self, path: str | Path, *, expected_config_hash: str | None = None,
                  device: str | torch.device = "cpu"):
@@ -129,6 +168,10 @@ class FrozenFOVRiskPredictor:
         payload = torch.load(self.path, map_location="cpu", weights_only=False)
         if payload.get("format") != FOV_RISK_MODEL_FORMAT:
             raise ValueError("unsupported FOV-risk model format")
+        readout = dict(payload.get("architecture") or {})
+        if (readout.get("separate_output_mlp") or readout.get("separate_linear_readout")
+                or readout.get("last_layer_residual")):
+            raise ValueError("FOV readout must come from the graph, not a separate head")
         if payload.get("graph_version") != FOV_GRAPH_VERSION:
             raise ValueError("FOV-risk graph version mismatch")
         if tuple(payload.get("node_names", ())) != FOV_NODE_NAMES:

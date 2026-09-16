@@ -7,7 +7,7 @@ from ontology_rgat.evaluation.presentation import (
 
 METHODS = (
     "shin_se_fixed",
-    "shin_se_onto_rgat_fov",
+    "shin_se_onto_rgat_recovery",
 )
 
 
@@ -33,7 +33,7 @@ def test_incomplete_run_uses_current_training_and_never_stale_evaluation(tmp_pat
     manifest = {
         "execution_status": "configured; results pending",
         "pipeline_specs": {method: {
-            "fov_risk_reward_enabled": method.endswith("onto_rgat_fov")}
+            "fov_risk_reward_enabled": method.endswith("onto_rgat_recovery")}
             for method in METHODS},
         "fov_risk_design_id": None,
         "evaluation": {"circle": 1},
@@ -48,7 +48,7 @@ def test_incomplete_run_uses_current_training_and_never_stale_evaluation(tmp_pat
     assert summary["performance_status"] == "training_preliminary"
     by_method = {row["method"]: row for row in summary["safe_landing_metrics"]}
     assert by_method["shin_se_fixed"]["safe_landings"] == 1
-    assert by_method["shin_se_onto_rgat_fov"]["episodes"] == 0
+    assert by_method["shin_se_onto_rgat_recovery"]["episodes"] == 0
     assert (tmp_path / "presentation/slide13_safe_landing_performance.png").is_file()
     assert (tmp_path / "presentation/slide14_rgat_reward_validation.png").is_file()
     for name in (

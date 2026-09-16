@@ -6,7 +6,9 @@ import numpy as np
 
 from ontology_rgat.viz.rviz import _outcome_style
 from ontology_rgat.viz.rviz import RvizPublisher, RvizPublisherGroup
-from ontology_rgat.rgat.fov_graph import FOVSemanticObservation, build_fov_graph
+from ontology_rgat.rgat.fov_graph import (FOV_FEATURE_NAMES,
+                                          FOVSemanticObservation,
+                                          build_fov_graph)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -176,16 +178,17 @@ def test_benchmark_scene_and_telemetry_show_proposed_fov_branch():
     rviz.potential = None
     rviz._broadcast_tf = lambda *_args: None
     rviz._publish_path = lambda *_args: None
-    graph = build_fov_graph(FOVSemanticObservation(*([0.5] * 8)))
+    graph = build_fov_graph(
+        FOVSemanticObservation(*([0.5] * len(FOV_FEATURE_NAMES))))
 
     rviz.publish_benchmark_step(
         state={"pad": {"position": [0.0, 0.0, 0.0]},
                "truth": {"valid": True, "position": [0.1, -0.2, 1.3]},
                "quaternion_wxyz": [1.0, 0.0, 0.0, 0.0]},
-        method="shin_se_onto_rgat_fov", scenario="circle", step=1, dt=0.1,
+        method="shin_se_onto_rgat_recovery", scenario="circle", step=1, dt=0.1,
         geometric_in_fov=True, status="running", reward=-0.07,
         reward_parts={"active_perception": -0.01, "fov_margin": 0.3,
-                      "predicted_fov_loss_probability": 0.6,
+                      "predicted_fov_unavailability": 0.6,
                       "ontology_fov_reward": -0.06},
         semantic_graph=graph)
 
@@ -199,5 +202,5 @@ def test_benchmark_scene_and_telemetry_show_proposed_fov_branch():
     telemetry = json.loads(rviz.telemetry_pub.messages[-1].data)
     assert telemetry["ontology_fov_branch_enabled"] is True
     assert telemetry["active_perception_reward"] == -0.01
-    assert telemetry["predicted_fov_loss_probability"] == 0.6
+    assert telemetry["predicted_fov_unavailability"] == 0.6
     assert telemetry["ontology_fov_reward"] == -0.06

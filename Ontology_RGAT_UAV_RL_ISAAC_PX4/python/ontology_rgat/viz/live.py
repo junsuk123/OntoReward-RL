@@ -642,7 +642,8 @@ class BenchmarkMonitor:
              geometric_in_fov: bool,
              estimation_loss: float | None,
              state: dict[str, Any] | None = None, pipeline_spec=None,
-             semantic_features=None, semantic_graph=None,
+             semantic_features=None, fov_semantic_features=None,
+             semantic_graph=None,
              scenario: str = "", status: str = "running",
              pair_index: int | None = None) -> None:
         parts = reward_parts or {}
@@ -690,10 +691,26 @@ class BenchmarkMonitor:
                     "vertical_speed_penalty", "undershoot_penalty",
                     "yaw_rate_penalty", "active_perception", "shape",
                     "phi", "phi_next", "ontology_fov_reward",
-                    "predicted_fov_loss_probability", "fov_margin",
+                    "predicted_fov_unavailability", "fov_margin",
                     "keypoint_confidence", "visible_keypoint_fraction",
                     "visibility_memory", "reacquisition_trend"):
             point[key] = float(parts.get(key, 0.0))
+        # Perception quality is a shared diagnostic, not a reward component:
+        # take it from the visual FOV features both arms compute rather than
+        # from reward parts, which only the proposed arm populates. Without
+        # this the baseline's keypoint tiles would read a constant zero and
+        # look like a broken camera instead of a comparable measurement.
+        if fov_semantic_features is not None:
+            from ..rgat.fov_graph import FOV_FEATURE_NAMES
+            values = np.asarray(fov_semantic_features, dtype=float).reshape(-1)
+            if values.shape == (len(FOV_FEATURE_NAMES),):
+                named = dict(zip(FOV_FEATURE_NAMES, (float(v) for v in values)))
+                point.update({f"fov_{name}": value
+                              for name, value in named.items()})
+                for key in ("keypoint_confidence", "visible_keypoint_fraction",
+                            "fov_margin", "visibility_memory",
+                            "reacquisition_trend"):
+                    point[key] = named[key]
         battery = (state.get("battery") if isinstance(state, dict)
                    and isinstance(state.get("battery"), dict) else {})
         world = (state.get("world") if isinstance(state, dict)
@@ -736,8 +753,8 @@ class BenchmarkMonitor:
             reward=float(reward),
             active_perception=point["active_perception"],
             ontology_fov_reward=point["ontology_fov_reward"],
-            predicted_fov_loss_probability=point[
-                "predicted_fov_loss_probability"],
+            predicted_fov_unavailability=point[
+                "predicted_fov_unavailability"],
             fov_margin=point["fov_margin"],
             keypoint_confidence=point["keypoint_confidence"],
             visible_keypoint_fraction=point["visible_keypoint_fraction"],
@@ -747,6 +764,8 @@ class BenchmarkMonitor:
                 state=state, method=method, scenario=scenario, step=index,
                 dt=dt, geometric_in_fov=geometric_in_fov, status=status,
                 reward=float(reward), reward_parts=parts,
+                keypoint_confidence=point["keypoint_confidence"],
+                visible_keypoint_fraction=point["visible_keypoint_fraction"],
                 semantic_graph=semantic_graph,
                 potential=self.potential_for(method),
                 pair_index=resolved_pair_index)
@@ -902,6 +921,8 @@ class EpisodeMonitor:
             "wind_risk": float(cur.sem.wind_risk),
             "pad_speed": float(log.pad_speed[-1]),
             "closing_speed": float(log.closing_speed[-1]),
+            # Legacy EpisodeLog arms only; the primary pipelines publish
+            # geometric_in_fov plus keypoint quality through step().
             "marker_quality": float(log.marker_quality[-1]),
             "gnss_quality": float(log.gnss_quality[-1]),
             "gnss_sigma_xy": float(log.gnss_sigma_xy[-1]),

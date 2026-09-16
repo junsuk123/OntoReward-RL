@@ -373,6 +373,14 @@ class PX4Bridge:
         state: dict[str, Any] | None = None
         last_arm = float("-inf")
         was_armed = False
+        # The final sample alone is a misleading diagnosis: a vehicle whose
+        # limit cycle straddles a tolerance can be inside every bound at the
+        # instant the deadline expires and still never have held the streak.
+        # Record what actually blocked the streak instead.
+        samples = 0
+        blocked = {"offset": 0, "speed": 0, "view": 0}
+        worst = {"offset": 0.0, "speed": 0.0}
+        longest_streak = 0.0
         while time.monotonic() - started < float(self.cfg.entry_timeout):
             elapsed = time.monotonic() - started
             try:
@@ -429,26 +437,51 @@ class PX4Bridge:
                     self.cfg, "entry_view_margin", 0.85)))
             pad_ready = (
                 not bool(self.cfg.require_pad_in_view) or geometry_ready)
-            at_target = (
-                float(np.linalg.norm(here - target)) <= float(self.cfg.entry_tolerance)
-                and speed <= float(self.cfg.entry_speed_tolerance)
-                and pad_ready)
+            offset = float(np.linalg.norm(here - target))
+            offset_ready = offset <= float(self.cfg.entry_tolerance)
+            speed_ready = speed <= float(self.cfg.entry_speed_tolerance)
+            samples += 1
+            worst["offset"] = max(worst["offset"], offset)
+            worst["speed"] = max(worst["speed"], float(speed))
+            if not offset_ready:
+                blocked["offset"] += 1
+            if not speed_ready:
+                blocked["speed"] += 1
+            if not pad_ready:
+                blocked["view"] += 1
+            at_target = offset_ready and speed_ready and pad_ready
             if not at_target:
                 settled_since = None
             elif settled_since is None:
                 settled_since = sample_now
-            elif sample_now - settled_since >= float(self.cfg.entry_settle):
-                return state
+            else:
+                longest_streak = max(longest_streak, sample_now - settled_since)
+                if sample_now - settled_since >= float(self.cfg.entry_settle):
+                    return state
             time.sleep(0.02)
         if state is None:
             raise BridgeError("PX4 published no state while climbing to the entry pose.")
         here, speed = self.entry_state(state)
+        limits = (f"offset<={float(self.cfg.entry_tolerance):.2f} m, "
+                  f"speed<={float(self.cfg.entry_speed_tolerance):.2f} m/s, "
+                  f"view<={float(getattr(self.cfg, 'entry_view_margin', 0.85)):.2f}")
+        culprit = max(blocked, key=blocked.get) if samples else None
+        if culprit is None or blocked[culprit] == 0:
+            cause = ("every bound was met but never for the required "
+                     f"{float(self.cfg.entry_settle):.2f} s in a row")
+        else:
+            cause = (f"{culprit} was out of tolerance on "
+                     f"{blocked[culprit]}/{samples} samples "
+                     f"(worst offset {worst['offset']:.2f} m, "
+                     f"worst speed {worst['speed']:.2f} m/s)")
         raise EntryResetError(
             f"PX4 did not hold the entry pose within {float(self.cfg.entry_timeout):.1f} s "
-            f"(offset {float(np.linalg.norm(here - target)):.2f} m, "
+            f"(last sample: offset {float(np.linalg.norm(here - target)):.2f} m, "
             f"speed {speed:.2f} m/s, "
             "geometric pad-centre view offset "
-            f"{'n/a' if view_margin is None else format(view_margin, '.2f')}).")
+            f"{'n/a' if view_margin is None else format(view_margin, '.2f')}; "
+            f"limits {limits}; longest hold {longest_streak:.2f} s of "
+            f"{float(self.cfg.entry_settle):.2f} s; {cause}).")
 
     # ------------------------------------------------------------------- step
     def step(self, action: Iterable[float]) -> dict[str, Any]:

@@ -194,16 +194,33 @@ class LandingPadVisual:
 
     @staticmethod
     def _omni_pbr():
-        """Isaac renamed this module; accept either spelling.
+        """Import ``OmniPBR`` through the ``omni.isaac.core`` shim. Measured.
 
-        ``landing_world`` imports ``isaacsim.core.api.materials`` directly, so
-        that name is the one this build is known to have; the legacy alias is
-        kept for older installations.
+        This spelling is load-bearing, and not for the reason it looks like.
+        ``isaacsim.core.api.materials`` is where ``OmniPBR`` now lives and is
+        what ``landing_world`` imports at module scope, so reusing that binding
+        here looks strictly tidier. It is not: on this Isaac 5.1 build, taking
+        the already-bound symbol (i.e. importing nothing at spawn time) makes
+        Kit abort a few milliseconds after the landing cameras start, with
+
+            Mutex.h(158) BaseMutex<false>::unlock():
+            Assertion (m_owner == pthread_self()) failed:
+            unlock() called by non-owning thread
+
+        in a ``libcarb.assets`` worker on a ``libcarb.tasking`` fiber.
+        Measured on 2026-09-15 with everything else held fixed: five boots
+        without this import crashed, two with it reached "ready for takeoff".
+        Importing the shim during ``spawn`` pulls in the legacy
+        ``omni.isaac.core`` extension, and that side effect is what avoids the
+        race.
+
+        So this is a *workaround for a Kit startup race*, not a preference
+        about module names, and it is the kind of thing a later tidy-up
+        silently reverts. The crash it prevents costs a full simulator boot
+        and looks like an unrelated Isaac fault, so if you change this line,
+        boot the two-pair stage several times before believing it.
         """
-        try:
-            from isaacsim.core.api.materials import OmniPBR
-        except ImportError:  # pragma: no cover - depends on the Isaac build
-            from omni.isaac.core.materials import OmniPBR
+        from omni.isaac.core.materials import OmniPBR
         return OmniPBR
 
     def spawn(self, world) -> None:

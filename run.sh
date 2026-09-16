@@ -105,7 +105,7 @@ if [[ "$seminar_fast" == true ]]; then
     --system-config "$project_root/config/seminar-fast-system.yaml"
     --experiment two_pipeline_fov_risk
     --results-dir "$project_root/results/seminar_10h/two_pipe_parallel_144"
-    --pipelines shin_se_fixed shin_se_onto_rgat_fov
+    --pipelines shin_se_fixed shin_se_onto_rgat_recovery
     --parallel-pairs 2
     --stay-open
     --rgat-max-data-episodes 120

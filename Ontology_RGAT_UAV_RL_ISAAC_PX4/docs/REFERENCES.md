@@ -1,6 +1,6 @@
 # 참고문헌과 구현 근거
 
-[문서 안내](README.md) · [제안 알고리즘](ONTOLOGY_RGAT_ADAPTIVE_REWARD_WEIGHTING.md) ·
+[문서 안내](README.md) · [제안 알고리즘](ONTOLOGY_RGAT_FOV_RISK.md) ·
 [아키텍처](ARCHITECTURE.md)
 
 ## 연구 baseline
@@ -46,11 +46,14 @@
 - [Pegasus PX4 integration](https://pegasussimulator.github.io/PegasusSimulator/source/features/px4_integration.html)
 - [OpenUSD rigid-body API](https://openusd.org/dev/api/class_usd_physics_rigid_body_a_p_i.html)
 
-## Landing marker와 vehicle
+## Landing target과 vehicle
 
-- [OpenCV ArUco detection](https://docs.opencv.org/4.x/d5/dae/tutorial_aruco_detection.html):
+주 실험의 착륙 표적은 패드 중심 정육각형 위의 6개 landmark이며 검출기를 쓰지 않는다.
+아래 두 항목은 `config/system.yaml`에만 남은 legacy ArUco 프로파일의 근거다.
+
+- [OpenCV ArUco detection](https://docs.opencv.org/4.x/d5/dae/tutorial_aruco_detection.html) (legacy):
   dictionary, black border, quiet zone와 corner refinement
-- [OpenCV planar pose methods](https://docs.opencv.org/4.x/d9/d0c/group__calib3d.html):
+- [OpenCV planar pose methods](https://docs.opencv.org/4.x/d9/d0c/group__calib3d.html) (legacy):
   planar ambiguity와 IPPE square
 - [AGILEX RANGER MINI](https://global.agilex.ai/products/ranger-mini): UGV platform
 - [AGILEX `ugv_gazebo_sim`](https://github.com/agilexrobotics/ugv_gazebo_sim):

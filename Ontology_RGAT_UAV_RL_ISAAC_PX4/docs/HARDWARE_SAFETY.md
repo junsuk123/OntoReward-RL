@@ -2,7 +2,7 @@
 
 [문서 안내](README.md) · [아키텍처](ARCHITECTURE.md) · [운영](OPERATIONS.md)
 
-현재 핵심 3-arm recurrent checkpoint는 Isaac Sim/Pegasus/PX4 SITL용이다. 실제 기체에
+현재 두 pipeline의 recurrent checkpoint는 Isaac Sim/Pegasus/PX4 SITL용이다. 실제 기체에
 배포하려면 camera preprocessing, recurrent policy adapter, timing, frame, battery와
 failsafe를 실제 장비에서 별도로 검증해야 한다.
 
@@ -42,7 +42,7 @@ $$
 | Body velocity | PX4 frame과 actor frame 변환, 단위, 지연 |
 | Quaternion | $wxyz$ 순서, ENU/NED 변환, 정규화 |
 | Battery | voltage/current calibration, usable capacity, reserve threshold |
-| Keypoint | marker 종류별 검출률, FOV edge와 근접 touchdown 가시성 |
+| Keypoint | landmark 크기별 검출률, FOV edge와 근접 touchdown 가시성 |
 
 Actor observation에 GNSS platform truth, motion-capture relative pose 또는 simulator 전용
 field를 추가하면 학습 정보경계와 달라지므로 동일 모델로 간주할 수 없다.
@@ -71,7 +71,7 @@ Simulation의 성공 gate는 연구 평가 기준이며 실제 비행의 독립 
 
 ## 배포 경계
 
-`python/run_hardware_policy.py`의 hardware policy와 핵심 3-arm recurrent checkpoint는
+`python/run_hardware_policy.py`의 hardware policy와 두 pipeline의 recurrent checkpoint는
 서로 다른 observation/model contract다. 핵심 모델을 실제 기체에 배포하려면 전용
 recurrent adapter를 구현·검증하고, camera·frame·timing·제어 제한을 deployment
 manifest에 기록해야 한다.

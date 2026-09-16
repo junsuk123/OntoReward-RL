@@ -4,7 +4,7 @@
 > [두 pipeline 비교](TWO_PIPELINE_COMPARISON.md)가 정의한다.
 
 [문서 안내](README.md) · [시스템 개요](SYSTEM_OVERVIEW.md) ·
-[제안 알고리즘](ONTOLOGY_RGAT_ADAPTIVE_REWARD_WEIGHTING.md) ·
+[현재 제안 알고리즘](ONTOLOGY_RGAT_FOV_RISK.md) ·
 [Shin baseline](SHIN2026_BASELINE.md)
 
 ## 연구 질문

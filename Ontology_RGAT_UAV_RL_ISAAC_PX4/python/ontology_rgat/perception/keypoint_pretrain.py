@@ -281,6 +281,7 @@ def synthetic_keypoint_dataset(system: Mapping[str, Any], *, samples: int,
 
 
 def empirical_keypoint_dataset(samples: Sequence, system: Mapping[str, Any],
+                               *, rejections: dict[str, int] | None = None,
                                ) -> dict[str, np.ndarray]:
     """Label real rendered frames by projecting the known pad landmarks.
 
@@ -291,30 +292,48 @@ def empirical_keypoint_dataset(samples: Sequence, system: Mapping[str, Any],
     the same projection that defines the synthetic targets -- no detector, no
     homography and no marker id is involved.  Frames whose pose payload is
     missing, malformed or places every landmark outside the frame are dropped.
+
+    ``rejections`` is filled, when given, with why each sample was dropped.
+    Five separate conditions silently discard a frame here, and "0 labelled
+    frames" on its own cannot tell an unpublished camera from a camera that
+    works while the truth-pose stream does not.
     """
     model = camera_model(system)
     settings = landing_pad_settings(system)
     width, height = model.width, model.height
     feature_h, feature_w = height // 16, width // 16
     landmark_radius = float(settings["landmark_radius_m"])
+    counts = {"unpaired": 0, "no_image": 0, "no_pose": 0,
+              "degenerate_attitude": 0, "no_landmark_in_frame": 0}
     labelled = []
     for sample in samples:
         try:
             image, pose = sample
         except (TypeError, ValueError):
+            counts["unpaired"] += 1
+            continue
+        if image is None:
+            counts["no_image"] += 1
             continue
         image = np.asarray(image, dtype=np.uint8)
-        pose = np.asarray(pose, dtype=float).reshape(-1)
         if image.shape != (height, width):
+            counts["no_image"] += 1
             continue
+        if pose is None:
+            counts["no_pose"] += 1
+            continue
+        pose = np.asarray(pose, dtype=float).reshape(-1)
         if pose.shape != (EMPIRICAL_POSE_LENGTH,) or not np.isfinite(pose).all():
+            counts["no_pose"] += 1
             continue
         if float(np.linalg.norm(pose[3:])) < 1e-8:
+            counts["degenerate_attitude"] += 1
             continue
         projection = project_landing_pad(
             pose[:3], pose[3:], camera=model,
             landmark_radius_m=landmark_radius)
         if not np.any(projection.keypoint_visible):
+            counts["no_landmark_in_frame"] += 1
             continue
         labelled.append((
             image.copy(),
@@ -323,6 +342,9 @@ def empirical_keypoint_dataset(samples: Sequence, system: Mapping[str, Any],
                              feature_h, feature_w),
             projection.keypoint_normalized.astype(np.float32),
             projection.keypoint_visible.astype(np.float32)))
+    if rejections is not None:
+        rejections.clear()
+        rejections.update(counts)
     if not labelled:
         return {
             "images": np.empty((0, height, width), dtype=np.uint8),
@@ -365,6 +387,40 @@ def _empirical_metrics(encoder, dataset, indices, device) -> dict:
     }
 
 
+def _calibration_diagnosis(attempted: int, rejections: Mapping[str, int]) -> str:
+    """Name the condition that discarded the frames, not just the count.
+
+    Each of these points at a different part of the stack, and guessing
+    between them costs an hour of a run that has already started.
+    """
+    if not attempted:
+        return "The camera source was never polled."
+    counts = {name: int(value) for name, value in rejections.items() if value}
+    if not counts:
+        return (f"{attempted} frames were polled and none was rejected, so the "
+                "labelled set was simply never filled.")
+    order = ["no_image", "no_pose", "degenerate_attitude",
+             "no_landmark_in_frame", "unpaired"]
+    dominant = max(order, key=lambda name: counts.get(name, 0))
+    detail = ", ".join(f"{name}={counts[name]}" for name in order
+                       if counts.get(name))
+    remedy = {
+        "no_image": ("the rendered camera topic published nothing usable -- "
+                     "check that Isaac is stepping and the pair's image topic "
+                     "is alive"),
+        "no_pose": ("frames arrived but the training-only pad-relative truth "
+                    "pose never matched their timestamps -- check that the "
+                    "pair's truth-pose topic is publishing and that PX4's "
+                    "timesync is not resetting"),
+        "degenerate_attitude": "the truth pose carried a zero-norm quaternion",
+        "no_landmark_in_frame": ("poses arrived but the pad projected entirely "
+                                 "outside the frame -- the vehicle is not "
+                                 "looking at the deck"),
+        "unpaired": "the camera source did not return (image, pose) pairs",
+    }[dominant]
+    return f"Of {attempted} polled frames: {detail}. Most likely {remedy}."
+
+
 def calibrate_keypoint_encoder(
         path: str | Path, artifact: dict, labelled_source,
         *, system: Mapping[str, Any], experiment: Mapping[str, Any],
@@ -389,18 +445,21 @@ def calibrate_keypoint_encoder(
         f"empirical_samples_{mode}", settings.get("empirical_samples", 48)))
     minimum = max(8, int(settings.get("minimum_empirical_samples", 8)))
     samples = []
-    dataset = empirical_keypoint_dataset(samples, system)
+    rejections: dict[str, int] = {}
+    dataset = empirical_keypoint_dataset(samples, system, rejections=rejections)
     for _ in range(max(requested * 5, minimum)):
         samples.append(labelled_source())
         if len(samples) >= minimum:
-            dataset = empirical_keypoint_dataset(samples, system)
+            dataset = empirical_keypoint_dataset(
+                samples, system, rejections=rejections)
             if len(dataset["images"]) >= requested:
                 break
     count = len(dataset["images"])
     if count < minimum:
         raise RuntimeError(
             f"Isaac keypoint calibration found only {count} labelled frames "
-            f"(minimum {minimum}); refusing a synthetic-only frozen encoder")
+            f"(minimum {minimum}); refusing a synthetic-only frozen encoder. "
+            + _calibration_diagnosis(len(samples), rejections))
     if count > requested:
         dataset = {name: value[:requested] for name, value in dataset.items()}
         count = requested

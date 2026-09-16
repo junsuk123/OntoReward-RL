@@ -51,6 +51,18 @@ def current(new_stack: Any = _KEEP) -> "ExternalStack | None":
     return _registered
 
 
+def can_replace_simulator() -> bool:
+    """Whether restarting would actually give this run a new simulator.
+
+    ``stop`` terminates only what this object started, so a simulator the run
+    adopted survives a restart and is immediately re-adopted. Faults that only
+    a fresh simulator can clear are therefore not recoverable here, and a
+    caller that retries anyway spends its whole budget reproducing the fault.
+    """
+    stack = current()
+    return stack is not None and not getattr(stack, "adopted_simulator", False)
+
+
 def _udp_port_bound(port: int) -> bool:
     result = subprocess.run(["ss", "-lnuH"], capture_output=True, text=True, check=False)
     return f":{port} " in result.stdout

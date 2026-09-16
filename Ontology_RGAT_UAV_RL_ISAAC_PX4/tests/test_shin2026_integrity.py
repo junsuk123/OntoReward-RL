@@ -1014,3 +1014,123 @@ def test_benchmark_dimensions_and_modes():
                  "ontoreward_plus_active"):
         cfg = default_shin2026_config(reward_mode=mode)
         assert cfg.action_dimension == 4 and cfg.relative_state_dimension == 6
+
+
+def test_keypoint_calibration_names_which_filter_discarded_the_frames():
+    """"0 labelled frames" cannot tell a dead camera from a dead pose stream.
+
+    Five separate conditions drop a sample silently, and each points at a
+    different part of the stack. The message has to say which one fired.
+    """
+    from ontology_rgat.perception.keypoint_pretrain import (
+        _calibration_diagnosis, empirical_keypoint_dataset)
+
+    system = load_config(ROOT / "config/shin2026-system.yaml")
+    image = np.zeros((320, 512), dtype=np.uint8)
+    pose = np.array([0.0, 0.0, 4.0, 1.0, 0.0, 0.0, 0.0])
+
+    # Frames arrive, the truth pose never does: today's failure.
+    rejections = {}
+    dataset = empirical_keypoint_dataset(
+        [(image, None)] * 5, system, rejections=rejections)
+    assert len(dataset["images"]) == 0
+    assert rejections["no_pose"] == 5
+    assert rejections["no_image"] == 0
+    text = _calibration_diagnosis(5, rejections)
+    assert "no_pose=5" in text
+    assert "truth-pose topic is publishing" in text
+
+    # No frames at all points at the camera instead.
+    rejections = {}
+    empirical_keypoint_dataset([(None, pose)] * 4, system,
+                               rejections=rejections)
+    assert rejections["no_image"] == 4
+    assert "camera topic published nothing" in _calibration_diagnosis(
+        4, rejections)
+
+    # A pose that simply is not looking at the deck is its own case.
+    rejections = {}
+    empirical_keypoint_dataset(
+        [(image, np.array([60.0, 60.0, 4.0, 1.0, 0.0, 0.0, 0.0]))] * 3,
+        system, rejections=rejections)
+    assert rejections["no_landmark_in_frame"] == 3
+    assert "outside the frame" in _calibration_diagnosis(3, rejections)
+
+    # A zero-norm quaternion is malformed, not merely out of view.
+    rejections = {}
+    empirical_keypoint_dataset(
+        [(image, np.zeros(7))] * 2, system, rejections=rejections)
+    assert rejections["degenerate_attitude"] == 2
+
+    assert "never polled" in _calibration_diagnosis(0, {})
+
+
+def test_valid_frames_still_label_and_report_no_rejections():
+    from ontology_rgat.perception.keypoint_pretrain import (
+        empirical_keypoint_dataset)
+
+    system = load_config(ROOT / "config/shin2026-system.yaml")
+    image = np.zeros((320, 512), dtype=np.uint8)
+    pose = np.array([0.0, 0.0, 4.0, 1.0, 0.0, 0.0, 0.0])
+    rejections = {}
+    dataset = empirical_keypoint_dataset([(image, pose)] * 3, system,
+                                         rejections=rejections)
+    assert len(dataset["images"]) == 3
+    assert sum(rejections.values()) == 0
+
+
+def _trajectory_row_schema():
+    """Keys the rollout row dict in ``collect_episode`` actually carries."""
+    import ast
+
+    source = (ROOT / "python/ontology_rgat/ppo/recurrent_train.py").read_text()
+    tree = ast.parse(source)
+    collect = next(node for node in ast.walk(tree)
+                   if isinstance(node, ast.FunctionDef)
+                   and node.name == "collect_episode")
+    written = set()
+    for node in ast.walk(collect):
+        # row = {...}: the literal schema of one trajectory step.
+        if (isinstance(node, ast.Assign) and isinstance(node.value, ast.Dict)
+                and any(isinstance(target, ast.Name) and target.id == "row"
+                        for target in node.targets)):
+            written.update(key.value for key in node.value.keys
+                           if isinstance(key, ast.Constant))
+        # row["..."] = ...: fields attached after the literal.
+        for target in getattr(node, "targets", []):
+            if (isinstance(target, ast.Subscript)
+                    and isinstance(target.value, ast.Name)
+                    and target.value.id == "row"
+                    and isinstance(target.slice, ast.Constant)):
+                written.add(target.slice.value)
+    assert "reward" in written and "geometric_in_fov" in written
+    return tree, written
+
+
+def test_every_trajectory_row_field_read_is_a_field_that_is_written():
+    # ``collect_episode`` only runs against live Isaac/PX4, so a renamed row
+    # key cannot be caught by an offline rollout test.  Renaming the readers
+    # without the writer once cost a full run: the FOV-risk data stage died on
+    # KeyError('fov_graph_geometric_in_fov') after the episodes were flown.
+    import ast
+
+    tree, written = _trajectory_row_schema()
+    read = {node.slice.value for node in ast.walk(tree)
+            if isinstance(node, ast.Subscript)
+            and isinstance(node.ctx, ast.Load)
+            and isinstance(node.value, ast.Name) and node.value.id == "row"
+            and isinstance(node.slice, ast.Constant)
+            and isinstance(node.slice.value, str)}
+    assert read <= written, f"rollout rows never carry {sorted(read - written)}"
+
+
+def test_run_pipeline_reads_only_trajectory_fields_that_exist():
+    _, written = _trajectory_row_schema()
+    consumed = {"semantic_graph_X", "fov_graph_X", "next_fov_graph_X",
+                "fov_graph_geometric_in_fov", "geometric_in_fov"}
+    source = (ROOT / "python/run_three_pipeline.py").read_text()
+    for key in sorted(consumed):
+        assert f'row["{key}"]' in source or f'rows[-1]["{key}"]' in source, (
+            f"{key} is no longer consumed by the run pipeline; drop it here")
+    assert consumed <= written, (
+        f"rollout rows never carry {sorted(consumed - written)}")

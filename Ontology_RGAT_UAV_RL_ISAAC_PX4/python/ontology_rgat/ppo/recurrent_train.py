@@ -12,7 +12,8 @@ from typing import Callable
 import numpy as np
 import torch
 
-from ..bridge import BridgeError, EntryResetError, GatewayTimeout, PX4Failsafe
+from ..bridge import (ArmingRefused, BridgeError, EntryResetError,
+                      GatewayTimeout, PX4Failsafe)
 from ..curriculum import PlatformMotionCurriculum
 from ..perception import (POINT_CONFIDENCE_THRESHOLD, SEMANTIC_FEATURE_NAMES,
                           grayscale_image_tensor, semantic_graph,
@@ -520,7 +521,7 @@ def collect_episode(env, model: PipelineActorCritic, method: str, seed: int,
                 "reward_parts": parts,
                 "semantic_graph_X": graph.X.copy(),
                 "fov_graph_X": fov_graph.X.copy(),
-                "fov_graph_in_fov": bool(step.geometric_pad_center_in_fov),
+                "fov_graph_geometric_in_fov": bool(step.geometric_pad_center_in_fov),
                 "next_fov_graph_X": next_fov_graph.X.copy(),
                 "adaptive_graph_X": adaptive_graph.X.copy(),
                 "rho_raw": shin_reward_components(
@@ -818,6 +819,11 @@ def collect_episode(env, model: PipelineActorCritic, method: str, seed: int,
     return rows, metric
 
 
+def _can_replace_simulator() -> bool:
+    from .. import stack as stack_module
+    return stack_module.can_replace_simulator()
+
+
 def collect_episode_resilient(env, model: PipelineActorCritic, method: str,
                               seed: int, **kwargs):
     """Retry one seed after a recoverable SITL infrastructure interruption.
@@ -842,6 +848,15 @@ def collect_episode_resilient(env, model: PipelineActorCritic, method: str,
             return collect_episode(env, model, method, seed, **kwargs)
         except BridgeError as exc:
             message = str(exc).lower()
+            if isinstance(exc, ArmingRefused) and not _can_replace_simulator():
+                # Preflight will keep refusing on the same degraded SITL, and
+                # this run cannot replace it. Retrying is a bounded number of
+                # full entry budgets spent reaching the identical failure.
+                raise ArmingRefused(
+                    f"{exc} This run adopted the simulator instead of starting "
+                    "it, so restarting cannot replace the degraded PX4. Stop "
+                    "the running Isaac/PX4 processes and start again so this "
+                    "run owns a fresh simulator.") from exc
             recoverable = (isinstance(exc, (EntryResetError, GatewayTimeout))
                            or (isinstance(exc, PX4Failsafe) and exc.recoverable)
                            or "simulator has stalled" in message

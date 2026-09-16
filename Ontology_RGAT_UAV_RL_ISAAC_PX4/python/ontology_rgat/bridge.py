@@ -54,6 +54,17 @@ class GatewayTimeout(BridgeError):
     """The gateway did not answer inside the configured budget."""
 
 
+class ArmingRefused(EntryResetError):
+    """PX4's preflight checks refuse to arm the vehicle.
+
+    A separate type because the remedy is different from every other entry
+    failure: no number of resets makes a vehicle whose EKF reports a high
+    accelerometer bias or an attitude failure pass preflight. It needs a fresh
+    simulator, and a run that cannot provide one has to say so instead of
+    spending its bounded retries proving the point.
+    """
+
+
 class PX4Failsafe(BridgeError):
     """PX4 entered a failsafe while an episode was being measured.
 
@@ -455,13 +466,14 @@ class PX4Bridge:
                     # A degraded SITL instance needs a new simulator, not more
                     # seconds, and eight silent retries of 99 s each is a
                     # quarter of an hour spent proving that.
-                    raise EntryResetError(
+                    raise ArmingRefused(
                         "PX4 refused to arm for "
                         f"{elapsed:.0f} s (command {arm_refusal[0]} result "
                         f"{arm_refusal[1]}); the vehicle never left the "
-                        "ground, so no entry pose is reachable. PX4 SITL "
-                        "that has degraded in a long session needs a fresh "
-                        "simulator.")
+                        "ground, so no entry pose is reachable. Check the "
+                        "simulator log for 'Preflight Fail': a degraded SITL "
+                        "EKF (high accelerometer bias, attitude failure) "
+                        "needs a fresh simulator, not another reset.")
                 if not armed and elapsed - last_arm >= float(self.cfg.arm_retry):
                     # PX4 rejects arming in transient pre-flight states, so one
                     # request is not enough to start the climb.
@@ -537,7 +549,7 @@ class PX4Bridge:
                   f"speed<={float(self.cfg.entry_speed_tolerance):.2f} m/s, "
                   f"view<={float(getattr(self.cfg, 'entry_view_margin', 0.85)):.2f}")
         if not was_armed:
-            raise EntryResetError(
+            raise ArmingRefused(
                 f"PX4 never armed within {float(self.cfg.entry_timeout):.1f} s"
                 + (f" (command {arm_refusal[0]} result {arm_refusal[1]})"
                    if arm_refusal is not None else "")

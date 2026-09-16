@@ -203,7 +203,14 @@ class LiveShinEnvironment:
                     initial_condition_scale=curriculum)
                 break
             except BridgeError as exc:
+                from ..bridge import ArmingRefused
+
                 owned = stack_module.current()
+                if (isinstance(exc, ArmingRefused)
+                        and not stack_module.can_replace_simulator()):
+                    # No reset clears a failed preflight, and this run cannot
+                    # give itself a new simulator to clear it with.
+                    raise
                 if attempt == attempts or owned is None:
                     raise
                 self.bridge.close()

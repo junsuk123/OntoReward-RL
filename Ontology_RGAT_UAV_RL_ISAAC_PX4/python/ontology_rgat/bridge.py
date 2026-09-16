@@ -31,6 +31,11 @@ class BridgeError(RuntimeError):
     """Anything the gateway link can fail with."""
 
 
+# MAV_CMD_COMPONENT_ARM_DISARM, and the two results that are not a refusal.
+ARM_COMMAND = 400
+COMMAND_ACCEPTED = (0, 5)
+
+
 class EntryResetError(BridgeError):
     """The SITL vehicle could not safely establish the episode entry hover.
 
@@ -252,13 +257,30 @@ class PX4Bridge:
         prestream_s = (float(self.cfg.prestream_count)
                        / float(self.cfg.control_hz))
         hold_margin_s = max(2.0, prestream_s + float(self.cfg.reset_settle))
-        self.transact("goto", {"position": list(entry["position"]),
-                               "yaw": entry["yaw"], "frame": entry["frame"],
-                               "hold_s": (float(self.cfg.entry_timeout)
-                                          + hold_margin_s)}, ("ack",))
+        def send_goto() -> None:
+            self.transact("goto", {"position": list(entry["position"]),
+                                   "yaw": entry["yaw"], "frame": entry["frame"],
+                                   "hold_s": (float(self.cfg.entry_timeout)
+                                              + hold_margin_s)}, ("ack",))
+
+        send_goto()
         # Let the setpoint stream establish offboard before arming.
         time.sleep(prestream_s)
-        state = self.wait_at_entry(np.asarray(entry["position"], dtype=float))
+
+        def reissue(attempt: int) -> None:
+            """Re-send the seeded entry setpoint, unchanged.
+
+            Used only when the vehicle is already holding the commanded offset
+            and speed but the deck is not in frame. The pose itself is not
+            re-drawn: that offset is part of the episode's seeded initial
+            condition and both arms have to receive the same one.
+            """
+            print(f"Entry hover: deck out of frame at the commanded offset; "
+                  f"re-aiming the setpoint ({attempt}).")
+            send_goto()
+
+        state = self.wait_at_entry(np.asarray(entry["position"], dtype=float),
+                                   reissue=reissue)
         # The episode clock starts at handover, not at the reset.
         self.last_px4_time_us = int(state["px4_time_us"])
         return state
@@ -349,7 +371,8 @@ class PX4Bridge:
         return (np.asarray(state["position"], dtype=float),
                 float(np.linalg.norm(state["velocity"])))
 
-    def wait_at_entry(self, target: np.ndarray) -> dict[str, Any]:
+    def wait_at_entry(self, target: np.ndarray, *,
+                      reissue=None) -> dict[str, Any]:
         """Hand over only once PX4 holds the entry pose.
 
         The outer timeout is deliberately wall-clock bounded so a stalled
@@ -381,6 +404,20 @@ class PX4Bridge:
         blocked = {"offset": 0, "speed": 0, "view": 0}
         worst = {"offset": 0.0, "speed": 0.0}
         longest_streak = 0.0
+        # PX4 publishes the result of the last command it processed. A vehicle
+        # that never arms cannot reach any pose, and reporting its frozen
+        # position offset instead of the refusal sends the operator after the
+        # wrong thing entirely.
+        arm_refusal: tuple[int, int] | None = None
+        arm_grace = float(getattr(
+            self.cfg, "entry_arm_grace",
+            max(20.0, float(self.cfg.entry_timeout) / 3.0)))
+        # Bounded re-aim for the case the vehicle is holding station correctly
+        # but the deck is not in frame. Setup only, and identical for both arms.
+        view_retries = 0
+        view_retry_limit = int(getattr(self.cfg, "entry_view_retries", 2))
+        view_retry_after = max(4.0, float(getattr(self.cfg, "entry_settle", 0.5)) * 4.0)
+        out_of_view_since: float | None = None
         while time.monotonic() - started < float(self.cfg.entry_timeout):
             elapsed = time.monotonic() - started
             try:
@@ -394,6 +431,14 @@ class PX4Bridge:
                 # a velocity-estimator/failsafe storm.  It cannot become a
                 # valid entry hover without rebuilding SITL, so fail fast and
                 # let the owner restart it.  No transition has been collected.
+                last_command = extra.get("last_command")
+                if (isinstance(last_command, (list, tuple))
+                        and len(last_command) == 2
+                        and int(last_command[0]) == ARM_COMMAND
+                        and int(last_command[1]) not in COMMAND_ACCEPTED):
+                    arm_refusal = (int(last_command[0]), int(last_command[1]))
+                elif armed:
+                    arm_refusal = None
                 if bool(extra.get("pad_contact", False)):
                     raise EntryResetError(
                         "PX4 contacted the pad while establishing the entry "
@@ -403,6 +448,20 @@ class PX4Bridge:
                         "PX4 disarmed while establishing the entry hover; "
                         "restarting SITL before collecting RL data.")
                 was_armed = bool(was_armed or armed)
+                if (not was_armed and arm_refusal is not None
+                        and elapsed >= arm_grace):
+                    # Waiting out the rest of the budget cannot change this:
+                    # PX4 has been refusing to arm for the whole grace window.
+                    # A degraded SITL instance needs a new simulator, not more
+                    # seconds, and eight silent retries of 99 s each is a
+                    # quarter of an hour spent proving that.
+                    raise EntryResetError(
+                        "PX4 refused to arm for "
+                        f"{elapsed:.0f} s (command {arm_refusal[0]} result "
+                        f"{arm_refusal[1]}); the vehicle never left the "
+                        "ground, so no entry pose is reachable. PX4 SITL "
+                        "that has degraded in a long session needs a fresh "
+                        "simulator.")
                 if not armed and elapsed - last_arm >= float(self.cfg.arm_retry):
                     # PX4 rejects arming in transient pre-flight states, so one
                     # request is not enough to start the climb.
@@ -450,6 +509,18 @@ class PX4Bridge:
             if not pad_ready:
                 blocked["view"] += 1
             at_target = offset_ready and speed_ready and pad_ready
+            if offset_ready and speed_ready and not pad_ready:
+                # Stable at the commanded offset with the deck out of frame.
+                if out_of_view_since is None:
+                    out_of_view_since = sample_now
+                elif (reissue is not None
+                        and view_retries < view_retry_limit
+                        and sample_now - out_of_view_since >= view_retry_after):
+                    view_retries += 1
+                    out_of_view_since = None
+                    reissue(view_retries)
+            else:
+                out_of_view_since = None
             if not at_target:
                 settled_since = None
             elif settled_since is None:
@@ -465,6 +536,13 @@ class PX4Bridge:
         limits = (f"offset<={float(self.cfg.entry_tolerance):.2f} m, "
                   f"speed<={float(self.cfg.entry_speed_tolerance):.2f} m/s, "
                   f"view<={float(getattr(self.cfg, 'entry_view_margin', 0.85)):.2f}")
+        if not was_armed:
+            raise EntryResetError(
+                f"PX4 never armed within {float(self.cfg.entry_timeout):.1f} s"
+                + (f" (command {arm_refusal[0]} result {arm_refusal[1]})"
+                   if arm_refusal is not None else "")
+                + "; the reported entry offset is the parked vehicle's, not a "
+                  "failure to hold station.")
         culprit = max(blocked, key=blocked.get) if samples else None
         if culprit is None or blocked[culprit] == 0:
             cause = ("every bound was met but never for the required "
@@ -481,7 +559,8 @@ class PX4Bridge:
             "geometric pad-centre view offset "
             f"{'n/a' if view_margin is None else format(view_margin, '.2f')}; "
             f"limits {limits}; longest hold {longest_streak:.2f} s of "
-            f"{float(self.cfg.entry_settle):.2f} s; {cause}).")
+            f"{float(self.cfg.entry_settle):.2f} s; {cause}"
+            + (f"; re-aimed {view_retries}x" if view_retries else "") + ").")
 
     # ------------------------------------------------------------------- step
     def step(self, action: Iterable[float]) -> dict[str, Any]:

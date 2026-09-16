@@ -1,5 +1,37 @@
 # 두 pair 실행과 검증
 
+
+## 진입 호버가 계속 실패할 때
+
+`wait_at_entry`의 실패 메시지는 무엇이 게이트를 막았는지 직접 말한다.
+
+* `PX4 refused to arm ... command 400 result 1` — 기체가 뜨지 못한 것이다.
+  위치·시야는 증상일 뿐이다. PX4 SITL이 긴 세션에서 열화되면 arming을
+  거부하며, 이때 필요한 것은 더 긴 대기가 아니라 새 시뮬레이터다.
+* `offset was out of tolerance on N/N samples` 이고 속도가 0이면 역시 기체가
+  움직이지 않은 것이다.
+* `view was out of tolerance` 이고 위치·속도는 통과했다면 갑판이 화면 밖이다.
+  게이트는 같은 seeded setpoint를 `entry_view_retries`회까지 다시 조준한다.
+
+`WARNING: the Isaac/PX4 simulator was adopted, not started by this run`이
+보이면 재시작은 아무것도 바꾸지 못한다. `stop`은 이 run이 띄운 프로세스만
+종료하므로, 이전 run이 남긴 열화된 Isaac/PX4는 그대로 채택되고 남은 재시도는
+같은 실패를 반복하는 데 소모된다. 그 시뮬레이터를 run 바깥에서 직접 종료한 뒤
+다시 시작해야 한다.
+
+## 실행 중인 run 상태 확인
+
+브라우저 없이 진행 상황을 보려면 대시보드 API를 그대로 읽는 읽기 전용 도구를 쓴다.
+이미 비행 중인 run에도 붙을 수 있고, run에 아무것도 쓰지 않는다.
+
+```bash
+tools/watch_run.py              # 스냅샷 1회 (127.0.0.1:8770)
+tools/watch_run.py --follow     # 중단할 때까지 갱신
+```
+
+stage/phase, 두 arm의 PPO episode와 최근 50회 성공률, pair별 상태, 그리고 FOV
+데이터 수집·readout 학습·동결 모델 검증 진행을 한 화면에 출력한다.
+
 ## 기본 실행
 
 ```bash

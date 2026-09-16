@@ -149,11 +149,15 @@ BACKEND_DEVIATIONS: tuple[Deviation, ...] = (
                "is setup only: the policy, the reward and the logs never see "
                "it. Its speed bound is held at or above Table II's per-axis "
                "initial-velocity randomization so the handover is never "
-               "stricter than the paper's own initial condition.",
+               "stricter than the paper's own initial condition. A bounded "
+               "re-aim of the same seeded setpoint is allowed when the deck "
+               "leaves the frame; the entry pose itself is never redrawn, so "
+               "both arms still receive identical initial conditions.",
         identical_across_arms=True,
         evidence=(("system", "benchmark.entry_speed_tolerance_m_s"),
                   ("system", "benchmark.entry_settle_s"),
-                  ("system", "benchmark.entry_view_margin")),
+                  ("system", "benchmark.entry_view_margin"),
+                  ("system", "benchmark.entry_view_retries")),
     ),
     Deviation(
         key="keypoint_encoder",

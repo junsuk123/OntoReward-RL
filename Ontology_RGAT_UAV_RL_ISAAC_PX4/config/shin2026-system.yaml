@@ -88,6 +88,13 @@ benchmark:
   # fly-through and sits clear of the observed cycle. Identical for both arms.
   entry_speed_tolerance_m_s: 1.00
   entry_settle_s: 1.0
+  # A disarmed vehicle cannot reach any pose. If PX4 keeps refusing command 400
+  # for this long, the gate fails with that as the stated cause instead of
+  # reporting the parked vehicle's position offset for the full budget.
+  entry_arm_grace_s: 25.0
+  # Re-aims allowed when the vehicle is holding the commanded offset and speed
+  # but the deck is out of frame. The seeded entry pose itself is never redrawn.
+  entry_view_retries: 2
   # Initial visibility is a single geometric condition: the landing-pad centre
   # must project inside the rendered camera's frustum. No detector takes part.
   entry_view_margin: 0.85

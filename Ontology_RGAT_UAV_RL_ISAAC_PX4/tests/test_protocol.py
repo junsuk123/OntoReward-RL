@@ -624,3 +624,139 @@ def test_a_genuinely_settled_entry_reports_no_blocking_condition(monkeypatch):
         for n in range(6)])
     bridge = _entry_gate_bridge(states)
     assert bridge.wait_at_entry(entry)["px4_time_us"] == 1_000_000
+
+
+def _clock(step=0.2):
+    class Clock:
+        value = -step
+
+        def monotonic(self):
+            self.value += step
+            return self.value
+    return Clock().monotonic
+
+
+def test_a_vehicle_that_never_arms_is_reported_as_an_arming_refusal(monkeypatch):
+    """PX4 refusing to arm must not be reported as a failure to hold station.
+
+    A parked vehicle's position offset is constant and large, so the old
+    message blamed the pose and sent the operator after the wrong thing while
+    the real cause -- command 400 rejected -- sat in the state's extra block.
+    """
+    monkeypatch.setattr(bridge_module.time, "monotonic", _clock())
+    monkeypatch.setattr(bridge_module.time, "sleep", lambda _s: None)
+    entry = camera_centered_hover_offset(7.55)
+
+    def states():
+        index = 0
+        while True:
+            index += 1
+            yield {"armed": False, "px4_time_us": 100_000 * index,
+                   "position": [6.06, 0.0, 0.0], "velocity": [0.0, 0.0, 0.0],
+                   "quaternion_wxyz": [1.0, 0.0, 0.0, 0.0],
+                   "position_frame": "pad",
+                   "extra": {"last_command": [400, 1]}}
+
+    bridge = _entry_gate_bridge(states())
+    # The gate keeps requesting ARM during the grace window; the transport is
+    # not under test here.
+    bridge.transact = lambda *args, **kwargs: {}
+    bridge.cfg.entry_timeout = 90.0
+    bridge.cfg.entry_arm_grace = 20.0
+    with pytest.raises(EntryResetError, match="refused to arm"):
+        bridge.wait_at_entry(entry)
+
+
+def test_the_arming_refusal_aborts_long_before_the_entry_budget(monkeypatch):
+    """Eight bounded retries of a full budget is a quarter hour of nothing."""
+    elapsed = []
+    monkeypatch.setattr(bridge_module.time, "monotonic", _clock())
+    monkeypatch.setattr(bridge_module.time, "sleep", lambda _s: None)
+    entry = camera_centered_hover_offset(7.55)
+
+    def states():
+        index = 0
+        while True:
+            index += 1
+            elapsed.append(index)
+            yield {"armed": False, "px4_time_us": 100_000 * index,
+                   "position": [6.06, 0.0, 0.0], "velocity": [0.0, 0.0, 0.0],
+                   "quaternion_wxyz": [1.0, 0.0, 0.0, 0.0],
+                   "position_frame": "pad",
+                   "extra": {"last_command": [400, 1]}}
+
+    bridge = _entry_gate_bridge(states())
+    bridge.transact = lambda *args, **kwargs: {}
+    bridge.cfg.entry_timeout = 99.0
+    bridge.cfg.entry_arm_grace = 20.0
+    with pytest.raises(EntryResetError, match="refused to arm"):
+        bridge.wait_at_entry(entry)
+    # The clock advances 0.2 s per sample, so the grace window is ~100 samples
+    # and the full budget would have been ~495.
+    assert len(elapsed) < 200
+
+
+def test_an_accepted_arm_command_does_not_trip_the_refusal_path(monkeypatch):
+    monkeypatch.setattr(bridge_module.time, "monotonic", _clock())
+    monkeypatch.setattr(bridge_module.time, "sleep", lambda _s: None)
+    entry = camera_centered_hover_offset(7.55)
+    states = iter([
+        {"armed": True, "px4_time_us": 1_000_000 * n, "position": entry.tolist(),
+         "velocity": [0.0, 0.0, 0.0], "quaternion_wxyz": [1.0, 0.0, 0.0, 0.0],
+         "position_frame": "pad", "extra": {"last_command": [400, 0]}}
+        for n in range(8)])
+    bridge = _entry_gate_bridge(states)
+    assert bridge.wait_at_entry(entry)["px4_time_us"] == 1_000_000
+
+
+def test_the_setpoint_is_re_aimed_when_only_the_deck_is_out_of_frame(monkeypatch):
+    """Holding the commanded offset with the pad out of view is recoverable."""
+    monkeypatch.setattr(bridge_module.time, "monotonic", _clock())
+    monkeypatch.setattr(bridge_module.time, "sleep", lambda _s: None)
+    # Hovering ahead of the deck: position and speed are fine, the forward/down
+    # camera simply does not contain it.
+    entry = np.array([3.0, 0.0, 4.5])
+    attempts = []
+
+    def states():
+        index = 0
+        while True:
+            index += 1
+            yield {"armed": True, "px4_time_us": 1_000_000 * index,
+                   "position": entry.tolist(), "velocity": [0.0, 0.0, 0.0],
+                   "quaternion_wxyz": [1.0, 0.0, 0.0, 0.0],
+                   "position_frame": "pad"}
+
+    bridge = _entry_gate_bridge(states())
+    bridge.cfg.entry_timeout = 40.0
+    bridge.cfg.entry_view_retries = 2
+    with pytest.raises(EntryResetError) as excinfo:
+        bridge.wait_at_entry(entry, reissue=attempts.append)
+    # Bounded, and reported rather than retried silently for ever.
+    assert attempts == [1, 2]
+    assert "re-aimed 2x" in str(excinfo.value)
+    assert "view was out of tolerance" in str(excinfo.value)
+
+
+def test_no_re_aim_happens_while_the_vehicle_is_still_travelling(monkeypatch):
+    """Re-sending the setpoint mid-transit would restart the approach."""
+    monkeypatch.setattr(bridge_module.time, "monotonic", _clock())
+    monkeypatch.setattr(bridge_module.time, "sleep", lambda _s: None)
+    entry = np.array([3.0, 0.0, 4.5])
+    attempts = []
+
+    def states():
+        index = 0
+        while True:
+            index += 1
+            yield {"armed": True, "px4_time_us": 1_000_000 * index,
+                   # Far from the target: offset, not view, is what blocks.
+                   "position": [20.0, 0.0, 4.5], "velocity": [3.0, 0.0, 0.0],
+                   "quaternion_wxyz": [1.0, 0.0, 0.0, 0.0],
+                   "position_frame": "pad"}
+
+    bridge = _entry_gate_bridge(states())
+    bridge.cfg.entry_timeout = 30.0
+    with pytest.raises(EntryResetError):
+        bridge.wait_at_entry(entry, reissue=attempts.append)
+    assert attempts == []

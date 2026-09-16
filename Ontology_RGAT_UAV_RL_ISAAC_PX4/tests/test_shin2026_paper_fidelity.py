@@ -368,6 +368,10 @@ def test_the_entry_gate_is_never_stricter_than_the_paper_initial_velocity():
     entry = deviation("entry_handover")
     assert "setup only" in entry.reason
     assert entry.identical_across_arms
+    # Recovery may re-send the seeded setpoint but must never redraw it: a
+    # redrawn entry pose would hand the two arms different initial conditions.
+    assert "never redrawn" in entry.reason
+    assert int(system["benchmark"]["entry_view_retries"]) >= 0
 
 
 def test_battery_termination_is_an_addition_to_the_paper_terminal_set():

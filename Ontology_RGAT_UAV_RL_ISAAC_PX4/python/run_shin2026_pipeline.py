@@ -97,6 +97,10 @@ def _live_config(mode, results_dir, system_config):
                       cfg.external.entry_speed_tolerance))
     cfg.external.entry_settle = float(
         benchmark.get("entry_settle_s", cfg.external.entry_settle))
+    cfg.external.entry_arm_grace = float(
+        benchmark.get("entry_arm_grace_s", cfg.external.entry_arm_grace))
+    cfg.external.entry_view_retries = int(
+        benchmark.get("entry_view_retries", cfg.external.entry_view_retries))
     # The entry gate, the geometric FOV metric and the future-FOV-loss labels
     # all project through the camera Isaac actually renders with, so copy that
     # model rather than relying on the defaults.

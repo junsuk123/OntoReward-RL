@@ -8,6 +8,9 @@ cannot start still has to fail the run.
 """
 from __future__ import annotations
 
+import threading
+from unittest import mock
+
 import pytest
 
 from ontology_rgat.stack import ExternalStack, StackError
@@ -83,3 +86,42 @@ def test_retries_can_be_disabled_for_a_single_call(monkeypatch):
         stack.start(attempts=1)
 
     assert calls["isaac"] == 1
+
+
+def test_restart_reports_that_an_adopted_simulator_was_not_replaced(capsys):
+    """``stop`` only ends what this run started, so adoption defeats restart.
+
+    A run that adopts a degraded PX4 will keep failing identically through
+    every bounded retry. The caller has to be able to tell that apart from a
+    restart that actually rebuilt the simulator.
+    """
+    from ontology_rgat.stack import ExternalStack
+
+    stack = object.__new__(ExternalStack)
+    stack._restart_lock = threading.RLock()
+    stack._shutdown_requested = False
+    stack.generation = 0
+    stack.adopted_simulator = True
+    stack.managed = []
+    stopped = []
+
+    def stop():
+        stopped.append(True)
+
+    def start_adopting():
+        stack.adopted_simulator = True
+
+    stack.stop = stop
+    stack.start = start_adopting
+    with mock.patch("ontology_rgat.stack.time.sleep", lambda _s: None):
+        replaced = ExternalStack.restart(stack)
+    assert replaced is False
+    assert stopped == [True]
+    assert "adopted, not" in capsys.readouterr().out
+
+    def start_owning():
+        stack.adopted_simulator = False
+
+    stack.start = start_owning
+    with mock.patch("ontology_rgat.stack.time.sleep", lambda _s: None):
+        assert ExternalStack.restart(stack) is True

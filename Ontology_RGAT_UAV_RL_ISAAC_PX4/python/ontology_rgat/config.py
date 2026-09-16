@@ -440,6 +440,15 @@ def default_config(mode: str = "quick", target: str = "sitl") -> Config:
             "pitch_down_deg": 60.0,
             "mount_translation_flu_m": [0.0, 0.0, -0.16],
         },
+        # How long a disarmed vehicle may keep being refused arming before the
+        # gate gives up. PX4 SITL that has degraded in a long session refuses
+        # command 400 indefinitely; waiting out the whole entry budget, eight
+        # bounded retries deep, is a quarter of an hour spent confirming it.
+        "entry_arm_grace": 25.0,          # s
+        # Re-aims allowed when the vehicle holds the commanded offset and speed
+        # but the deck is not in frame. The seeded entry pose is never redrawn:
+        # both arms must receive the same initial condition.
+        "entry_view_retries": 2,
         "entry_settle": 0.5,              # s held inside tolerance
         # Unmeasured OFFBOARD position hold between episodes (bridge.
         # hold_for_next_airborne_reset). It must outlast PPO/estimator

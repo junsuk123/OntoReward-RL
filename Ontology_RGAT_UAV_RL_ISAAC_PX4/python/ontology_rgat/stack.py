@@ -110,6 +110,10 @@ class ExternalStack:
                             else (self.root / "config" / "system.yaml").resolve())
         if not self.config_path.is_file():
             raise StackError(f"Stack configuration does not exist: {self.config_path}")
+        # True when ``start`` found a simulator already running and attached
+        # to it instead of launching one. ``stop`` will not terminate it, so
+        # ``restart`` cannot replace it either.
+        self.adopted_simulator = False
         self.log_dir = Path(log_dir) if log_dir else Path("/tmp/ontology_rgat_stack")
         self.log_dir.mkdir(parents=True, exist_ok=True)
         self.timeouts = {"agent": agent_timeout, "isaac": isaac_timeout,
@@ -184,6 +188,7 @@ class ExternalStack:
                     "before starting the default GUI pipeline, or rerun with "
                     "--headless.")
             print("Isaac/PX4 already running; adopting it.")
+            self.adopted_simulator = True
             return
         if not self.isaac_sim_path or not (Path(self.isaac_sim_path) / "python.sh").is_file():
             raise StackError(
@@ -242,22 +247,36 @@ class ExternalStack:
                           for i in range(self.parallel_pairs))
         print(f"Gateway(s) listening on UDP {ports}.")
 
-    def restart(self) -> None:
-        """Cycle the simulator.
+    def restart(self) -> bool:
+        """Cycle the simulator. Returns whether the simulator was replaced.
 
         PX4 SITL degrades over long sessions -- ``battery_status`` goes stale
         under lockstep and arming is then refused -- so a long sweep may need a
         clean simulator rather than a lost run.
+
+        ``stop`` terminates only what this object started, so a simulator this
+        run merely adopted survives the cycle and ``start`` re-adopts the same
+        degraded processes. That is the right ownership rule, but it makes the
+        recovery a no-op, and a caller that keeps spending bounded retries on
+        it is burning minutes to prove the same failure. The return value says
+        which of the two happened.
         """
         with self._restart_lock:
             if self._shutdown_requested:
-                return
+                return False
             self.stop()
             time.sleep(3.0)
             if self._shutdown_requested:
-                return
+                return False
+            self.adopted_simulator = False
             self.start()
             self.generation += 1
+            if self.adopted_simulator:
+                print("WARNING: the Isaac/PX4 simulator was adopted, not "
+                      "started by this run, so restarting could not replace "
+                      "it. A degraded PX4 will keep failing until that "
+                      "simulator is restarted outside this run.")
+            return not self.adopted_simulator
 
     def restart_if_generation(self, observed_generation: int) -> bool:
         """Restart once when several pair workers observe the same stack fault.
@@ -274,8 +293,14 @@ class ExternalStack:
             time.sleep(3.0)
             if self._shutdown_requested:
                 return False
+            self.adopted_simulator = False
             self.start()
             self.generation += 1
+            if self.adopted_simulator:
+                print("WARNING: the Isaac/PX4 simulator was adopted, not "
+                      "started by this run, so restarting could not replace "
+                      "it. A degraded PX4 will keep failing until that "
+                      "simulator is restarted outside this run.")
             return True
 
     def shutdown(self) -> None:

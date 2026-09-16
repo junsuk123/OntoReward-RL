@@ -760,3 +760,50 @@ def test_no_re_aim_happens_while_the_vehicle_is_still_travelling(monkeypatch):
     with pytest.raises(EntryResetError):
         bridge.wait_at_entry(entry, reissue=attempts.append)
     assert attempts == []
+
+
+# --------------------------------------------------------------------------
+# The entry setpoint chases a deck that is driving away from it.
+
+def test_entry_setpoint_feeds_the_deck_velocity_forward():
+    from ontology_rgat_px4.ros2_gateway import entry_feedforward_velocity
+
+    # A position-only setpoint leaves PX4 to build the whole chase velocity
+    # out of position error, which is a standing lag of v/MPC_XY_P.
+    assert entry_feedforward_velocity(np.array([0.6, 0.0, 0.0])) == pytest.approx(
+        [0.6, 0.0, 0.0])
+    assert entry_feedforward_velocity(np.zeros(3)) == pytest.approx([0.0, 0.0, 0.0])
+
+
+def test_entry_feedforward_refuses_an_untrustworthy_deck_twist():
+    from ontology_rgat_px4.ros2_gateway import entry_feedforward_velocity
+
+    # Above the rover's configured ceiling the sample is corrupt, and flying
+    # it would carry the vehicle away from the deck it waits over. Falling
+    # back to position-only is the previous, safe behaviour.
+    assert entry_feedforward_velocity(np.array([50.0, 0.0, 0.0])) is None
+    assert entry_feedforward_velocity(np.array([np.nan, 0.0, 0.0])) is None
+    assert entry_feedforward_velocity(np.array([0.0, 0.0])) is None
+    assert entry_feedforward_velocity(np.array([0.3, 0.0, 0.0]),
+                                      max_speed_m_s=0.0) is None
+
+
+def test_the_entry_lag_the_feedforward_removes_is_larger_than_the_tolerance():
+    """The arithmetic that makes this a fix and not a preference.
+
+    PX4's position loop settles a ramp input at ``v / MPC_XY_P``. The deck is
+    configured for up to 0.60 m/s, the stock horizontal position gain is
+    0.95 1/s, and the entry gate admits 0.90 m -- so the lag alone eats most
+    of the tolerance before the rover turns or its seeded speed perturbation
+    fires.
+    """
+    from config_loader import load_config
+    from ontology_rgat.config import default_config
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    system = load_config(root / "config/shin2026-system.yaml")
+    deck_speed = float(system["pad"]["speed_range_m_s"][1])
+    tolerance = float(default_config().external["entry_tolerance"])
+    mpc_xy_p = 0.95
+    assert deck_speed / mpc_xy_p > 0.6 * tolerance

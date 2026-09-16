@@ -249,6 +249,47 @@ def bounded_position_update(reference, measurement, max_correction_m: float) -> 
     return result + delta
 
 
+# A deck twist far above the configured rover ceiling is a corrupt sample,
+# not a fast rover. Feeding that forward would fly the vehicle away from the
+# deck it is supposed to be waiting over.
+ENTRY_FEEDFORWARD_MAX_SPEED_M_S = 3.0
+
+
+def entry_feedforward_velocity(deck_velocity,
+                               max_speed_m_s: float = ENTRY_FEEDFORWARD_MAX_SPEED_M_S):
+    """The deck velocity to feed forward on a pad-relative entry setpoint.
+
+    The entry setpoint is re-aimed at the live deck every control tick, but it
+    used to carry position alone. PX4's position loop then has to manufacture
+    the whole chase velocity out of position error, so it settles at a standing
+    lag of roughly ``v_deck / MPC_XY_P``: at the configured 0.60 m/s rover
+    ceiling and the stock 0.95 1/s gain that is ~0.63 m of permanent offset,
+    against a 0.90 m entry tolerance -- before the rover turns or the seeded
+    speed perturbation moves it at all. The gate then expires with the vehicle
+    trailing the deck, which reads as an infrastructure failure and restarts a
+    simulator that was never at fault.
+
+    Handing PX4 the deck's own velocity leaves the position loop to correct
+    only the residual. This is setup, not the experiment: it decides where the
+    vehicle waits before handover, it is identical for both arms, and nothing
+    from it reaches the policy, the reward or the log.
+
+    ``None`` means "publish no feed-forward", which is the previous behaviour.
+    """
+    velocity = np.asarray(deck_velocity, dtype=float).reshape(-1)
+    if velocity.shape != (3,) or not np.isfinite(velocity).all():
+        return None
+    limit = float(max_speed_m_s)
+    if not math.isfinite(limit) or limit <= 0.0:
+        return None
+    speed = float(np.linalg.norm(velocity))
+    if speed > limit:
+        # A sample this far out of range is not trustworthy enough to scale
+        # down and fly; fall back to position-only control.
+        return None
+    return velocity
+
+
 def advance_velocity_position_target(reference, velocity_enu, dt_s: float, *,
                                      floor_z_m: float, ceiling_z_m: float,
                                      world_radius_m: float) -> np.ndarray:
@@ -905,7 +946,18 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
         def _publish_position_setpoint(self) -> None:
             # PX4 flies the episode entry pose itself: no teleport, so the
             # estimator never sees a jump it cannot explain.
-            self._publish_offboard_mode(position=True)
+            # Chasing a moving deck with a position-only setpoint costs a
+            # standing lag of v_deck / MPC_XY_P, which is most of the entry
+            # tolerance at full platform speed. Feed the deck's own velocity
+            # forward so the position loop only has to close the residual.
+            feedforward = (
+                entry_feedforward_velocity(
+                    self.deck_truth_velocity_enu
+                    if self.deck_truth_position_enu is not None
+                    else self.deck_velocity_enu)
+                if self.goto_pad_relative else None)
+            self._publish_offboard_mode(position=True,
+                                        velocity=feedforward is not None)
             # Back out of the world frame: this is published as a *local*
             # setpoint, so a world-frame target would be off by the distance
             # between the two origins -- which is what sent the vehicle
@@ -914,7 +966,8 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             sp = TrajectorySetpoint()
             sp.timestamp = self._timestamp_us()
             sp.position = [float(x) for x in target_ned]
-            sp.velocity = [float("nan")] * 3
+            sp.velocity = ([float("nan")] * 3 if feedforward is None else
+                           [float(x) for x in enu_to_ned(feedforward)])
             sp.acceleration = [float("nan")] * 3
             sp.yaw = float(yaw_enu_to_ned(self.goto_yaw_enu))
             sp.yawspeed = 0.0

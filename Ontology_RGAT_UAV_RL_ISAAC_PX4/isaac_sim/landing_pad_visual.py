@@ -216,7 +216,10 @@ class LandingPadVisual:
 
         So this is a *workaround for a Kit startup race*, not a preference
         about module names, and it is the kind of thing a later tidy-up
-        silently reverts. The crash it prevents costs a full simulator boot
+        silently reverts. ``landing_world.settle_stage_assets`` now addresses
+        the same race at its source -- this material is authored only once the
+        referenced rover/quadrotor/city assets have finished loading -- but
+        that fix and this import were never measured apart, so both stay. The crash it prevents costs a full simulator boot
         and looks like an unrelated Isaac fault, so if you change this line,
         boot the two-pair stage several times before believing it.
         """

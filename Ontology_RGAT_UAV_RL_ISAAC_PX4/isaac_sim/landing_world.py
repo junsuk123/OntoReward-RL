@@ -12,6 +12,7 @@ import json
 import math
 import os
 import sys
+import time
 from pathlib import Path
 
 import numpy as np
@@ -86,6 +87,7 @@ from sensor_msgs.msg import Image
 from std_msgs.msg import Bool, Float32, String
 from scipy.spatial.transform import Rotation
 from isaacsim.core.api import World
+from isaacsim.core.utils.stage import is_stage_loading
 from isaacsim.core.utils.viewports import set_camera_view
 
 from pegasus.simulator.params import ROBOTS, SIMULATION_ENVIRONMENTS
@@ -191,6 +193,37 @@ def _quat_wxyz_to_matrix(q):
 def _matrix_to_quat_wxyz(m):
     quat = Rotation.from_matrix(m).as_quat()      # scipy returns x, y, z, w
     return np.array([quat[3], quat[0], quat[1], quat[2]])
+
+
+def settle_stage_assets(reason: str, *, timeout_s: float = 180.0) -> float:
+    """Let every referenced asset finish loading before authoring more.
+
+    The rover, the quadrotor and the city arrive as USD references whose
+    materials Kit cooks on ``carb.tasking`` fibers, in the background, after
+    the call that added them has returned. Authoring a new MDL material into
+    the stage while that is in flight is a concurrent write to the same
+    material database, and it is where Kit aborts on its own
+    ``unlock() called by non-owning thread`` assertion -- always ~20 s in,
+    inside the rover prototype's ``Looks`` scope. The abort costs a full boot
+    and looks like an unrelated Isaac fault.
+
+    Waiting is not a tuning knob: nothing this simulator does before the world
+    is loaded needs to overlap with the load.
+    """
+    started = time.monotonic()
+    while is_stage_loading():
+        if time.monotonic() - started > float(timeout_s):
+            carb.log_warn(
+                f"[landing-pad] stage still loading after {timeout_s:.0f} s "
+                f"before {reason}; continuing.")
+            break
+        simulation_app.update()
+    waited = time.monotonic() - started
+    if waited > 0.1:
+        carb.log_info(
+            f"[landing-pad] waited {waited:.1f} s for referenced assets "
+            f"before {reason}.")
+    return waited
 
 
 class LandingPadMarkers:
@@ -1281,6 +1314,11 @@ class LandingWorld:
         self.vision_enabled = vision_mode in {"aruco", "keypoint_fiducial"}
         self.pad = None
         self.camera = None
+        if self.vision_enabled:
+            # The landing target's material is the one thing this file adds to
+            # the material database, and it must not be added while the
+            # referenced rover/quadrotor/city materials are still being cooked.
+            settle_stage_assets("painting the landing target")
         if self.keypoint_vision:
             # Parented to the deck: the target rides the rover for free.
             self.pad = LandingPadVisual(

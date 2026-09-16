@@ -460,12 +460,28 @@ def default_config(mode: str = "quick", target: str = "sitl") -> Config:
         # both arms must receive the same initial condition.
         "entry_view_retries": 2,
         "entry_settle": 0.5,              # s held inside tolerance
+        # Simulated seconds the vehicle gets to reach the seeded entry pose and
+        # hold it for entry_settle. This is the budget the gate is actually
+        # judged against, and it is on PX4's clock for the same reason the
+        # settle streak is: the manoeuvre is a physical duration. A wall-clock
+        # budget shrinks it as the stage gets heavier -- on the two-camera
+        # rendered city stage the previous 90 s wall budget bought only a
+        # fraction of the simulated time the same number bought on a flat
+        # plane, and arriving vehicles were cut off mid-settle. Flying a few
+        # metres and settling needs roughly ten to twenty simulated seconds;
+        # this leaves a wide margin without letting a stuck climb run forever.
+        "entry_sim_budget": 60.0,         # s of simulated PX4 time
         # Unmeasured OFFBOARD position hold between episodes (bridge.
         # hold_for_next_airborne_reset). It must outlast PPO/estimator
         # updates; the gateway lands the vehicle when it expires, which PX4
         # then reports as an offboard-loss failsafe at the next reset.
         "between_episode_hold_s": 900.0,
-        "entry_timeout": 90.0,            # s; must outlast PX4's post-boot arm refusal
+        # Wall-clock hang guard, no longer the entry budget itself: that is
+        # entry_sim_budget above. This bounds a simulator that has stopped
+        # publishing time at all, so it must outlast entry_sim_budget at the
+        # slowest stage rate the run is expected to reach -- and PX4's
+        # post-boot arm refusal, which entry_arm_grace cuts short anyway.
+        "entry_timeout": 240.0,           # s of wall clock
         "arm_retry": 2.0,                 # s between arm attempts during the climb
         # PX4 SITL stops accepting arm commands after hours of lockstep; a
         # pipeline that owns the simulator cycles it rather than losing the run.

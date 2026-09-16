@@ -44,7 +44,11 @@ $$
 | 최대 yaw rate / 가속도 | 60°/s · 90°/s² |
 | Control period | 0.1 s |
 | Episode horizon | 300 step |
-| Camera | 512×320 grayscale, 수평 FOV 90°, 60° 하향 |
+| Camera | 512×320 grayscale, 수평 FOV 90°, 60° 하향, 30 Hz |
+| 물리 / 렌더 | 250 Hz / 30 Hz (headless), 20 Hz (GUI) |
+
+렌더 주기는 카메라 주기와 같다. `sensor_profiles`가 카메라를
+`min(rate_hz, render rate)`로 묶으므로 그보다 자주 렌더해도 읽는 곳이 없다.
 
 ## 3. 한 stage의 2쌍 병렬 실행
 
@@ -179,6 +183,13 @@ Reset은 공중 teleport를 사용하지 않는다.
 
 이 순서가 PX4 EKF와 Isaac rigid-body state의 불일치를 방지한다. Entry gate는 설정
 전용이며 policy·보상·로그는 이 gate를 보지 않는다.
+
+Gate의 예산은 **시뮬레이션 시간**(`external.entry_sim_budget`, 기본 60 s)이다.
+정착 조건(`entry_settle` 1.0 s)도 같은 시계이므로, 렌더 부하가 늘어 stage가
+느려져도 gate가 요구하는 기동의 크기는 변하지 않는다. 벽시계
+(`external.entry_timeout`)는 시각을 더 이상 발행하지 않는 시뮬레이터를 막는
+멈춤 방지 상한으로만 남는다. 실패 메시지는 어느 시계가 소진되었는지 밝힌다 —
+"simulated"는 수렴하지 못한 기체, "wall"은 멈춘 stage다.
 
 ## 12. Contact와 terminal
 

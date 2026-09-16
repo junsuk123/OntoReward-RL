@@ -885,3 +885,101 @@ def test_the_reconnect_and_reset_use_the_boot_budget():
     # there would consume the entry window itself.
     entry = source[source.index("def send_goto"):]
     assert entry[:entry.index("send_goto(")].count("_setup_timeout") == 0
+
+
+def test_a_slow_stage_does_not_shorten_the_entry_manoeuvre(monkeypatch):
+    """The entry budget is simulated time, so render load cannot shrink it.
+
+    The settle streak has always been measured on PX4's clock. While the
+    budget around it was wall time, adding a second rendered landing camera
+    silently shortened the manoeuvre the gate was asking for: on the two-pair
+    city stage a 99 s wall budget bought only a fraction of the simulated
+    seconds the same number bought on a flat plane, and vehicles that were
+    converging normally were cut off mid-settle -- reported as "longest hold
+    0.98 s of 1.00 s" with every tolerance met at the final sample. Restarting
+    a simulator for that also destroyed the other pair's episode.
+
+    Here one simulated second costs twenty wall seconds. The vehicle is at the
+    entry pose from the first sample and must still be handed over.
+    """
+    monkeypatch.setattr(bridge_module.time, "monotonic", _clock(1.0))
+    monkeypatch.setattr(bridge_module.time, "sleep", lambda _s: None)
+    entry = camera_centered_hover_offset(7.55)
+
+    def states():
+        index = 0
+        while True:
+            index += 1
+            yield {"armed": True, "px4_time_us": 50_000 * index,
+                   "position": entry.tolist(), "velocity": [0.0, 0.0, 0.0],
+                   "quaternion_wxyz": [1.0, 0.0, 0.0, 0.0],
+                   "position_frame": "pad"}
+
+    bridge = _entry_gate_bridge(states())
+    bridge.cfg.entry_settle = 1.0
+    bridge.cfg.entry_sim_budget = 60.0
+    # Twenty-one samples at 1.0 s of wall clock each: the old wall-only gate
+    # expired at ten with the vehicle sitting exactly on the entry pose.
+    bridge.cfg.entry_timeout = 240.0
+
+    state = bridge.wait_at_entry(entry)
+
+    assert state["px4_time_us"] >= 1_000_000
+
+
+def test_the_entry_budget_that_expired_names_its_clock(monkeypatch):
+    """"Out of simulated time" and "out of wall time" need opposite responses.
+
+    A vehicle that never converged is a vehicle; a stage that stopped
+    advancing its clock is a simulator. The message has to say which, or the
+    operator restarts the wrong thing.
+    """
+    monkeypatch.setattr(bridge_module.time, "monotonic", _clock(0.01))
+    monkeypatch.setattr(bridge_module.time, "sleep", lambda _s: None)
+    entry = camera_centered_hover_offset(7.55)
+
+    def states():
+        index = 0
+        while True:
+            index += 1
+            yield {"armed": True, "px4_time_us": 1_000_000 * index,
+                   "position": (entry + np.array([4.0, 0.0, 0.0])).tolist(),
+                   "velocity": [0.0, 0.0, 0.0],
+                   "quaternion_wxyz": [1.0, 0.0, 0.0, 0.0],
+                   "position_frame": "pad"}
+
+    bridge = _entry_gate_bridge(states())
+    bridge.cfg.entry_sim_budget = 5.0
+    bridge.cfg.entry_timeout = 240.0
+    with pytest.raises(EntryResetError) as excinfo:
+        bridge.wait_at_entry(entry)
+    message = str(excinfo.value)
+    assert "5.0 simulated s" in message
+    # The wall guard was nowhere near expiry, so it must not be the headline.
+    assert "240.0 s wall" not in message
+    assert "offset was out of tolerance" in message
+
+
+def test_a_stage_that_stops_advancing_still_hits_the_wall_guard(monkeypatch):
+    """A frozen PX4 clock cannot hold a worker open forever."""
+    monkeypatch.setattr(bridge_module.time, "monotonic", _clock(1.0))
+    monkeypatch.setattr(bridge_module.time, "sleep", lambda _s: None)
+    entry = camera_centered_hover_offset(7.55)
+
+    def states():
+        while True:
+            # The simulator answers, but its clock never moves.
+            yield {"armed": True, "px4_time_us": 7_000_000,
+                   "position": (entry + np.array([4.0, 0.0, 0.0])).tolist(),
+                   "velocity": [0.0, 0.0, 0.0],
+                   "quaternion_wxyz": [1.0, 0.0, 0.0, 0.0],
+                   "position_frame": "pad"}
+
+    bridge = _entry_gate_bridge(states())
+    bridge.cfg.entry_sim_budget = 60.0
+    bridge.cfg.entry_timeout = 12.0
+    with pytest.raises(EntryResetError) as excinfo:
+        bridge.wait_at_entry(entry)
+    message = str(excinfo.value)
+    assert "12.0 s wall" in message
+    assert "slower than real time" in message

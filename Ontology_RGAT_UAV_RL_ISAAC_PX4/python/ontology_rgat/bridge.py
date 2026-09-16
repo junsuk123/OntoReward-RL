@@ -434,6 +434,25 @@ class PX4Bridge:
         the primary perception path.
         """
         started = time.monotonic()
+        # Two clocks, two jobs.
+        #
+        # The budget the vehicle is judged against is *simulated* PX4 time,
+        # because the settle streak below is. A wall-clock budget silently
+        # shrinks the manoeuvre the gate asks for as the stage gets heavier:
+        # on this two-camera city stage one simulated second costs several
+        # wall seconds, so the same 99 s that was ample on a flat plane cut
+        # arriving vehicles off mid-settle -- reported as "longest hold 0.98 s
+        # of 1.00 s" with every tolerance met at the final sample. That is a
+        # deadline, not an unstable hover, and restarting the simulator for it
+        # throws away the other pair's episode as well.
+        #
+        # The wall clock stays only as a hang guard, for a simulator that has
+        # stopped publishing time at all and would otherwise never return.
+        sim_budget = float(getattr(self.cfg, "entry_sim_budget", float("inf")))
+        wall_guard = float(self.cfg.entry_timeout)
+        sim_started: float | None = None
+        sim_elapsed = 0.0
+        expiry = "wall"
         settled_since: float | None = None
         view_margin: float | None = None
         state: dict[str, Any] | None = None
@@ -452,17 +471,25 @@ class PX4Bridge:
         # position offset instead of the refusal sends the operator after the
         # wrong thing entirely.
         arm_refusal: tuple[int, int] | None = None
+        # Bounded on its own terms: entry_timeout is now a wall-clock hang
+        # guard, and a third of it would push the arming diagnosis minutes out.
         arm_grace = float(getattr(
             self.cfg, "entry_arm_grace",
-            max(20.0, float(self.cfg.entry_timeout) / 3.0)))
+            min(60.0, max(20.0, float(self.cfg.entry_timeout) / 3.0))))
         # Bounded re-aim for the case the vehicle is holding station correctly
         # but the deck is not in frame. Setup only, and identical for both arms.
         view_retries = 0
         view_retry_limit = int(getattr(self.cfg, "entry_view_retries", 2))
         view_retry_after = max(4.0, float(getattr(self.cfg, "entry_settle", 0.5)) * 4.0)
         out_of_view_since: float | None = None
-        while time.monotonic() - started < float(self.cfg.entry_timeout):
+        while True:
             elapsed = time.monotonic() - started
+            if elapsed >= wall_guard:
+                expiry = "wall"
+                break
+            if sim_elapsed >= sim_budget:
+                expiry = "simulated"
+                break
             try:
                 state = self.get_state()
                 armed = bool(state["armed"])
@@ -533,6 +560,13 @@ class PX4Bridge:
                 # a PX4 timestamp. They retain the historical wall-clock
                 # behaviour instead of losing the readiness gate entirely.
                 sample_now = wall_now
+            if sim_started is None:
+                sim_started = sample_now
+            # PX4's clock can be re-anchored by the timesync filter; a jump
+            # backwards must not read as a budget that has already expired.
+            if sample_now < sim_started:
+                sim_started = sample_now
+            sim_elapsed = float(sample_now - sim_started)
             view_margin = self.entry_view_margin(state, here)
             geometry_ready = (
                 view_margin is not None
@@ -582,7 +616,7 @@ class PX4Bridge:
                   f"view<={float(getattr(self.cfg, 'entry_view_margin', 0.85)):.2f}")
         if not was_armed:
             raise ArmingRefused(
-                f"PX4 never armed within {float(self.cfg.entry_timeout):.1f} s"
+                f"PX4 never armed within {elapsed:.1f} s"
                 + (f" (command {arm_refusal[0]} result {arm_refusal[1]})"
                    if arm_refusal is not None else "")
                 + "; the reported entry offset is the parked vehicle's, not a "
@@ -596,8 +630,15 @@ class PX4Bridge:
                      f"{blocked[culprit]}/{samples} samples "
                      f"(worst offset {worst['offset']:.2f} m, "
                      f"worst speed {worst['speed']:.2f} m/s)")
+        # Name the clock that ran out. "Ran out of simulated time" is a vehicle
+        # that never converged; "ran out of wall time" is a simulator that
+        # stopped advancing, and the two need opposite responses.
+        budget = (f"{sim_budget:.1f} simulated s ({elapsed:.0f} s wall)"
+                  if expiry == "simulated" else
+                  f"{wall_guard:.1f} s wall ({sim_elapsed:.1f} simulated s; "
+                  "the stage is running far slower than real time)")
         raise EntryResetError(
-            f"PX4 did not hold the entry pose within {float(self.cfg.entry_timeout):.1f} s "
+            f"PX4 did not hold the entry pose within {budget} "
             f"(last sample: offset {float(np.linalg.norm(here - target)):.2f} m, "
             f"speed {speed:.2f} m/s, "
             "geometric pad-centre view offset "

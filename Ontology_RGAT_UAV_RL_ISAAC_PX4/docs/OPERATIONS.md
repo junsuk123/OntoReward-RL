@@ -98,6 +98,14 @@ readout 학습·동결 모델 검증 진행을 한 화면에 출력한다.
 * `view was out of tolerance`이고 위치·속도는 통과했다면 갑판이 화면 밖이다. 게이트는
   같은 seeded setpoint를 `entry_view_retries`회까지 다시 조준한다.
 
+메시지 앞부분의 예산은 어느 시계가 소진되었는지 말한다.
+
+* `within 60.0 simulated s (...)` — 기체가 시뮬레이션 60초 안에 수렴하지 못했다.
+  실제 비행 문제이므로 `longest hold`와 `out of tolerance` 항목을 본다.
+* `within 240.0 s wall (... simulated s; the stage is running far slower than
+  real time)` — 시뮬레이터가 시각을 거의 진행시키지 못했다. 기체가 아니라 stage의
+  문제이며, 렌더 부하나 멈춘 Isaac을 확인한다.
+
 `WARNING: the Isaac/PX4 simulator was adopted, not started by this run`이 보이면
 재시작은 아무것도 바꾸지 못한다. `stop`은 이 run이 띄운 프로세스만 종료하므로 이전
 run이 남긴 열화된 Isaac/PX4는 그대로 채택되고 남은 재시도는 같은 실패를 반복하는 데

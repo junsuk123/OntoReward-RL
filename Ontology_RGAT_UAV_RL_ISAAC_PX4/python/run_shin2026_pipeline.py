@@ -99,6 +99,12 @@ def _live_config(mode, results_dir, system_config):
         benchmark.get("entry_settle_s", cfg.external.entry_settle))
     cfg.external.entry_arm_grace = float(
         benchmark.get("entry_arm_grace_s", cfg.external.entry_arm_grace))
+    # The budget the entry gate is judged against, in simulated PX4 seconds,
+    # and the wall-clock hang guard that bounds a stopped simulator.
+    cfg.external.entry_sim_budget = float(
+        benchmark.get("entry_sim_budget_s", cfg.external.entry_sim_budget))
+    cfg.external.entry_timeout = float(
+        benchmark.get("entry_timeout_s", cfg.external.entry_timeout))
     cfg.external.entry_view_retries = int(
         benchmark.get("entry_view_retries", cfg.external.entry_view_retries))
     # The entry gate, the geometric FOV metric and the future-FOV-loss labels

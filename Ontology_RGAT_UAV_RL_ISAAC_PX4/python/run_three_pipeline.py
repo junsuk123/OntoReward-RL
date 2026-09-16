@@ -139,10 +139,10 @@ def _pair_live_config(cfg, pair_index: int, pair_count: int):
     if pair_count == 1:
         return cfg
     index = int(pair_index)
-    # Entry convergence is governed by simulated PX4 time, while its safety
-    # deadline is intentionally wall time. Three rendered landing cameras make
-    # the shared stage slower than real time, so retain roughly the same amount
-    # of simulated settling time without changing the measured episode horizon.
+    # The entry budget itself is simulated PX4 time (external.entry_sim_budget)
+    # and therefore already immune to how slowly the shared stage runs; this
+    # scale applies only to the wall-clock hang guard, which has to stay
+    # comfortably above that budget as more rendered cameras slow the stage.
     entry_timeout_scale = 1.25 if int(pair_count) == 3 else 1.10
     return cfg.derive(**{
         "external.gateway_port": int(cfg.external.gateway_port) + 2 * index,
@@ -660,10 +660,16 @@ def _prepare_fast_demonstrations(*, cfg, camera, config, config_hash,
             "training-only teacher demonstrations",
             f"successful real Isaac/PX4 flights {successes}/{required}")
         original_entry_timeout = float(cfg.external.entry_timeout)
+        original_entry_sim_budget = float(cfg.external.entry_sim_budget)
         original_reset_recoveries = int(cfg.external.reset_recoveries)
         original_episode_recoveries = int(cfg.external.get(
             "episode_recoveries", original_reset_recoveries))
-        cfg.external.entry_timeout = min(original_entry_timeout, 45.0)
+        cfg.external.entry_timeout = min(original_entry_timeout, 120.0)
+        # Fail a demonstration flight fast rather than spending the whole entry
+        # budget on it: this pass only needs successful teacher episodes and
+        # skips the rest. Shorten the budget the gate is judged on, not just
+        # its hang guard, or the shortening does nothing.
+        cfg.external.entry_sim_budget = min(original_entry_sim_budget, 25.0)
         cfg.external.reset_recoveries = 0
         cfg.external.episode_recoveries = 0
         with LiveShinEnvironment(
@@ -746,6 +752,7 @@ def _prepare_fast_demonstrations(*, cfg, camera, config, config_hash,
                 if successes >= required:
                     break
         cfg.external.entry_timeout = original_entry_timeout
+        cfg.external.entry_sim_budget = original_entry_sim_budget
         cfg.external.reset_recoveries = original_reset_recoveries
         cfg.external.episode_recoveries = original_episode_recoveries
         del teacher_model

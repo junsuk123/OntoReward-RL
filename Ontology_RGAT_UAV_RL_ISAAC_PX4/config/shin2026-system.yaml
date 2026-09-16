@@ -20,6 +20,15 @@ isaac:
   # The campus scene is substantially heavier than Flat Plane. Keep physics
   # and the PX4 HIL loop at full rate while rendering a deterministic GUI
   # subset, as in the validated Meta-Sejong pipeline profile.
+  #
+  # The headless render period matches the landing camera instead of doubling
+  # it. vision.camera.rate_hz is 30, and sensor_profiles clamps the camera to
+  # min(rate_hz, render rate), so the inherited 60 Hz stage rendered two frames
+  # for every frame either pair's camera could consume -- on a two-camera city
+  # stage that is half the GPU budget spent on frames nothing reads. The
+  # camera rate, physics (250 Hz) and every measured quantity are unchanged;
+  # only simulated seconds per wall second go up.
+  rendering_dt: 0.0333333333
   gui_rendering_dt: 0.05
   gui_viewport_resolution: [960, 540]
   startup_rendering_dt: 0.5
@@ -88,6 +97,13 @@ benchmark:
   # fly-through and sits clear of the observed cycle. Identical for both arms.
   entry_speed_tolerance_m_s: 1.00
   entry_settle_s: 1.0
+  # The budget the entry gate is judged against, in *simulated* PX4 seconds.
+  # Its wall-clock counterpart (external.entry_timeout) is only a hang guard.
+  # The vehicle has to fly up to a few metres to the seeded Table-I offset and
+  # then hold every tolerance for entry_settle_s; that is ten to twenty
+  # simulated seconds, so 60 leaves room for a re-aim without letting a stuck
+  # climb hold a pair open indefinitely.
+  entry_sim_budget_s: 60.0
   # A disarmed vehicle cannot reach any pose. If PX4 keeps refusing command 400
   # for this long, the gate fails with that as the stated cause instead of
   # reporting the parked vehicle's position offset for the full budget.

@@ -91,7 +91,7 @@ def test_shin_profile_uses_campus_plaza_and_fitted_platform():
     assert config["px4"]["sitl_parameters"] == {
         "COM_RC_IN_MODE": 4,
         "COM_RCL_EXCEPT": 4,
-        "COM_OF_LOSS_T": 5.0,
+        "COM_OF_LOSS_T": 30.0,
         "COM_OBL_RC_ACT": 5,
         "MPC_THR_HOVER": 0.58,
         "MPC_USE_HTE": 0,

@@ -62,13 +62,28 @@ px4:
   offboard_prestream_count: 20
   estimator_warmup_s: 3.0
   # Autonomous SITL has no RC transmitter or QGroundControl. Ignore those
-  # absent manual links, tolerate a short render/DDS scheduling pause, and
-  # fall back to a controlled hold if OFFBOARD really disappears. Isaac sends
-  # a temporary wrapper around PX4's stock rcS on every fresh boot.
+  # absent manual links, tolerate a render/DDS scheduling pause, and fall back
+  # to a controlled hold if OFFBOARD really disappears. Isaac sends a temporary
+  # wrapper around PX4's stock rcS on every fresh boot.
+  #
+  # COM_OF_LOSS_T is not a link budget here: the gateway is a localhost process
+  # that streams at 20 Hz and does not stop. What expires is the *timestamp*.
+  # OffboardChecks compares hrt_absolute_time() against the setpoint's own
+  # timestamp, which the gateway stamps from the wall clock and PX4's
+  # uxrce_dds_client rewrites into simulated time using the Timesync filter's
+  # offset. Under lockstep, a stalled render freezes PX4's clock while the
+  # agent's keeps running, so that offset lags and the converted timestamp
+  # lands seconds behind hrt_absolute_time() even though the message just
+  # arrived. At 5 s the observed 20-30 s stalls on the two-pair campus stage
+  # tripped the offboard-loss failsafe on most entry climbs; PX4 then flew
+  # COM_OBL_RC_ACT hold and the vehicle drifted away from the seeded entry pose
+  # until the gate gave up and rebuilt the simulator. 30 s covers those stalls
+  # with margin and is still a real bound -- a genuinely dead gateway is caught
+  # far sooner by the learner's own 2 s state timeout.
   sitl_parameters:
     COM_RC_IN_MODE: 4
     COM_RCL_EXCEPT: 4
-    COM_OF_LOSS_T: 5.0
+    COM_OF_LOSS_T: 30.0
     COM_OBL_RC_ACT: 5
 
 isaac:

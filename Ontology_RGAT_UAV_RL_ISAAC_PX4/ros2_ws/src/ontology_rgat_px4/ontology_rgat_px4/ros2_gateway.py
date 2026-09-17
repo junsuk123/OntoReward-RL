@@ -526,6 +526,7 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             self.last_mode_request_tick = -self.mode_request_period
             self.offboard_mode_rejections = 0
             self.px4_failsafe = False
+            self.clock_skew_baseline_us: int | None = None
             self.px4_failsafe_detail = {
                 "reasons": [], "battery_warning": 0,
                 "recoverable_infrastructure": False,
@@ -1238,9 +1239,30 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                 self.px4_failsafe_detail)
             self._report_failsafe()
 
+        def _clock_skew_us(self) -> int | None:
+            """Wall-clock minus PX4 time, the quantity uxrce_dds_client tracks.
+
+            The gateway stamps every setpoint from the wall clock, and PX4's
+            uxrce_dds_client rewrites that into simulated time with the
+            Timesync filter's offset before OffboardChecks compares it against
+            hrt_absolute_time(). While the offset is right this difference is a
+            constant. It is the drift in it, not a gap in the 20 Hz stream,
+            that expires COM_OF_LOSS_T, so record it whenever PX4 says the
+            offboard signal is lost.
+            """
+            px4_time_us = int(self.sample.px4_time_us)
+            if px4_time_us <= 0:
+                return None
+            return self._timestamp_us() - px4_time_us
+
         def _report_failsafe(self) -> None:
             if not self.px4_failsafe:
                 self.reported_failsafe_signature = None
+                # Healthy flight is the only honest baseline for the drift
+                # reported below.
+                skew = self._clock_skew_us()
+                if skew is not None:
+                    self.clock_skew_baseline_us = skew
                 return
             reasons = tuple(self.px4_failsafe_detail.get("reasons", ()))
             if reasons == self.reported_failsafe_signature:
@@ -1251,8 +1273,16 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                         if self.px4_failsafe_detail.get(
                             "recoverable_infrastructure", False)
                         else "non-recoverable vehicle/task fault")
+            drift = ""
+            skew = self._clock_skew_us()
+            if ("offboard_control_signal_lost" in reasons
+                    and skew is not None
+                    and self.clock_skew_baseline_us is not None):
+                drift = (f"; wall-vs-PX4 clock drift "
+                         f"{(skew - self.clock_skew_baseline_us) * 1e-6:+.1f} s "
+                         f"against COM_OF_LOSS_T")
             self.get_logger().warning(
-                f"PX4 failsafe active: {detail} ({recovery})")
+                f"PX4 failsafe active: {detail} ({recovery}){drift}")
 
         def _on_land(self, msg) -> None:
             self.px4_landed = bool(msg.landed)

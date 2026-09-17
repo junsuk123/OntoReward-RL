@@ -79,7 +79,18 @@ estimator:
     # Calibrated on a held-out live-Isaac split: the previous 2 x 1e-4 pass
     # made no measurable change; 20 x 1e-3 reduced 23.2 px to <=16.8 px in
     # the stage-5 audit while the best validation checkpoint was retained.
-    empirical_epochs: 20
+    #
+    # 20 was then raised to 60 because it left the recall gate above a
+    # coin flip. Replaying a real 24-viewpoint survey off the datastore (the
+    # frozen split, the same seed), held-out recall oscillates epoch to epoch
+    # and only 9 of 20 epochs sit above the 0.50 minimum, so which epoch the
+    # best-checkpoint rule happens to select decides whether the run starts at
+    # all -- one live run selected 0.387 and aborted PPO. At 60 epochs 45 of 60
+    # are above it, the selected checkpoint reaches 0.758, and held-out
+    # coordinate error improves from 64 px to 50 px. 120 epochs is no better
+    # than 60 (0.758, 49 px), and the learning rate is not the lever: 1e-4,
+    # 3e-4 and 1e-3 all behave the same. Cost is seconds of CPU, not flight.
+    empirical_epochs: 60
     empirical_learning_rate: 0.001
 control:
   dt_seconds: 0.1
@@ -137,6 +148,14 @@ ppo:
   # would delete the weakness the proposed FOV-risk reward exists to improve.
   health_window_episodes: 20
   health_grace_episodes: 40
+  # Ceiling on the zero-success grace. no_landing_abort_episode() takes
+  # min(this, 0.75 * planned episodes), so the code default of 120 was a hard
+  # stop tuned for the seminar preview budget: against the declared 40,000
+  # training episodes it is 0.3% of the run, and it aborted a resumed run three
+  # hours in. 10% of the reference budget keeps the guard meaningful -- a setup
+  # that can never land is still caught in days rather than months -- while
+  # giving PPO a realistic window to find a first sparse touchdown.
+  health_no_landing_max_grace_episodes: 4000
   health_max_position_rmse_m: 3.0
   health_max_active_reward_saturation_fraction: 0.80
   # Perception-infrastructure witness: the pad centre was geometrically inside

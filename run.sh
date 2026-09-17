@@ -244,21 +244,19 @@ fi
 if [[ "$mode_supplied" == false ]]; then
   arguments=(--mode full "${arguments[@]}")
 fi
-if [[ "$selected_mode" == full ]]; then
-  # Equal PPO budgets and equal estimator warm-up apply to both SE-enabled arms.
-  if [[ "$training_budget_supplied" == false ]]; then
-    arguments+=(--total-train-episodes 800)
-  fi
-  # The original 32,000-flight evaluation and 400-flight reward-design pass are
-  # also incompatible with a two-day seminar deadline. Keep every scenario but
-  # use a clearly labelled preview sample size; CLI overrides recover any larger
-  # budget without editing this launcher.
-  if [[ "$evaluation_budget_supplied" == false ]]; then
-    arguments+=(--eval-episodes 5)
-  fi
-  if [[ "$rgat_budget_supplied" == false ]]; then
-    arguments+=(--rgat-data-episodes 40)
-  fi
-fi
+# --mode full now runs the budget the experiment config declares, which is the
+# reference budget: training.episodes_full and fov_risk_design.episodes_full are
+# both 40,000, and the evaluation block is per-scenario (10,000 random-walk plus
+# 1,000 each for the six trajectory cases). Equal PPO budgets and equal
+# estimator warm-up still apply to both SE-enabled arms, because
+# --total-train-episodes is no longer imposed here and each arm takes
+# training.episodes_full.
+#
+# This launcher used to cut those to 800 total / 5 evaluation / 40 design
+# flights for a two-day seminar deadline. That preview budget still exists as
+# its own profile: ./run.sh --seminar-fast, which is the one marked
+# publication_claim_allowed: false. A shorter ad-hoc run needs no edit here
+# either -- --train-episodes, --total-train-episodes, --eval-episodes and
+# --rgat-data-episodes all still override the config.
 
 exec "$launcher" "${arguments[@]}"

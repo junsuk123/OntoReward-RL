@@ -141,9 +141,22 @@ Attention/message-passing coefficient는 relation importance나 인과 근거로
 ## 7. 설정과 실행 프로파일
 
 주 설정은 `config/experiments/two_pipeline_comparison.yaml`이다. quick profile은
-8 training episodes와 8 FOV-risk design episodes를 사용한다. 명시적 full 실행의
-설정 예산은 40,000 training episodes와 40,000 FOV-risk design episodes이며, 실행
-스크립트는 deadline을 위해 CLI에서 더 작은 예산으로 덮어쓸 수 있다.
+8 training episodes와 8 FOV-risk design episodes를 사용한다. full 실행의 설정
+예산은 reference 예산인 pipeline당 40,000 training episodes, 40,000 FOV-risk
+design episodes, pipeline당 16,000 evaluation episodes(random-walk 10,000 +
+6개 궤적 시나리오 각 1,000)이다.
+
+`./run.sh --mode full`은 이제 이 설정 예산을 그대로 실행한다. 이전에는 launcher가
+seminar deadline을 위해 800 total / 5 evaluation / 40 design flight로 줄여
+덮어썼으나, 그 preview 예산은 아래 `--seminar-fast` 프로파일로 분리했다. 더 짧은
+임시 실행은 `--train-episodes`, `--total-train-episodes`, `--eval-episodes`,
+`--rgat-data-episodes`로 여전히 덮어쓸 수 있다.
+
+zero-success health gate의 상한 `ppo.health_no_landing_max_grace_episodes`는
+reference 예산의 10%인 4,000으로 둔다. 코드 기본값 120은 preview 예산에 맞춘
+고정 상한이라 40,000 예산에서는 전체의 0.3%에 불과했다. `no_landing_abort_episode`는
+`min(상한, 0.75 x 계획 episode)`를 쓰므로 144-episode seminar 프로파일의 실효
+상한(108)은 바뀌지 않는다.
 
 인자 없는 상위 `./run.sh`는 별도 `seminar_10h_two_pipeline.yaml`을 선택해 pipeline당
 144 training episodes, 40 data episodes, 80 epochs, 5 evaluation episodes를 쓴다.

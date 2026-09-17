@@ -869,6 +869,23 @@ def collect_episode_resilient(env, model: PipelineActorCritic, method: str,
             if not recoverable or attempt >= recoveries or not callable(recover):
                 raise
             next_attempt = attempt + 1
+            # A gateway-classified recoverable link failsafe clears on its own
+            # in well under a second. The interrupted trajectory is discarded
+            # either way -- a step PX4 did not fly is not a transition PPO may
+            # learn from -- but rebuilding the shared simulator for a blip
+            # costs minutes and takes the other pair's episode with it.
+            clear = getattr(getattr(env, "bridge", None),
+                            "wait_for_failsafe_clear", None)
+            if (isinstance(exc, PX4Failsafe) and exc.recoverable
+                    and callable(clear) and clear()):
+                print(
+                    f"WARNING: [{method}] episode infrastructure failed ({exc}). "
+                    "The failsafe cleared on its own, so the partial trajectory "
+                    "is discarded and seed "
+                    f"{int(seed)} retried without rebuilding the simulator "
+                    f"({next_attempt} of {recoveries}).")
+                attempt = next_attempt
+                continue
             print(
                 f"WARNING: [{method}] episode infrastructure failed ({exc}). Discarding "
                 f"the partial trajectory, restarting the owned stack, and "

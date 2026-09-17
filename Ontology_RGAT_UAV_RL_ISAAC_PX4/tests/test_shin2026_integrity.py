@@ -27,7 +27,8 @@ from ontology_rgat.benchmarks.randomization import (px4_gain_parameters,
 from ontology_rgat.benchmarks.shin2026 import (ActorObservation,
                                                assert_actor_payload_safe,
                                                default_shin2026_config)
-from ontology_rgat.bridge import BridgeError
+from ontology_rgat.bridge import BridgeError, PX4Bridge
+from ontology_rgat.config import default_config
 from ontology_rgat.mathx import euler_to_quat
 from ontology_rgat.controllers import VelocityYawRateController
 from ontology_rgat.curriculum import (PlatformMotionCurriculum,
@@ -41,8 +42,12 @@ from ontology_rgat.initialization import (R_BODY_FROM_OPTICAL_NADIR,
                                           pad_view_margin,
                                           yaw_aligned_hover_offset)
 from ontology_rgat.estimation import LSTMRelativeStateEstimator
-from ontology_rgat.perception import (PRETRAIN_FORMAT, ShinKeypointEncoder,
+from ontology_rgat.perception import (EMPIRICAL_CALIBRATION_FORMAT,
+                                      PRETRAIN_FORMAT, ShinKeypointEncoder,
+                                      calibrate_keypoint_encoder,
+                                      calibration_viewpoints,
                                       empirical_keypoint_dataset,
+                                      needs_empirical_calibration,
                                       prepare_keypoint_encoder,
                                       synthetic_keypoint_dataset)
 from ontology_rgat.ppo.recurrent import ShinRecurrentActorCritic
@@ -509,6 +514,311 @@ def test_empirical_keypoint_labelling_projects_known_pad_landmarks():
         [(rendered["images"][0], None)], system)["images"]) == 0
     assert len(empirical_keypoint_dataset(
         [(rendered["images"][0], np.zeros(7))], system)["images"]) == 0
+
+
+def _surveyed_isaac_camera(system, *, jitter_m=0.02, seed=3):
+    """A labelled camera that renders whichever viewpoint the survey flew to.
+
+    Stands in for Isaac: the frames are rendered from the commanded pose, so a
+    survey that never moves produces one pose and a survey that visits the
+    configured viewpoints produces that many.
+    """
+    from ontology_rgat.perception.keypoint_pretrain import (
+        _pad_texture, _quat_wxyz_from_yaw, _render_landing_target,
+        _texture_pyramid, camera_model, landing_pad_settings)
+
+    model = camera_model(system)
+    settings = landing_pad_settings(system)
+    pyramid = _texture_pyramid(_pad_texture(settings))
+    rng = np.random.default_rng(seed)
+    flown = {"viewpoint": None}
+
+    def survey(viewpoint):
+        flown["viewpoint"] = viewpoint
+        return True
+
+    def labelled():
+        viewpoint = flown["viewpoint"]
+        position = (np.asarray(viewpoint["position_pad_m"], dtype=float)
+                    + rng.normal(0.0, jitter_m, 3))
+        quaternion = _quat_wxyz_from_yaw(float(viewpoint["yaw_rad"]))
+        image = np.clip(rng.normal(96.0, 6.0, (model.height, model.width)),
+                        0.0, 255.0).astype(np.uint8)
+        image = _render_landing_target(
+            image, pyramid, settings["deck_size_m"], position, quaternion, model)
+        return image, np.concatenate((position, quaternion))
+
+    return survey, labelled, flown
+
+
+def _calibration_experiment(**overrides):
+    keypoint = {
+        "enabled": True, "samples_quick": 24, "epochs_quick": 2,
+        "batch_size": 8, "learning_rate": 1e-3, "seed": 17,
+        "empirical_samples_quick": 24, "empirical_epochs": 1,
+        "empirical_learning_rate": 1e-3,
+        # The quality of a 32-dimensional encoder trained for two epochs is
+        # not what these tests are about; the split and the gates are.
+        "minimum_holdout_visibility_recall": 0.0,
+    }
+    keypoint.update(overrides)
+    return {"estimator": {"image_embedding": 32, "keypoint_pretraining": keypoint}}
+
+
+def _prepared_artifact(path, system, experiment):
+    return prepare_keypoint_encoder(
+        path, config_hash="cfg", experiment=experiment, system=system,
+        mode="quick", device="cpu")
+
+
+def test_every_calibration_viewpoint_puts_the_pad_in_the_camera_frame():
+    system = load_config(ROOT / "config/shin2026-system.yaml")
+    viewpoints = calibration_viewpoints(system, {})
+    assert len(viewpoints) >= 12
+    # Several distinct altitudes, and a lateral ring wide enough that some
+    # views are only partial -- which is where a real approach spends its time.
+    assert len({point["altitude_m"] for point in viewpoints}) >= 3
+    assert min(point["landmarks_in_frame"] for point in viewpoints) >= 4
+    assert min(point["landmarks_in_frame"] for point in viewpoints) < 6
+    for point in viewpoints:
+        x, y, z = point["position_pad_m"]
+        # Inside the gateway's pad-frame goto envelope.
+        assert math.hypot(x, y) <= 9.5 and 0.0 < z <= 24.0
+
+
+def test_keypoint_calibration_surveys_poses_and_holds_whole_viewpoints_out(tmp_path):
+    """The held-out split is over poses, so it cannot be passed by memorising.
+
+    The superseded procedure polled 48 frames of one hover and split them at
+    random: its 100 % held-out score certified an encoder that reported no
+    landmark on 99.7 % of the in-frame steps that followed.
+    """
+    system = load_config(ROOT / "config/shin2026-system.yaml")
+    experiment = _calibration_experiment()
+    path = tmp_path / "keypoint_encoder.pt"
+    artifact = _prepared_artifact(path, system, experiment)
+    assert needs_empirical_calibration(artifact)
+    survey, labelled, _ = _surveyed_isaac_camera(system)
+
+    calibrated = calibrate_keypoint_encoder(
+        path, artifact, labelled, survey=survey, system=system,
+        experiment=experiment, mode="quick", device="cpu")
+
+    empirical = calibrated["empirical_calibration"]
+    assert empirical["format"] == EMPIRICAL_CALIBRATION_FORMAT
+    assert empirical["viewpoints"] >= 6
+    assert len(empirical["held_out_viewpoints"]) >= 2
+    assert empirical["pose_span"]["altitude_span_m"] > 1.5
+    assert empirical["pose_span"]["lateral_span_m"] > 1.0
+    assert "visibility_recall" in empirical["after"]
+
+    # No frame of a held-out viewpoint may have been trained on.
+    dataset = np.load(calibrated["empirical_dataset"])
+    held_out = set(empirical["held_out_viewpoints"])
+    validation = int(sum(int(point) in held_out for point in dataset["viewpoint"]))
+    assert validation == empirical["validation_samples"]
+    assert (empirical["training_samples"] + validation
+            == len(dataset["images"]) == empirical["samples"])
+    # A recalibrated artifact is not calibrated again on the next run.
+    assert not needs_empirical_calibration(calibrated)
+
+
+def test_an_accumulated_calibration_reuses_its_viewpoints_and_flies_nothing(
+        tmp_path):
+    """Surveying costs simulator minutes; a second run should not repay them.
+
+    And it must not re-fly a viewpoint it already holds either: that would add
+    a second, near-identical copy of a pose the fit is already anchored on.
+    """
+    from ontology_rgat.datastore import (KIND_KEYPOINT_CALIBRATION,
+                                         CollectedDataStore)
+
+    system = load_config(ROOT / "config/shin2026-system.yaml")
+    experiment = _calibration_experiment()
+    survey, labelled, _ = _surveyed_isaac_camera(system)
+    store = CollectedDataStore(tmp_path / "collected.sqlite3", run_id="first")
+
+    first_path = tmp_path / "first.pt"
+    first = calibrate_keypoint_encoder(
+        first_path, _prepared_artifact(first_path, system, experiment),
+        labelled, survey=survey, system=system, experiment=experiment,
+        mode="quick", device="cpu", datastore=store)
+    empirical = first["empirical_calibration"]
+    assert empirical["reused_viewpoints"] == 0
+    assert empirical["split_source"] == "frozen per-viewpoint datastore split"
+    stored = store.episodes(KIND_KEYPOINT_CALIBRATION,
+                            empirical["datastore_fingerprint"])
+    assert len(stored) == empirical["viewpoints"] >= 6
+
+    flown = []
+
+    def refuse_to_fly(viewpoint):
+        flown.append(int(viewpoint["index"]))
+        return True
+
+    second_path = tmp_path / "second.pt"
+    second = calibrate_keypoint_encoder(
+        second_path, _prepared_artifact(second_path, system, experiment),
+        labelled, survey=refuse_to_fly, system=system, experiment=experiment,
+        mode="quick", device="cpu", datastore=store)
+
+    assert flown == []
+    reused = second["empirical_calibration"]
+    assert reused["reused_viewpoints"] == empirical["viewpoints"]
+    assert reused["samples"] == empirical["samples"]
+    # The held-out poses are the store's, so the second run cannot train on a
+    # viewpoint the first one validated against.
+    assert reused["held_out_viewpoints"] == empirical["held_out_viewpoints"]
+    store.close()
+
+
+def test_keypoint_calibration_refuses_a_frame_set_that_never_moved(tmp_path):
+    system = load_config(ROOT / "config/shin2026-system.yaml")
+    experiment = _calibration_experiment()
+    path = tmp_path / "keypoint_encoder.pt"
+    artifact = _prepared_artifact(path, system, experiment)
+    survey, labelled, flown = _surveyed_isaac_camera(system, jitter_m=0.0)
+    single = calibration_viewpoints(system, {})[0]
+
+    def frozen_survey(_viewpoint):
+        return survey(single)
+
+    with pytest.raises(RuntimeError, match="degenerate frame set"):
+        calibrate_keypoint_encoder(
+            path, artifact, labelled, survey=frozen_survey, system=system,
+            experiment=experiment, mode="quick", device="cpu")
+    assert flown["viewpoint"] is single
+
+
+def test_keypoint_calibration_rejects_an_encoder_blind_on_held_out_poses(tmp_path):
+    system = load_config(ROOT / "config/shin2026-system.yaml")
+    experiment = _calibration_experiment(
+        minimum_holdout_visibility_recall=1.01)
+    path = tmp_path / "keypoint_encoder.pt"
+    artifact = _prepared_artifact(path, system, experiment)
+    survey, labelled, _ = _surveyed_isaac_camera(system)
+
+    with pytest.raises(RuntimeError, match="held-out viewpoints"):
+        calibrate_keypoint_encoder(
+            path, artifact, labelled, survey=survey, system=system,
+            experiment=experiment, mode="quick", device="cpu")
+
+
+class _StubSurveyBridge:
+    """A PX4 bridge that flies to whatever pad-frame goto it is given."""
+
+    entry_state = staticmethod(PX4Bridge.entry_state)
+
+    def __init__(self, *, arrive_after=3, reachable=True):
+        self.gotos = []
+        self.arrive_after = int(arrive_after)
+        self.reachable = bool(reachable)
+        self.target = np.zeros(3)
+        self.samples = 0
+        self.last_state = {}
+
+    def transact(self, kind, fields, expected, timeout=None):
+        assert kind == "goto" and expected == ("ack",)
+        self.gotos.append(dict(fields))
+        self.target = np.asarray(fields["position"], dtype=float)
+        self.samples = 0
+        return {"type": "ack"}
+
+    def get_state(self):
+        self.samples += 1
+        arrived = self.reachable and self.samples >= self.arrive_after
+        position = self.target if arrived else self.target + 5.0
+        self.last_state = {"truth": {
+            "valid": True, "position": position, "velocity": np.zeros(3)}}
+        return self.last_state
+
+
+class _StubSurveyEnvironment:
+    def __init__(self, cfg, image_source, *, horizon_steps, bridge):
+        self.cfg = cfg
+        self.image_source = image_source
+        self.horizon_steps = horizon_steps
+        self.bridge = bridge
+        self.resets = []
+        self.finished = False
+        self.closed = False
+
+    def reset(self, seed, curriculum=1.0):
+        self.resets.append((int(seed), float(curriculum)))
+
+    def finish_episode(self):
+        self.finished = True
+
+    def close(self):
+        self.closed = True
+
+
+def _stub_survey_flight(monkeypatch, *, settings, bridge):
+    import run_shin2026_pipeline as runner
+
+    built = {}
+
+    def factory(cfg, image_source, *, horizon_steps):
+        built["environment"] = _StubSurveyEnvironment(
+            cfg, image_source, horizon_steps=horizon_steps, bridge=bridge)
+        return built["environment"]
+
+    monkeypatch.setattr(runner, "LiveShinEnvironment", factory)
+    flight = runner.KeypointCalibrationFlight(
+        default_config(), object(), seed=31337, settings=settings)
+    return flight, built
+
+
+def test_survey_flight_commands_pad_frame_viewpoints_and_lands_after(monkeypatch):
+    system = load_config(ROOT / "config/shin2026-system.yaml")
+    viewpoint = calibration_viewpoints(system, {})[4]
+    bridge = _StubSurveyBridge()
+    flight, built = _stub_survey_flight(
+        monkeypatch,
+        settings={"survey_settle_s": 0.0, "survey_travel_timeout_s": 5.0},
+        bridge=bridge)
+
+    with flight as survey:
+        assert survey(viewpoint) is True
+        goto = bridge.gotos[-1]
+        # The offset is commanded in the pad frame, because the deck moves and
+        # the gateway re-aims a pad-frame target at it every control tick.
+        assert goto["frame"] == "pad"
+        assert goto["position"] == pytest.approx(
+            list(viewpoint["position_pad_m"]))
+        assert goto["yaw"] == pytest.approx(viewpoint["yaw_rad"])
+        # An expired goto makes the gateway command a landing, so the hold has
+        # to outlast the travel and the frames captured after arrival.
+        assert goto["hold_s"] > 5.0
+
+    environment = built["environment"]
+    # Setup, not a measured episode: the gentlest seeded initial condition.
+    assert environment.resets == [(31337, 0.0)]
+    assert environment.finished and environment.closed
+
+
+def test_survey_flight_skips_a_viewpoint_it_cannot_reach(monkeypatch, capsys):
+    system = load_config(ROOT / "config/shin2026-system.yaml")
+    viewpoint = calibration_viewpoints(system, {})[0]
+    flight, _ = _stub_survey_flight(
+        monkeypatch,
+        settings={"survey_settle_s": 0.0, "survey_travel_timeout_s": 0.3},
+        bridge=_StubSurveyBridge(reachable=False))
+
+    with flight as survey:
+        assert survey(viewpoint) is False
+    assert "could not reach viewpoint" in capsys.readouterr().out
+
+
+def test_a_single_pose_calibrated_artifact_is_recalibrated():
+    """An artifact certified by the superseded procedure is not reused."""
+    assert needs_empirical_calibration(
+        {"empirical_calibration": {"validated": True}})
+    assert needs_empirical_calibration(
+        {"empirical_calibration": {"validated": True, "format": "v0"}})
+    assert not needs_empirical_calibration(
+        {"empirical_calibration": {"validated": True,
+                                   "format": EMPIRICAL_CALIBRATION_FORMAT}})
 
 
 def test_deadline_budget_is_exact_and_preserves_all_curriculum_levels():

@@ -35,7 +35,6 @@ from ontology_rgat.evaluation import (write_adaptive_reward_figures,
                                       write_three_pipeline_outputs,
                                       write_two_pipeline_outputs)
 from ontology_rgat.perception import (RosGrayscaleSource,
-                                      calibrate_keypoint_encoder,
                                       prepare_keypoint_encoder)
 from ontology_rgat.pipelines import (assert_no_aruco_in_primary_system,
                                      available_pipeline_ids, get_pipeline,
@@ -56,9 +55,10 @@ from ontology_rgat.rgat import (
     load_semantic_dataset, prepare_adaptive_reward_artifact,
     merge_semantic_datasets, prepare_semantic_rgat_artifact,
     save_adaptive_dataset, save_semantic_dataset, semantic_episode_dataset,
-    FrozenFOVRiskPredictor, build_fov_risk_dataset, horizon_steps,
-    load_fov_risk_dataset, prepare_fov_risk_artifact,
+    FrozenFOVRiskPredictor, build_fov_risk_dataset, fov_risk_data_fingerprint,
+    horizon_steps, load_fov_risk_dataset, prepare_fov_risk_artifact,
     save_fov_risk_dataset)
+from ontology_rgat.datastore import KIND_FOV_RISK, open_datastore
 from ontology_rgat.stack import ExternalStack
 from ontology_rgat.viz.contracts import (algorithm_pipeline_contract,
                                           mdp_contract)
@@ -66,7 +66,8 @@ from ontology_rgat.viz.dashboard import Dashboard
 from ontology_rgat.viz.live import BenchmarkMonitor, STORE
 from ontology_rgat.viz.rviz import RvizPublisher
 from run_shin2026_pipeline import (_build_model, _live_config, _sha256_file,
-                                   _start_rviz, _write_csv)
+                                   _start_rviz, _write_csv,
+                                   calibrate_keypoint_encoder_in_flight)
 
 
 def _write_json(path: Path, value) -> None:
@@ -975,11 +976,43 @@ def _fov_dataset_progress(dataset) -> dict:
     }
 
 
+def _fov_episode_payload(samples) -> dict:
+    """One episode's collection, in the two arrays the labeller needs."""
+    return {
+        "graph_X": np.stack([np.asarray(sample["graph_X"], dtype=np.float32)
+                             for sample in samples]),
+        "geometric_in_fov": np.asarray(
+            [bool(sample["geometric_in_fov"]) for sample in samples], dtype=bool),
+    }
+
+
+def _fov_episode_from_payload(payload, *, episode_id: int, seed: int) -> dict:
+    graphs = np.asarray(payload["graph_X"], dtype=np.float32)
+    visible = np.asarray(payload["geometric_in_fov"], dtype=bool)
+    if graphs.shape[0] != visible.shape[0]:
+        raise ValueError("stored FOV-risk episode has mismatched arrays")
+    return {
+        "episode_id": int(episode_id), "seed": int(seed),
+        "samples": [{"graph_X": graphs[index],
+                     "geometric_in_fov": bool(visible[index])}
+                    for index in range(graphs.shape[0])],
+    }
+
+
 def _collect_fov_risk_data(*, cfg, camera, model, config, config_hash,
                            checkpoint_path, results_dir, mode, monitor,
                            episodes_override=None, max_episodes_override=None,
-                           source_pipeline="shin_se_fixed"):
-    """Collect same-domain trajectories and label future visibility offline."""
+                           source_pipeline="shin_se_fixed", system=None,
+                           datastore=None, keypoint_implementation=None,
+                           validation_fraction=0.2):
+    """Collect same-domain trajectories and label future visibility offline.
+
+    With a ``datastore`` the episodes every previous run flew under the same
+    data fingerprint are reused, and only the shortfall is flown. The labels
+    are recomputed here from the stored visibility sequence rather than
+    stored, so a change to the horizon re-derives them instead of reusing a
+    target that no longer means what it says.
+    """
     design = dict(config.get("fov_risk_design") or {})
     risk = dict(config.get("fov_risk") or {})
     minimum = int(episodes_override if episodes_override is not None else
@@ -992,7 +1025,28 @@ def _collect_fov_risk_data(*, cfg, camera, model, config, config_hash,
     control_hz = 1.0 / float(cfg.sim.dt)
     prediction_steps = horizon_steps(seconds, control_hz)
     dataset_path = Path(results_dir) / "rgat/fov_risk_rollouts.npz"
-    if dataset_path.is_file() and dataset_path.with_suffix(".manifest.json").is_file():
+    fingerprint = None
+    stored = []
+    if datastore is not None:
+        if system is None:
+            raise ValueError(
+                "the FOV-risk datastore needs the merged system profile to "
+                "fingerprint what its episodes mean")
+        fingerprint = fov_risk_data_fingerprint(
+            system, prediction_steps=prediction_steps, control_hz=control_hz,
+            keypoint_implementation=keypoint_implementation)
+        stored = datastore.episodes(KIND_FOV_RISK, fingerprint)
+        if stored:
+            summary = datastore.summary(
+                KIND_FOV_RISK, fingerprint,
+                validation_fraction=validation_fraction)
+            print(
+                f"Reusing {summary['episodes']} accumulated FOV-risk episodes "
+                f"({summary['samples']} samples, {summary['environment_steps']} "
+                f"environment steps) from {len(summary['runs'])} run(s); "
+                f"fingerprint {fingerprint[:12]}.")
+    elif dataset_path.is_file() and dataset_path.with_suffix(".manifest.json").is_file():
+        # Without an accumulation the run's own directory is the only cache.
         try:
             cached, cached_manifest = load_fov_risk_dataset(
                 dataset_path, config_hash=config_hash)
@@ -1005,65 +1059,147 @@ def _collect_fov_risk_data(*, cfg, camera, model, config, config_hash,
                     minimum=minimum, maximum=maximum,
                     loss_episodes=0, environment_steps=steps, cached=True,
                     **_fov_dataset_progress(cached))
-                return cached, cached_manifest, dataset_path, steps
+                return cached, cached_manifest, dataset_path, steps, {}
         except (OSError, ValueError, KeyError, json.JSONDecodeError) as exc:
             print(f"Ignoring incompatible FOV-risk rollout cache: {exc}")
 
     seed0 = int((config.get("seeds") or {}).get("fov_risk_dataset_start", 70000))
-    episodes = []
-    total_steps = 0
+    episodes = [_fov_episode_from_payload(record.payload(), episode_id=index,
+                                          seed=record.seed)
+                for index, record in enumerate(stored, start=1)]
+    flown_steps = 0
+    total_steps = sum(len(episode["samples"]) for episode in episodes)
     loss_episodes = 0
-    monitor.stage("FOV-risk data", "visual-only graph · future visibility labels")
-    with LiveShinEnvironment(
-            cfg, camera, horizon_steps=int(cfg.sim.max_steps)) as environment:
-        for episode_id in range(1, maximum + 1):
-            seed = seed0 + episode_id - 1
-            rows, metric = collect_episode_resilient(
-                environment, model, source_pipeline, seed, curriculum=1.0,
-                deterministic=False, scenario="training_random_walk",
-                monitor=monitor, phase="FOV-risk offline data",
-                action_transform=_behavior_transform((episode_id - 1) % 3))
-            episodes.append({
-                "episode_id": episode_id,
-                "seed": seed,
-                "samples": ([{"graph_X": row["fov_graph_X"],
-                              "geometric_in_fov": row["fov_graph_geometric_in_fov"]}
-                             for row in rows]
-                            + ([{"graph_X": rows[-1]["next_fov_graph_X"],
-                                 "geometric_in_fov": rows[-1]["geometric_in_fov"]}]
-                               if rows else [])),
-            })
-            total_steps += len(rows)
-            loss_episodes += int(metric["geometric_fov_loss_episode_rate"])
-            dataset = build_fov_risk_dataset(
-                episodes, prediction_steps=prediction_steps)
-            progress = _fov_dataset_progress(dataset)
-            monitor.fov_dataset(
-                episodes=episode_id, minimum=minimum, maximum=maximum,
-                loss_episodes=loss_episodes, environment_steps=total_steps,
-                **progress)
-            if episode_id >= minimum and progress["covered"]:
-                break
-            print(f"FOV-risk data {episode_id}/{minimum} minimum "
-                  f"(cap {maximum}): loss_episode={int(metric['geometric_fov_loss_episode_rate'])}")
-    if not _fov_target_coverage(dataset):
+    checkpoint_sha = (
+        _sha256_file(checkpoint_path) if checkpoint_path is not None
+        and Path(checkpoint_path).is_file() else None)
+    dataset = (build_fov_risk_dataset(episodes, prediction_steps=prediction_steps)
+               if episodes else None)
+    covered = bool(dataset is not None and _fov_target_coverage(dataset))
+    if len(episodes) < minimum or not covered:
+        used_seeds = {int(episode["seed"]) for episode in episodes}
+        monitor.stage("FOV-risk data", "visual-only graph · future visibility labels")
+        with LiveShinEnvironment(
+                cfg, camera, horizon_steps=int(cfg.sim.max_steps)) as environment:
+            offset = 0
+            while len(episodes) < maximum:
+                while (seed0 + offset) in used_seeds:
+                    offset += 1
+                seed = seed0 + offset
+                offset += 1
+                used_seeds.add(seed)
+                episode_id = len(episodes) + 1
+                # The behaviour cycle continues across runs so an accumulation
+                # keeps the three transforms balanced instead of re-collecting
+                # the same one every time.
+                variant = (episode_id - 1) % 3
+                rows, metric = collect_episode_resilient(
+                    environment, model, source_pipeline, seed, curriculum=1.0,
+                    deterministic=False, scenario="training_random_walk",
+                    monitor=monitor, phase="FOV-risk offline data",
+                    action_transform=_behavior_transform(variant))
+                samples = ([{"graph_X": row["fov_graph_X"],
+                             "geometric_in_fov": row["fov_graph_geometric_in_fov"]}
+                            for row in rows]
+                           + ([{"graph_X": rows[-1]["next_fov_graph_X"],
+                                "geometric_in_fov": rows[-1]["geometric_in_fov"]}]
+                              if rows else []))
+                episodes.append({"episode_id": episode_id, "seed": seed,
+                                 "samples": samples})
+                flown_steps += len(rows)
+                total_steps += len(rows)
+                loss_episodes += int(metric["geometric_fov_loss_episode_rate"])
+                if datastore is not None:
+                    datastore.store_episode(
+                        KIND_FOV_RISK, fingerprint, seed=seed,
+                        payload=_fov_episode_payload(samples),
+                        identity={"seed": seed, "source_pipeline": source_pipeline,
+                                  "source_checkpoint_sha256": checkpoint_sha,
+                                  "behaviour_variant": variant},
+                        provenance={
+                            "source_pipeline": source_pipeline,
+                            "source_checkpoint_sha256": checkpoint_sha,
+                            "behaviour_variant": variant,
+                            # Recorded, not fingerprinted: the features come
+                            # from this encoder's weights, so a mixed-lineage
+                            # accumulation stays auditable.
+                            "keypoint_encoder_implementation": keypoint_implementation,
+                            "config_hash": str(config_hash),
+                            "geometric_fov_loss_episode": int(
+                                metric["geometric_fov_loss_episode_rate"]),
+                            "control_hz": float(control_hz),
+                        },
+                        samples=len(samples), environment_steps=len(rows))
+                dataset = build_fov_risk_dataset(
+                    episodes, prediction_steps=prediction_steps)
+                progress = _fov_dataset_progress(dataset)
+                monitor.fov_dataset(
+                    episodes=len(episodes), minimum=minimum, maximum=maximum,
+                    loss_episodes=loss_episodes, environment_steps=total_steps,
+                    **progress)
+                if len(episodes) >= minimum and progress["covered"]:
+                    break
+                print(f"FOV-risk data {len(episodes)}/{minimum} minimum "
+                      f"(cap {maximum}): loss_episode="
+                      f"{int(metric['geometric_fov_loss_episode_rate'])}")
+    else:
+        monitor.fov_dataset(
+            episodes=len(episodes), minimum=minimum, maximum=maximum,
+            loss_episodes=0, environment_steps=total_steps, cached=True,
+            **_fov_dataset_progress(dataset))
+    if dataset is None or not _fov_target_coverage(dataset):
         raise RuntimeError(
             f"FOV-risk data covers one target regime after {maximum} episodes; "
             "increase --rgat-max-data-episodes")
     manifest = save_fov_risk_dataset(
         dataset, dataset_path, config_hash=config_hash, seed=seed0,
         horizon_seconds=seconds, control_hz=control_hz)
+    reuse = {}
+    if datastore is not None:
+        # The split is the store's, frozen on each episode's seed. Recomputed
+        # here over the episode ids this materialisation used.
+        by_seed = {int(record.seed): record for record in
+                   datastore.episodes(KIND_FOV_RISK, fingerprint,
+                                      payloads=False)}
+        consumed, validation_ids = [], []
+        for episode in episodes:
+            record = by_seed.get(int(episode["seed"]))
+            if record is None:
+                continue
+            consumed.append(record)
+            if record.split(validation_fraction) == "validation":
+                validation_ids.append(int(episode["episode_id"]))
+        reuse = {
+            "fingerprint": fingerprint,
+            "validation_episodes": validation_ids,
+            "consumed": consumed,
+            "validation_fraction": float(validation_fraction),
+            "reused_episodes": len(stored),
+            "flown_episodes": len(episodes) - len(stored),
+            # One initial condition flown twice is not a duplicate sample, but
+            # it does weigh that condition twice. The collection skips seeds
+            # the store already holds, so this should equal the episode count;
+            # it is reported rather than assumed.
+            "distinct_seeds": len({int(record.seed) for record in consumed}),
+            "encoder_lineages": sorted({
+                str(record.provenance.get("keypoint_encoder_implementation"))
+                for record in consumed}),
+        }
     manifest.update({
         "source_pipeline": source_pipeline,
-        "source_checkpoint_sha256": (
-            _sha256_file(checkpoint_path) if checkpoint_path is not None
-            and Path(checkpoint_path).is_file() else None),
+        "source_checkpoint_sha256": checkpoint_sha,
         "environment_steps": total_steps,
         "episode_split_required": True,
+        "datastore_fingerprint": fingerprint,
+        "reused_episodes": len(stored),
+        "flown_episodes": len(episodes) - len(stored),
+        "flown_environment_steps": flown_steps,
+        "distinct_seeds": len({int(episode["seed"]) for episode in episodes}),
+        "validation_episodes": reuse.get("validation_episodes"),
     })
     # Persist the extended provenance without altering the checked NPZ digest.
     _write_json(dataset_path.with_suffix(".manifest.json"), manifest)
-    return dataset, manifest, dataset_path, total_steps
+    return dataset, manifest, dataset_path, flown_steps, reuse
 
 
 def _records_from_adaptive_dataset(dataset):
@@ -1331,6 +1467,16 @@ def main(*, primary_only: bool = False):
     parser.add_argument("--system-config", type=Path,
                         default=ROOT / "config/shin2026-system.yaml")
     parser.add_argument("--results-dir", type=Path)
+    # Collected flight data outlives one results directory. The accumulation
+    # is reused only by a run whose data fingerprint matches; see
+    # ontology_rgat.datastore for what may and may not be reused.
+    parser.add_argument(
+        "--datastore", type=Path,
+        default=ROOT / "results/datastore/collected.sqlite3",
+        help="SQLite accumulation of reusable offline collection")
+    parser.add_argument(
+        "--no-datastore", action="store_true",
+        help="fly fresh offline data instead of reusing the accumulation")
     if primary_only:
         parser.set_defaults(reward_design=None, adaptive_reward_design=None,
                             robust_adaptive_reward=False)
@@ -1831,6 +1977,13 @@ def main(*, primary_only: bool = False):
                         else potential if spec.use_direct_rgat_potential else None)
         if reward_model is not None:
             monitor.set_potential(name, reward_model)
+    datastore = open_datastore(None if args.no_datastore else args.datastore)
+    if datastore is not None:
+        datastore.record_run(
+            experiment=str(args.experiment), results_dir=args.results_dir,
+            config_hash=config_hash,
+            notes=f"mode={args.mode} pipelines={','.join(args.pipelines)}")
+        print(f"Accumulating reusable collection in {args.datastore}.")
     dashboard = Dashboard(cfg, STORE).start()
     # ``--headless`` is about Isaac Sim's own window, not about the operator's
     # view of the run. RViz 2 is a separate process reading ROS topics that are
@@ -1872,15 +2025,15 @@ def main(*, primary_only: bool = False):
                 node_name=f"shin2026_actor_camera_{index}"))
                 for index in range(args.parallel_pairs)]
             camera = cameras[0]
-            monitor.stage("keypoint validation", "live Isaac camera · held-out labels")
+            monitor.stage("keypoint validation",
+                          "live Isaac camera · surveyed viewpoints")
             calibration_system = _calibration_system_for_pair(
                 system, pair_index=0, pair_count=args.parallel_pairs)
-            keypoint_pretraining = calibrate_keypoint_encoder(
+            keypoint_pretraining = calibrate_keypoint_encoder_in_flight(
                 args.results_dir / "models/shared/keypoint_encoder.pt",
-                keypoint_pretraining, camera.labelled,
-                system=calibration_system,
-                experiment=config,
-                mode=args.mode, device=args.device)
+                keypoint_pretraining, camera, cfg=pair_cfgs[0], config=config,
+                system=calibration_system, mode=args.mode, device=args.device,
+                datastore=datastore)
             manifest["keypoint_pretraining"] = (
                 None if keypoint_pretraining is None else {
                     "format": keypoint_pretraining["format"],
@@ -2108,7 +2261,10 @@ def main(*, primary_only: bool = False):
                         "offline FOV-risk data while baseline PPO trains.")
                 else:
                     source_model = initialize_pipeline_model(source_name)
-                fov_dataset, fov_manifest, _, fov_design_steps = (
+                fov_validation_fraction = float(
+                    (config.get("fov_risk_design") or {}).get(
+                        "validation_fraction", 0.2))
+                fov_dataset, fov_manifest, _, fov_design_steps, fov_reuse = (
                     _collect_fov_risk_data(
                         cfg=pair_cfgs[reward_design_pair_indices[0]],
                         camera=cameras[reward_design_pair_indices[0]],
@@ -2118,7 +2274,12 @@ def main(*, primary_only: bool = False):
                         monitor=worker_monitors[reward_design_pair_indices[0]],
                         episodes_override=args.rgat_data_episodes,
                         max_episodes_override=args.rgat_max_data_episodes,
-                        source_pipeline=source_name))
+                        source_pipeline=source_name, system=system,
+                        datastore=datastore,
+                        keypoint_implementation=(
+                            None if keypoint_pretraining is None
+                            else keypoint_pretraining["implementation"]),
+                        validation_fraction=fov_validation_fraction))
                 fov_design_episodes = int(fov_manifest["episodes"])
                 settings = dict(config.get("fov_risk_design") or {})
                 settings["epochs"] = int(
@@ -2136,10 +2297,25 @@ def main(*, primary_only: bool = False):
                               f"best={float(row['best_validation_loss']):.5f}")
                     refresh_presentation_results()
 
+                settings["validation_fraction"] = fov_validation_fraction
                 fov_risk_model, fov_metadata = prepare_fov_risk_artifact(
                     args.fov_risk_model, fov_dataset,
                     dataset_manifest=fov_manifest, config_hash=config_hash,
-                    seed=model_seed, settings=settings, progress=_fov_epoch)
+                    seed=model_seed, settings=settings, progress=_fov_epoch,
+                    validation_episodes=fov_reuse.get("validation_episodes"))
+                if datastore is not None and fov_reuse.get("consumed"):
+                    # A fresh FOVRiskModel every run, so the accumulation adds
+                    # data rather than epochs. Written down so an artifact that
+                    # was ever fine-tuned on one is distinguishable later.
+                    datastore.record_consumption(
+                        fov_risk_model.sha256, fov_reuse["consumed"],
+                        validation_fraction=fov_reuse["validation_fraction"],
+                        trained_from_scratch=True)
+                    fov_metadata["datastore"] = {
+                        key: fov_reuse[key] for key in (
+                            "fingerprint", "reused_episodes", "flown_episodes",
+                            "distinct_seeds", "validation_fraction",
+                            "encoder_lineages")}
                 monitor.fov_model(design_id=fov_risk_model.design_id,
                                   metadata=fov_metadata)
                 manifest.update({
@@ -2815,6 +2991,8 @@ def main(*, primary_only: bool = False):
             rviz.close()
         if dashboard is not None:
             dashboard.stop()
+        if datastore is not None:
+            datastore.close()
     label = "Two-pipeline" if primary_only else "Legacy multi-pipeline"
     print(f"{label} experiment complete: {args.results_dir}")
     return 0

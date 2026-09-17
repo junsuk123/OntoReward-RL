@@ -24,6 +24,7 @@ import torch
 
 from .fov_graph import FOV_FEATURE_NAMES, FOV_NODE_NAMES
 from .fov_risk_dataset import (dataset_digest, split_by_episode,
+                               split_by_episode_ids,
                                validate_fov_risk_dataset)
 from .fov_risk_model import (FOVRiskModel, FrozenFOVRiskPredictor,
                              save_fov_risk_model)
@@ -81,7 +82,8 @@ def train_fov_risk_model(dataset, *, seed=42, validation_fraction=0.2,
                          epochs=80, batch_size=64, learning_rate=5e-4,
                          hidden_dim=24, relation_dim=6, heads=1,
                          huber_delta=0.1, contract_weight=0.1,
-                         contract_delta=0.25, device="cpu", progress=None):
+                         contract_delta=0.25, device="cpu", progress=None,
+                         validation_episodes=None):
     """Huber regression of the unavailability fraction plus rule R-04.
 
     ``progress`` is called with each epoch's history row and the running best
@@ -89,8 +91,14 @@ def train_fov_risk_model(dataset, *, seed=42, validation_fraction=0.2,
     the middle of a long flight run, so a caller that wants to show it can.
     """
     X, y, valid, meta = validate_fov_risk_dataset(dataset)
-    training, validation = split_by_episode(
-        dataset, validation_fraction=validation_fraction, seed=seed)
+    # An accumulating datastore decides the split itself, from each episode's
+    # seed, so that an episode held out by one run is never trained on by the
+    # next. Only a one-off dataset falls back to the seeded draw.
+    training, validation = (
+        split_by_episode_ids(dataset, validation_episodes)
+        if validation_episodes is not None else
+        split_by_episode(dataset, validation_fraction=validation_fraction,
+                         seed=seed))
     if not training.any() or not validation.any():
         raise ValueError("FOV-risk split produced an empty supervised side")
     torch.manual_seed(int(seed))
@@ -192,11 +200,13 @@ _TRAINING_DEFAULTS = (
 
 def prepare_fov_risk_artifact(path: str | Path, dataset, *,
                               dataset_manifest: dict, config_hash: str,
-                              seed=42, settings=None, progress=None):
+                              seed=42, settings=None, progress=None,
+                              validation_episodes=None):
     settings = dict(settings or {})
     model, history, metrics = train_fov_risk_model(
         dataset,
         seed=seed,
+        validation_episodes=validation_episodes,
         validation_fraction=float(settings.get("validation_fraction", 0.2)),
         epochs=int(settings.get("epochs", 80)),
         batch_size=int(settings.get("batch_size", 64)),
@@ -229,6 +239,12 @@ def prepare_fov_risk_artifact(path: str | Path, dataset, *,
             "not a binary loss probability"),
         "loss": "huber_regression_plus_contract_rule_R-04",
         "checkpoint_selection": "minimum_validation_loss",
+        # A fresh FOVRiskModel every time. The accumulation below therefore
+        # gives this training more data, never more epochs over the same data.
+        "trained_from_scratch": True,
+        "split_source": ("frozen per-seed datastore split"
+                         if validation_episodes is not None
+                         else "seeded per-dataset draw"),
         "validation_metrics": metrics,
         "training_config": {
             key: settings.get(key, default) for key, default in _TRAINING_DEFAULTS

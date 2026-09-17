@@ -32,10 +32,50 @@ estimator:
     # reserve a held-out split, and retain fine-tuning only when it improves
     # real-render coordinate RMSE. No detector is involved, so an unreadable
     # frame still receives correct supervision instead of being discarded.
+    #
+    # The frames are *surveyed*: the vehicle is flown to each pad-relative
+    # viewpoint below and a couple of frames are taken there. The earlier
+    # procedure polled the camera where the stack left the vehicle after boot,
+    # so all 48 frames were one hover; a randomly held-out quarter of them
+    # scored 10 px / 100 % on an encoder that then reported no landmark on
+    # 99.7 % of the in-frame steps of the run it had certified.
     empirical_samples_quick: 12
     empirical_samples_full: 48
     minimum_empirical_samples: 8
     empirical_validation_fraction: 0.25
+    # Viewpoints: camera-centred hover offsets, displaced across the image
+    # plane by these fractions of their own altitude and turned by these yaws.
+    # The outer lateral ring puts the pad at the frame edge, which is where
+    # most of a real approach is spent.
+    survey_altitudes_m: [1.6, 2.6, 4.0, 6.0]
+    survey_lateral_fractions:
+      - [0.0, 0.0]
+      - [0.30, 0.14]
+      - [-0.30, 0.14]
+      - [-0.30, -0.14]
+      - [0.30, -0.14]
+      - [0.70, 0.0]
+      - [-0.70, 0.0]
+      - [0.0, 0.34]
+      - [0.0, -0.34]
+    survey_yaws_deg: [0.0, 35.0, -35.0]
+    # Two frames per pose, four camera frames apart: consecutive 30 Hz frames
+    # of one hover differ by less than a grey level.
+    survey_frames_per_viewpoint: 2
+    survey_frame_stride: 4
+    survey_travel_timeout_s: 45.0
+    survey_tolerance_m: 0.8
+    survey_speed_tolerance_m_s: 0.7
+    survey_settle_s: 0.7
+    # A calibration set that does not actually spread out certifies nothing,
+    # so it is refused here instead of after four hundred blind episodes.
+    minimum_calibration_viewpoints: 6
+    minimum_calibration_altitude_span_m: 1.5
+    minimum_calibration_lateral_span_m: 1.0
+    # An encoder that cannot report the labelled landmarks from viewpoints it
+    # never trained on would fly blind: the semantic observation counts an
+    # unreported landmark as no landmark.
+    minimum_holdout_visibility_recall: 0.50
     # Calibrated on a held-out live-Isaac split: the previous 2 x 1e-4 pass
     # made no measurable change; 20 x 1e-3 reduced 23.2 px to <=16.8 px in
     # the stage-5 audit while the best validation checkpoint was retained.
@@ -130,6 +170,10 @@ seeds:
   training_start: 20000
   rgat_dataset_start: 70000
   evaluation_start: 5000
+  # The keypoint survey's own reset seed, disjoint from every training and
+  # evaluation seed so the setup flight cannot reuse a measured episode's
+  # initial condition.
+  keypoint_calibration: 31337
 training:
   # Not reported by Shin et al.; explicit reference-budget choices. The outer
   # run.sh applies the seminar deadline budget (800 total across selected arms)

@@ -1,8 +1,10 @@
 import csv
 import json
 
+import pytest
+
 from ontology_rgat.evaluation.presentation import (
-    _evaluation_is_complete, write_presentation_results)
+    _evaluation_is_complete, _wilson, write_presentation_results)
 
 
 METHODS = (
@@ -75,3 +77,42 @@ def test_final_evaluation_requires_every_selected_checkpoint_digest():
     assert _evaluation_is_complete(rows, manifest)
     rows[-1]["selected_checkpoint_sha256"] = "wrong"
     assert not _evaluation_is_complete(rows, manifest)
+
+
+def test_wilson_interval_always_contains_the_point_estimate():
+    """The errorbar arrays are built as rate-low and high-rate.
+
+    At p=0 the floating-point interval used to land on ~1e-17 instead of 0, so
+    every figure refresh of a run without a success died on "'yerr' must not
+    contain negative values" and the slides silently stopped updating.
+    """
+    for count in (1, 3, 8, 12, 25, 40, 48, 100, 400):
+        low, high = _wilson(0, count)
+        assert low <= 0.0 <= high
+        low, high = _wilson(count, count)
+        assert low <= 1.0 <= high
+        successes = count // 2
+        low, high = _wilson(successes, count)
+        assert low <= successes / count <= high
+
+
+def test_a_failed_refresh_does_not_leak_its_figures(tmp_path, monkeypatch):
+    """The loop retries this after every episode; a leak per retry is a leak.
+
+    Before the Wilson interval was clamped every refresh raised between
+    ``plt.figure()`` and its ``plt.close()``, and matplotlib ended up warning
+    about more than twenty open figures on a run that had produced none.
+    """
+    import matplotlib.pyplot as plt
+    from ontology_rgat.evaluation import presentation
+
+    def explode(*_args, **_kwargs):
+        plt.figure()
+        plt.figure()
+        raise ValueError("'yerr' must not contain negative values")
+
+    monkeypatch.setattr(presentation, "_write_presentation_results", explode)
+    before = set(plt.get_fignums())
+    with pytest.raises(ValueError, match="yerr"):
+        write_presentation_results(tmp_path)
+    assert set(plt.get_fignums()) == before

@@ -24,7 +24,9 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
-from ..initialization import camera_centered_hover_offset
+from ..datastore import KIND_KEYPOINT_CALIBRATION, data_fingerprint
+from ..initialization import (camera_centered_hover_offset,
+                              yaw_aligned_hover_offset)
 from .keypoint_encoder import ShinKeypointEncoder
 from .pad_geometry import (KEYPOINT_LAYOUT_ID, LANDING_PAD_VISUAL_VERSION,
                            PAD_LANDMARK_COUNT, PAD_LANDMARK_RADIUS_M,
@@ -32,11 +34,35 @@ from .pad_geometry import (KEYPOINT_LAYOUT_ID, LANDING_PAD_VISUAL_VERSION,
                            landing_pad_texture, project_landing_pad)
 
 
-PRETRAIN_FORMAT = "shin2026-six-keypoint-fiducial-pretrain-v4"
+# v5 is the first format whose empirical half is surveyed across poses. The
+# bump deliberately invalidates every v4 artifact: a v4 encoder was fine-tuned
+# on one hover pose and its "validated" flag means nothing.
+PRETRAIN_FORMAT = "shin2026-six-keypoint-fiducial-pretrain-v5"
+# Stamped into ``empirical_calibration`` so an artifact calibrated under the
+# old single-pose procedure is recalibrated instead of silently reused.
+EMPIRICAL_CALIBRATION_FORMAT = "isaac-pose-surveyed-holdout-v1"
 # Training-label-only pose payload published by the simulator alongside each
 # empirical frame: pad-relative UAV position (3) and ENU/FLU attitude (4).
 EMPIRICAL_POSE_LENGTH = 7
 _HEATMAP_SIGMA = 0.85
+# The survey's default pad-relative viewpoints. Altitudes span the Table-I
+# approach band and the lateral offsets are fractions of altitude, which is
+# how the synthetic generator jitters the pad across the image plane.
+_DEFAULT_SURVEY_ALTITUDES_M = (1.6, 2.6, 4.0, 6.0)
+# Two rings: the inner one keeps all six landmarks in frame, the outer one
+# pushes the pad to the edge so the encoder is also certified on the partially
+# visible views the policy spends its approach in.
+_DEFAULT_SURVEY_LATERAL_FRACTIONS = (
+    (0.0, 0.0), (0.30, 0.14), (-0.30, 0.14), (-0.30, -0.14), (0.30, -0.14),
+    (0.70, 0.0), (-0.70, 0.0), (0.0, 0.34), (0.0, -0.34))
+_DEFAULT_SURVEY_YAWS_DEG = (0.0, 35.0, -35.0)
+# A viewpoint the pad is barely inside is a frame the labeller would drop, so
+# the geometry is checked before the vehicle is ever sent there.
+_SURVEY_MIN_VISIBLE_LANDMARKS = 4
+# Pad-frame goto limits from the gateway protocol, kept as a margin here so a
+# mis-parameterised survey is rejected on this side rather than by the gateway.
+_SURVEY_MAX_RADIUS_M = 9.5
+_SURVEY_MAX_ALTITUDE_M = 24.0
 
 
 def _balanced_visibility_loss(prediction, target):
@@ -297,6 +323,13 @@ def empirical_keypoint_dataset(samples: Sequence, system: Mapping[str, Any],
     Five separate conditions silently discard a frame here, and "0 labelled
     frames" on its own cannot tell an unpublished camera from a camera that
     works while the truth-pose stream does not.
+
+    A sample may carry a third element, the index of the surveyed viewpoint it
+    was captured at.  It is returned as ``viewpoint`` so the held-out split is
+    taken over *poses* rather than over frames: 48 frames of one hover are 48
+    copies of one measurement, and splitting them at random produced a 100 %
+    validation score for an encoder that could not see the pad from anywhere
+    else.  Frames from callers that do not survey are tagged ``-1``.
     """
     model = camera_model(system)
     settings = landing_pad_settings(system)
@@ -308,7 +341,12 @@ def empirical_keypoint_dataset(samples: Sequence, system: Mapping[str, Any],
     labelled = []
     for sample in samples:
         try:
-            image, pose = sample
+            image, pose, *surveyed = sample
+        except (TypeError, ValueError):
+            counts["unpaired"] += 1
+            continue
+        try:
+            viewpoint = int(surveyed[0]) if surveyed else -1
         except (TypeError, ValueError):
             counts["unpaired"] += 1
             continue
@@ -341,7 +379,9 @@ def empirical_keypoint_dataset(samples: Sequence, system: Mapping[str, Any],
                              projection.keypoint_visible, model,
                              feature_h, feature_w),
             projection.keypoint_normalized.astype(np.float32),
-            projection.keypoint_visible.astype(np.float32)))
+            projection.keypoint_visible.astype(np.float32),
+            pose.astype(np.float32),
+            viewpoint))
     if rejections is not None:
         rejections.clear()
         rejections.update(counts)
@@ -352,10 +392,17 @@ def empirical_keypoint_dataset(samples: Sequence, system: Mapping[str, Any],
                                  dtype=np.float32),
             "coordinates": np.empty((0, PAD_LANDMARK_COUNT, 2), dtype=np.float32),
             "visible": np.empty((0, PAD_LANDMARK_COUNT), dtype=np.float32),
+            "pad_relative_pose": np.empty((0, EMPIRICAL_POSE_LENGTH),
+                                          dtype=np.float32),
+            "viewpoint": np.empty((0,), dtype=np.int64),
         }
-    return {name: np.stack([item[index] for item in labelled])
-            for index, name in enumerate(
-                ("images", "heatmaps", "coordinates", "visible"))}
+    dataset = {name: np.stack([item[index] for item in labelled])
+               for index, name in enumerate(
+                   ("images", "heatmaps", "coordinates", "visible",
+                    "pad_relative_pose"))}
+    dataset["viewpoint"] = np.asarray(
+        [item[5] for item in labelled], dtype=np.int64)
+    return dataset
 
 
 @torch.no_grad()
@@ -376,15 +423,288 @@ def _empirical_metrics(encoder, dataset, indices, device) -> dict:
     selected = pixel_error[visible]
     if selected.numel() == 0:
         return {"coordinate_rmse_px": float("inf"), "pck_20px": 0.0,
-                "visibility_accuracy": 0.0,
+                "visibility_accuracy": 0.0, "visibility_recall": 0.0,
                 "absent_false_positive_rate": false_positive_rate}
     return {
         "coordinate_rmse_px": float(torch.sqrt(selected.square().mean()).cpu()),
         "pck_20px": float((selected <= 20.0).float().mean().cpu()),
         "visibility_accuracy": float(
             ((output.visibility >= 0.5) == visible).float().mean().cpu()),
+        # Accuracy alone cannot separate "sees the pad" from "calls everything
+        # absent" on a mostly-visible split. Recall is the quantity the flight
+        # depends on: a landmark the encoder does not report is a landmark the
+        # semantic observation counts as blind.
+        "visibility_recall": float(
+            (output.visibility >= 0.5)[visible].float().mean().cpu()),
         "absent_false_positive_rate": false_positive_rate,
     }
+
+
+def calibration_score(metrics: Mapping[str, Any]) -> float:
+    """Rank a candidate encoder on the held-out viewpoints.
+
+    Coordinate error alone selected the encoder this replaces: it scored 10 px
+    on the frames it had memorised while reporting no landmark at all in
+    flight. Blindness on unseen poses therefore has to cost as much as a gross
+    localisation error, or the pose-held-out split changes nothing.
+    """
+    return (float(metrics["coordinate_rmse_px"])
+            + 50.0 * float(metrics["absent_false_positive_rate"])
+            + 50.0 * (1.0 - float(metrics.get("visibility_recall", 0.0))))
+
+
+def calibration_viewpoints(system: Mapping[str, Any],
+                           settings: Mapping[str, Any]) -> list[dict]:
+    """The pad-relative poses the empirical calibration is sampled at.
+
+    Every viewpoint is a camera-centred hover offset (the same construction the
+    seeded entry pose uses) displaced across the image plane by a fraction of
+    its own altitude and turned by a yaw, which is exactly how the synthetic
+    generator jitters the pad.  Poses whose pad would fall outside the goto
+    envelope, or which do not put at least
+    ``_SURVEY_MIN_VISIBLE_LANDMARKS`` landmarks in frame, are dropped here
+    rather than flown and then discarded by the labeller.
+    """
+    model = camera_model(system)
+    pad = landing_pad_settings(system)
+    mount = np.asarray(model.mount_translation_flu_m, dtype=float)
+    pitch_down = float(model.pitch_down_deg)
+    landmark_radius = float(pad["landmark_radius_m"])
+    altitudes = tuple(float(value) for value in settings.get(
+        "survey_altitudes_m", _DEFAULT_SURVEY_ALTITUDES_M))
+    laterals = tuple(tuple(float(axis) for axis in pair) for pair in settings.get(
+        "survey_lateral_fractions", _DEFAULT_SURVEY_LATERAL_FRACTIONS))
+    yaws = tuple(math.radians(float(value)) for value in settings.get(
+        "survey_yaws_deg", _DEFAULT_SURVEY_YAWS_DEG))
+    if not altitudes or not laterals or not yaws:
+        raise ValueError("the keypoint calibration survey needs at least one "
+                         "altitude, lateral offset and yaw")
+    if any(len(pair) != 2 for pair in laterals):
+        raise ValueError("survey_lateral_fractions holds (x, y) pairs")
+    viewpoints: list[dict] = []
+    for altitude in altitudes:
+        centred = camera_centered_hover_offset(altitude, pitch_down, mount)
+        for lateral in laterals:
+            yaw = yaws[len(viewpoints) % len(yaws)]
+            body = centred + np.array(
+                [lateral[0] * altitude, lateral[1] * altitude, 0.0])
+            position = yaw_aligned_hover_offset(body, yaw)
+            if (math.hypot(position[0], position[1]) > _SURVEY_MAX_RADIUS_M
+                    or not 0.0 < position[2] <= _SURVEY_MAX_ALTITUDE_M):
+                continue
+            projection = project_landing_pad(
+                position, _quat_wxyz_from_yaw(yaw), camera=model,
+                landmark_radius_m=landmark_radius)
+            visible = int(np.count_nonzero(projection.keypoint_visible))
+            if visible < _SURVEY_MIN_VISIBLE_LANDMARKS:
+                continue
+            viewpoints.append({
+                "index": len(viewpoints),
+                "position_pad_m": tuple(float(axis) for axis in position),
+                "yaw_rad": float(yaw), "altitude_m": float(altitude),
+                "landmarks_in_frame": visible})
+    if not viewpoints:
+        raise ValueError(
+            "no configured calibration viewpoint places the landing pad in "
+            "the camera frame; check vision.camera and survey_altitudes_m")
+    return viewpoints
+
+
+def keypoint_calibration_fingerprint(system: Mapping[str, Any],
+                                     settings: Mapping[str, Any]) -> str:
+    """What a stored calibration frame means, for deciding reuse across runs.
+
+    The camera it was rendered by, the target painted on the deck, the encoder
+    architecture it supervises and the survey that decides where the vehicle
+    stands. Not the experiment's configuration hash: an edit to the PPO budget
+    does not change a pixel of a calibration frame, and invalidating hours of
+    surveying for it is how a run ends up certifying an encoder on one hover
+    again.
+    """
+    model = camera_model(system)
+    pad = landing_pad_settings(system)
+    return data_fingerprint({
+        "pretrain_format": PRETRAIN_FORMAT,
+        "calibration_format": EMPIRICAL_CALIBRATION_FORMAT,
+        "encoder_implementation": ShinKeypointEncoder.implementation,
+        "landmark_layout": KEYPOINT_LAYOUT_ID,
+        "landing_pad_visual": LANDING_PAD_VISUAL_VERSION,
+        "camera": {"width": model.width, "height": model.height,
+                   "focal_px": round(float(model.focal_px), 6),
+                   "pitch_down_deg": round(float(model.pitch_down_deg), 6),
+                   "mount_translation_flu_m": [
+                       round(float(axis), 6)
+                       for axis in np.asarray(model.mount_translation_flu_m,
+                                              dtype=float).reshape(-1)]},
+        "landing_pad": {key: pad[key] for key in sorted(pad)},
+        "survey": {
+            "altitudes_m": list(settings.get(
+                "survey_altitudes_m", _DEFAULT_SURVEY_ALTITUDES_M)),
+            "lateral_fractions": [list(pair) for pair in settings.get(
+                "survey_lateral_fractions", _DEFAULT_SURVEY_LATERAL_FRACTIONS)],
+            "yaws_deg": list(settings.get(
+                "survey_yaws_deg", _DEFAULT_SURVEY_YAWS_DEG)),
+        },
+    })
+
+
+def _even_subset(items: Sequence, count: int) -> list:
+    """``count`` entries spread evenly across ``items``, endpoints kept."""
+    if count >= len(items):
+        return list(items)
+    positions = np.linspace(0.0, len(items) - 1.0, int(count)).round().astype(int)
+    return [items[int(position)] for position in dict.fromkeys(positions.tolist())]
+
+
+def _survey_frames(labelled_source, survey, viewpoints: Sequence[Mapping],
+                   *, frames_per_viewpoint: int, frame_stride: int,
+                   already_stored=(), store=None):
+    """Fly each viewpoint and keep a few decorrelated frames from it.
+
+    Consecutive 30 Hz frames of one hover differ by less than a grey level, so
+    the stride is what makes ``frames_per_viewpoint`` more than one sample.
+
+    A viewpoint the accumulation already holds is not flown again: re-flying
+    it would spend simulator minutes to add a second, near-identical copy of a
+    pose the fit is already anchored on, which is the weighting this store
+    exists to avoid.
+    """
+    samples, visited, unreachable = [], [], []
+    stride = max(1, int(frame_stride))
+    skip = {int(index) for index in already_stored}
+    for viewpoint in viewpoints:
+        index = int(viewpoint["index"])
+        if index in skip:
+            continue
+        if not survey(viewpoint):
+            unreachable.append(index)
+            continue
+        visited.append(index)
+        captured = []
+        for poll in range(int(frames_per_viewpoint) * stride):
+            image, pose = labelled_source()
+            if poll % stride:
+                continue
+            captured.append((image, pose))
+            samples.append((image, pose, index))
+        if store is not None:
+            store(viewpoint, captured)
+    return samples, visited, unreachable
+
+
+def _viewpoint_groups(dataset: Mapping[str, np.ndarray]) -> dict[int, list[int]]:
+    groups: dict[int, list[int]] = {}
+    for index, viewpoint in enumerate(np.asarray(dataset["viewpoint"]).tolist()):
+        groups.setdefault(int(viewpoint), []).append(int(index))
+    return groups
+
+
+def _pose_span(dataset: Mapping[str, np.ndarray]) -> dict:
+    """How far the accepted frames actually spread, in metres."""
+    poses = np.asarray(dataset["pad_relative_pose"], dtype=float)
+    altitude = poses[:, 2]
+    lateral = poses[:, :2]
+    if len(lateral) > 1:
+        distances = np.linalg.norm(
+            lateral[:, None, :] - lateral[None, :, :], axis=-1)
+        lateral_span = float(distances.max())
+    else:
+        lateral_span = 0.0
+    return {"altitude_span_m": float(altitude.max() - altitude.min()),
+            "altitude_min_m": float(altitude.min()),
+            "altitude_max_m": float(altitude.max()),
+            "lateral_span_m": lateral_span}
+
+
+def _reject_degenerate_calibration(span: Mapping[str, float],
+                                   groups: Mapping[int, Sequence[int]],
+                                   settings: Mapping[str, Any]) -> None:
+    """Refuse to certify an encoder on frames that are all the same view.
+
+    The previous procedure polled 48 consecutive frames of a single hover and
+    split them at random.  Its held-out score was a memorisation test, the
+    artifact was written with ``validated: true``, and the encoder then
+    reported no landmark on 99.7 % of the in-frame steps of the run it was
+    certified for.  Measure the spread of what was actually collected, and
+    stop here rather than after four hundred blind episodes.
+    """
+    minimum_viewpoints = int(settings.get("minimum_calibration_viewpoints", 6))
+    minimum_altitude = float(settings.get(
+        "minimum_calibration_altitude_span_m", 1.5))
+    minimum_lateral = float(settings.get(
+        "minimum_calibration_lateral_span_m", 1.0))
+    reasons = []
+    if len(groups) < minimum_viewpoints:
+        reasons.append(f"{len(groups)} distinct viewpoint(s) "
+                       f"(minimum {minimum_viewpoints})")
+    if span["altitude_span_m"] < minimum_altitude:
+        reasons.append(
+            f"altitude spread {span['altitude_span_m']:.2f} m "
+            f"(minimum {minimum_altitude:.2f} m)")
+    if span["lateral_span_m"] < minimum_lateral:
+        reasons.append(
+            f"lateral spread {span['lateral_span_m']:.2f} m "
+            f"(minimum {minimum_lateral:.2f} m)")
+    if reasons:
+        raise RuntimeError(
+            "Isaac keypoint calibration collected a degenerate frame set: "
+            + "; ".join(reasons)
+            + ". A held-out split of one pose measures memorisation, not "
+            "perception, so no encoder is certified from it. Check that the "
+            "calibration survey reached its viewpoints.")
+
+
+def _held_out_viewpoints(groups: Mapping[int, Sequence[int]],
+                         settings: Mapping[str, Any], rng,
+                         frozen=None) -> tuple:
+    """Hold out whole viewpoints, never frames of a viewpoint that trains.
+
+    ``frozen`` is the accumulating store's own split, decided once per
+    viewpoint and never redrawn. Without it the draw is per-run, which is
+    correct for a one-off calibration but would let a viewpoint held out by
+    one run train the next one -- and the held-out score that certifies the
+    encoder would then be measured on a pose its lineage had already fitted.
+    """
+    identifiers = sorted(groups)
+    fraction = float(settings.get("empirical_validation_fraction", .25))
+    count = max(2, int(round(len(identifiers) * fraction)))
+    count = min(count, len(identifiers) - 3)
+    if count < 2:
+        raise RuntimeError(
+            f"Isaac keypoint calibration reached {len(identifiers)} viewpoints, "
+            "too few to hold out two of them and still train on three.")
+    if frozen is not None:
+        held_out = sorted(set(frozen) & set(identifiers))
+        if len(held_out) < 2 or len(identifiers) - len(held_out) < 3:
+            raise RuntimeError(
+                "the accumulated calibration split holds out "
+                f"{len(held_out)} of {len(identifiers)} viewpoints, which "
+                "cannot both validate on two and train on three. Survey more "
+                "viewpoints rather than redrawing the split.")
+    else:
+        order = rng.permutation(len(identifiers))
+        held_out = sorted(identifiers[int(position)] for position in order[:count])
+    chosen = set(held_out)
+    validation = np.asarray(
+        sorted(index for key in held_out for index in groups[key]), dtype=int)
+    training = np.asarray(
+        sorted(index for key in identifiers if key not in chosen
+               for index in groups[key]), dtype=int)
+    return training, validation, held_out
+
+
+def needs_empirical_calibration(artifact: Mapping[str, Any] | None) -> bool:
+    """Whether this artifact still has to be surveyed against live Isaac.
+
+    Also true for an artifact certified under the superseded single-pose
+    procedure, so an old ``validated`` flag cannot carry a blind encoder into
+    a new run.
+    """
+    if artifact is None:
+        return False
+    empirical = artifact.get("empirical_calibration") or {}
+    return not (bool(empirical.get("validated"))
+                and str(empirical.get("format")) == EMPIRICAL_CALIBRATION_FORMAT)
 
 
 def _calibration_diagnosis(attempted: int, rejections: Mapping[str, int]) -> str:
@@ -424,19 +744,24 @@ def _calibration_diagnosis(attempted: int, rejections: Mapping[str, int]) -> str
 def calibrate_keypoint_encoder(
         path: str | Path, artifact: dict, labelled_source,
         *, system: Mapping[str, Any], experiment: Mapping[str, Any],
-        mode: str, device: str | torch.device) -> dict:
-    """Validate and optionally fine-tune a frozen encoder on live Isaac output.
+        mode: str, device: str | torch.device, survey=None,
+        datastore=None) -> dict:
+    """Survey live Isaac output across poses, then fine-tune and certify.
 
     ``labelled_source()`` must return ``(image, pose)`` where ``pose`` is the
     simulator's training-label-only pad-relative UAV pose for that exact
     frame.  Labels are projected from the known pad landmarks; there is no
     detector in this path, so a frame whose target is unreadable still gets
     correct supervision instead of being silently discarded.
+
+    ``survey(viewpoint)`` flies the vehicle to one entry of
+    :func:`calibration_viewpoints` and returns whether it arrived.  Without it
+    the frames all come from wherever the vehicle happens to be sitting, which
+    the degeneracy gate below then refuses to certify.
     """
     if artifact is None:
         return None
-    empirical = artifact.get("empirical_calibration") or {}
-    if empirical.get("validated"):
+    if not needs_empirical_calibration(artifact):
         print(f"Using empirically validated Isaac keypoint encoder from {path}.")
         return artifact
     estimator = dict(experiment.get("estimator") or {})
@@ -446,35 +771,124 @@ def calibrate_keypoint_encoder(
     minimum = max(8, int(settings.get("minimum_empirical_samples", 8)))
     samples = []
     rejections: dict[str, int] = {}
-    dataset = empirical_keypoint_dataset(samples, system, rejections=rejections)
-    for _ in range(max(requested * 5, minimum)):
-        samples.append(labelled_source())
-        if len(samples) >= minimum:
-            dataset = empirical_keypoint_dataset(
-                samples, system, rejections=rejections)
-            if len(dataset["images"]) >= requested:
-                break
+    visited: list[int] = []
+    unreachable: list[int] = []
+    planned: list[dict] = []
+    frames_per_viewpoint = 0
+    fingerprint = None
+    stored_records = []
+    if datastore is not None:
+        fingerprint = keypoint_calibration_fingerprint(system, settings)
+        stored_records = datastore.episodes(
+            KIND_KEYPOINT_CALIBRATION, fingerprint)
+        for record in stored_records:
+            payload = record.payload()
+            images = np.asarray(payload["images"], dtype=np.uint8)
+            poses = np.asarray(payload["poses"], dtype=float)
+            index = int(record.provenance.get("viewpoint", record.seed))
+            for frame in range(images.shape[0]):
+                samples.append((images[frame], poses[frame], index))
+        if stored_records:
+            print(f"Reusing {len(stored_records)} accumulated calibration "
+                  f"viewpoints ({sum(record.samples for record in stored_records)} "
+                  f"frames) from {len({record.run_id for record in stored_records})} "
+                  f"run(s); fingerprint {fingerprint[:12]}.")
+    if survey is not None:
+        planned = calibration_viewpoints(system, settings)
+        frame_stride = int(settings.get("survey_frame_stride", 4))
+        # Two frames per pose, then as many poses as the frame budget allows:
+        # a third frame of the same hover adds far less than a further
+        # viewpoint does.
+        frames_per_viewpoint = max(
+            1, int(settings.get("survey_frames_per_viewpoint", 2)))
+        planned = _even_subset(
+            planned, max(1, requested // frames_per_viewpoint))
+        held = {int(record.provenance.get("viewpoint", record.seed))
+                for record in stored_records}
+
+        def _store_viewpoint(viewpoint, captured):
+            if datastore is None or not captured:
+                return
+            index = int(viewpoint["index"])
+            datastore.store_episode(
+                KIND_KEYPOINT_CALIBRATION, fingerprint, seed=index,
+                payload={
+                    "images": np.stack([
+                        np.asarray(image, dtype=np.uint8)
+                        for image, _pose in captured]),
+                    "poses": np.stack([
+                        np.asarray(pose, dtype=np.float32)
+                        if pose is not None else
+                        np.full(EMPIRICAL_POSE_LENGTH, np.nan, dtype=np.float32)
+                        for _image, pose in captured]),
+                },
+                identity={"viewpoint": index},
+                provenance={
+                    "viewpoint": index,
+                    "position_pad_m": [float(axis)
+                                       for axis in viewpoint["position_pad_m"]],
+                    "yaw_rad": float(viewpoint["yaw_rad"]),
+                    "altitude_m": float(viewpoint["altitude_m"]),
+                    "landmarks_in_frame": int(viewpoint["landmarks_in_frame"]),
+                    "mode": str(mode),
+                },
+                samples=len(captured), environment_steps=0,
+                split_key=f"viewpoint:{index}")
+
+        surveyed, visited, unreachable = _survey_frames(
+            labelled_source, survey, planned,
+            frames_per_viewpoint=frames_per_viewpoint,
+            frame_stride=frame_stride, already_stored=held,
+            store=_store_viewpoint)
+        samples.extend(surveyed)
+        dataset = empirical_keypoint_dataset(
+            samples, system, rejections=rejections)
+    elif samples:
+        # The accumulation already covers the survey, so nothing is flown at
+        # all: no entry gate, no simulator minutes, and no second copy of a
+        # viewpoint the fit is already anchored on.
+        dataset = empirical_keypoint_dataset(samples, system, rejections=rejections)
+    else:
+        dataset = empirical_keypoint_dataset(samples, system, rejections=rejections)
+        for _ in range(max(requested * 5, minimum)):
+            samples.append(labelled_source())
+            if len(samples) >= minimum:
+                dataset = empirical_keypoint_dataset(
+                    samples, system, rejections=rejections)
+                if len(dataset["images"]) >= requested:
+                    break
     count = len(dataset["images"])
     if count < minimum:
+        detail = ""
+        if survey is not None:
+            detail = (f" The survey reached {len(visited)} of {len(planned)} "
+                      f"viewpoints and could not reach {len(unreachable)}.")
         raise RuntimeError(
             f"Isaac keypoint calibration found only {count} labelled frames "
             f"(minimum {minimum}); refusing a synthetic-only frozen encoder. "
-            + _calibration_diagnosis(len(samples), rejections))
-    if count > requested:
-        dataset = {name: value[:requested] for name, value in dataset.items()}
-        count = requested
+            + _calibration_diagnosis(len(samples), rejections) + detail)
+    groups = _viewpoint_groups(dataset)
+    span = _pose_span(dataset)
+    _reject_degenerate_calibration(span, groups, settings)
     seed = int(settings.get("seed", 41026)) + 73
     rng = np.random.default_rng(seed)
     torch.manual_seed(seed)
-    order = rng.permutation(count)
-    validation_count = max(4, int(round(count * float(
-        settings.get("empirical_validation_fraction", .25)))))
-    validation_count = min(validation_count, count - 4)
-    validation, training = order[:validation_count], order[validation_count:]
+    frozen_split = None
+    if datastore is not None:
+        fraction = float(settings.get("empirical_validation_fraction", .25))
+        frozen_split = {
+            int(record.provenance.get("viewpoint", record.seed))
+            for record in datastore.episodes(
+                KIND_KEYPOINT_CALIBRATION, fingerprint, payloads=False)
+            if record.split(fraction) == "validation"}
+    training, validation, held_out = _held_out_viewpoints(
+        groups, settings, rng, frozen=frozen_split)
     torch_device = torch.device(device)
     encoder = ShinKeypointEncoder(
         int(estimator.get("image_embedding", 512)), keypoints=6).to(torch_device)
-    encoder.load_state_dict(artifact["encoder"])
+    # Always restart from the synthetic weights. Fine-tuning on top of a
+    # previous calibration compounds whatever that calibration overfitted to.
+    encoder.load_state_dict(artifact.get("synthetic_encoder") or artifact["encoder"])
     before = _empirical_metrics(encoder, dataset, validation, torch_device)
     best = {name: value.detach().cpu().clone()
             for name, value in encoder.state_dict().items()}
@@ -485,8 +899,10 @@ def calibrate_keypoint_encoder(
     batch_size = int(settings.get("batch_size", 16))
     epochs = int(settings.get("empirical_epochs", 2))
     for _ in range(max(1, epochs)):
-        for start in range(0, len(training), batch_size):
-            indices = training[start:start + batch_size]
+        order = rng.permutation(len(training))
+        shuffled = training[order]
+        for start in range(0, len(shuffled), batch_size):
+            indices = shuffled[start:start + batch_size]
             images = torch.as_tensor(
                 dataset["images"][indices, None], dtype=torch.float32,
                 device=torch_device) / 255.0
@@ -523,31 +939,49 @@ def calibrate_keypoint_encoder(
             optimizer.step()
         candidate = _empirical_metrics(
             encoder, dataset, validation, torch_device)
-        candidate_score = (candidate["coordinate_rmse_px"]
-                           + 50.0 * candidate["absent_false_positive_rate"])
-        best_score = (best_metrics["coordinate_rmse_px"]
-                      + 50.0 * best_metrics["absent_false_positive_rate"])
-        if candidate_score < best_score:
+        if calibration_score(candidate) < calibration_score(best_metrics):
             best_metrics = candidate
             best = {name: value.detach().cpu().clone()
                     for name, value in encoder.state_dict().items()}
+    minimum_recall = float(settings.get(
+        "minimum_holdout_visibility_recall", 0.50))
+    if float(best_metrics["visibility_recall"]) < minimum_recall:
+        raise RuntimeError(
+            "Isaac keypoint calibration produced an encoder that reports "
+            f"{best_metrics['visibility_recall']:.1%} of the labelled "
+            f"landmarks on the {len(held_out)} held-out viewpoints "
+            f"(minimum {minimum_recall:.1%}). It would fly blind: the "
+            "semantic observation counts an unreported landmark as no "
+            "landmark. Collect more viewpoints or raise empirical_epochs "
+            "rather than starting PPO on it.")
     artifact = dict(artifact)
     artifact["encoder"] = best
     artifact["training_source"] = (
         "synthetic six-keypoint fiducial projections plus geometry-labelled "
-        "Isaac camera frames")
+        "Isaac camera frames surveyed across pad-relative viewpoints")
     artifact["empirical_calibration"] = {
         "validated": True,
+        "format": EMPIRICAL_CALIBRATION_FORMAT,
         "label_source": "simulator pad-landmark projection (training-only)",
-        "samples": count, "training_samples": len(training),
-        "validation_samples": len(validation), "before": before,
-        "after": best_metrics,
-        "selection_score": "coordinate_rmse_px + 50*absent_false_positive_rate",
+        "samples": count,
+        "training_samples": int(len(training)),
+        "validation_samples": int(len(validation)),
+        "viewpoints": len(groups),
+        "planned_viewpoints": len(planned),
+        "unreachable_viewpoints": unreachable,
+        "frames_per_viewpoint": frames_per_viewpoint,
+        "held_out_viewpoints": held_out,
+        "pose_span": span,
+        "datastore_fingerprint": fingerprint,
+        "reused_viewpoints": len(stored_records),
+        "split_source": ("frozen per-viewpoint datastore split"
+                         if frozen_split is not None else "seeded per-run draw"),
+        "before": before, "after": best_metrics,
+        "selection_score": ("coordinate_rmse_px + 50*absent_false_positive_rate"
+                            " + 50*(1 - visibility_recall), on held-out "
+                            "viewpoints"),
         "fine_tune_selected": bool(
-            best_metrics["coordinate_rmse_px"]
-            + 50.0 * best_metrics["absent_false_positive_rate"]
-            < before["coordinate_rmse_px"]
-            + 50.0 * before["absent_false_positive_rate"]),
+            calibration_score(best_metrics) < calibration_score(before)),
     }
     dataset_path = Path(path).with_name("keypoint_isaac_calibration.npz")
     np.savez_compressed(dataset_path, **dataset)
@@ -557,10 +991,15 @@ def calibrate_keypoint_encoder(
     os.replace(temporary, path)
     print(
         "Isaac keypoint validation complete: "
+        f"{count} frames from {len(groups)} viewpoints "
+        f"({span['altitude_min_m']:.1f}-{span['altitude_max_m']:.1f} m "
+        f"altitude, {span['lateral_span_m']:.1f} m lateral spread), "
+        f"{len(held_out)} viewpoints held out; "
         f"{before['coordinate_rmse_px']:.1f}px -> "
         f"{best_metrics['coordinate_rmse_px']:.1f}px, "
         f"PCK@20 {before['pck_20px']:.1%} -> {best_metrics['pck_20px']:.1%}, "
-        f"visibility accuracy {best_metrics['visibility_accuracy']:.1%}, "
+        f"landmark recall {before['visibility_recall']:.1%} -> "
+        f"{best_metrics['visibility_recall']:.1%}, "
         "target-absent false positives "
         f"{best_metrics['absent_false_positive_rate']:.1%}.")
     del encoder, optimizer
@@ -711,6 +1150,9 @@ def prepare_keypoint_encoder(
         "empirical_calibration": None,
         "metrics": metrics,
         "encoder": state,
+        # Kept so a recalibration restarts from the synthetic weights instead
+        # of fine-tuning on top of an earlier calibration's overfit.
+        "synthetic_encoder": state,
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(path.suffix + ".tmp")

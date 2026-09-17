@@ -2,8 +2,11 @@
 
 from .image_encoder import grayscale_image_tensor
 from .keypoint_encoder import KeypointEncoderOutput, ShinKeypointEncoder
-from .keypoint_pretrain import (PRETRAIN_FORMAT, calibrate_keypoint_encoder,
+from .keypoint_pretrain import (EMPIRICAL_CALIBRATION_FORMAT, PRETRAIN_FORMAT,
+                                calibrate_keypoint_encoder,
+                                calibration_viewpoints,
                                 empirical_keypoint_dataset,
+                                needs_empirical_calibration,
                                 prepare_keypoint_encoder,
                                 synthetic_keypoint_dataset)
 from .pad_geometry import (KEYPOINT_LAYOUT_ID, LANDING_PAD_VISUAL_VERSION,
@@ -22,7 +25,9 @@ from .semantic_observation import (
     semantic_observation_from_payload)
 
 __all__ = ["grayscale_image_tensor", "KeypointEncoderOutput", "ShinKeypointEncoder",
-           "PRETRAIN_FORMAT", "prepare_keypoint_encoder",
+           "PRETRAIN_FORMAT", "EMPIRICAL_CALIBRATION_FORMAT",
+           "prepare_keypoint_encoder", "calibration_viewpoints",
+           "needs_empirical_calibration",
            "calibrate_keypoint_encoder", "empirical_keypoint_dataset",
            "synthetic_keypoint_dataset", "LatestGrayscaleFrame",
            "LatestPadRelativeTruthPose", "RosGrayscaleSource",

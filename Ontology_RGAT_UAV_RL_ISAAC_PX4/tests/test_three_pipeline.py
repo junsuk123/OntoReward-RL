@@ -727,6 +727,64 @@ def test_peer_restart_estimator_warmup_retries_same_policy_seed(monkeypatch):
     assert recoveries == ["restart"]
 
 
+def test_a_self_clearing_link_failsafe_retries_without_rebuilding_the_stack(
+        monkeypatch, capsys):
+    """Minutes of Isaac boot -- and the other pair's episode -- for a blip.
+
+    The gateway classifies an OFFBOARD heartbeat loss as a recoverable
+    transport fault and it clears in well under a second. The interrupted
+    trajectory is still discarded; only the rebuild is skipped.
+    """
+    attempts = []
+    recoveries = []
+    cleared = []
+
+    def collect(_env, _model, _method, seed, **_kwargs):
+        attempts.append(seed)
+        if len(attempts) == 1:
+            raise PX4Failsafe(["offboard_control_signal_lost"], recoverable=True)
+        return ["complete"], {"seed": seed}
+
+    monkeypatch.setattr(recurrent_train, "collect_episode", collect)
+    env = type("Env", (), {
+        "cfg": type("Cfg", (), {"external": {"episode_recoveries": 2}})(),
+        "bridge": type("Bridge", (), {
+            "wait_for_failsafe_clear": lambda self, timeout=None: (
+                cleared.append("waited") or True)})(),
+        "recover_infrastructure": lambda self: recoveries.append("restart"),
+    })()
+
+    rows, metric = collect_episode_resilient(env, object(), "shin_se", 20017)
+
+    assert rows == ["complete"] and metric["seed"] == 20017
+    assert attempts == [20017, 20017]
+    assert cleared == ["waited"] and recoveries == []
+    assert "without rebuilding the simulator" in capsys.readouterr().out
+
+
+def test_a_link_failsafe_that_does_not_clear_still_rebuilds_the_stack(monkeypatch):
+    attempts = []
+    recoveries = []
+
+    def collect(_env, _model, _method, seed, **_kwargs):
+        attempts.append(seed)
+        if len(attempts) == 1:
+            raise PX4Failsafe(["offboard_control_signal_lost"], recoverable=True)
+        return ["complete"], {"seed": seed}
+
+    monkeypatch.setattr(recurrent_train, "collect_episode", collect)
+    env = type("Env", (), {
+        "cfg": type("Cfg", (), {"external": {"episode_recoveries": 2}})(),
+        "bridge": type("Bridge", (), {
+            "wait_for_failsafe_clear": lambda self, timeout=None: False})(),
+        "recover_infrastructure": lambda self: recoveries.append("restart"),
+    })()
+
+    rows, _metric = collect_episode_resilient(env, object(), "shin_se", 20018)
+
+    assert rows == ["complete"] and recoveries == ["restart"]
+
+
 def test_hard_px4_failsafe_is_not_retried(monkeypatch):
     recoveries = []
 

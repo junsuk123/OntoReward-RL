@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
 import csv
 import json
 import math
@@ -94,7 +95,30 @@ def _wilson(successes: int, count: int, z=1.959963984540054) -> tuple[float, flo
     denominator = 1.0 + z * z / count
     centre = (p + z * z / (2.0 * count)) / denominator
     radius = z * math.sqrt(p * (1.0 - p) / count + z * z / (4.0 * count * count)) / denominator
-    return max(0.0, centre - radius), min(1.0, centre + radius)
+    # At p=0 (or p=1) ``centre - radius`` lands on ~1e-17 instead of 0, so the
+    # interval would not contain the point estimate and every errorbar refresh
+    # died on "'yerr' must not contain negative values". Clamp to the estimate.
+    return min(p, max(0.0, centre - radius)), max(p, min(1.0, centre + radius))
+
+
+@contextmanager
+def _closing_new_figures():
+    """Close whatever figures this refresh opened, including on failure.
+
+    The training loop calls this module after every episode. An exception
+    between ``plt.figure()`` and its ``plt.close()`` leaks one figure per
+    call: the run that prompted this leaked one per episode -- every refresh
+    died on the Wilson interval above -- until matplotlib warned about more
+    than twenty open figures and the memory behind them.
+    """
+    import matplotlib.pyplot as plt
+
+    existing = set(plt.get_fignums())
+    try:
+        yield
+    finally:
+        for number in set(plt.get_fignums()) - existing:
+            plt.close(number)
 
 
 def _configure_matplotlib():
@@ -618,6 +642,11 @@ def _save_fov_risk_diagnostics(output_dir: Path, manifest: Mapping[str, Any]):
 
 def write_presentation_results(results_dir, output_dir=None) -> dict[str, Any]:
     """발표용 지표 CSV/JSON과 슬라이드용 PNG를 생성하고 경로를 반환한다."""
+    with _closing_new_figures():
+        return _write_presentation_results(results_dir, output_dir)
+
+
+def _write_presentation_results(results_dir, output_dir=None) -> dict[str, Any]:
     results_dir = Path(results_dir).resolve()
     output_dir = Path(output_dir or (results_dir / "presentation")).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)

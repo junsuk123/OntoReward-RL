@@ -46,7 +46,8 @@ from .fov_risk_model import (FOV_RISK_MODEL_FORMAT, FOVRiskModel,
 from .fov_risk_dataset import (
     FOV_RISK_DATASET_FORMAT, build_fov_risk_dataset, dataset_digest,
     future_fov_unavailability_targets, horizon_steps, load_fov_risk_dataset,
-    save_fov_risk_dataset, split_by_episode, validate_fov_risk_dataset)
+    fov_risk_data_fingerprint, save_fov_risk_dataset, split_by_episode,
+    split_by_episode_ids, validate_fov_risk_dataset)
 from .fov_risk_train import (CONTRACT_RULE_ID, contract_loss,
                              prepare_fov_risk_artifact, regression_metrics,
                              train_fov_risk_model)
@@ -84,6 +85,7 @@ __all__ = ["RGAT", "RelationalGraphAttention", "RGATEncoder", "PotentialHead",
            "FOV_RISK_DATASET_FORMAT", "build_fov_risk_dataset",
            "dataset_digest", "future_fov_unavailability_targets", "horizon_steps",
            "load_fov_risk_dataset", "save_fov_risk_dataset",
-           "split_by_episode", "validate_fov_risk_dataset",
+           "split_by_episode", "split_by_episode_ids",
+           "fov_risk_data_fingerprint", "validate_fov_risk_dataset",
            "CONTRACT_RULE_ID", "contract_loss", "regression_metrics",
            "prepare_fov_risk_artifact", "train_fov_risk_model"]

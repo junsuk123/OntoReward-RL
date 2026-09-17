@@ -1120,7 +1120,7 @@ class LandingWorld:
     """One independently controlled UAV/UGV pair in a possibly shared stage."""
 
     def __init__(self, *, pair_index: int = 0, pair_count: int = 1,
-                 shared=None, defer_world_reset: bool = False):
+                 shared=None):
         isaac_cfg = CONFIG["isaac"]
         self.pair_index = int(pair_index)
         self.pair_count = int(pair_count)
@@ -1465,7 +1465,25 @@ class LandingWorld:
         # rendered frame would give it a stale, chunky velocity.
         self.world.add_physics_callback(
             f"/landing_deck_{self.pair_index}", self._advance_deck)
-        self.world.reset()
+        self.stop_sim = False
+        self.activated = False
+
+    def activate(self) -> None:
+        """Bring this pair up once the shared timeline is playing.
+
+        Deliberately not part of ``__init__``.  ``World.reset()`` stops and
+        replays the timeline *shared by every pair*, and a stop runs Pegasus'
+        ``sim_start_stop``: it closes each vehicle's MAVLink connection and
+        kills its auto-launched PX4.  Doing that inside the second pair's
+        constructor therefore killed the first pair's already-running PX4 and,
+        worse, raced Kit's own asset, material and sensor creation for the pair
+        being built -- which is where startup aborted on
+        ``unlock() called by non-owning thread`` (the crash report's last
+        command was pair 1's contact-sensor creation).  :func:`main` now builds
+        every pair, resets the world once, and activates them.
+        """
+        if self.activated:
+            return
         if self.camera is not None:
             self.camera.start()
             self.camera.aim_at_nadir(self.vehicle)
@@ -1488,7 +1506,7 @@ class LandingWorld:
             self.deck.release(self.world.current_time)
         self.gnss.reset(int((CONFIG.get("gnss") or {}).get("seed", 17)))
         self.gnss_time = float(self.world.current_time)
-        self.stop_sim = False
+        self.activated = True
 
     def _on_reset_request(self, msg: String) -> None:
         try:
@@ -2268,6 +2286,11 @@ def main():
     for index in range(1, ARGS.parallel_pairs):
         pairs.append(LandingWorld(
             pair_index=index, pair_count=ARGS.parallel_pairs, shared=app))
+    # One reset for the one shared timeline, after every pair exists. See
+    # LandingWorld.activate for why this cannot be done per pair.
+    app.world.reset()
+    for pair in pairs:
+        pair.activate()
     if len(pairs) > 1:
         offsets = ", ".join(
             f"pair {pair.pair_index}=route {pair.route_phase_fraction:.0%}"

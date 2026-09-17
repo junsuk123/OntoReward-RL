@@ -450,6 +450,14 @@ class PX4Bridge:
         # stopped publishing time at all and would otherwise never return.
         sim_budget = float(getattr(self.cfg, "entry_sim_budget", float("inf")))
         wall_guard = float(self.cfg.entry_timeout)
+        # Paid for once, from the first sample: the distance the vehicle still
+        # has to cover before it can hold anything. See ``entry_travel_speed``.
+        travel_allowance: float | None = None
+        initial_offset = float("nan")
+        failsafe_grace = float(getattr(self.cfg, "failsafe_grace", 10.0))
+        failsafe_since: float | None = None
+        failsafe_seconds = 0.0
+        failsafe_reasons: tuple[str, ...] = ()
         sim_started: float | None = None
         sim_elapsed = 0.0
         expiry = "wall"
@@ -538,17 +546,44 @@ class PX4Bridge:
                     # request is not enough to start the climb.
                     last_arm = elapsed
                     self.transact("arm", {}, ("ack",))
-            except (EntryResetError, PX4Failsafe):
-                # A latched contact/disarm or an explicit PX4 failsafe is not a
-                # transient missing sample.  Waiting here only preserves a bad
-                # estimator; the owned-stack recovery path must rebuild it.
+            except EntryResetError:
+                # A latched contact or disarm is not a transient missing
+                # sample. Waiting here only preserves a bad estimator; the
+                # owned-stack recovery path must rebuild it.
                 raise
+            except PX4Failsafe as failsafe:
+                # The gateway classifies an OFFBOARD heartbeat loss and its
+                # benign status-clear race as recoverable transport faults,
+                # and they clear in well under a second -- the gateway keeps
+                # streaming setpoints and re-requests OFFBOARD as soon as the
+                # flag drops. PX4 ignores the entry setpoints while it is set,
+                # which is why the gate then reports a *stationary* vehicle
+                # off target. Rebuilding the shared simulator for that costs
+                # minutes and both pairs' progress, so wait it out first. A
+                # hard failsafe (battery, estimator, geofence, failure
+                # detector) still aborts immediately.
+                if not failsafe.recoverable:
+                    raise
+                now = time.monotonic()
+                if failsafe_since is None:
+                    failsafe_since = now
+                    failsafe_reasons = failsafe.reasons
+                    print("Entry hover: waiting out a recoverable SITL link "
+                          f"failsafe ({', '.join(failsafe.reasons) or 'unknown'}).")
+                if now - failsafe_since >= failsafe_grace:
+                    raise
+                settled_since = None
+                time.sleep(0.05)
+                continue
             except BridgeError:
                 # A brief estimator or link transient during the climb is not a
                 # handover failure; only the deadline decides.
                 settled_since = None
                 time.sleep(0.05)
                 continue
+            if failsafe_since is not None:
+                failsafe_seconds += time.monotonic() - failsafe_since
+                failsafe_since = None
             here, speed = self.entry_state(state)
             wall_now = time.monotonic()
             try:
@@ -575,6 +610,22 @@ class PX4Bridge:
             pad_ready = (
                 not bool(self.cfg.require_pad_in_view) or geometry_ready)
             offset = float(np.linalg.norm(here - target))
+            if travel_allowance is None:
+                # A fixed budget pays for the manoeuvre, not for the trip. The
+                # previous episode can leave the vehicle tens of metres from
+                # the deck, and at PX4's own 2 m/s limit that is most of the
+                # budget before the hold can even begin.
+                initial_offset = offset
+                cruise = max(0.05, float(getattr(
+                    self.cfg, "entry_travel_speed", 1.2)))
+                travel_allowance = min(
+                    max(0.0, offset - float(self.cfg.entry_tolerance)) / cruise,
+                    float(getattr(self.cfg, "entry_travel_budget_max", 60.0)))
+                if travel_allowance > 1.0:
+                    print(f"Entry hover: {offset:.1f} m to fly; allowing "
+                          f"{travel_allowance:.0f} simulated s of travel on top "
+                          f"of the {sim_budget:.0f} s hold budget.")
+                sim_budget += travel_allowance
             offset_ready = offset <= float(self.cfg.entry_tolerance)
             speed_ready = speed <= float(self.cfg.entry_speed_tolerance)
             samples += 1
@@ -637,14 +688,31 @@ class PX4Bridge:
                   if expiry == "simulated" else
                   f"{wall_guard:.1f} s wall ({sim_elapsed:.1f} simulated s; "
                   "the stage is running far slower than real time)")
+        final_offset = float(np.linalg.norm(here - target))
+        # Where it started and how much of the gap it actually closed. "Never
+        # in tolerance" reads identically for a vehicle that stood still and
+        # for one that flew twenty metres and ran out of budget, and the two
+        # need opposite responses.
+        travel = ""
+        if bool(np.isfinite(initial_offset)):
+            travel = (f"; started {initial_offset:.2f} m out and closed "
+                      f"{initial_offset - final_offset:.2f} m of that")
+        if failsafe_since is not None:
+            failsafe_seconds += time.monotonic() - failsafe_since
+        if failsafe_seconds > 0.0:
+            travel += (f"; PX4 was in a recoverable link failsafe "
+                       f"({', '.join(failsafe_reasons) or 'unknown'}) for "
+                       f"{failsafe_seconds:.1f} s of the climb, during which it "
+                       "ignores the entry setpoint")
         raise EntryResetError(
             f"PX4 did not hold the entry pose within {budget} "
-            f"(last sample: offset {float(np.linalg.norm(here - target)):.2f} m, "
+            f"(last sample: offset {final_offset:.2f} m, "
             f"speed {speed:.2f} m/s, "
             "geometric pad-centre view offset "
             f"{'n/a' if view_margin is None else format(view_margin, '.2f')}; "
             f"limits {limits}; longest hold {longest_streak:.2f} s of "
             f"{float(self.cfg.entry_settle):.2f} s; {cause}"
+            + travel
             + (f"; re-aimed {view_retries}x" if view_retries else "") + ").")
 
     # ------------------------------------------------------------------- step
@@ -748,6 +816,39 @@ class PX4Bridge:
                     raise
                 time.sleep(0.05)
                 current = self.transact("state", {}, ("state",))
+
+    def wait_for_failsafe_clear(self, timeout: float | None = None) -> bool:
+        """Wait out a gateway-classified recoverable SITL link failsafe.
+
+        Returns whether PX4 left the failsafe within the budget. The caller
+        still discards whatever episode was interrupted -- a step PX4 did not
+        fly is not a transition PPO may learn from -- but a self-clearing
+        transport blip does not have to cost a rebuild of the shared simulator
+        and, with it, the other pair's episode too.
+
+        A hard failsafe or a dead transport returns ``False`` immediately, so
+        the caller falls through to the stack restart it would have done.
+        """
+        deadline = time.monotonic() + float(
+            getattr(self.cfg, "failsafe_grace", 10.0)
+            if timeout is None else timeout)
+        while True:
+            try:
+                state = self.transact("state", {}, ("state",))
+            except BridgeError:
+                return False
+            extra = state.get("extra") if isinstance(
+                state.get("extra"), dict) else {}
+            if not bool(extra.get("px4_failsafe", False)):
+                return True
+            detail = (extra.get("px4_failsafe_detail")
+                      if isinstance(extra.get("px4_failsafe_detail"), dict)
+                      else {})
+            if not bool(detail.get("recoverable_infrastructure", False)):
+                return False
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(0.05)
 
     def disarm(self) -> None:
         self.transact("disarm", {}, ("ack",))

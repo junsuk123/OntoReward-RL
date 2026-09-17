@@ -471,16 +471,37 @@ def default_config(mode: str = "quick", target: str = "sitl") -> Config:
         # metres and settling needs roughly ten to twenty simulated seconds;
         # this leaves a wide margin without letting a stuck climb run forever.
         "entry_sim_budget": 60.0,         # s of simulated PX4 time
+        # The budget above pays for the manoeuvre, not for the trip. Between
+        # episodes the vehicle can be tens of metres from the deck -- a blind
+        # or diverging policy ends its episode out there, and the staging hold
+        # only brings it back to within nine metres -- so a fixed budget times
+        # out vehicles that are still travelling at PX4's own speed limit.
+        # Pay for the measured distance at this closing speed, on top of the
+        # fixed budget. MPC_XY_VEL_MAX is 2.0 m/s in this SITL profile; the
+        # allowance assumes less so acceleration and the climb are covered.
+        "entry_travel_speed": 1.2,        # m/s of assumed closing speed
+        "entry_travel_budget_max": 60.0,  # s of simulated PX4 time, at most
+        # A gateway-classified recoverable SITL link failsafe (OFFBOARD
+        # heartbeat loss and its benign status-clear race) clears on its own
+        # in well under a second: the gateway keeps streaming setpoints and
+        # re-requests OFFBOARD as soon as the flag drops. While it is set PX4
+        # ignores the entry setpoints, so the vehicle stands still and the
+        # gate reports a stationary vehicle off target. Wait it out for this
+        # long before treating it as a fault; a hard failsafe never waits.
+        "failsafe_grace": 10.0,           # s of wall clock
         # Unmeasured OFFBOARD position hold between episodes (bridge.
         # hold_for_next_airborne_reset). It must outlast PPO/estimator
         # updates; the gateway lands the vehicle when it expires, which PX4
         # then reports as an offboard-loss failsafe at the next reset.
         "between_episode_hold_s": 900.0,
         # Wall-clock hang guard, no longer the entry budget itself: that is
-        # entry_sim_budget above. This bounds a simulator that has stopped
-        # publishing time at all, so it must outlast entry_sim_budget at the
-        # slowest stage rate the run is expected to reach -- and PX4's
-        # post-boot arm refusal, which entry_arm_grace cuts short anyway.
+        # entry_sim_budget above, plus at most entry_travel_budget_max. This
+        # bounds a simulator that has stopped publishing time at all, so it
+        # must outlast that sum at the slowest stage rate the run is expected
+        # to reach -- the measured two-pair city stage advances roughly one
+        # simulated second per wall second, so 240 s covers the 120 s ceiling
+        # with room to spare -- and PX4's post-boot arm refusal, which
+        # entry_arm_grace cuts short anyway.
         "entry_timeout": 240.0,           # s of wall clock
         "arm_retry": 2.0,                 # s between arm attempts during the climb
         # PX4 SITL stops accepting arm commands after hours of lockstep; a

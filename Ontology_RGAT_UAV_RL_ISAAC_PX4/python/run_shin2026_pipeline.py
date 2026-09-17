@@ -14,6 +14,7 @@ import subprocess
 import sys
 import time
 
+import numpy as np
 import torch
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -26,11 +27,13 @@ from ontology_rgat.benchmarks.experiment import (METHODS, configuration_hash,
                                                  episodes_per_method,
                                                  load_experiment, paired_seed_plan)
 from ontology_rgat.benchmarks.live_env import LiveShinEnvironment
+from ontology_rgat.bridge import BridgeError, EntryResetError, PX4Failsafe
 from ontology_rgat.cli import ensure_fastdds
 from ontology_rgat.config import default_config
 from ontology_rgat.evaluation.shin2026 import write_benchmark_outputs
 from ontology_rgat.perception import (RosGrayscaleSource,
                                       calibrate_keypoint_encoder,
+                                      needs_empirical_calibration,
                                       prepare_keypoint_encoder)
 from ontology_rgat.ppo.recurrent import PipelineActorCritic
 from ontology_rgat.ppo.recurrent_train import collect_episode, train_live
@@ -150,6 +153,131 @@ def _build_model(config, device, keypoint_pretraining=None, pipeline="shin_se"):
     if keypoint_pretraining is not None:
         model.encoder.load_state_dict(keypoint_pretraining["encoder"])
     return model.to(torch_device)
+
+
+class KeypointCalibrationFlight:
+    """Fly the pad-relative viewpoints the frozen encoder is certified on.
+
+    The encoder used to be calibrated on whatever the camera saw while the
+    vehicle sat where the stack left it after boot: 48 consecutive frames of
+    one hover, whose randomly held-out quarter could only measure
+    memorisation. It scored 10 px and 100 % on that split and then reported no
+    landmark on 99.7 % of the in-frame steps of the run it was certified for.
+
+    This takes the vehicle to each surveyed viewpoint under PX4's own position
+    controller -- the same pad-frame ``goto`` the seeded entry pose is flown
+    with -- so the held-out split is over poses the encoder never trained on.
+    """
+
+    def __init__(self, cfg, image_source, *, seed, settings=None):
+        self.cfg = cfg
+        self.image_source = image_source
+        self.seed = int(seed)
+        settings = dict(settings or {})
+        self.travel_timeout_s = float(settings.get(
+            "survey_travel_timeout_s", 45.0))
+        self.tolerance_m = float(settings.get("survey_tolerance_m", 0.8))
+        self.speed_tolerance_m_s = float(settings.get(
+            "survey_speed_tolerance_m_s", 0.7))
+        self.settle_s = float(settings.get("survey_settle_s", 0.7))
+        # The survey is setup, not a measured episode, so it enters at the
+        # gentlest seeded initial condition. What the calibration needs from
+        # this flight is viewpoints, and a full-difficulty entry only makes
+        # the one reset it depends on more likely to need a simulator rebuild.
+        self.curriculum = float(settings.get("survey_curriculum", 0.0))
+        self.environment = None
+
+    def __enter__(self):
+        return self
+
+    def _ensure_airborne(self):
+        """Arm and climb, but only once a viewpoint actually has to be flown.
+
+        An accumulation that already covers the survey needs no flight at all,
+        and opening one anyway would spend an entry gate -- the least reliable
+        part of the stack -- on a calibration that has nothing to collect.
+        """
+        if self.environment is None:
+            self.environment = LiveShinEnvironment(
+                self.cfg, self.image_source,
+                horizon_steps=int(self.cfg.sim.max_steps))
+            # Arming, the offboard pre-stream and the climb are the reset's
+            # job, and it owns simulator recovery if the stack has to be
+            # rebuilt.
+            self.environment.reset(self.seed, curriculum=self.curriculum)
+        return self.environment
+
+    def __exit__(self, *_):
+        environment, self.environment = self.environment, None
+        if environment is None:
+            return
+        try:
+            environment.finish_episode()
+        finally:
+            environment.close()
+
+    def __call__(self, viewpoint) -> bool:
+        bridge = self._ensure_airborne().bridge
+        target = np.asarray(viewpoint["position_pad_m"], dtype=float)
+        # The hold must outlast the travel *and* the frames captured after
+        # arrival: an expired goto makes the gateway command a landing.
+        bridge.transact(
+            "goto", {"position": target.tolist(),
+                     "yaw": float(viewpoint["yaw_rad"]), "frame": "pad",
+                     "hold_s": float(self.travel_timeout_s) + 60.0}, ("ack",))
+        deadline = time.monotonic() + self.travel_timeout_s
+        settled_since = None
+        while time.monotonic() < deadline:
+            try:
+                state = bridge.get_state()
+            except (EntryResetError, PX4Failsafe):
+                # A latched contact, a disarm or an explicit failsafe is not a
+                # transient: the owned-stack recovery has to rebuild it.
+                raise
+            except BridgeError:
+                time.sleep(0.05)
+                continue
+            here, speed = bridge.entry_state(state)
+            if (float(np.linalg.norm(here - target)) <= self.tolerance_m
+                    and speed <= self.speed_tolerance_m_s):
+                settled_since = settled_since or time.monotonic()
+                if time.monotonic() - settled_since >= self.settle_s:
+                    return True
+            else:
+                settled_since = None
+            time.sleep(0.05)
+        print(f"WARNING: keypoint survey could not reach viewpoint "
+              f"{int(viewpoint['index'])} at "
+              f"({target[0]:.1f}, {target[1]:.1f}, {target[2]:.1f}) m in "
+              f"{self.travel_timeout_s:.0f} s; it is left out of the "
+              "calibration set.")
+        return False
+
+
+def keypoint_calibration_seed(config) -> int:
+    """The survey's own reset seed, disjoint from training and evaluation."""
+    return int((config.get("seeds") or {}).get("keypoint_calibration", 31337))
+
+
+def calibrate_keypoint_encoder_in_flight(
+        path, artifact, camera, *, cfg, config, system, mode, device,
+        datastore=None):
+    """Calibrate against live Isaac, surveying poses when one is still owed.
+
+    The flight is lazy: with an accumulation that already covers the survey no
+    vehicle is armed at all.
+    """
+    if artifact is None or not needs_empirical_calibration(artifact):
+        return calibrate_keypoint_encoder(
+            path, artifact, camera.labelled, system=system,
+            experiment=config, mode=mode, device=device, datastore=datastore)
+    settings = (config.get("estimator") or {}).get("keypoint_pretraining")
+    with KeypointCalibrationFlight(
+            cfg, camera, seed=keypoint_calibration_seed(config),
+            settings=settings) as flight:
+        return calibrate_keypoint_encoder(
+            path, artifact, camera.labelled, survey=flight, system=system,
+            experiment=config, mode=mode, device=device, datastore=datastore)
 
 
 def _sha256_file(path):
@@ -492,12 +620,13 @@ def main():
                 truth_pose_topic=(
                     "/landing_uav0/perception/pad_relative_truth_pose")
         ) as camera:
-            monitor.stage("keypoint validation", "live Isaac camera · held-out labels")
-            keypoint_pretraining = calibrate_keypoint_encoder(
+            monitor.stage("keypoint validation",
+                          "live Isaac camera · surveyed viewpoints")
+            keypoint_pretraining = calibrate_keypoint_encoder_in_flight(
                 args.results_dir / "models/shin2026_keypoint_encoder.pt",
-                keypoint_pretraining, camera.labelled,
-                system=resolved_system_config,
-                experiment=config, mode=args.mode, device=args.device)
+                keypoint_pretraining, camera, cfg=cfg, config=config,
+                system=resolved_system_config, mode=args.mode,
+                device=args.device)
             manifest["keypoint_pretraining"] = (
                 None if keypoint_pretraining is None else {
                     "format": keypoint_pretraining["format"],

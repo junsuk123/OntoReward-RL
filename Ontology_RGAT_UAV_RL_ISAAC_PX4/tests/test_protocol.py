@@ -370,15 +370,96 @@ def test_entry_gate_aborts_immediately_after_pad_contact(monkeypatch):
         bridge.wait_at_entry(np.zeros(3))
 
 
-def test_entry_gate_propagates_px4_failsafe(monkeypatch):
+def test_entry_gate_aborts_immediately_on_a_hard_px4_failsafe(monkeypatch):
     monkeypatch.setattr(bridge_module.time, "sleep", lambda _seconds: None)
     bridge = object.__new__(PX4Bridge)
     bridge.cfg = SimpleNamespace(entry_timeout=90.0, arm_retry=2.0)
+    bridge.get_state = lambda: (_ for _ in ()).throw(
+        PX4Failsafe(["fd_critical_failure"], recoverable=False))
+
+    with pytest.raises(PX4Failsafe, match="fd_critical_failure"):
+        bridge.wait_at_entry(np.zeros(3))
+
+
+def test_entry_gate_waits_out_a_recoverable_link_failsafe(monkeypatch, capsys):
+    """PX4 ignores the entry setpoint while the flag is set, then flies again.
+
+    The gateway keeps streaming setpoints and re-requests OFFBOARD as soon as
+    the bit drops, so this clears in well under a second. Aborting on it
+    rebuilds the shared simulator -- minutes, and the other pair's episode
+    with it -- for a vehicle that was about to converge.
+    """
+    monkeypatch.setattr(bridge_module.time, "monotonic", _clock(0.05))
+    monkeypatch.setattr(bridge_module.time, "sleep", lambda _seconds: None)
+    entry = camera_centered_hover_offset(7.55)
+
+    def states():
+        for _ in range(4):
+            raise_failsafe = PX4Failsafe(
+                ["offboard_control_signal_lost"], recoverable=True)
+            yield raise_failsafe
+        index = 0
+        while True:
+            index += 1
+            yield {"armed": True, "px4_time_us": 1_000_000 * index,
+                   "position": entry.tolist(), "velocity": [0.0, 0.0, 0.0],
+                   "quaternion_wxyz": [1.0, 0.0, 0.0, 0.0],
+                   "position_frame": "pad"}
+
+    stream = states()
+
+    def get_state():
+        value = next(stream)
+        if isinstance(value, PX4Failsafe):
+            raise value
+        return value
+
+    bridge = _entry_gate_bridge(iter(()))
+    bridge.get_state = get_state
+    bridge.cfg.entry_sim_budget = 30.0
+    bridge.cfg.failsafe_grace = 5.0
+
+    assert bridge.wait_at_entry(entry)["armed"] is True
+    assert "waiting out a recoverable SITL link failsafe" in capsys.readouterr().out
+
+
+def test_entry_gate_aborts_on_a_link_failsafe_that_never_clears(monkeypatch):
+    monkeypatch.setattr(bridge_module.time, "monotonic", _clock(0.5))
+    monkeypatch.setattr(bridge_module.time, "sleep", lambda _seconds: None)
+    bridge = object.__new__(PX4Bridge)
+    bridge.cfg = SimpleNamespace(entry_timeout=90.0, arm_retry=2.0,
+                                 failsafe_grace=2.0)
     bridge.get_state = lambda: (_ for _ in ()).throw(
         PX4Failsafe(["offboard_control_signal_lost"], recoverable=True))
 
     with pytest.raises(PX4Failsafe, match="offboard_control_signal_lost"):
         bridge.wait_at_entry(np.zeros(3))
+
+
+def test_wait_for_failsafe_clear_separates_a_blip_from_a_real_fault(monkeypatch):
+    monkeypatch.setattr(bridge_module.time, "monotonic", _clock(0.5))
+    monkeypatch.setattr(bridge_module.time, "sleep", lambda _seconds: None)
+
+    def bridge_with(states):
+        bridge = object.__new__(PX4Bridge)
+        bridge.cfg = SimpleNamespace(failsafe_grace=2.0)
+        stream = iter(states)
+        bridge.transact = lambda *_a, **_k: next(stream)
+        return bridge
+
+    def state(active, recoverable=True):
+        return {"extra": {"px4_failsafe": active, "px4_failsafe_detail": {
+            "reasons": ["offboard_control_signal_lost"],
+            "recoverable_infrastructure": recoverable}}}
+
+    # Clears on its own: no rebuild is needed.
+    assert bridge_with([state(True), state(True), state(False)]
+                       ).wait_for_failsafe_clear() is True
+    # A hard failsafe is not waited on at all.
+    assert bridge_with([state(True, recoverable=False)]
+                       ).wait_for_failsafe_clear() is False
+    # Still set when the grace runs out.
+    assert bridge_with([state(True)] * 20).wait_for_failsafe_clear() is False
 
 
 def _valid_bridge_state(*, armed, recoverable_failsafe):
@@ -954,10 +1035,54 @@ def test_the_entry_budget_that_expired_names_its_clock(monkeypatch):
     with pytest.raises(EntryResetError) as excinfo:
         bridge.wait_at_entry(entry)
     message = str(excinfo.value)
-    assert "5.0 simulated s" in message
+    # 5 s of hold budget plus the travel allowance for the 4 m it was away
+    # (3.5 m outside tolerance at the assumed 1.2 m/s closing speed).
+    assert "7.9 simulated s" in message
     # The wall guard was nowhere near expiry, so it must not be the headline.
     assert "240.0 s wall" not in message
     assert "offset was out of tolerance" in message
+    assert "started 4.00 m out and closed 0.00 m of that" in message
+
+
+def test_the_entry_budget_pays_for_the_distance_still_to_be_flown(monkeypatch, capsys):
+    """A vehicle 20 m out is travelling, not failing to hold station.
+
+    Between episodes the vehicle can be tens of metres from the deck, and
+    PX4's own MPC_XY_VEL_MAX here is 2 m/s. A fixed hold budget times that
+    trip out and restarts a healthy simulator for it.
+    """
+    monkeypatch.setattr(bridge_module.time, "monotonic", _clock(0.01))
+    monkeypatch.setattr(bridge_module.time, "sleep", lambda _s: None)
+    entry = camera_centered_hover_offset(7.55)
+
+    def states(offset_m):
+        index = 0
+        while True:
+            index += 1
+            yield {"armed": True, "px4_time_us": 1_000_000 * index,
+                   "position": (entry + np.array([offset_m, 0.0, 0.0])).tolist(),
+                   "velocity": [0.0, 0.0, 0.0],
+                   "quaternion_wxyz": [1.0, 0.0, 0.0, 0.0],
+                   "position_frame": "pad"}
+
+    far = _entry_gate_bridge(states(20.0))
+    far.cfg.entry_sim_budget = 10.0
+    far.cfg.entry_timeout = 600.0
+    with pytest.raises(EntryResetError) as excinfo:
+        far.wait_at_entry(entry)
+    # 19.5 m outside tolerance at 1.2 m/s is 16.3 s, capped by
+    # entry_travel_budget_max, on top of the 10 s hold budget.
+    assert "26.2 simulated s" in str(excinfo.value)
+    assert "allowing 16 simulated s of travel" in capsys.readouterr().out
+
+    # A vehicle that is already at the pose buys no extension at all.
+    near = _entry_gate_bridge(states(0.2))
+    near.cfg.entry_sim_budget = 10.0
+    near.cfg.entry_timeout = 600.0
+    near.cfg.entry_settle = 1e9
+    with pytest.raises(EntryResetError) as excinfo:
+        near.wait_at_entry(entry)
+    assert "10.0 simulated s" in str(excinfo.value)
 
 
 def test_a_stage_that_stops_advancing_still_hits_the_wall_guard(monkeypatch):

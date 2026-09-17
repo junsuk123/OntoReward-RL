@@ -29,11 +29,60 @@ from typing import Mapping, Sequence
 
 import numpy as np
 
+from ..datastore import data_fingerprint
 from .fov_graph import (FOV_GRAPH_INPUT_DIM, FOV_GRAPH_VERSION,
                         FOV_NODE_NAMES, FOV_RELATION_NAMES)
 
 
 FOV_RISK_DATASET_FORMAT = "ontology_rgat.future_fov_unavailability/2"
+
+
+def fov_risk_data_fingerprint(system: Mapping, *, prediction_steps: int,
+                              control_hz: float,
+                              keypoint_implementation: str | None = None) -> str:
+    """What a stored FOV-risk episode means, for deciding reuse across runs.
+
+    Deliberately *not* the experiment's configuration hash. Learning rates,
+    episode budgets and seeds change nothing about a collected graph, and
+    making them invalidate an accumulation would throw away hours of flight
+    for an edit that cannot affect a single sample.
+
+    What does belong here is everything a sample's meaning depends on: the
+    graph and feature definition, the camera the frustum target is computed
+    for, the landing target the features are extracted from, the prediction
+    horizon and control rate, the encoder *architecture* behind the visual
+    features, and the trajectory distribution the episodes are drawn from. The
+    encoder's weights are recorded per episode instead (see the collection's
+    provenance), so a mixed-calibration accumulation stays auditable rather
+    than silently disallowed.
+    """
+    vision = dict(system.get("vision") or {})
+    camera = dict(vision.get("camera") or {})
+    landing_pad = dict(vision.get("landing_pad") or {})
+    pad = dict(system.get("pad") or {})
+    benchmark = dict(system.get("benchmark") or {})
+    return data_fingerprint({
+        "dataset_format": FOV_RISK_DATASET_FORMAT,
+        "graph_version": FOV_GRAPH_VERSION,
+        "node_names": list(FOV_NODE_NAMES),
+        "relation_names": list(FOV_RELATION_NAMES),
+        "graph_input_dim": int(FOV_GRAPH_INPUT_DIM),
+        "prediction_steps": int(prediction_steps),
+        "control_hz": round(float(control_hz), 6),
+        "keypoint_implementation": keypoint_implementation,
+        "vision_mode": vision.get("mode"),
+        "camera": {name: camera.get(name) for name in (
+            "model", "resolution", "horizontal_fov_deg", "pitch_down_deg",
+            "mount_translation_flu_m")},
+        "landing_pad": {name: landing_pad.get(name) for name in (
+            "layout", "landmark_radius_m", "landmark_diameter_m")},
+        "deck_size_m": pad.get("deck_size_m"),
+        "pad_motion": {name: pad.get(name) for name in (
+            "motion", "route_start", "speed_min_m_s", "speed_max_m_s",
+            "stop_interval_s", "deck_height_m")},
+        "benchmark": {name: benchmark.get(name) for name in (
+            "profile", "initial_conditions")},
+    })
 
 
 def horizon_steps(horizon_seconds: float, control_hz: float) -> int:
@@ -153,6 +202,42 @@ def split_by_episode(dataset: Mapping, *, validation_fraction: float = 0.2,
         [int(episode) in validation_episodes for episode in meta[:, 0]], dtype=bool)
     validation &= valid
     training = (~validation) & valid
+    if set(meta[training, 0]) & set(meta[validation, 0]):
+        raise AssertionError("episode leakage across FOV-risk train/validation split")
+    return training, validation
+
+
+def split_by_episode_ids(dataset: Mapping,
+                         validation_episode_ids: Sequence[int]
+                         ) -> tuple[np.ndarray, np.ndarray]:
+    """Episode-disjoint masks from an explicitly chosen validation set.
+
+    Used when the split is decided outside this run -- by the accumulating
+    datastore, which freezes an episode's side on its seed. Redrawing the
+    split every time the store grows would train the next run on an episode
+    the previous one held out, and the validation loss that selects the frozen
+    artifact would then be measured on data its own lineage had fitted.
+    """
+    _, _, valid, meta = validate_fov_risk_dataset(dataset)
+    chosen = {int(value) for value in validation_episode_ids}
+    episodes = {int(value) for value in np.unique(meta[valid, 0])}
+    unknown = chosen - episodes
+    if unknown:
+        raise ValueError(
+            f"validation episodes {sorted(unknown)} are not in this dataset")
+    if not chosen or chosen >= episodes:
+        raise ValueError(
+            f"the frozen split puts {len(chosen)} of {len(episodes)} episodes "
+            "in validation, which leaves one side empty. It is keyed on each "
+            "episode's seed and is deliberately not redrawn -- collect more "
+            "episodes, or change fov_risk_design.validation_fraction, rather "
+            "than letting this run reshuffle what an earlier one held out.")
+    validation = np.asarray(
+        [int(episode) in chosen for episode in meta[:, 0]], dtype=bool)
+    validation &= valid
+    training = (~validation) & valid
+    if not training.any() or not validation.any():
+        raise ValueError("FOV-risk split produced an empty supervised side")
     if set(meta[training, 0]) & set(meta[validation, 0]):
         raise AssertionError("episode leakage across FOV-risk train/validation split")
     return training, validation

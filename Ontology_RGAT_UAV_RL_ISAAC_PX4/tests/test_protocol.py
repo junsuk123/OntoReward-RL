@@ -25,7 +25,8 @@ from ontology_rgat_px4.ros2_gateway import (ContinuousPx4Clock,
                                             advance_pad_contact_latch,
                                             bounded_position_update,
                                             effective_px4_landed,
-                                            failsafe_detail)
+                                            failsafe_detail,
+                                            offboard_recovery_allowed)
 
 
 def test_failsafe_detail_classifies_only_benign_sitl_link_loss_as_recoverable():
@@ -71,6 +72,46 @@ def test_failsafe_detail_classifies_only_benign_sitl_link_loss_as_recoverable():
     detail = failsafe_detail(battery, target="sitl")
     assert "battery_warning_2" in detail["reasons"]
     assert detail["recoverable_infrastructure"] is False
+
+
+def test_offboard_is_re_requested_once_a_latched_link_failsafe_clears():
+    # VehicleStatus.failsafe stays latched through the offboard-loss reaction,
+    # so gating the mode request on it alone left the vehicle drifting under
+    # AUTO for the rest of the entry budget after a sub-second heartbeat gap.
+    assert offboard_recovery_allowed(False, None) is True
+
+    still_lost = failsafe_detail(type("Flags", (), {
+        "auto_mission_missing": True,
+        "offboard_control_signal_lost": True,
+        "manual_control_signal_lost": True,
+        "gcs_connection_lost": True,
+        "battery_warning": 0,
+    })(), target="sitl")
+    # PX4 rejects OFFBOARD while its own signal is lost, and six consecutive
+    # rejections abort the episode. Stay silent until the stream is back.
+    assert offboard_recovery_allowed(True, still_lost) is False
+
+    cause_cleared = failsafe_detail(type("Flags", (), {
+        "auto_mission_missing": True,
+        "manual_control_signal_lost": True,
+        "gcs_connection_lost": True,
+        "battery_warning": 0,
+    })(), target="sitl")
+    assert offboard_recovery_allowed(True, cause_cleared) is True
+
+    hard = failsafe_detail(type("Flags", (), {
+        "manual_control_signal_lost": True,
+        "fd_critical_failure": True,
+        "battery_warning": 0,
+    })(), target="sitl")
+    assert offboard_recovery_allowed(True, hard) is False
+
+    # A hardware target never auto-recovers OFFBOARD behind the operator.
+    assert offboard_recovery_allowed(True, failsafe_detail(type("Flags", (), {
+        "manual_control_signal_lost": True,
+        "gcs_connection_lost": True,
+        "battery_warning": 0,
+    })(), target="hardware")) is False
 
 
 def test_protocol_roundtrip():

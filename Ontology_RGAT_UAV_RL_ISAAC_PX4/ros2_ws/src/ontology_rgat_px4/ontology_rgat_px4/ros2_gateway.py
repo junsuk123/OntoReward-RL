@@ -150,6 +150,35 @@ def failsafe_detail(message: Any, *, target: str = "sitl") -> dict[str, Any]:
     }
 
 
+def offboard_recovery_allowed(failsafe_active: bool,
+                              detail: Any) -> bool:
+    """Decide whether to keep asking PX4 for OFFBOARD during a failsafe.
+
+    A momentarily starved heartbeat drops PX4 into its offboard-loss reaction,
+    and ``VehicleStatus.failsafe`` stays latched there until something commands
+    the vehicle back: PX4 does not return to OFFBOARD on its own. Gating the
+    mode request on that same latch made a sub-second transport blip cost the
+    whole entry budget -- the stream resumes, ``offboard_control_signal_lost``
+    clears, and nothing ever asks for OFFBOARD again, so the vehicle drifts
+    under AUTO until the entry gate gives up and rebuilds the shared simulator.
+
+    Recovery is offered only once the cause has cleared: a recoverable SITL
+    classification whose remaining inputs are the mission/RC/GCS flags PX4
+    publishes throughout autonomous SITL anyway. While the offboard signal is
+    still lost PX4 would reject the request, and six consecutive rejections
+    abort the episode, so that window stays silent -- as does any hard input.
+    """
+    if not failsafe_active:
+        return True
+    detail = detail if isinstance(detail, dict) else {}
+    if not bool(detail.get("recoverable_infrastructure", False)):
+        return False
+    reasons = detail.get("reasons", ())
+    if not isinstance(reasons, (list, tuple)):
+        return False
+    return "offboard_control_signal_lost" not in reasons
+
+
 def advance_pad_contact_latch(latched: bool, armed_clear: bool,
                               armed: bool, raw_contact: bool,
                               px4_landed: bool = False,
@@ -924,7 +953,8 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
 
             self.prestream += 1
             if (self.offboard_enabled and self.sample.armed
-                    and not self.px4_failsafe
+                    and offboard_recovery_allowed(
+                        self.px4_failsafe, self.px4_failsafe_detail)
                     and self.prestream >= cfg.offboard_prestream_count):
                 self.offboard_requested = self.sample.nav_state == self.offboard_nav_state
                 # PX4 only accepts the mode switch once it has seen a steady

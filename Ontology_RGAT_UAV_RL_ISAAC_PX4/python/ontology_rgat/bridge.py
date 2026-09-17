@@ -136,9 +136,16 @@ class PX4Bridge:
         # control budget would fail the reconnect here and spend one of the
         # worker's bounded recovery attempts on a simulator that is merely
         # still starting.
-        hello = self.transact("hello", {}, ("state",),
-                              timeout=self._setup_timeout())
-        self.assert_control_mapping(hello)
+        try:
+            hello = self.transact("hello", {}, ("state",),
+                                  timeout=self._setup_timeout())
+            self.assert_control_mapping(hello)
+        except BaseException:
+            # Release the local UDP port so a retry can bind it again, instead
+            # of leaving that to whenever the collector reaps this instance.
+            self._closed = True
+            self.socket.close()
+            raise
 
     # ------------------------------------------------------------- lifecycle
     def __enter__(self) -> "PX4Bridge":

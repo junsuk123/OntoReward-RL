@@ -53,9 +53,16 @@ class LiveShinEnvironment:
         self.last_step: LiveStep | None = None
 
     def _connect(self):
-        self.bridge = PX4Bridge(self.cfg)
         from .. import stack as stack_module
         owned = stack_module.current()
+        # Parallel workers share one Isaac/PX4 stack, so a peer may be halfway
+        # through rebuilding it. Saying hello into that window reaches a
+        # gateway that has been stopped and not started again, and the setup
+        # budget is sized for a boot already under way rather than for a full
+        # rebuild -- it expires on a simulator that was never going to answer.
+        if owned is not None and hasattr(owned, "wait_for_restart"):
+            owned.wait_for_restart()
+        self.bridge = PX4Bridge(self.cfg)
         self._stack_generation = int(getattr(owned, "generation", 0))
         self.control = getattr(self.cfg, "benchmark_control", {})
         self.adapter = ShinPX4Adapter(

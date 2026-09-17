@@ -824,6 +824,41 @@ def _can_replace_simulator() -> bool:
     return stack_module.can_replace_simulator()
 
 
+def open_live_env_resilient(env_factory, method: str, *, attempts: int = 3):
+    """Open the live environment, retrying a shared-stack interruption.
+
+    Parallel pipelines share one Isaac/PX4 stack, and a later pipeline starts
+    training while its peer is still flying -- possibly while that peer is
+    cycling the stack after a fault of its own. The new bridge then has no
+    gateway to say hello to, and letting that end the run discards a
+    checkpointed multi-arm experiment at the one moment where retrying is free:
+    no episode, reward or label exists yet.
+    """
+    from .. import stack as stack_module
+
+    attempts = max(1, int(attempts))
+    for attempt in range(1, attempts + 1):
+        owned = stack_module.current()
+        if owned is not None and hasattr(owned, "wait_for_restart"):
+            owned.wait_for_restart()
+        generation = int(getattr(owned, "generation", 0))
+        try:
+            return env_factory()
+        except BridgeError as exc:
+            if attempt >= attempts or owned is None:
+                raise
+            print(f"WARNING: [{method}] could not open the live environment "
+                  f"({exc}). Cycling the shared simulator and retrying "
+                  f"({attempt} of {attempts - 1}).")
+            # A peer may already have rebuilt the world while this worker was
+            # waiting on its hello; then there is nothing left to cycle.
+            if hasattr(owned, "restart_if_generation"):
+                owned.restart_if_generation(generation)
+            else:
+                owned.restart()
+    raise AssertionError("unreachable environment-recovery state")
+
+
 def collect_episode_resilient(env, model: PipelineActorCritic, method: str,
                               seed: int, **kwargs):
     """Retry one seed after a recoverable SITL infrastructure interruption.
@@ -1519,7 +1554,7 @@ def train_live(env_factory: Callable, model, method, seeds, output_dir,
                   f"{model._selected_checkpoint_episode}.")
         return history
 
-    with env_factory() as env:
+    with open_live_env_resilient(env_factory, method) as env:
         for episode, seed in enumerate(seed_list[completed:], start=completed + 1):
             perception_warmup = episode <= warmup_episodes
             ppo_episode = max(0, episode - warmup_episodes)

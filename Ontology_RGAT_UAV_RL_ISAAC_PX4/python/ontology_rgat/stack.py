@@ -384,6 +384,26 @@ class ExternalStack:
                       "simulator is restarted outside this run.")
             return True
 
+    def wait_for_restart(self, timeout: float | None = None) -> bool:
+        """Block while another worker is cycling the shared simulator.
+
+        ``restart``/``restart_if_generation`` hold the restart lock across the
+        whole stop-and-start, so acquiring it means the stack is not mid-cycle.
+        A bridge opened inside that window says hello to a gateway that has
+        been stopped and not started again; its setup budget is sized for a
+        boot that is already under way, not for a full rebuild, so it times out
+        on a simulator that was never going to answer. Returns whether the
+        stack settled within ``timeout``.
+        """
+        if timeout is None:
+            # One full rebuild -- every readiness budget ``start`` can spend --
+            # plus the teardown and the settle sleep ``restart`` adds.
+            timeout = sum(self.timeouts.values()) + 60.0
+        acquired = self._restart_lock.acquire(timeout=float(timeout))
+        if acquired:
+            self._restart_lock.release()
+        return acquired
+
     def shutdown(self) -> None:
         """Prevent recovery workers from relaunching while the pipeline exits."""
         self._shutdown_requested = True

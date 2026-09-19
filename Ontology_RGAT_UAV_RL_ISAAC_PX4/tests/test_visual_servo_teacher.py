@@ -40,11 +40,34 @@ def observation(centroid, *, scale=0.25, visible=1.0, loss=0.0):
         centroid_xy=tuple(float(v) for v in centroid), raw_scale=float(scale))
 
 
-def command(centroid, previous=None, *, integral=(0.0, 0.0), **kwargs):
-    action, carried = _visual_servo_teacher_action(
+def _when_the_servo_is_the_configured_teacher(test):
+    """Skip a servo-tuning invariant while a different teacher is selected.
+
+    The gains still have to be self-consistent when the servo is switched back
+    on, so these stay executable rather than being deleted with it.
+    """
+    import functools
+
+    @functools.wraps(test)
+    def wrapper(*args, **kwargs):
+        from config_loader import load_config
+        from run_three_pipeline import (
+            VISUAL_SERVO_TEACHER, behavior_cloning_settings)
+
+        settings = behavior_cloning_settings(load_config(
+            ROOT / "config/experiments/two_pipeline_comparison.yaml"))
+        if settings.get("teacher") != VISUAL_SERVO_TEACHER:
+            pytest.skip(f"teacher is {settings.get('teacher')}")
+        return test(*args, **kwargs)
+    return wrapper
+
+
+def command(centroid, previous=None, *, integral=(0.0, 0.0),
+            committed_already=False, **kwargs):
+    action, carried, _ = _visual_servo_teacher_action(
         observation(centroid, **kwargs), previous, LIMIT,
         setpoint=SETPOINT, dt=0.1, integral=np.asarray(integral, dtype=float),
-        noise_std=0.0)
+        committed_already=committed_already, noise_std=0.0)
     return action, carried
 
 
@@ -154,30 +177,28 @@ def test_a_committed_flare_does_not_climb_when_the_marker_fills_the_frame():
     assert action[2] <= 0.0
 
 
-def test_the_flare_cone_never_demands_more_than_the_touchdown_criterion():
-    """Why the cone widens once the marker fills the frame.
+def test_the_cone_widens_with_range_so_it_never_beats_the_landing_criterion():
+    """A cone fixed in angle keeps shrinking in metres all the way down.
 
-    A cone fixed in angle keeps shrinking in metres. At the flare the range is
-    a few tenths of a metre, so 0.30 of it is about 0.11 m -- tighter than the
-    0.35 m the landing criteria actually ask for. The descent then stalls
-    short on any disturbance. The first tuned flight is the evidence: every
-    landing gate satisfied except contact, and a 300-step timeout.
+    At 0.5 m of range 0.30 of it is 0.15 m, against a 0.35 m position gate --
+    the servo would refuse a landing the criteria would have accepted.
+    Widening with apparent scale, which goes as 1 / range, holds the metres it
+    implies roughly constant over the last stretch.
     """
-    offset = SETPOINT + np.array([0.0, 0.40 / 0.625])   # bearing 0.40
+    offset = SETPOINT + np.array([0.0, 0.30 / 0.625])   # bearing 0.30
 
-    approach, _ = command(offset, scale=0.20)
-    assert approach[2] == 0.0, "0.40 is outside the approach cone"
+    # Both readings sit in the same rate band, so the only thing that differs
+    # is how much of the cone the bearing uses up.
+    far, _ = command(offset, scale=0.13)
+    near, _ = command(offset, scale=0.18)
+    assert -near[2] > -far[2], "the same bearing must be more acceptable closer in"
 
-    flare, _ = command(offset, scale=0.95)
-    assert flare[2] < 0.0, "the same bearing is centimetres at flare range"
 
-
-def test_descent_waits_for_alignment_and_stops_at_the_limits():
+def test_descent_backs_off_beside_the_deck_and_stops_at_the_limits():
     aligned, _ = command(SETPOINT, scale=0.15)
-    assert aligned[2] < 0.0, "a centred distant target may descend"
-
     misaligned, _ = command(SETPOINT + np.array([0.5, 0.0]), scale=0.15)
-    assert misaligned[2] == 0.0, "do not descend beside the deck"
+    assert -aligned[2] > -misaligned[2] * 3.0, (
+        "a centred vehicle must come down far faster than one beside the deck")
 
     extreme, _ = command([1.0, 1.0], scale=0.01)
     assert np.all(np.abs(extreme) <= 0.90 + 1e-9)
@@ -212,8 +233,14 @@ def test_the_primary_experiment_actually_warms_both_arms_up():
         ROOT / "config/experiments/two_pipeline_comparison.yaml")
     settings = behavior_cloning_settings(config)
 
+    from run_three_pipeline import PRIVILEGED_VELOCITY_TEACHER
+
     assert settings.get("enabled") is True
-    assert settings["teacher"] == VISUAL_SERVO_TEACHER
+    # Either teacher is a valid choice -- the servo is the better kind and the
+    # PD is the one that lands today -- but it has to be one the runner knows,
+    # or _prepare_fast_demonstrations refuses the run.
+    assert settings["teacher"] in (
+        VISUAL_SERVO_TEACHER, PRIVILEGED_VELOCITY_TEACHER)
     # Both arms are cloned from one shared teacher, so the warm start cannot
     # favour either side of the comparison.
     assert settings["ppo_anchor"]["enabled"] is True
@@ -257,7 +284,7 @@ def test_tangent_angle_units_aim_better_than_raw_frame_fractions():
         toward_pad = -np.asarray(position[:2], dtype=float)
 
         def bearing(tan_half):
-            action, _ = _visual_servo_teacher_action(
+            action, _, _ = _visual_servo_teacher_action(
                 observation(centroid), None, LIMIT, setpoint=SETPOINT, dt=0.1,
                 integral=np.zeros(2), tan_half=tan_half, noise_std=0.0)
             commanded = action[:2] * LIMIT[:2]
@@ -272,29 +299,46 @@ def test_tangent_angle_units_aim_better_than_raw_frame_fractions():
     assert any(improved), "the correction must actually change the aim"
 
 
-@pytest.mark.parametrize("lateral_m, altitude_m, apparent, expected", [
-    (1.65, 5.0, 0.05, 0.0),      # the tracking error the first flights held
-    (0.76, 5.0, 0.05, -0.50),    # ... and the one they held on the good seeds
-    (0.40, 2.0, 0.20, -0.50),
-    (0.20, 1.0, 0.60, -0.30),
-    (0.08, 0.5, 0.95, -0.12),
+@pytest.mark.parametrize("lateral_m, altitude_m, apparent, floor, ceiling", [
+    (2.00, 5.0, 0.05, 0.00, 0.10),   # too far out to commit to coming down
+    (0.76, 5.0, 0.05, 0.15, 0.35),   # the error the first tuned flight held
+    (0.30, 5.0, 0.05, 0.40, 0.51),   # centred: the full approach rate
+    (0.30, 2.0, 0.12, 0.10, 0.25),   # mid band, still working the error off
+    (0.10, 1.0, 0.25, 0.20, 0.30),   # committed: the flare rate, unconditional
 ])
-def test_the_descent_funnel_tightens_on_the_way_down(
-        lateral_m, altitude_m, apparent, expected):
-    """The regression that cost the first three teacher flights.
+def test_the_descent_rate_follows_how_much_cone_is_left(
+        lateral_m, altitude_m, apparent, floor, ceiling):
+    """Descending while only roughly aligned destabilises the servo.
 
-    Every one of them timed out at the 300-step horizon with the pad in view
-    the whole way -- 0.0% and 1.7% geometric FOV loss -- and a vertical speed
-    of 0.01 m/s. The servo was tracking correctly and simply never opened its
-    own descent gate, because the alignment cone was narrower than the bearing
-    the horizontal loop actually holds at 5 m.
+    The bearing to a pad that is not directly below grows as the range
+    shrinks, so a flat descent rate drives the deck out of frame and hands the
+    vehicle to the climb branch. Flown at a flat 0.50 m/s that is exactly what
+    happened: seed 90000 ended 8.6 m out and climbing, against 0.32 m and
+    still descending from the same entry at 0.35 m/s.
 
-    The cone is fixed in angle, so the distance it admits shrinks with range
-    on its own: about 1.3 m at 5 m, 0.2 m at 1 m, without measuring altitude.
+    So the rate is proportional to the cone left, not switched on at its edge.
     """
     centroid = pad_image_position([0.0, lateral_m, altitude_m], LEVEL)
     action, _ = command(centroid, scale=apparent)
-    assert action[2] * LIMIT[2] == pytest.approx(expected, abs=1e-6)
+    rate = -action[2] * LIMIT[2]
+    assert floor <= rate <= ceiling, f"{rate:.3f} m/s outside [{floor}, {ceiling}]"
+
+
+def test_a_committed_flare_keeps_coming_down_whatever_the_bearing_says():
+    """The last half metre is not servoable, and must not be waited out.
+
+    The camera is mounted 0.16 m below the airframe, so below about half a
+    metre the bearing to anything not exactly underneath blows up and the
+    marker leaves the frame on its own. Flown open loop against the pre-commit
+    rule the descent asymptoted to a halt at 0.37 m with the pad still in
+    view. Past the commit the flare rate has to run regardless.
+    """
+    badly_off = SETPOINT + np.array([0.0, 0.95])   # near the frame edge
+
+    hesitating, _ = command(badly_off, scale=0.15)
+    committed, _ = command(badly_off, scale=0.95)
+    assert -committed[2] * LIMIT[2] > -hesitating[2] * LIMIT[2]
+    assert -committed[2] * LIMIT[2] == pytest.approx(0.25, abs=1e-6)
 
 
 def test_the_descent_schedule_fits_inside_the_episode_horizon():
@@ -309,7 +353,7 @@ def test_the_descent_schedule_fits_inside_the_episode_horizon():
 
     limit = float(default_config().criteria["vz"])
     rates = {}
-    for label, apparent in (("approach", 0.05), ("descent", 0.60),
+    for label, apparent in (("approach", 0.05), ("descent", 0.30),
                             ("flare", 0.95)):
         action, _ = command(SETPOINT, scale=apparent)
         rates[label] = -action[2] * LIMIT[2]
@@ -317,9 +361,88 @@ def test_the_descent_schedule_fits_inside_the_episode_horizon():
 
     # 8 m is the worst Table-I draw. Apparent scale goes as 1 / range, and the
     # measured stack reads 0.05 at 5 m, so the schedule changes at about 1 m
-    # and again at about 0.35 m.
+    # and again at about 0.63 m.
     seconds = ((8.0 - 1.0) / rates["approach"]
-               + (1.0 - 0.35) / rates["descent"]
-               + 0.35 / rates["flare"])
+               + (1.0 - 0.63) / rates["descent"]
+               + 0.63 / rates["flare"])
     assert seconds < 20.0, (
         f"the descent alone needs {seconds:.0f} s of a 30 s episode")
+
+
+@_when_the_servo_is_the_configured_teacher
+def test_the_servo_outruns_the_deck_it_has_to_hold_station_on():
+    """Saturation, which no amount of gain tuning can work around.
+
+    The horizontal clamp has to cover the deck's own top speed *and* leave
+    authority to close a position error. Set equal to it, the whole budget
+    goes on matching the deck and the lateral error stops converging: four
+    consecutive tunings measured 0.32-0.37 m of standing error against a
+    0.35 m position criterion, from completely different vertical schedules.
+    """
+    from config_loader import load_config
+    from run_three_pipeline import behavior_cloning_settings
+
+    from ontology_rgat.initialization import curriculum_motion_scale
+
+    system = load_config(ROOT / "config/shin2026-minimal-system.yaml")
+    settings = behavior_cloning_settings(
+        load_config(ROOT / "config/experiments/two_pipeline_comparison.yaml"))
+
+    # The deck the demonstration pass actually flies against, not the one the
+    # profile tops out at: the teacher stage sets its own curriculum.
+    deck_top_speed = (float(system["pad"]["speed_range_m_s"][1])
+                      * curriculum_motion_scale(
+                          float(settings["curriculum"]), 0.35))
+    clamp = float(settings["horizontal_speed_limit_m_s"])
+
+    spare = clamp - deck_top_speed
+    assert spare >= 0.20, (
+        f"{clamp} m/s leaves only {spare:.2f} m/s to close a position error "
+        f"against a {deck_top_speed:.2f} m/s deck, so it will not converge")
+    assert float(settings["integral_limit"]) >= deck_top_speed, (
+        "the integrator must be able to hold the whole chase velocity")
+
+    # And still inside the action envelope the episode is flown with.
+    assert clamp <= 2.0
+
+
+def test_the_commit_latches_because_apparent_scale_dies_with_the_marker():
+    """Apparent scale is measured from the keypoints, so it cannot survive them.
+
+    Tested fresh every step, the flare un-commits at exactly the moment it is
+    needed: losing the deck drops apparent scale to zero, the commit test
+    fails, and the climb branch fires. The sampled trajectory did precisely
+    that -- down to 0.385 m, deck out of frame, back up to 0.498 m and away.
+    """
+    blind = dict(visible=0.0, loss=1.0, scale=0.0)
+
+    unlatched, _ = command(SETPOINT, **blind)
+    assert unlatched[2] > 0.0, "a blind vehicle that never committed climbs"
+
+    latched, _ = command(SETPOINT, committed_already=True, **blind)
+    assert latched[2] < 0.0, "a committed flare keeps coming down blind"
+
+
+@_when_the_servo_is_the_configured_teacher
+def test_the_integrator_can_actually_hold_the_deck_velocity():
+    """gain x limit is the whole chase velocity the integrator can command.
+
+    Set below the deck's own speed it can never cancel the motion, and the
+    proportional term has to hold a standing error to make up the difference
+    -- which is the type-0 behaviour the integral exists to remove.
+    """
+    from config_loader import load_config
+    from ontology_rgat.initialization import curriculum_motion_scale
+    from run_three_pipeline import behavior_cloning_settings
+
+    system = load_config(ROOT / "config/shin2026-minimal-system.yaml")
+    settings = behavior_cloning_settings(
+        load_config(ROOT / "config/experiments/two_pipeline_comparison.yaml"))
+
+    deck = (float(system["pad"]["speed_range_m_s"][1])
+            * curriculum_motion_scale(float(settings["curriculum"]), 0.35))
+    authority = (float(settings["integral_gain"])
+                 * float(settings["integral_limit"]))
+    assert authority > deck, (
+        f"the integrator tops out at {authority:.2f} m/s against a "
+        f"{deck:.2f} m/s deck")

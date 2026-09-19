@@ -426,14 +426,14 @@ PRIVILEGED_VELOCITY_TEACHER = "privileged_relative_state_velocity_pd_v4"
 
 def _visual_servo_teacher_action(
         semantic, previous, velocity_limit, *, setpoint, dt, integral,
-        tan_half=(1.0, .625),
-        position_gain=.55, integral_gain=.45, damping_gain=.12,
-        integral_limit=.60, horizontal_speed_limit=.60,
+        tan_half=(1.0, .625), committed_already=False,
+        position_gain=.55, integral_gain=.20, damping_gain=.35,
+        integral_limit=3.0, horizontal_speed_limit=.60,
         reference_scale=.06, range_gain_bounds=(.35, 2.2),
-        alignment_tolerance=.30, flare_alignment_tolerance=.55,
-        rate_tolerance=.60, flare_scale=.70, approach_scale=.25,
-        approach_descent=.50, descent_rate=.30, flare_descent=.12,
-        climb_rate=.22, noise_std=.01, rng=None):
+        alignment_tolerance=.30, cone_widening=1.2,
+        rate_tolerance=.60, flare_scale=.20, approach_scale=.12,
+        approach_descent=.50, descent_rate=.30, flare_descent=.25,
+        descent_floor=.12, climb_rate=.22, noise_std=.01, rng=None):
     """Return a velocity label computed from the image plane alone.
 
     Unlike ``_privileged_velocity_teacher_action`` this reads nothing the
@@ -459,6 +459,13 @@ def _visual_servo_teacher_action(
       integrator's output rather than a standing position error. A pure
       proportional image servo has to *lag* to generate any chase velocity at
       all, which is the escape the privileged teacher was written to avoid.
+
+      Both clamps therefore have to clear the deck's own top speed with room
+      to spare, or the loop is saturated before it can correct anything: at a
+      0.60 m/s limit against a deck configured for 0.60 m/s the whole budget
+      goes on matching it, and the lateral error simply stops converging.
+      Four separate tunings all stalled at 0.32-0.37 m for exactly that
+      reason before the limits were opened up.
 
     * Image error is an angle; metres of it depend on range. Apparent scale is
       the only range signal available without estimating relative state, and
@@ -491,7 +498,8 @@ def _visual_servo_teacher_action(
     alignment pass its time. The touchdown criteria admit 0.55 m/s, which is
     what bounds the rates rather than caution: the first tuned flight arrived
     correctly positioned, slow, and level, and timed out having never touched
-    the deck. The
+    the deck. The rates below are ceilings reached only when the vehicle is
+    centred -- see ``margin`` for why a flat rate destabilises the servo. The
     marker legitimately fills and then leaves a downward camera at the end of a
     correct flare, so loss of visibility commands a climb only while the
     target still looks small; past ``flare_scale`` the vehicle is committed.
@@ -563,7 +571,17 @@ def _visual_servo_teacher_action(
     # threshold an order of magnitude out: a target 5 m away reads raw_scale
     # 0.04 and apparent_target_scale 0.05.
     apparent = float(semantic.apparent_target_scale)
-    committed = apparent >= float(flare_scale)
+    # Only the commit decision: past this the marker is expected to fill and
+    # leave the frame, so losing it stops commanding a climb.
+    #
+    # It has to latch. Apparent scale is measured *from the keypoints*, so the
+    # moment the marker leaves the frame it collapses to zero -- and that is
+    # precisely the moment the flare depends on it. Tested fresh each step the
+    # vehicle un-commits exactly when it should be committed: the sampled
+    # trajectory came down to 0.385 m, lost the deck, read apparent 0 and
+    # climbed back to 0.498 m and away. Once committed, this episode stays
+    # committed.
+    committed = bool(committed_already) or apparent >= float(flare_scale)
     # A cone fixed in angle keeps shrinking in metres all the way down, and
     # near the deck it ends up demanding better than the touchdown criterion
     # itself: 0.30 of a 0.36 m range is 0.11 m against a 0.35 m position gate.
@@ -571,24 +589,65 @@ def _visual_servo_teacher_action(
     # which is how the first tuned flight met every landing criterion except
     # contact and still timed out. Past the flare the cone widens so it never
     # asks for more than the success test does.
-    cone = float(flare_alignment_tolerance if committed else alignment_tolerance)
+    # A cone fixed in angle keeps shrinking in metres all the way down, and
+    # near the deck it ends up demanding better alignment than the touchdown
+    # criterion itself does -- 0.30 of a 0.5 m range is 0.15 m against a
+    # 0.35 m position gate -- so the descent stalls short of a landing that
+    # would have counted. Widening it with apparent scale, which goes as
+    # 1 / range, holds the tolerance it implies roughly constant in metres
+    # over the last stretch: about 1.3 m at 5 m, 0.39 m at 1 m and 0.20 m at
+    # the flare, all inside what the criteria ask for.
+    cone = float(alignment_tolerance) * (1.0 + float(cone_widening) * apparent)
+    # Descending is not free: the bearing to a pad that is not directly below
+    # grows as the range shrinks, so coming down while only roughly aligned
+    # drives the deck out of frame and hands the vehicle to the climb branch.
+    # Flown at a flat 0.50 m/s that is exactly what happened -- seed 90000
+    # ended 8.6 m out and climbing, against 0.32 m and descending at 0.35 m/s
+    # from the same entry.
+    #
+    # So the rate is proportional to how much of the cone is left rather than
+    # switched on at its edge. A centred vehicle gets the full schedule; one
+    # at a third of the cone gets about half of it; one at the edge coasts
+    # level while the horizontal loop catches up. The 1.2 makes the ramp reach
+    # full rate slightly inside the cone instead of only at dead centre.
+    margin = float(np.clip(1.2 * (1.0 - alignment / max(cone, 1e-6)), 0.0, 1.0))
+    if trustworthy:
+        # Without a floor the last stretch is an asymptote. Below about half a
+        # metre the camera -- mounted 0.16 m under the airframe -- is close
+        # enough to the deck that the bearing grows faster than the cone
+        # widens, so the ramp above tends to zero while the vehicle is still
+        # above the pad and simply hangs there. Flown open loop that settled
+        # at 0.37 m and stopped. A floor makes it creep instead of stall, at a
+        # rate small enough not to be the destabilising descent above.
+        margin = max(margin, float(descent_floor))
+    if float(np.linalg.norm(plane_rate)) > float(rate_tolerance):
+        margin = 0.0
+    if committed:
+        # In the flare the camera is a couple of handspans above the deck --
+        # the mount sits 0.16 m below the airframe -- so the bearing to
+        # anything not exactly underneath blows up and the marker leaves the
+        # frame on its own. Holding the vehicle there until it aligns to a
+        # cone that geometry no longer supports is the trap the privileged
+        # teacher documents as well. Past the commit the flare rate runs
+        # regardless: the pad fills the frame, so the position gate is already
+        # satisfied by a wide margin.
+        margin = 1.0
+    if apparent < float(approach_scale):
+        scheduled = float(approach_descent)
+    elif not committed:
+        scheduled = float(descent_rate)
+    else:
+        scheduled = float(flare_descent)
     if not trustworthy and not committed:
         target_vz = float(climb_rate)
-    elif alignment > cone or float(
-            np.linalg.norm(plane_rate)) > float(rate_tolerance):
-        target_vz = 0.0
-    elif apparent < float(approach_scale):
-        target_vz = -float(approach_descent)
-    elif not committed:
-        target_vz = -float(descent_rate)
     else:
-        target_vz = -float(flare_descent)
+        target_vz = -scheduled * margin
 
     action = np.r_[np.r_[target_xy, target_vz] / limit, 0.0]
     if float(noise_std) > 0.0:
         generator = rng if rng is not None else np.random.default_rng()
         action = action + generator.normal(0.0, float(noise_std), 4)
-    return np.clip(action, -.90, .90), carried
+    return np.clip(action, -.90, .90), carried, committed
 
 
 def _visual_servo_teacher(environment, *, settings):
@@ -606,38 +665,41 @@ def _visual_servo_teacher(environment, *, settings):
     tan_half_h = math.tan(math.radians(
         float(camera.get("horizontal_fov_deg", 90.0))) / 2.0)
     tan_half = (tan_half_h, tan_half_h * height / width)
-    state = {"integral": np.zeros(2), "previous": None}
+    state = {"integral": np.zeros(2), "previous": None, "committed": False}
 
     def transform(step, policy_action, semantic, rng):
         if int(step) == 0:
             state["integral"] = np.zeros(2)
             state["previous"] = None
+            state["committed"] = False
         controller = environment.adapter.controller
-        action, integral = _visual_servo_teacher_action(
+        action, integral, committed = _visual_servo_teacher_action(
             semantic, state["previous"],
             controller.max_velocity * controller.action_scale,
             setpoint=setpoint, dt=float(environment.cfg.sim.dt),
             integral=state["integral"], tan_half=tan_half,
+            committed_already=state["committed"],
             position_gain=float(settings.get("position_gain", .55)),
-            integral_gain=float(settings.get("integral_gain", .45)),
-            damping_gain=float(settings.get("damping_gain", .12)),
-            integral_limit=float(settings.get("integral_limit", .60)),
+            integral_gain=float(settings.get("integral_gain", .20)),
+            damping_gain=float(settings.get("damping_gain", .35)),
+            integral_limit=float(settings.get("integral_limit", 3.0)),
             horizontal_speed_limit=float(settings.get(
                 "horizontal_speed_limit_m_s", .60)),
             reference_scale=float(settings.get("reference_scale", .06)),
             alignment_tolerance=float(settings.get("alignment_tolerance", .30)),
-            flare_alignment_tolerance=float(settings.get(
-                "flare_alignment_tolerance", .55)),
+            cone_widening=float(settings.get("cone_widening", 1.2)),
             rate_tolerance=float(settings.get("rate_tolerance", .60)),
             approach_descent=float(settings.get("approach_descent_m_s", .50)),
             descent_rate=float(settings.get("descent_rate_m_s", .30)),
-            flare_descent=float(settings.get("flare_descent_m_s", .12)),
-            flare_scale=float(settings.get("flare_scale", .70)),
-            approach_scale=float(settings.get("approach_scale", .25)),
+            flare_descent=float(settings.get("flare_descent_m_s", .25)),
+            flare_scale=float(settings.get("flare_scale", .20)),
+            descent_floor=float(settings.get("descent_floor", .12)),
+            approach_scale=float(settings.get("approach_scale", .12)),
             noise_std=float(settings.get("noise_std", .01)),
             rng=rng)
         state["integral"] = integral
         state["previous"] = semantic
+        state["committed"] = committed
         return action
     return transform
 

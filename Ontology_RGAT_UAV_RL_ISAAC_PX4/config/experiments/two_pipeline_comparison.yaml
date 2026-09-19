@@ -82,30 +82,74 @@ behavior_cloning:
   # deployed actor has and nothing else.
   source_pipeline: no_se_fixed
 
-  # An image-plane servo, not the privileged relative-state PD. It reads the
-  # frozen keypoint encoder's centroid and apparent scale -- exactly what the
-  # student sees -- so the mapping being cloned is one the student can
-  # reproduce without the simulator. See _visual_servo_teacher_action for why
-  # a naive image servo does not work here and what the nadir setpoint,
-  # integral term and scale-scheduled gain are each for.
-  teacher: image_based_visual_servo_v1
+  # The proven teacher, restored 2026-09-19 to unblock the pipeline.
+  #
+  # image_based_visual_servo_v1 is the better *kind* of teacher -- it reads
+  # only the frozen encoder's centroid and apparent scale, so the mapping
+  # being cloned is one the student can reproduce without the simulator -- and
+  # it is still implemented, tested and selectable. It has not yet been tuned
+  # to land: 16 flights over seven tunings, 0 successes, while this teacher
+  # has 4/4, 4/4, 4/4, 3/3 and 4/8 on recorded runs. The demonstrations are
+  # training-only either way, and nothing from them reaches the deployed actor
+  # beyond the image embedding and proprioception.
+  #
+  # To switch back: set the teacher below and restore position_gain to 0.55.
+  teacher: privileged_relative_state_velocity_pd_v4
   successful_episodes: 6
   max_attempts: 14
-  curriculum: 1.0
+  # The teacher stage is warm-start data collection, not the experiment, so it
+  # may fly an easier deck than PPO will: the demonstrations only have to be
+  # successful landings for the policy to start from.
+  #
+  # This is what buys the servo its closing authority. pad.speed_range_m_s
+  # tops out at 0.60 m/s and the horizontal clamp below is 0.60 m/s, so at
+  # curriculum 1.0 the entire speed budget goes on matching the deck and the
+  # lateral error simply stops converging -- five consecutive tunings measured
+  # 0.32-0.39 m of standing error from completely different vertical
+  # schedules. 0.40 scales the deck to 0.366 m/s and leaves 0.234 m/s to close
+  # with, without raising a loop gain that has already been shown not to take
+  # it. The entry draw is correspondingly gentler, which is also what a
+  # demonstration pass wants.
+  curriculum: 0.40
 
   # Servo gains. The proportional path is multiplied by
   # reference_scale / raw_scale, so these are the gains at the apparent size a
   # target has partway through the approach; the flare inherits smaller ones
   # and the far field larger, bounded either side.
-  position_gain: 0.55
-  integral_gain: 0.45
-  damping_gain: 0.12
-  integral_limit: 0.60
+  # CAREFUL: both teachers read position_gain and mean different things by it.
+  # 0.35 with velocity_gain 0.75 is the privileged PD's proven pair; the image
+  # servo wants 0.55 and ignores velocity_gain.
+  position_gain: 0.35
+  velocity_gain: 0.75
+
+  # ---- image_based_visual_servo_v1 only; ignored by the PD above ----
+  # The integrator is slowed, not weakened. Its authority is gain x limit and
+  # still has to clear the deck (below), but a fast integrator on a loop with
+  # almost no derivative term is what makes it hunt: the sampled lateral error
+  # cycled +-0.25 m at limit 0.60 and +-0.50 m at 1.30. Lowering the gain and
+  # raising the limit keeps the final authority and lengthens the time
+  # constant, which is where the phase margin comes from.
+  integral_gain: 0.20
+  # Raised with it. 0.12 against a 0.55 proportional and an integral term was
+  # not enough damping to stop the hunt.
+  damping_gain: 0.35
+  # integral_gain x integral_limit is the entire chase velocity the integrator
+  # can command. At 0.45 x 0.60 that was 0.27 m/s against a 0.366 m/s deck, so
+  # it could never cancel the motion and the proportional term had to hold a
+  # standing error to make up the rest -- the type-0 behaviour the integral is
+  # there to remove. 0.20 x 3.00 = 0.60 m/s clears it.
+  integral_limit: 3.00
   # Unsaturated RMS keypoint spread, which is what raw_scale reports. Measured
   # on the stack: a deck 5 m out reads about 0.04. The first tuning used 0.25
   # and pinned the range gain against its own ceiling for the whole approach,
   # so the scheduling did nothing until the flare.
   reference_scale: 0.06
+  # Held at the value the servo is measurably stable at. Opening it to 1.20 to
+  # buy closing authority did buy it and then lost the loop: seed 90000 ran to
+  # 3.94 m and climbed away, the same signature a flat 0.50 m/s descent
+  # produced. This loop has integral action and very little damping, so it
+  # does not tolerate more gain -- the authority has to come from the deck
+  # being slower, not from the servo being faster. See curriculum above.
   horizontal_speed_limit_m_s: 0.60
 
   # The descent gate, as a bearing: offset divided by range, so the distance
@@ -121,26 +165,48 @@ behavior_cloning:
   # one drained the pack doing it.
   alignment_tolerance: 0.30
   rate_tolerance: 0.60
-  # Past the flare the same cone would be tighter than the 0.35 m the
-  # touchdown criteria ask for, so it widens rather than stalling the descent
-  # centimetres short. Seed 90000 under the first tuning satisfied every
-  # landing gate except contact and still timed out at 300 steps.
-  flare_alignment_tolerance: 0.55
+  # A cone fixed in angle keeps shrinking in metres, and near the deck it ends
+  # up demanding better alignment than the 0.35 m the touchdown criteria ask
+  # for -- so the descent stalls short of a landing that would have counted.
+  # Widening it with apparent scale (which goes as 1 / range) holds the metres
+  # it implies roughly constant: ~1.3 m at 5 m, 0.39 m at 1 m, 0.2 m at flare.
+  cone_widening: 1.2
 
-  # Descent schedule, m/s. Bounded by the touchdown criterion (0.55 m/s), not
-  # by caution: Table I starts the vehicle 2-8 m up and an episode is 30
-  # simulated seconds, so the previous 0.35/0.14/0.04 could not reach the deck
-  # from the top of that range before the horizon expired.
+  # Descent schedule, m/s. These are ceilings reached only when the vehicle is
+  # centred: the commanded rate is proportional to how much of the cone is
+  # left. A flat rate is what broke the second tuning -- descending magnifies
+  # the bearing to a pad that is not directly below, so coming down at a flat
+  # 0.50 m/s drove the deck out of frame and left seed 90000 8.6 m out and
+  # climbing, against 0.32 m and still descending at 0.35 m/s from the same
+  # entry. The ceilings are bounded by the touchdown criterion (0.55 m/s)
+  # rather than by caution: Table I starts the vehicle 2-8 m up inside a 30 s
+  # episode, and 0.35/0.14/0.04 could not reach the deck from the top of that.
   approach_descent_m_s: 0.50
   descent_rate_m_s: 0.30
-  flare_descent_m_s: 0.12
+  flare_descent_m_s: 0.25
+  # Without a floor the last half metre is an asymptote: below it the camera
+  # (mounted 0.16 m down) is close enough that the bearing grows faster than
+  # the cone widens. Flown open loop the descent settled at 0.37 m and stopped.
+  descent_floor: 0.12
 
   # Saturated apparent scale, the same reading _landing_phase defines the
   # approach/descent/touchdown phases on. Past flare_scale the marker is
   # expected to fill and leave the frame, so visibility loss stops commanding
   # a climb rather than trapping the vehicle above the deck.
-  approach_scale: 0.25
-  flare_scale: 0.70
+  # Has to stay below flare_scale or the bands inverse: a vehicle that has
+  # just committed would take the *approach* rate, diving the last 1.2 m at
+  # 0.50 m/s. 0.12 is about 2 m, so the ladder is 0.50 above 2 m, 0.30 from
+  # 2 m to 1.2 m, and the flare rate once committed.
+  approach_scale: 0.12
+  # The commit point, and it has to come before the marker leaves the frame on
+  # its own -- otherwise it can never latch, because apparent scale is measured
+  # from the very keypoints that have gone. Flown at 0.40 (about 0.63 m of
+  # altitude) it never once engaged: the sampled trajectory lost the deck at
+  # 1.09 m and climbed away from 0.51 m to 1.49 m. 0.20 is about 1.2 m, above
+  # where the pad has been observed to leave the frame. Past this the flare
+  # rate runs regardless of bearing and visibility loss stops commanding a
+  # climb.
+  flare_scale: 0.20
   noise_std: 0.01
 
   epochs: 12

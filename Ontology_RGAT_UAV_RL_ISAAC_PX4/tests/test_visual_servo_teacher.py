@@ -154,6 +154,24 @@ def test_a_committed_flare_does_not_climb_when_the_marker_fills_the_frame():
     assert action[2] <= 0.0
 
 
+def test_the_flare_cone_never_demands_more_than_the_touchdown_criterion():
+    """Why the cone widens once the marker fills the frame.
+
+    A cone fixed in angle keeps shrinking in metres. At the flare the range is
+    a few tenths of a metre, so 0.30 of it is about 0.11 m -- tighter than the
+    0.35 m the landing criteria actually ask for. The descent then stalls
+    short on any disturbance. The first tuned flight is the evidence: every
+    landing gate satisfied except contact, and a 300-step timeout.
+    """
+    offset = SETPOINT + np.array([0.0, 0.40 / 0.625])   # bearing 0.40
+
+    approach, _ = command(offset, scale=0.20)
+    assert approach[2] == 0.0, "0.40 is outside the approach cone"
+
+    flare, _ = command(offset, scale=0.95)
+    assert flare[2] < 0.0, "the same bearing is centimetres at flare range"
+
+
 def test_descent_waits_for_alignment_and_stops_at_the_limits():
     aligned, _ = command(SETPOINT, scale=0.15)
     assert aligned[2] < 0.0, "a centred distant target may descend"
@@ -256,10 +274,10 @@ def test_tangent_angle_units_aim_better_than_raw_frame_fractions():
 
 @pytest.mark.parametrize("lateral_m, altitude_m, apparent, expected", [
     (1.65, 5.0, 0.05, 0.0),      # the tracking error the first flights held
-    (0.76, 5.0, 0.05, -0.35),    # ... and the one they held on the good seeds
-    (0.40, 2.0, 0.20, -0.35),
-    (0.20, 1.0, 0.60, -0.14),
-    (0.08, 0.5, 0.95, -0.04),
+    (0.76, 5.0, 0.05, -0.50),    # ... and the one they held on the good seeds
+    (0.40, 2.0, 0.20, -0.50),
+    (0.20, 1.0, 0.60, -0.30),
+    (0.08, 0.5, 0.95, -0.12),
 ])
 def test_the_descent_funnel_tightens_on_the_way_down(
         lateral_m, altitude_m, apparent, expected):
@@ -277,3 +295,31 @@ def test_the_descent_funnel_tightens_on_the_way_down(
     centroid = pad_image_position([0.0, lateral_m, altitude_m], LEVEL)
     action, _ = command(centroid, scale=apparent)
     assert action[2] * LIMIT[2] == pytest.approx(expected, abs=1e-6)
+
+
+def test_the_descent_schedule_fits_inside_the_episode_horizon():
+    """Arriving correctly after the horizon has expired is not a landing.
+
+    Table I starts the vehicle between 2 m and 8 m above the deck and an
+    episode is 30 simulated seconds. The schedule has to bring the worst case
+    down with enough margin left for the alignment pass, and every rate has to
+    stay inside the 0.55 m/s the touchdown criteria admit.
+    """
+    from ontology_rgat.config import default_config
+
+    limit = float(default_config().criteria["vz"])
+    rates = {}
+    for label, apparent in (("approach", 0.05), ("descent", 0.60),
+                            ("flare", 0.95)):
+        action, _ = command(SETPOINT, scale=apparent)
+        rates[label] = -action[2] * LIMIT[2]
+        assert 0.0 < rates[label] < limit, f"{label} rate is outside the criteria"
+
+    # 8 m is the worst Table-I draw. Apparent scale goes as 1 / range, and the
+    # measured stack reads 0.05 at 5 m, so the schedule changes at about 1 m
+    # and again at about 0.35 m.
+    seconds = ((8.0 - 1.0) / rates["approach"]
+               + (1.0 - 0.35) / rates["descent"]
+               + 0.35 / rates["flare"])
+    assert seconds < 20.0, (
+        f"the descent alone needs {seconds:.0f} s of a 30 s episode")

@@ -430,9 +430,10 @@ def _visual_servo_teacher_action(
         position_gain=.55, integral_gain=.45, damping_gain=.12,
         integral_limit=.60, horizontal_speed_limit=.60,
         reference_scale=.06, range_gain_bounds=(.35, 2.2),
-        alignment_tolerance=.30, rate_tolerance=.60,
-        flare_scale=.70, approach_scale=.25, climb_rate=.22,
-        noise_std=.01, rng=None):
+        alignment_tolerance=.30, flare_alignment_tolerance=.55,
+        rate_tolerance=.60, flare_scale=.70, approach_scale=.25,
+        approach_descent=.50, descent_rate=.30, flare_descent=.12,
+        climb_rate=.22, noise_std=.01, rng=None):
     """Return a velocity label computed from the image plane alone.
 
     Unlike ``_privileged_velocity_teacher_action`` this reads nothing the
@@ -482,7 +483,15 @@ def _visual_servo_teacher_action(
     to clear what the horizontal loop actually holds, or the vehicle hovers
     the horizon out: the first three flights of the 2026-09-19 run tracked to
     0.76 m at 5 m -- a bearing of 0.18 -- and a cone of that size left the
-    descent shut for all 300 steps. The
+    descent shut for all 300 steps.
+
+    The descent rates have to fit the horizon. An episode is 30 simulated
+    seconds and Table I starts the vehicle between 2 m and 8 m up, so the
+    schedule has to spend well under that on the way down and still leave the
+    alignment pass its time. The touchdown criteria admit 0.55 m/s, which is
+    what bounds the rates rather than caution: the first tuned flight arrived
+    correctly positioned, slow, and level, and timed out having never touched
+    the deck. The
     marker legitimately fills and then leaves a downward camera at the end of a
     correct flare, so loss of visibility commands a climb only while the
     target still looks small; past ``flare_scale`` the vehicle is committed.
@@ -555,17 +564,25 @@ def _visual_servo_teacher_action(
     # 0.04 and apparent_target_scale 0.05.
     apparent = float(semantic.apparent_target_scale)
     committed = apparent >= float(flare_scale)
+    # A cone fixed in angle keeps shrinking in metres all the way down, and
+    # near the deck it ends up demanding better than the touchdown criterion
+    # itself: 0.30 of a 0.36 m range is 0.11 m against a 0.35 m position gate.
+    # The descent then stalls centimetres short on any small disturbance,
+    # which is how the first tuned flight met every landing criterion except
+    # contact and still timed out. Past the flare the cone widens so it never
+    # asks for more than the success test does.
+    cone = float(flare_alignment_tolerance if committed else alignment_tolerance)
     if not trustworthy and not committed:
         target_vz = float(climb_rate)
-    elif alignment > float(alignment_tolerance) or float(
+    elif alignment > cone or float(
             np.linalg.norm(plane_rate)) > float(rate_tolerance):
         target_vz = 0.0
     elif apparent < float(approach_scale):
-        target_vz = -.35
+        target_vz = -float(approach_descent)
     elif not committed:
-        target_vz = -.14
+        target_vz = -float(descent_rate)
     else:
-        target_vz = -.04
+        target_vz = -float(flare_descent)
 
     action = np.r_[np.r_[target_xy, target_vz] / limit, 0.0]
     if float(noise_std) > 0.0:
@@ -609,7 +626,12 @@ def _visual_servo_teacher(environment, *, settings):
                 "horizontal_speed_limit_m_s", .60)),
             reference_scale=float(settings.get("reference_scale", .06)),
             alignment_tolerance=float(settings.get("alignment_tolerance", .30)),
+            flare_alignment_tolerance=float(settings.get(
+                "flare_alignment_tolerance", .55)),
             rate_tolerance=float(settings.get("rate_tolerance", .60)),
+            approach_descent=float(settings.get("approach_descent_m_s", .50)),
+            descent_rate=float(settings.get("descent_rate_m_s", .30)),
+            flare_descent=float(settings.get("flare_descent_m_s", .12)),
             flare_scale=float(settings.get("flare_scale", .70)),
             approach_scale=float(settings.get("approach_scale", .25)),
             noise_std=float(settings.get("noise_std", .01)),

@@ -121,6 +121,19 @@ behavior_cloning:
   # one drained the pack doing it.
   alignment_tolerance: 0.30
   rate_tolerance: 0.60
+  # Past the flare the same cone would be tighter than the 0.35 m the
+  # touchdown criteria ask for, so it widens rather than stalling the descent
+  # centimetres short. Seed 90000 under the first tuning satisfied every
+  # landing gate except contact and still timed out at 300 steps.
+  flare_alignment_tolerance: 0.55
+
+  # Descent schedule, m/s. Bounded by the touchdown criterion (0.55 m/s), not
+  # by caution: Table I starts the vehicle 2-8 m up and an episode is 30
+  # simulated seconds, so the previous 0.35/0.14/0.04 could not reach the deck
+  # from the top of that range before the horizon expired.
+  approach_descent_m_s: 0.50
+  descent_rate_m_s: 0.30
+  flare_descent_m_s: 0.12
 
   # Saturated apparent scale, the same reading _landing_phase defines the
   # approach/descent/touchdown phases on. Past flare_scale the marker is

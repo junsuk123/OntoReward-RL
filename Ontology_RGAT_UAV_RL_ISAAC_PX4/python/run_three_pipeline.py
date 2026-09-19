@@ -31,6 +31,7 @@ from ontology_rgat.benchmarks.experiment import (
 from ontology_rgat.benchmarks.live_env import LiveShinEnvironment
 from ontology_rgat.bridge import BridgeError
 from ontology_rgat.cli import ensure_fastdds
+from ontology_rgat.initialization import nadir_image_setpoint
 from ontology_rgat.evaluation import (write_adaptive_reward_figures,
                                       write_presentation_results,
                                       write_three_pipeline_outputs,
@@ -418,6 +419,173 @@ def _privileged_velocity_teacher(environment, *, settings):
     return transform
 
 
+VISUAL_SERVO_TEACHER = "image_based_visual_servo_v1"
+PRIVILEGED_VELOCITY_TEACHER = "privileged_relative_state_velocity_pd_v4"
+
+
+def _visual_servo_teacher_action(
+        semantic, previous, velocity_limit, *, setpoint, dt, integral,
+        position_gain=.55, integral_gain=.45, damping_gain=.12,
+        integral_limit=.60, horizontal_speed_limit=.60,
+        reference_scale=.25, range_gain_bounds=(.35, 2.2),
+        alignment_tolerance=.10, rate_tolerance=.45,
+        flare_scale=.70, approach_scale=.30, climb_rate=.22,
+        noise_std=.01, rng=None):
+    """Return a velocity label computed from the image plane alone.
+
+    Unlike ``_privileged_velocity_teacher_action`` this reads nothing the
+    student cannot: the confidence-weighted keypoint centroid, its apparent
+    RMS scale, and the visibility scalars -- all of which come out of the same
+    frozen encoder the actor sees. There is no relative position, no relative
+    velocity and no deck twist anywhere in it, so a policy cloned from these
+    labels is being taught a mapping it can actually reproduce in deployment.
+
+    Three things make an image servo work here rather than the naive version,
+    which "commands zero at image centre, lets a moving UGV escape, and
+    repeatedly crosses the target":
+
+    * The setpoint is the nadir projection, not the image centre. A 60-degree
+      camera sees the pad centred while the vehicle hovers a height-dependent
+      distance *behind* the deck, so centring is a station-keeping point, not
+      a landing point. ``nadir_image_setpoint`` is the constant the vehicle
+      sees when it is directly above -- constant because a projected direction
+      does not move with altitude.
+
+    * The loop is type 1. Commanded velocity carries an integral of the image
+      error, so the steady state that cancels a constantly-driving deck is the
+      integrator's output rather than a standing position error. A pure
+      proportional image servo has to *lag* to generate any chase velocity at
+      all, which is the escape the privileged teacher was written to avoid.
+
+    * Image error is an angle; metres of it depend on range. Apparent scale is
+      the only range signal available without estimating relative state, and
+      it is monotone in inverse range, so the proportional path is scaled by
+      ``reference_scale / raw_scale``: wide corrections while the deck is far
+      and small ones in the flare, from one gain.
+
+    Descent is gated on what the image says rather than on altitude. The
+    marker legitimately fills and then leaves a downward camera at the end of a
+    correct flare, so loss of visibility commands a climb only while the
+    target still looks small; past ``flare_scale`` the vehicle is committed.
+
+    Returns ``(action, integral)``; the caller carries ``integral`` between
+    steps.
+    """
+    limit = np.asarray(velocity_limit, dtype=np.float64).reshape(-1)
+    target = np.asarray(setpoint, dtype=np.float64).reshape(-1)
+    carried = np.asarray(integral, dtype=np.float64).reshape(-1)
+    if limit.shape != (3,) or target.shape != (2,) or carried.shape != (2,):
+        raise ValueError("visual servo teacher expects 3-D limits and 2-D image state")
+    if (not np.isfinite(limit).all() or np.any(limit <= 0.0)
+            or not np.isfinite(target).all() or not np.isfinite(carried).all()):
+        raise ValueError("visual servo teacher inputs must be finite with positive limits")
+    step = float(dt)
+    speed_limit = float(horizontal_speed_limit)
+    if not np.isfinite(step) or step <= 0.0:
+        raise ValueError("visual servo teacher needs a positive control period")
+    if not np.isfinite(speed_limit) or speed_limit <= 0.0:
+        raise ValueError("visual servo teacher speed limit must be positive")
+
+    centroid = np.asarray(semantic.centroid_xy, dtype=np.float64).reshape(-1)
+    error = centroid - target
+    # Image column moves with the pad's fore/aft position and image row with
+    # its lateral position, and +row means the pad is to the vehicle's right,
+    # which is -y in the body FLU frame the action is expressed in. Both signs
+    # are pinned by ``pad_image_position`` rather than asserted here.
+    plane_error = np.array([error[0], -error[1]])
+    if previous is None:
+        plane_rate = np.zeros(2)
+    else:
+        previous_centroid = np.asarray(
+            previous.centroid_xy, dtype=np.float64).reshape(-1)
+        rate = (centroid - previous_centroid) / step
+        plane_rate = np.array([rate[0], -rate[1]])
+
+    scale = max(float(semantic.raw_scale), 1e-3)
+    low, high = (float(bound) for bound in range_gain_bounds)
+    if not 0.0 < low <= high:
+        raise ValueError("visual servo range gain bounds must be positive and ordered")
+    range_gain = float(np.clip(float(reference_scale) / scale, low, high))
+    metric_error = range_gain * plane_error
+    metric_rate = range_gain * plane_rate
+
+    # A centroid nobody can see is not evidence about where the deck is, and
+    # integrating it winds the chase velocity up while the vehicle is blind.
+    trustworthy = (float(semantic.visible_keypoint_fraction) >= 0.5
+                   and float(semantic.visual_loss_risk) <= 0.0)
+    if trustworthy:
+        carried = np.clip(carried + metric_error * step,
+                          -float(integral_limit), float(integral_limit))
+
+    target_xy = (float(position_gain) * metric_error
+                 + float(integral_gain) * carried
+                 - float(damping_gain) * metric_rate)
+    speed = float(np.linalg.norm(target_xy))
+    if speed > speed_limit:
+        target_xy = target_xy * (speed_limit / speed)
+
+    alignment = float(np.linalg.norm(plane_error))
+    committed = scale >= float(flare_scale)
+    if not trustworthy and not committed:
+        target_vz = float(climb_rate)
+    elif alignment > float(alignment_tolerance) or float(
+            np.linalg.norm(plane_rate)) > float(rate_tolerance):
+        target_vz = 0.0
+    elif scale < float(approach_scale):
+        target_vz = -.35
+    elif not committed:
+        target_vz = -.14
+    else:
+        target_vz = -.04
+
+    action = np.r_[np.r_[target_xy, target_vz] / limit, 0.0]
+    if float(noise_std) > 0.0:
+        generator = rng if rng is not None else np.random.default_rng()
+        action = action + generator.normal(0.0, float(noise_std), 4)
+    return np.clip(action, -.90, .90), carried
+
+
+def _visual_servo_teacher(environment, *, settings):
+    """Bind the estimator-free image servo to this environment's camera.
+
+    The integral and the previous centroid are per-episode state, so the
+    binding resets them whenever the environment hands back a step index of
+    zero rather than carrying one episode's chase into the next.
+    """
+    camera = dict(getattr(environment.cfg.external, "landing_camera", None) or {})
+    setpoint = nadir_image_setpoint(
+        float(camera.get("horizontal_fov_deg", 90.0)),
+        float(camera.get("pitch_down_deg", 60.0)))
+    state = {"integral": np.zeros(2), "previous": None}
+
+    def transform(step, policy_action, semantic, rng):
+        if int(step) == 0:
+            state["integral"] = np.zeros(2)
+            state["previous"] = None
+        controller = environment.adapter.controller
+        action, integral = _visual_servo_teacher_action(
+            semantic, state["previous"],
+            controller.max_velocity * controller.action_scale,
+            setpoint=setpoint, dt=float(environment.cfg.sim.dt),
+            integral=state["integral"],
+            position_gain=float(settings.get("position_gain", .55)),
+            integral_gain=float(settings.get("integral_gain", .45)),
+            damping_gain=float(settings.get("damping_gain", .12)),
+            integral_limit=float(settings.get("integral_limit", .60)),
+            horizontal_speed_limit=float(settings.get(
+                "horizontal_speed_limit_m_s", .60)),
+            reference_scale=float(settings.get("reference_scale", .25)),
+            alignment_tolerance=float(settings.get("alignment_tolerance", .10)),
+            flare_scale=float(settings.get("flare_scale", .70)),
+            approach_scale=float(settings.get("approach_scale", .30)),
+            noise_std=float(settings.get("noise_std", .01)),
+            rng=rng)
+        state["integral"] = integral
+        state["previous"] = semantic
+        return action
+    return transform
+
+
 def _adverse_landing_teacher(environment, *, settings):
     """Generate real near-miss/unsafe-contact examples for reward design only."""
     stable = _privileged_velocity_teacher(environment, settings=settings)
@@ -718,12 +886,27 @@ def _archive_rejected_adaptive_artifact(path: Path, design_id: str = "unknown") 
         os.replace(source, destination)
 
 
+def behavior_cloning_settings(config):
+    """The behavior-cloning block, wherever the profile declares it.
+
+    It began life under ``seminar_fast`` because only the deadline profile
+    warmed a policy up. The primary experiment needs it for the same reason
+    the seminar one did -- an unclonded policy spends its first episodes
+    diverging, and on this stack a diverging episode ends tens of metres from
+    a deck that is still driving -- so a top-level ``behavior_cloning`` block
+    is read first and the old location kept working underneath it.
+    """
+    settings = dict(config.get("behavior_cloning") or {})
+    if settings:
+        return settings
+    return dict((config.get("seminar_fast") or {}).get("behavior_cloning") or {})
+
+
 def _prepare_fast_demonstrations(*, cfg, camera, config, config_hash,
                                  keypoint_pretraining, results_dir, device,
                                  model_seed, monitor):
     """Collect successful teacher flights once and store compact actor inputs."""
-    fast = dict(config.get("seminar_fast") or {})
-    settings = dict(fast.get("behavior_cloning") or {})
+    settings = behavior_cloning_settings(config)
     if not bool(settings.get("enabled", False)):
         return None
     required = max(1, int(settings.get("successful_episodes", 6)))
@@ -734,10 +917,9 @@ def _prepare_fast_demonstrations(*, cfg, camera, config, config_hash,
     source_pipeline = str(settings.get("source_pipeline", "no_se_fixed"))
     if get_pipeline(source_pipeline).state_estimation_enabled:
         raise ValueError("the behavior-teacher encoder source must be estimator-free")
-    teacher_id = str(settings.get(
-        "teacher", "privileged_relative_state_velocity_pd_v4"))
-    if teacher_id != "privileged_relative_state_velocity_pd_v4":
-        raise ValueError(f"unknown seminar-fast behavior teacher: {teacher_id}")
+    teacher_id = str(settings.get("teacher", PRIVILEGED_VELOCITY_TEACHER))
+    if teacher_id not in (PRIVILEGED_VELOCITY_TEACHER, VISUAL_SERVO_TEACHER):
+        raise ValueError(f"unknown behavior teacher: {teacher_id}")
     artifact_path = (Path(results_dir) / "models/shared"
                      / f"teacher_demonstrations_{config_hash[:12]}.pt")
     attempts_path = (Path(results_dir) / "training"
@@ -798,8 +980,10 @@ def _prepare_fast_demonstrations(*, cfg, camera, config, config_hash,
         cfg.external.episode_recoveries = 0
         with LiveShinEnvironment(
                 cfg, camera, horizon_steps=int(cfg.sim.max_steps)) as environment:
-            teacher = _privileged_velocity_teacher(
-                environment, settings=settings)
+            teacher = (
+                _visual_servo_teacher(environment, settings=settings)
+                if teacher_id == VISUAL_SERVO_TEACHER
+                else _privileged_velocity_teacher(environment, settings=settings))
             for attempt in range(maximum_seed_candidates):
                 if flight_attempts >= maximum_flights:
                     break
@@ -844,12 +1028,19 @@ def _prepare_fast_demonstrations(*, cfg, camera, config, config_hash,
                 flight_attempts += 1
                 environment_steps += int(metric["steps"])
                 metric.update({
-                    "method": "privileged_teacher", "pipeline": "shared_warm_start",
+                    "method": ("visual_servo_teacher"
+                               if teacher_id == VISUAL_SERVO_TEACHER
+                               else "privileged_teacher"),
+                    "pipeline": "shared_warm_start",
                     "episode": len(attempted_seeds),
                     "accepted_for_cloning": float(metric["paper_success"]),
                     "teacher": teacher_id,
                     "config_hash": config_hash,
                     "teacher_information": (
+                        "estimator-free image-plane servo on the frozen keypoint "
+                        "encoder's centroid and apparent scale; no relative state "
+                        "of any kind enters the action labels"
+                        if teacher_id == VISUAL_SERVO_TEACHER else
                         "training-only simulator relative state for action labels; "
                         "stored/deployed actor inputs are image embedding and UAV "
                         "proprioception only"),
@@ -1411,8 +1602,7 @@ def _collect_adaptive_data(*, cfg, camera, model, source_pipeline, config,
 
     scenarios = tuple(design.get("scenarios") or (
         "training_random_walk", "circle", "zigzag", "vertical_heave_boat"))
-    fast_settings = dict(
-        ((config.get("seminar_fast") or {}).get("behavior_cloning") or {}))
+    fast_settings = behavior_cloning_settings(config)
     deadline_teacher_enabled = bool(fast_settings.get("enabled", False))
     completed_episodes = set(int(row["episode_id"]) for row in records)
 
@@ -2282,7 +2472,7 @@ def main(*, primary_only: bool = False):
                 model = _build_model(
                     config, args.device, keypoint_pretraining, pipeline=name)
                 if demonstrations is not None:
-                    cloning = dict((seminar_fast.get("behavior_cloning") or {}))
+                    cloning = behavior_cloning_settings(config)
                     monitor.stage("behavior cloning", f"shared training teacher · {name}")
                     cloning_metrics[name] = behavior_clone(
                         model, demonstrations["dataset"],
@@ -2310,7 +2500,7 @@ def main(*, primary_only: bool = False):
                     model = initialize_pipeline_model(name)
                 target_dir = (args.results_dir / f"models/{name}" if primary else
                               args.results_dir / "models/reward_design_source")
-                cloning = dict((seminar_fast.get("behavior_cloning") or {}))
+                cloning = behavior_cloning_settings(config)
                 anchor = deepcopy(dict(cloning.get("ppo_anchor") or {}))
                 if args.robust_adaptive_reward and anchor.get("enabled", False):
                     anchor["until_policy_episode"] = max(

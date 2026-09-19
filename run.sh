@@ -158,7 +158,7 @@ if [[ ! -x "$launcher" ]]; then
   exit 1
 fi
 
-# A bare ./run.sh means the deadline/seminar full pipeline. Explicit overrides
+# A bare ./run.sh means the full reference experiment. Explicit overrides
 # always win, and every other option is passed through unchanged.
 mode_supplied=false
 selected_mode=full
@@ -168,14 +168,16 @@ rgat_budget_supplied=false
 expect_mode_value=false
 expect_config_value=false
 seminar_fast=false
-# The repository's zero-argument contract is the currently supported seminar
-# experiment: two isolated UAV/UGV pairs in one Isaac stage, one method
-# per pair, with both operator views kept alive after the saved result.  Any
-# explicit command line keeps the former opt-in behaviour and can override the
-# profile below.
-if [[ $# -eq 0 ]]; then
-  seminar_fast=true
-fi
+# The repository's zero-argument contract is the full reference experiment:
+# ./run.sh alone runs config/experiments/two_pipeline_comparison.yaml at the
+# budgets that file declares, on as many isolated UAV/UGV pairs as the machine
+# measures room for.
+#
+# It used to select the seminar preview here instead -- the profile marked
+# publication_claim_allowed: false. So the command that reads as "run the
+# experiment" quietly ran the one whose results may not be published, and an
+# edit to the experiment config landed on a file that path never opens. The
+# preview is still one flag away: ./run.sh --seminar-fast.
 for argument in "$@"; do
   if [[ "$expect_config_value" == true ]]; then
     expect_config_value=false
@@ -244,17 +246,18 @@ fi
 if [[ "$mode_supplied" == false ]]; then
   arguments=(--mode full "${arguments[@]}")
 fi
-# --mode full now runs the budget the experiment config declares, which is the
-# reference budget: training.episodes_full and fov_risk_design.episodes_full are
-# both 40,000, and the evaluation block is per-scenario (10,000 random-walk plus
-# 1,000 each for the six trajectory cases). Equal PPO budgets and equal
-# estimator warm-up still apply to both SE-enabled arms, because
-# --total-train-episodes is no longer imposed here and each arm takes
-# training.episodes_full.
+# --mode full runs the budget the experiment config declares, which is the
+# reference budget: 1,000 PPO episodes per arm, a 400-episode floor on the
+# FOV-risk design set, and 200 paired evaluation flights per scenario per arm.
+# Those are sized against this machine's measured ~20 episodes per hour per
+# pair -- about five days end to end -- rather than the round 40,000 that
+# preceded them, which was months of flying and could not have completed.
+# Equal PPO budgets and equal estimator warm-up still apply to both
+# SE-enabled arms, because --total-train-episodes is not imposed here and each
+# arm takes training.episodes_full.
 #
-# This launcher used to cut those to 800 total / 5 evaluation / 40 design
-# flights for a two-day seminar deadline. That preview budget still exists as
-# its own profile: ./run.sh --seminar-fast, which is the one marked
+# The seminar preview budget still exists as its own profile:
+# ./run.sh --seminar-fast, which is the one marked
 # publication_claim_allowed: false. A shorter ad-hoc run needs no edit here
 # either -- --train-episodes, --total-train-episodes, --eval-episodes and
 # --rgat-data-episodes all still override the config.

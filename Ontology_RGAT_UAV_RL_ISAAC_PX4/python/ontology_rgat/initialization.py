@@ -135,8 +135,11 @@ def pad_view_margin(uav_position_pad_enu, uav_quaternion_wxyz, *,
                     image_size=(512, 320), horizontal_fov_deg: float = 90.0,
                     pitch_down_deg: float = 60.0,
                     mount_translation_flu_m=(0.0, 0.0, -0.16),
-                    pad_position_enu=(0.0, 0.0, 0.0)) -> float:
+                    pad_position_enu=(0.0, 0.0, 0.0), signed: bool = False):
     """How deep inside the camera frustum the pad centre projects.
+
+    With ``signed`` this returns the ``[column, row]`` coordinates themselves
+    rather than their magnitude; ``pad_image_position`` is that spelling.
 
     Returns the pad centre's normalised image coordinate: the larger of
     ``|x| / tan(hfov/2)`` and ``|y| / tan(vfov/2)`` in the optical frame, so a
@@ -162,11 +165,59 @@ def pad_view_margin(uav_position_pad_enu, uav_quaternion_wxyz, *,
     ray = optical_in_enu.T @ (pad - camera_position)
     depth = float(ray[2])
     if depth <= 1e-9:
-        return math.inf
+        return None if signed else math.inf
     tan_half_h = math.tan(hfov / 2.0)
     tan_half_v = tan_half_h * height / width
-    return max(abs(float(ray[0])) / depth / tan_half_h,
-               abs(float(ray[1])) / depth / tan_half_v)
+    column = float(ray[0]) / depth / tan_half_h
+    row = float(ray[1]) / depth / tan_half_v
+    if signed:
+        return np.array([column, row], dtype=float)
+    return max(abs(column), abs(row))
+
+
+def pad_image_position(uav_position_pad_enu, uav_quaternion_wxyz, **camera):
+    """Where the pad centre projects, signed, in the encoder's convention.
+
+    ``pad_view_margin`` answers "is it in frame" and therefore throws the sign
+    away. A servo needs the direction: this returns ``[column, row]`` with the
+    same normalization the keypoint encoder is trained against
+    (``2 * pixel / (size - 1) - 1``, so +-1 is the frame edge), or ``None``
+    when the pad is behind the camera.
+
+    This camera's mounting rotates the frame: ``R_BODY_FROM_OPTICAL_NADIR``
+    sends optical x to body forward and optical y to body right, so the image
+    *column* moves with the pad's fore/aft position and the image *row* moves
+    with its lateral position. Both signs are measured here rather than
+    assumed, which is what makes them safe to build a controller on.
+    """
+    return pad_view_margin(uav_position_pad_enu, uav_quaternion_wxyz,
+                           signed=True, **camera)
+
+
+def nadir_image_setpoint(horizontal_fov_deg: float = 90.0,
+                         pitch_down_deg: float = 60.0) -> np.ndarray:
+    """The image point a vehicle directly above the pad sees the pad at.
+
+    The landing camera looks ``pitch_down_deg`` below horizontal, so the image
+    centre is *not* the landing point: holding the pad there parks the vehicle
+    ``camera_height / tan(pitch)`` behind the deck, which is exactly what
+    ``camera_centered_hover_offset`` computes for the entry pose. A servo that
+    drives the pad to the image centre therefore never arrives.
+
+    The point to drive it to is the nadir direction, ``90 - pitch_down``
+    degrees off the optical axis along the column axis. Two properties make it
+    usable as a fixed setpoint: it is a direction, so it does not move with
+    altitude -- the same normalized column holds at 8 m and at 0.5 m -- and
+    for this camera it is well inside the frame, at
+    ``tan(30 deg) / tan(45 deg) = 0.577`` of the half width.
+    """
+    hfov = math.radians(float(horizontal_fov_deg))
+    pitch = float(pitch_down_deg)
+    if (not math.isfinite(hfov) or not 0.0 < hfov < math.pi
+            or not math.isfinite(pitch) or not 0.0 < pitch <= 90.0):
+        raise ValueError("nadir setpoint needs a valid camera geometry")
+    return np.array([
+        -math.tan(math.radians(90.0 - pitch)) / math.tan(hfov / 2.0), 0.0])
 
 
 def pad_in_camera_view(uav_position_pad_enu, uav_quaternion_wxyz, *,

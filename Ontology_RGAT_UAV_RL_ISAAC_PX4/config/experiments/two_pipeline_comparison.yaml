@@ -68,8 +68,71 @@ fov_risk_design:
 # Disable the inherited legacy potential-design block on the primary path.
 rgat_design: null
 
+# Both arms start from one cloned checkpoint, so the warm start is a property
+# of the comparison rather than of either side of it. Without it PPO's first
+# episodes are a randomly initialised network, and on this stack a diverging
+# episode does not merely score badly: it ends tens of metres from a deck that
+# is still driving, and the next entry becomes a stern chase the budget has to
+# pay for. The 2026-09-18 run is the evidence -- every one of its 23 entry
+# failures began 21 m or further out.
+behavior_cloning:
+  enabled: true
+  # The encoder the demonstrations are stored against must be estimator-free,
+  # so the stored actor inputs are the image embedding and proprioception the
+  # deployed actor has and nothing else.
+  source_pipeline: no_se_fixed
+
+  # An image-plane servo, not the privileged relative-state PD. It reads the
+  # frozen keypoint encoder's centroid and apparent scale -- exactly what the
+  # student sees -- so the mapping being cloned is one the student can
+  # reproduce without the simulator. See _visual_servo_teacher_action for why
+  # a naive image servo does not work here and what the nadir setpoint,
+  # integral term and scale-scheduled gain are each for.
+  teacher: image_based_visual_servo_v1
+  successful_episodes: 6
+  max_attempts: 14
+  curriculum: 1.0
+
+  # Servo gains. The proportional path is multiplied by
+  # reference_scale / raw_scale, so these are the gains at the apparent size a
+  # target has partway through the approach; the flare inherits smaller ones
+  # and the far field larger, bounded either side.
+  position_gain: 0.55
+  integral_gain: 0.45
+  damping_gain: 0.12
+  integral_limit: 0.60
+  reference_scale: 0.25
+  horizontal_speed_limit_m_s: 0.60
+  # Normalized image units. The pad centre has to sit this close to the nadir
+  # projection before the vehicle is allowed to descend.
+  alignment_tolerance: 0.10
+  # Apparent scale, not altitude: past flare_scale the marker is expected to
+  # fill and leave the frame, so visibility loss stops commanding a climb.
+  approach_scale: 0.30
+  flare_scale: 0.70
+  noise_std: 0.01
+
+  epochs: 12
+  learning_rate: 0.0003
+  sequence_length: 48
+  auxiliary_coefficient: 0.20
+  post_log_std: -2.5
+
+  # Keep the demonstrations from being forgotten before PPO earns its first
+  # sparse success. Identical for both arms; critic and reward stay on-policy.
+  ppo_anchor:
+    enabled: true
+    until_policy_episode: 16
+    interval_episodes: 1
+    epochs: 1
+    learning_rate: 0.00005
+    minimum_learning_rate: 0.00001
+    sequence_length: 48
+    auxiliary_coefficient: 0.10
+
 seeds:
   fov_risk_dataset_start: 70000
+  behavior_cloning_start: 90000
   estimator_warmup_start: 19000
   independent_training_starts_full: [20000, 120000, 220000]
 

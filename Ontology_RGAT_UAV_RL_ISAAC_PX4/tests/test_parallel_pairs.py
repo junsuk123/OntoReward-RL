@@ -100,13 +100,59 @@ def test_legacy_aruco_profile_still_separates_parallel_pairs_by_marker_id():
     assert [int(marker["id"]) for marker in system["vision"]["board"]] == original_ids
 
 
-def test_bare_repository_launcher_selects_two_pair_operator_profile():
+def test_bare_repository_launcher_runs_the_full_reference_experiment():
+    """``./run.sh`` alone must be the experiment, not the preview of it.
+
+    The zero-argument path used to select ``--seminar-fast``, the profile
+    marked ``publication_claim_allowed: false``. The command that reads as
+    "run the experiment" therefore ran the one whose results may not be
+    published, and a budget fix to the experiment config landed on a file
+    that path never opens.
+    """
     launcher = (ROOT.parent / "run.sh").read_text(encoding="utf-8")
-    assert "if [[ $# -eq 0 ]]" in launcher
-    assert "seminar_fast=true" in launcher
-    assert "--parallel-pairs 2" in launcher
-    assert "--pipelines shin_se_fixed shin_se_onto_rgat_recovery" in launcher
-    assert "--stay-open" in launcher
+
+    # Nothing may turn the preview on by itself; it is an explicit flag.
+    assert "if [[ $# -eq 0 ]]" not in launcher
+    assert "seminar_fast=true" in launcher, "the preview must stay reachable"
+    preview = launcher[launcher.index("if [[ \"$seminar_fast\" == true ]]"):]
+    assert "--seminar-fast) seminar_fast=true" in launcher
+    # The preview profile itself is unchanged, and still opt-in only.
+    assert "--parallel-pairs 2" in preview
+    assert "--pipelines shin_se_fixed shin_se_onto_rgat_recovery" in preview
+    assert "--stay-open" in preview
+
+    # With no arguments the launcher falls through to the primary two-pipeline
+    # entry point at the mode the reference budget is declared for.
+    assert 'launcher="$project_root/scripts/run_two_pipeline.sh"' in launcher
+    assert 'arguments=(--mode full "${arguments[@]}")' in launcher
+
+
+def test_the_bare_launcher_budget_is_the_one_the_experiment_config_declares():
+    """``--mode full`` takes its budgets from the config, so they must be sane.
+
+    The 2026-09-18 run flew a 40,000-episode-per-arm budget that this machine
+    would have needed months to finish, against a measured ~20 episodes per
+    hour per pair. Nothing in the launcher imposes a budget any more, so the
+    config is the only place this can be got wrong.
+    """
+    from config_loader import load_config
+
+    config = load_config(
+        ROOT / "config/experiments/two_pipeline_comparison.yaml")
+    per_pair_hourly = 20.0
+    arms = 2
+
+    training = int(config["training"]["episodes_full"])
+    evaluation = sum(int(count) for count in config["evaluation"].values())
+    design = int(config["fov_risk_design"]["episodes_full"])
+
+    # Arms train on their own pairs, so training is one arm's wall clock;
+    # evaluation flies every seed twice across the same two pairs.
+    days = (training / per_pair_hourly
+            + evaluation * arms / (arms * per_pair_hourly)
+            + design / per_pair_hourly) / 24.0
+    assert days < 14.0, f"the declared budget is {days:.0f} days of flying"
+    assert int(config["fov_risk_design"]["max_episodes_full"]) >= design
 
 
 def test_a_headless_flight_still_opens_the_operator_rviz_view():

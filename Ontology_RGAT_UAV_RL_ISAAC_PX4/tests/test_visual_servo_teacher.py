@@ -75,7 +75,12 @@ def test_the_servo_flies_toward_the_pad_the_projection_actually_shows(offset_enu
     assert np.linalg.norm(commanded) > 1e-3, "a displaced vehicle must be commanded"
     cosine = float(np.dot(commanded, toward_pad)
                    / (np.linalg.norm(commanded) * np.linalg.norm(toward_pad)))
-    assert cosine > 0.9, f"commanded {commanded} does not point at the pad {toward_pad}"
+    # Carrying the error in tangent-of-angle units rather than frame fractions
+    # is what buys the last of this: the raw frame is not square, so the same
+    # metre reads 1.6x larger down the column axis than the row axis, and the
+    # commanded bearing drifts off the true one. Measured over these poses the
+    # worst case improves from 0.989 to 0.998.
+    assert cosine > 0.99, f"commanded {commanded} does not point at the pad {toward_pad}"
 
 
 def test_the_nadir_projection_is_the_servo_fixed_point_at_every_altitude():
@@ -212,3 +217,63 @@ def test_the_demonstration_encoder_source_stays_estimator_free():
         ROOT / "config/experiments/two_pipeline_comparison.yaml")
     source = behavior_cloning_settings(config)["source_pipeline"]
     assert not get_pipeline(source).state_estimation_enabled
+
+
+def test_tangent_angle_units_aim_better_than_raw_frame_fractions():
+    """Why the error is scaled by each axis's own half-angle tangent.
+
+    The frame is not square: the column axis spans tan(45 deg) and the row
+    axis tan(32 deg), so a raw frame fraction means 1.6x more offset down one
+    axis than the other and the commanded bearing leans away from the true
+    one. Scaling each axis back to ``offset / range`` removes that lean.
+
+    Magnitude is deliberately not asserted: a pitched camera really does see
+    a different angle per metre fore/aft than laterally, because fore/aft
+    motion changes the range as well. Only the bearing has to be right.
+    """
+    improved = []
+    for offset in ([-2.0, 0.0, 0.0], [0.0, 1.5, 0.0], [-1.5, 1.0, 0.0],
+                   [1.2, -0.8, 0.0]):
+        position = camera_centered_hover_offset(5.0) + np.asarray(offset, float)
+        centroid = pad_image_position(position, LEVEL)
+        toward_pad = -np.asarray(position[:2], dtype=float)
+
+        def bearing(tan_half):
+            action, _ = _visual_servo_teacher_action(
+                observation(centroid), None, LIMIT, setpoint=SETPOINT, dt=0.1,
+                integral=np.zeros(2), tan_half=tan_half, noise_std=0.0)
+            commanded = action[:2] * LIMIT[:2]
+            return float(np.dot(commanded, toward_pad)
+                         / (np.linalg.norm(commanded) * np.linalg.norm(toward_pad)))
+
+        angle_units = bearing((1.0, 0.625))
+        frame_fractions = bearing((1.0, 1.0))
+        assert angle_units >= frame_fractions - 1e-9
+        improved.append(angle_units > frame_fractions + 1e-6)
+
+    assert any(improved), "the correction must actually change the aim"
+
+
+@pytest.mark.parametrize("lateral_m, altitude_m, apparent, expected", [
+    (1.65, 5.0, 0.05, 0.0),      # the tracking error the first flights held
+    (0.76, 5.0, 0.05, -0.35),    # ... and the one they held on the good seeds
+    (0.40, 2.0, 0.20, -0.35),
+    (0.20, 1.0, 0.60, -0.14),
+    (0.08, 0.5, 0.95, -0.04),
+])
+def test_the_descent_funnel_tightens_on_the_way_down(
+        lateral_m, altitude_m, apparent, expected):
+    """The regression that cost the first three teacher flights.
+
+    Every one of them timed out at the 300-step horizon with the pad in view
+    the whole way -- 0.0% and 1.7% geometric FOV loss -- and a vertical speed
+    of 0.01 m/s. The servo was tracking correctly and simply never opened its
+    own descent gate, because the alignment cone was narrower than the bearing
+    the horizontal loop actually holds at 5 m.
+
+    The cone is fixed in angle, so the distance it admits shrinks with range
+    on its own: about 1.3 m at 5 m, 0.2 m at 1 m, without measuring altitude.
+    """
+    centroid = pad_image_position([0.0, lateral_m, altitude_m], LEVEL)
+    action, _ = command(centroid, scale=apparent)
+    assert action[2] * LIMIT[2] == pytest.approx(expected, abs=1e-6)

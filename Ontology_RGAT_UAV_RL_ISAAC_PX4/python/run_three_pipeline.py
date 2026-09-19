@@ -9,6 +9,7 @@ from copy import deepcopy
 import csv
 from datetime import datetime, timezone
 import json
+import math
 import os
 from pathlib import Path
 import subprocess
@@ -425,11 +426,12 @@ PRIVILEGED_VELOCITY_TEACHER = "privileged_relative_state_velocity_pd_v4"
 
 def _visual_servo_teacher_action(
         semantic, previous, velocity_limit, *, setpoint, dt, integral,
+        tan_half=(1.0, .625),
         position_gain=.55, integral_gain=.45, damping_gain=.12,
         integral_limit=.60, horizontal_speed_limit=.60,
-        reference_scale=.25, range_gain_bounds=(.35, 2.2),
-        alignment_tolerance=.10, rate_tolerance=.45,
-        flare_scale=.70, approach_scale=.30, climb_rate=.22,
+        reference_scale=.06, range_gain_bounds=(.35, 2.2),
+        alignment_tolerance=.30, rate_tolerance=.60,
+        flare_scale=.70, approach_scale=.25, climb_rate=.22,
         noise_std=.01, rng=None):
     """Return a velocity label computed from the image plane alone.
 
@@ -463,7 +465,24 @@ def _visual_servo_teacher_action(
       ``reference_scale / raw_scale``: wide corrections while the deck is far
       and small ones in the flare, from one gain.
 
-    Descent is gated on what the image says rather than on altitude. The
+    The error is carried in tangent-of-angle units rather than in raw frame
+    fractions. The frame is not square -- the column axis spans
+    ``tan(hfov/2)`` and the row axis ``tan(vfov/2)``, here 1.0 against 0.625 --
+    so the same metre of offset reads 1.6x larger down one axis than the
+    other. Left in frame fractions the servo pulls off the true bearing and
+    the alignment test means a different distance fore/aft than laterally.
+    Multiplying each axis by its own half-angle tangent makes both
+    ``offset / range``, which is isotropic and is what the range gain then
+    converts back into metres per second.
+
+    Descent is gated on what the image says rather than on altitude, and the
+    gate is that bearing: ``alignment_tolerance`` is a cone, so it admits about
+    1.3 m of offset at 5 m of range and about 0.2 m at 1 m. The funnel tightens
+    on the way down without anything having to measure altitude. The cone has
+    to clear what the horizontal loop actually holds, or the vehicle hovers
+    the horizon out: the first three flights of the 2026-09-19 run tracked to
+    0.76 m at 5 m -- a bearing of 0.18 -- and a cone of that size left the
+    descent shut for all 300 steps. The
     marker legitimately fills and then leaves a downward camera at the end of a
     correct flare, so loss of visibility commands a climb only while the
     target still looks small; past ``flare_scale`` the vehicle is committed.
@@ -486,8 +505,12 @@ def _visual_servo_teacher_action(
     if not np.isfinite(speed_limit) or speed_limit <= 0.0:
         raise ValueError("visual servo teacher speed limit must be positive")
 
+    half_angle = np.asarray(tan_half, dtype=np.float64).reshape(-1)
+    if half_angle.shape != (2,) or not np.isfinite(half_angle).all() or np.any(
+            half_angle <= 0.0):
+        raise ValueError("visual servo teacher needs positive half-angle tangents")
     centroid = np.asarray(semantic.centroid_xy, dtype=np.float64).reshape(-1)
-    error = centroid - target
+    error = (centroid - target) * half_angle
     # Image column moves with the pad's fore/aft position and image row with
     # its lateral position, and +row means the pad is to the vehicle's right,
     # which is -y in the body FLU frame the action is expressed in. Both signs
@@ -498,7 +521,7 @@ def _visual_servo_teacher_action(
     else:
         previous_centroid = np.asarray(
             previous.centroid_xy, dtype=np.float64).reshape(-1)
-        rate = (centroid - previous_centroid) / step
+        rate = (centroid - previous_centroid) * half_angle / step
         plane_rate = np.array([rate[0], -rate[1]])
 
     scale = max(float(semantic.raw_scale), 1e-3)
@@ -525,13 +548,19 @@ def _visual_servo_teacher_action(
         target_xy = target_xy * (speed_limit / speed)
 
     alignment = float(np.linalg.norm(plane_error))
-    committed = scale >= float(flare_scale)
+    # ``apparent_target_scale`` is the saturated [0, 1] reading the rest of the
+    # pipeline defines its landing phases on (see _landing_phase); raw_scale is
+    # the unsaturated value the range gain needs. Mixing the two up puts every
+    # threshold an order of magnitude out: a target 5 m away reads raw_scale
+    # 0.04 and apparent_target_scale 0.05.
+    apparent = float(semantic.apparent_target_scale)
+    committed = apparent >= float(flare_scale)
     if not trustworthy and not committed:
         target_vz = float(climb_rate)
     elif alignment > float(alignment_tolerance) or float(
             np.linalg.norm(plane_rate)) > float(rate_tolerance):
         target_vz = 0.0
-    elif scale < float(approach_scale):
+    elif apparent < float(approach_scale):
         target_vz = -.35
     elif not committed:
         target_vz = -.14
@@ -556,6 +585,10 @@ def _visual_servo_teacher(environment, *, settings):
     setpoint = nadir_image_setpoint(
         float(camera.get("horizontal_fov_deg", 90.0)),
         float(camera.get("pitch_down_deg", 60.0)))
+    width, height = (int(value) for value in camera.get("resolution", (512, 320)))
+    tan_half_h = math.tan(math.radians(
+        float(camera.get("horizontal_fov_deg", 90.0))) / 2.0)
+    tan_half = (tan_half_h, tan_half_h * height / width)
     state = {"integral": np.zeros(2), "previous": None}
 
     def transform(step, policy_action, semantic, rng):
@@ -567,17 +600,18 @@ def _visual_servo_teacher(environment, *, settings):
             semantic, state["previous"],
             controller.max_velocity * controller.action_scale,
             setpoint=setpoint, dt=float(environment.cfg.sim.dt),
-            integral=state["integral"],
+            integral=state["integral"], tan_half=tan_half,
             position_gain=float(settings.get("position_gain", .55)),
             integral_gain=float(settings.get("integral_gain", .45)),
             damping_gain=float(settings.get("damping_gain", .12)),
             integral_limit=float(settings.get("integral_limit", .60)),
             horizontal_speed_limit=float(settings.get(
                 "horizontal_speed_limit_m_s", .60)),
-            reference_scale=float(settings.get("reference_scale", .25)),
-            alignment_tolerance=float(settings.get("alignment_tolerance", .10)),
+            reference_scale=float(settings.get("reference_scale", .06)),
+            alignment_tolerance=float(settings.get("alignment_tolerance", .30)),
+            rate_tolerance=float(settings.get("rate_tolerance", .60)),
             flare_scale=float(settings.get("flare_scale", .70)),
-            approach_scale=float(settings.get("approach_scale", .30)),
+            approach_scale=float(settings.get("approach_scale", .25)),
             noise_std=float(settings.get("noise_std", .01)),
             rng=rng)
         state["integral"] = integral

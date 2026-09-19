@@ -101,14 +101,32 @@ behavior_cloning:
   integral_gain: 0.45
   damping_gain: 0.12
   integral_limit: 0.60
-  reference_scale: 0.25
+  # Unsaturated RMS keypoint spread, which is what raw_scale reports. Measured
+  # on the stack: a deck 5 m out reads about 0.04. The first tuning used 0.25
+  # and pinned the range gain against its own ceiling for the whole approach,
+  # so the scheduling did nothing until the flare.
+  reference_scale: 0.06
   horizontal_speed_limit_m_s: 0.60
-  # Normalized image units. The pad centre has to sit this close to the nadir
-  # projection before the vehicle is allowed to descend.
-  alignment_tolerance: 0.10
-  # Apparent scale, not altitude: past flare_scale the marker is expected to
-  # fill and leave the frame, so visibility loss stops commanding a climb.
-  approach_scale: 0.30
+
+  # The descent gate, as a bearing: offset divided by range, so the distance
+  # it admits shrinks with altitude on its own -- about 1.3 m at 5 m and 0.2 m
+  # at 1 m -- and nothing has to measure altitude.
+  #
+  # It has to clear what the horizontal loop actually holds. The first three
+  # teacher flights of 2026-09-19 tracked the deck correctly the whole way
+  # (0.0% and 1.7% geometric FOV loss, against 96% for the untrained policy
+  # the FOV stage had been flying) and still landed nothing: they held 0.76 m
+  # at 5 m, a bearing of 0.18, against a cone of 0.10. All three hovered out
+  # the full 300-step horizon at 0.01 m/s of vertical speed, and the second
+  # one drained the pack doing it.
+  alignment_tolerance: 0.30
+  rate_tolerance: 0.60
+
+  # Saturated apparent scale, the same reading _landing_phase defines the
+  # approach/descent/touchdown phases on. Past flare_scale the marker is
+  # expected to fill and leave the frame, so visibility loss stops commanding
+  # a climb rather than trapping the vehicle above the deck.
+  approach_scale: 0.25
   flare_scale: 0.70
   noise_std: 0.01
 

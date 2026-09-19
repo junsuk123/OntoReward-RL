@@ -26,9 +26,21 @@ def parse_args():
     return parser.parse_args()
 
 
+# Upper bound on pairs one shared Isaac stage will place. Raise together with
+# parallel.pair_offsets_enu_m, which must have at least this many entries for a
+# profile to actually reach it.
+MAX_PARALLEL_PAIRS = 8
+
 ARGS = parse_args()
-if ARGS.parallel_pairs < 1 or ARGS.parallel_pairs > 3:
-    raise SystemExit("--parallel-pairs must be between 1 and 3")
+# The ceiling is the length of parallel.pair_offsets_enu_m in the profile, which
+# is what actually decides how many pairs the stage can place. 3 was a fixed
+# guess; measured total throughput on this machine still rises at 3 pairs
+# (1.00x / 2.60x / 3.28x simulated seconds per wall second for 1 / 2 / 3), so a
+# guess is the wrong thing to be bounded by. The learner picks the count from
+# the machine and the profile bounds it here.
+if ARGS.parallel_pairs < 1 or ARGS.parallel_pairs > MAX_PARALLEL_PAIRS:
+    raise SystemExit(
+        f"--parallel-pairs must be between 1 and {MAX_PARALLEL_PAIRS}")
 CONFIG_PATH = Path(ARGS.config).expanduser().resolve()
 WORKSPACE = CONFIG_PATH.parent.parent
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -124,6 +136,7 @@ from pad_motion import (BENCHMARK_SCENARIOS, PadMotionConfig, PadTrajectory,
 from urban_scene import UrbanConfig, UrbanLayout, UrbanScene
 from gnss import GnssConfig, UrbanGnss
 from px4_gnss import UrbanGnssSensor
+from operator_overlay import overlay_wanted
 from px4_sitl_parameters import configured_px4_parameters, px4_rc_script
 from live_overlay import LiveOverlay
 from metasejong_scene import MetaSejongConfig, MetaSejongScene
@@ -1371,6 +1384,10 @@ class LandingWorld:
         self.force_pub = node.create_publisher(Vector3Stamped, ns + "/environment/aero_force", 10)
         # Legacy ArUco detector outputs. Published only in ``vision.mode:
         # aruco``; the primary keypoint benchmark leaves both silent.
+        # Diagnostic overlay: drawn only while something subscribes to it, and
+        # never when this is false. See _operator_overlay_wanted.
+        self.operator_overlay_enabled = bool(
+            (CONFIG.get("vision") or {}).get("operator_overlay", True))
         self.marker_pub = node.create_publisher(Float32, ns + "/perception/marker_quality", 10)
         self.pad_pose_pub = node.create_publisher(PoseStamped, ns + "/perception/uav_pose_in_pad", 10)
         # Training-label-only: the simulator's pad-relative UAV pose, stamped
@@ -1572,6 +1589,23 @@ class LandingWorld:
                     self.domain_randomization)
         elif self.camera is not None:
             self.camera.configure_domain_randomization(None)
+        # The deck draws its new heading here, before the entry pose, because
+        # the entry offset is rotated by that heading and the entry yaw is
+        # derived from it. Drawing the deck afterwards rotated the offset by
+        # the *previous* episode's heading while commanding the new one, which
+        # is invisible on a surveyed route -- consecutive headings differ by a
+        # degree or two -- and fatal the moment the heading is redrawn freely:
+        # the pad then sits 100+ degrees off the nose and the entry gate's view
+        # test can never pass. The deck's own generator is seeded separately,
+        # so moving this does not disturb the entry draw below.
+        self.deck.park()
+        # The lorry does NOT pull away here. It waits until handover, so PX4
+        # flies the entry climb over a deck that is standing still and only the
+        # landing -- the part being measured -- has to track a moving one. See
+        # _on_flight_state.
+        deck = self.deck.reset(req["seed"], self.world.current_time,
+                               req.get("pad_scale", 1.0),
+                               req.get("scenario", "training_random_walk"))
         initial = benchmark.get("initial_conditions") or {}
         if str(benchmark.get("profile", "")).lower() == "shin2026":
             # Draw the Table-I box first. During training its curriculum starts
@@ -1633,18 +1667,10 @@ class LandingWorld:
         # condition -- geometry, wind, deck motion and energy -- is one seed.
         hover_seconds = float(rng.uniform(*self.battery_hover_range))
         reseated = self._seat_on_deck()
-        self.deck.park()
-        # The lorry does NOT pull away here. It waits until handover, so PX4
-        # flies the entry climb over a deck that is standing still and only the
-        # landing -- the part being measured -- has to track a moving one. See
-        # _on_flight_state.
         for backend in (self.px4_backend, self.ros_backend):
             backend.reset()
         self.wind.reset(req["seed"], self.world.current_time, req["wind_scale"])
         self.wind_sensor.reset(req["seed"], self.world.current_time)
-        deck = self.deck.reset(req["seed"], self.world.current_time,
-                               req.get("pad_scale", 1.0),
-                               req.get("scenario", "training_random_walk"))
         entry_yaw_enu = (self.deck.yaw + math.radians(float(rpy_deg[2]))
                          if str(benchmark.get("profile", "")).lower() == "shin2026"
                          else math.radians(float(rpy_deg[2])))
@@ -2175,11 +2201,36 @@ class LandingWorld:
                 position_pad, quaternion_wxyz)
         except ValueError:
             return
-        self.camera.annotate_keypoints(projection)
-        self._publish_annotated_camera(stamp)
+        if self._operator_overlay_wanted():
+            self.camera.annotate_keypoints(projection)
+            self._publish_annotated_camera(stamp)
+
+    def _operator_overlay_wanted(self) -> bool:
+        """Whether the diagnostic overlay is worth the main loop's time.
+
+        Drawing it costs a GRAY->BGR convert, a dozen OpenCV primitives, a
+        BGR->RGB convert and a 491 KB ``tobytes`` per camera per rendered
+        frame, all of it on the single thread that also steps physics and
+        renders. Nothing scientific reads it -- not the actor observation, the
+        reward, the R-GAT input, the labels or any metric -- so when no
+        operator tool is subscribed there is nothing to pay it for.
+
+        ``vision.operator_overlay`` can switch it off even while RViz is
+        attached, for a run being timed.
+        """
+        try:
+            subscribers = self.marker_image_pub.get_subscription_count()
+        except AttributeError:
+            subscribers = None
+        return overlay_wanted(self.operator_overlay_enabled, subscribers)
 
     def _publish_annotated_camera(self, stamp) -> None:
         """Publish the most recent operator view as a standard ROS ``rgb8`` image."""
+        # Also gated here, not only at the keypoint call site: the legacy
+        # detector path annotates inside ``observe`` and would otherwise still
+        # pay the 491 KB copy and the publish with nothing listening.
+        if not self._operator_overlay_wanted():
+            return
         image = self.camera.annotated_rgb
         if image is None or image.size == 0:
             return

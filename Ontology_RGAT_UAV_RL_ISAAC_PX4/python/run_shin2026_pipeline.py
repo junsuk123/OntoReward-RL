@@ -124,8 +124,11 @@ def _live_config(mode, results_dir, system_config):
         cfg.external.entry_view_margin = float(benchmark["entry_view_margin"])
     cfg.viz.rviz.deck_size_m = list(pad.get("deck_size_m", (1.5, 1.5)))
     cfg.viz.rviz.deck_height_m = float(pad.get("deck_height_m", 0.0))
+    # ``null`` clears an inherited key in this config family, and a profile
+    # that drives an analytic scenario instead of a surveyed route has no
+    # waypoints for RViz to draw.
     cfg.viz.rviz.route_waypoints_enu_m = list(
-        pad.get("route_waypoints_enu_m", ()))
+        pad.get("route_waypoints_enu_m") or ())
     return cfg
 
 

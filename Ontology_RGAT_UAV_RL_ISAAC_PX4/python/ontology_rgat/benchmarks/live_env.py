@@ -241,13 +241,20 @@ class LiveShinEnvironment:
             timeout=self.steps >= self.horizon_steps)
         return self.last_step
 
-    def recover_infrastructure(self) -> bool:
+    def recover_infrastructure(self, attempts: int = 3) -> bool:
         """Cycle an owned SITL stack after a mid-episode transport failure.
 
         A partially observed episode must never enter PPO. The caller discards
         it and retries the same seed after this method establishes a fresh
         bridge. Hardware or manually adopted stacks are intentionally not
         restarted because the learner does not own them.
+
+        The reconnection is retried for the same reason opening the environment
+        is: several workers share one stack, and a hello can still land in the
+        window where a peer's rebuild has torn the gateway down but not yet
+        brought it back. ``wait_for_restart`` only says that no rebuild holds
+        the lock right now, not that the simulator answers -- so a single
+        timeout here used to end a checkpointed multi-hour run outright.
         """
         from .. import stack as stack_module
 
@@ -262,8 +269,27 @@ class LiveShinEnvironment:
         else:
             owned.restart()
             restarted = True
-        self._connect()
-        return restarted
+        attempts = max(1, int(attempts))
+        for attempt in range(1, attempts + 1):
+            generation = int(getattr(owned, "generation", 0))
+            try:
+                self._connect()
+                return restarted
+            except BridgeError as exc:
+                if attempt >= attempts:
+                    raise
+                print(f"WARNING: could not reach the gateway after recovering "
+                      f"the simulator ({exc}). Cycling it and retrying "
+                      f"({attempt} of {attempts - 1}).")
+                # A peer may already have rebuilt the stack while this worker
+                # was waiting on its hello; then there is nothing left to
+                # cycle and the next attempt simply reconnects.
+                if hasattr(owned, "restart_if_generation"):
+                    owned.restart_if_generation(generation)
+                else:
+                    owned.restart()
+                restarted = True
+        raise AssertionError("unreachable infrastructure-recovery state")
 
     def finish_episode(self):
         if self.bridge.last_state:

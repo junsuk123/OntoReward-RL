@@ -429,6 +429,12 @@ class BenchmarkMonitor:
         self.pair_layout: list[dict[str, Any]] = []
         self.pair_status: dict[int, dict[str, Any]] = {}
         self._phase_episode_counts: dict[tuple[int, str], int] = {}
+        # One method now flies several physical pairs at once, so several
+        # collection threads report into the same monitor. Both dictionaries
+        # below are read-modify-written, which the GIL does not make atomic:
+        # two threads reading the same count before either writes it back lose
+        # an episode from the operator's view.
+        self._state_lock = threading.RLock()
 
     @property
     def potential(self):
@@ -467,6 +473,10 @@ class BenchmarkMonitor:
                      **values: Any) -> None:
         """Atomically publish one pair without overwriting another worker."""
         key = self._resolve_pair_index(method, pair_index)
+        with self._state_lock:
+            return self._set_pair_status_locked(key, method, values)
+
+    def _set_pair_status_locked(self, key, method, values):
         current = dict(self.pair_status.get(key) or {"index": key})
         # ``method`` in the layout is the experiment arm permanently assigned
         # to this physical pair. Reward-design collection can temporarily run
@@ -515,7 +525,8 @@ class BenchmarkMonitor:
         self.training_total = int(training_total)
         self.evaluation_total = int(evaluation_total)
         self.pair_layout = [dict(item) for item in (pair_layout or ())]
-        self._phase_episode_counts.clear()
+        with self._state_lock:
+            self._phase_episode_counts.clear()
         self.pair_status = {
             int(item["index"]): {
                 **dict(item),
@@ -685,8 +696,9 @@ class BenchmarkMonitor:
             # phase so concurrent baseline warm-up cannot overwrite pair 2's
             # visible episode progress.
             phase_key = (int(resolved_pair_index), phase_name)
-            current_episode = self._phase_episode_counts.get(phase_key, 0) + 1
-            self._phase_episode_counts[phase_key] = current_episode
+            with self._state_lock:
+                current_episode = self._phase_episode_counts.get(phase_key, 0) + 1
+                self._phase_episode_counts[phase_key] = current_episode
             episode_kind = ("FOV 데이터" if "FOV" in phase_name
                             else "설계 데이터")
         if self.rviz is not None:

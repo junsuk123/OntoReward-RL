@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
+import subprocess
 import sys
 import threading
 import time
@@ -133,6 +134,95 @@ def _abort_parallel_workers(executor, futures, owned) -> None:
     for future in futures:
         future.cancel()
     executor.shutdown(wait=True, cancel_futures=True)
+
+
+# Mirrors isaac_sim/landing_world.py: one shared stage, bounded by how many
+# pair offsets a profile defines rather than by a fixed guess.
+MAX_PARALLEL_PAIRS = 8
+
+# Marginal cost of one more UAV/UGV pair, measured on the shared stage rather
+# than estimated: at four pairs Isaac held 4.7 GB RSS and 2.7 GiB of VRAM, the
+# four gateways 305 MB between them, the four PX4 instances 33 MB, and the
+# whole stack drew about 2.4 of 20 cores. The base figures are what one pair
+# already costs before any of that scales.
+PAIR_SYSTEM_RAM_GB = 0.45
+BASE_SYSTEM_RAM_GB = 9.0          # Isaac, the learner and torch before pairs
+PAIR_VRAM_GB = 0.35
+BASE_VRAM_GB = 1.6
+PAIR_CPU_CORES = 0.7
+
+# Highest pair count whose throughput has actually been measured on the shared
+# stage (4 pairs, 4.96x total). The resource model above happily allows more,
+# but six pairs produced one pathological reading (0.363x) that was never
+# explained, and an unmeasured recommendation is how several wrong conclusions
+# were reached before this ceiling existed. Raise it by measuring, not by
+# reasoning about headroom.
+MEASURED_PAIR_CEILING = 4
+
+
+def machine_resources() -> dict:
+    """What this box has, for sizing the stage at start-up.
+
+    Reported rather than assumed: the numbers go into the run's own log so a
+    pair count can be explained after the fact.
+    """
+    resources = {"cpu_count": os.cpu_count() or 1,
+                 "total_ram_gb": 0.0, "total_vram_gb": 0.0}
+    try:
+        for line in Path("/proc/meminfo").read_text().splitlines():
+            if line.startswith("MemTotal:"):
+                resources["total_ram_gb"] = int(line.split()[1]) / (1024.0 ** 2)
+                break
+    except (OSError, ValueError, IndexError):
+        pass
+    try:
+        out = subprocess.run(
+            ["nvidia-smi", "--query-gpu=memory.total",
+             "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=20)
+        totals = [float(value) for value in out.stdout.split() if value.strip()]
+        if totals:
+            # One shared Isaac stage renders on one device.
+            resources["total_vram_gb"] = max(totals) / 1024.0
+    except (OSError, ValueError, subprocess.SubprocessError):
+        pass
+    return resources
+
+
+def automatic_parallel_pairs(method_count, *, cpu_count, total_ram_gb,
+                             total_vram_gb, offsets_available,
+                             maximum=MAX_PARALLEL_PAIRS):
+    """How many physical pairs this machine should run, as a multiple of arms.
+
+    Every method must get the same number of pairs or the arms stop being
+    budget-matched, so the answer is always a multiple of ``method_count``.
+
+    More pairs is worth wanting: total simulated seconds per wall second
+    measured 1.00x, 2.60x, 3.28x and 4.96x at one, two, three and four pairs,
+    because the shared Isaac stage steps one scene however many vehicles stand
+    in it. The bound is memory rather than speed, so the limits below are
+    headroom limits and the caller still says what it actually wants.
+    """
+    methods = max(1, int(method_count))
+    limits = {
+        "profile pair offsets": int(offsets_available),
+        "configured maximum": int(maximum),
+        "measured throughput ceiling": MEASURED_PAIR_CEILING,
+        "system RAM": int((float(total_ram_gb) - BASE_SYSTEM_RAM_GB)
+                          / PAIR_SYSTEM_RAM_GB) if total_ram_gb else maximum,
+        "GPU memory": int((float(total_vram_gb) - BASE_VRAM_GB) / PAIR_VRAM_GB)
+                      if total_vram_gb else maximum,
+        "CPU cores": int(float(cpu_count) / PAIR_CPU_CORES) if cpu_count else maximum,
+    }
+    allowed = min(limits.values())
+    # Down to a whole number of rounds so both arms fly the same count.
+    pairs = (allowed // methods) * methods
+    if pairs < methods:
+        # One round is the floor: fewer pairs than methods cannot give each
+        # method a pair of its own, which parallel training requires.
+        return methods, "minimum of one pair per method", limits
+    binding = min(limits, key=limits.get)
+    return pairs, binding, limits
 
 
 def _pair_live_config(cfg, pair_index: int, pair_count: int):
@@ -449,23 +539,56 @@ def _crossover_evaluation_tasks(plan, pipelines, pair_count: int) -> list[list[d
     return tasks
 
 
-def _balanced_training_pair_assignment(pipelines, pair_count: int,
-                                       replicate: int) -> tuple[dict, list]:
-    """Counterbalance method-to-route-phase assignment across replicates."""
+def _training_pair_replicas(pipelines, pair_count: int,
+                            replicate: int) -> dict[str, list[int]]:
+    """Physical pairs each method collects episodes on, in pair order.
+
+    One pair per method is the sequential case this started as. Beyond that the
+    pairs are divided evenly and a method flies all of its own at once, which
+    is the only way to spend a machine that runs several UAV/UGV pairs faster
+    in total than it runs one (measured: 1 pair 0.888x real time, 2 pairs
+    1.315x in total). The block per method stays contiguous so a method's
+    replicas keep the same route phases and world offsets across a resume.
+    """
     methods = list(pipelines)
     count = int(pair_count)
-    if count < 1 or (count > 1 and count != len(methods)):
-        raise ValueError("parallel training needs one method per physical pair")
+    if count < 1:
+        raise ValueError("parallel training needs at least one physical pair")
     if count == 1:
-        return {name: 0 for name in methods}, methods[:1]
-    offset = int(replicate) % count
-    assignment = {
-        name: (method_index + offset) % count
+        return {name: [0] for name in methods}
+    if count % len(methods):
+        raise ValueError(
+            f"{count} physical pairs cannot be divided evenly between "
+            f"{len(methods)} method(s); parallel training gives every method "
+            "the same number of pairs so the arms stay budget-matched")
+    replicas = count // len(methods)
+    offset = int(replicate) % len(methods)
+    return {
+        name: [((method_index + offset) % len(methods)) * replicas + replica
+               for replica in range(replicas)]
         for method_index, name in enumerate(methods)}
-    pair_methods = [next(name for name, index in assignment.items()
-                         if index == pair_index)
-                    for pair_index in range(count)]
-    return assignment, pair_methods
+
+
+def _balanced_training_pair_assignment(pipelines, pair_count: int,
+                                       replicate: int) -> tuple[dict, list]:
+    """Counterbalance method-to-route-phase assignment across replicates.
+
+    Returns each method's *primary* pair -- the one that stands for it outside
+    the training loop, where a single pair is what is wanted: reward-design
+    collection, checkpoint validation and per-pair monitors. The training loop
+    itself uses :func:`_training_pair_replicas`.
+    """
+    methods = list(pipelines)
+    count = int(pair_count)
+    replicas = _training_pair_replicas(methods, count, replicate)
+    assignment = {name: indices[0] for name, indices in replicas.items()}
+    if count == 1:
+        return assignment, methods[:1]
+    pair_methods: list[str | None] = [None] * count
+    for name, indices in replicas.items():
+        for index in indices:
+            pair_methods[index] = name
+    return assignment, [name for name in pair_methods if name is not None]
 
 
 def _adaptive_reward_settings(config, *, robust: bool = False) -> dict:
@@ -999,12 +1122,44 @@ def _fov_episode_from_payload(payload, *, episode_id: int, seed: int) -> dict:
     }
 
 
+def peer_training_health(futures):
+    """Raise a concurrently trained arm's failure now, not at the join.
+
+    ``training_futures`` is submitted before the reward-design stages and
+    joined only after them, so an arm that dies in its first minutes leaves
+    its exception sitting unread inside the future while the run carries on
+    collecting data for a comparison that can no longer be made. On the
+    2026-09-18 run that was twelve hours and twenty-eight simulator rebuilds
+    spent after the baseline PPO arm had already stopped -- and the reward
+    design was flown by an untrained policy the whole time, because the
+    checkpoint it was supposed to freeze never advanced past two episodes.
+
+    The returned callable is cheap enough to run once per collected episode.
+    An arm that finished *successfully* is not a failure; only a future that
+    completed with an exception stops the run.
+    """
+    def check() -> None:
+        for name, future in futures.items():
+            if not future.done() or future.cancelled():
+                continue
+            error = future.exception()
+            if error is not None:
+                raise RuntimeError(
+                    f"the {name} PPO arm stopped early, so nothing flown "
+                    "after it can complete the paired comparison. Its own "
+                    "failure is the cause below."
+                ) from error
+    return check
+
+
 def _collect_fov_risk_data(*, cfg, camera, model, config, config_hash,
                            checkpoint_path, results_dir, mode, monitor,
                            episodes_override=None, max_episodes_override=None,
                            source_pipeline="shin_se_fixed", system=None,
                            datastore=None, keypoint_implementation=None,
-                           validation_fraction=0.2):
+                           validation_fraction=0.2,
+                           scenarios=("training_random_walk",),
+                           peer_health=None):
     """Collect same-domain trajectories and label future visibility offline.
 
     With a ``datastore`` the episodes every previous run flew under the same
@@ -1083,6 +1238,11 @@ def _collect_fov_risk_data(*, cfg, camera, model, config, config_hash,
                 cfg, camera, horizon_steps=int(cfg.sim.max_steps)) as environment:
             offset = 0
             while len(episodes) < maximum:
+                # Before flying anything else, make sure there is still an arm
+                # left to compare against: this loop runs for hours next to a
+                # PPO worker whose exception nothing reads until long after.
+                if peer_health is not None:
+                    peer_health()
                 while (seed0 + offset) in used_seeds:
                     offset += 1
                 seed = seed0 + offset
@@ -1095,7 +1255,8 @@ def _collect_fov_risk_data(*, cfg, camera, model, config, config_hash,
                 variant = (episode_id - 1) % 3
                 rows, metric = collect_episode_resilient(
                     environment, model, source_pipeline, seed, curriculum=1.0,
-                    deterministic=False, scenario="training_random_walk",
+                    deterministic=False,
+                    scenario=scenarios[(episode_id - 1) % len(scenarios)],
                     monitor=monitor, phase="FOV-risk offline data",
                     action_transform=_behavior_transform(variant))
                 samples = ([{"graph_X": row["fov_graph_X"],
@@ -1464,8 +1625,13 @@ def main(*, primary_only: bool = False):
                         default=ROOT / "config/experiments/two_pipeline_comparison.yaml"
                         if primary_only else
                         ROOT / "config/experiments/three_pipeline_comparison.yaml")
+    # The minimal profile is the default because the campus stage buys nothing
+    # the benchmark measures: the six deck scenarios are closed-form ground
+    # tracks and the landing target is a fiducial painted on the deck, which is
+    # identical on every map. The campus USD is still selectable and still the
+    # profile for a photoreal run.
     parser.add_argument("--system-config", type=Path,
-                        default=ROOT / "config/shin2026-system.yaml")
+                        default=ROOT / "config/shin2026-minimal-system.yaml")
     parser.add_argument("--results-dir", type=Path)
     # Collected flight data outlives one results directory. The accumulation
     # is reused only by a run whose data fingerprint matches; see
@@ -1513,8 +1679,9 @@ def main(*, primary_only: bool = False):
     parser.add_argument("--no-rviz", action="store_true")
     parser.add_argument("--dashboard-port", type=int)
     parser.add_argument(
-        "--parallel-pairs", type=int, default=(2 if primary_only else 3),
-        help="number of isolated UAV/UGV pairs in the shared Isaac stage")
+        "--parallel-pairs", default="auto",
+        help="number of isolated UAV/UGV pairs in the shared Isaac stage, or "
+             "'auto' to size it from this machine and the profile")
     args = parser.parse_args()
     if args.train_episodes is not None and args.total_train_episodes is not None:
         parser.error("use either --train-episodes or --total-train-episodes")
@@ -1529,8 +1696,15 @@ def main(*, primary_only: bool = False):
         parser.error("--rgat-max-data-episodes must be at least two")
     if args.training_replicate < 0:
         parser.error("--training-replicate must be non-negative")
-    if not 1 <= args.parallel_pairs <= 3:
-        parser.error("--parallel-pairs must be between 1 and 3")
+    automatic_pairs = str(args.parallel_pairs).strip().lower() == "auto"
+    if not automatic_pairs:
+        try:
+            args.parallel_pairs = int(args.parallel_pairs)
+        except (TypeError, ValueError):
+            parser.error("--parallel-pairs must be an integer or 'auto'")
+        if not 1 <= args.parallel_pairs <= MAX_PARALLEL_PAIRS:
+            parser.error(
+                f"--parallel-pairs must be between 1 and {MAX_PARALLEL_PAIRS}")
 
     config = load_experiment(args.config)
     seminar_fast = dict(config.get("seminar_fast") or {})
@@ -1551,9 +1725,12 @@ def main(*, primary_only: bool = False):
         # an ArUco board or lets a detector-solved pose drive the policy.
         assert_no_aruco_in_primary_system(
             load_system_config(Path(args.system_config)))
-    if args.parallel_pairs > 1 and args.parallel_pairs != len(args.pipelines):
+    if (not automatic_pairs and args.parallel_pairs > 1
+            and args.parallel_pairs % len(args.pipelines)):
         parser.error(
-            "parallel mode requires exactly one selected pipeline per UAV/UGV pair")
+            f"--parallel-pairs {args.parallel_pairs} cannot be divided evenly "
+            f"between {len(args.pipelines)} pipeline(s); every arm flies the "
+            "same number of pairs so their budgets stay matched")
     if args.results_dir is None:
         experiment_dir = ("two_pipeline_fov_risk" if
                           config.get("experiment") == "two_pipeline_fov_risk" else
@@ -1573,6 +1750,21 @@ def main(*, primary_only: bool = False):
     args.results_dir.mkdir(parents=True, exist_ok=True)
 
     system = load_system_config(args.system_config)
+    if automatic_pairs:
+        offsets = ((system.get("parallel") or {}).get("pair_offsets_enu_m")
+                   or ())
+        resources = machine_resources()
+        args.parallel_pairs, binding, limits = automatic_parallel_pairs(
+            len(args.pipelines), offsets_available=len(offsets), **resources)
+        print(f"Sizing the stage from this machine: "
+              f"{resources['cpu_count']} cores, "
+              f"{resources['total_ram_gb']:.0f} GB RAM, "
+              f"{resources['total_vram_gb']:.1f} GB VRAM, "
+              f"{len(offsets)} pair offsets in the profile.")
+        print(f"Running {args.parallel_pairs} UAV/UGV pair(s) "
+              f"({args.parallel_pairs // len(args.pipelines)} per arm); "
+              f"limited by {binding} "
+              f"({', '.join(f'{k} {v}' for k, v in sorted(limits.items(), key=lambda kv: kv[1]))}).")
     training_cfg = dict(config.get("training") or {})
     seed_cfg = dict(config.get("seeds") or {})
     base_model_seed = int(seed_cfg.get("model_initialization", 42))
@@ -1611,6 +1803,11 @@ def main(*, primary_only: bool = False):
     })
     configured_count = int(training_cfg.get(
         f"episodes_{args.mode}", 8 if args.mode == "quick" else 40960))
+    # Deck motions the PPO episodes rotate through. The FOV-risk collection
+    # below flies the same set, so the frozen readout is fitted on the deck
+    # distribution the policies are actually trained and scored against.
+    training_scenarios = tuple(training_cfg.get("scenarios")
+                               or ("training_random_walk",))
     configured_ppo = dict(config.get("ppo") or {})
     se_pipeline_count = sum(
         get_pipeline(name).state_estimation_enabled for name in args.pipelines)
@@ -1852,6 +2049,12 @@ def main(*, primary_only: bool = False):
         cfg.viz.dashboard.port = int(args.dashboard_port)
     pair_cfgs = [_pair_live_config(cfg, index, args.parallel_pairs)
                  for index in range(args.parallel_pairs)]
+    # Physical pairs each method flies on. One per method is the sequential
+    # case; more makes each method's episodes a vectorised batch. Measured on
+    # this machine, four pairs move 4.96x simulated seconds per wall second in
+    # total against 2.60x for two, so the pairs are worth spending.
+    training_pair_replicas = _training_pair_replicas(
+        args.pipelines, args.parallel_pairs, args.training_replicate)
     training_pair_for, pair_training_methods = _balanced_training_pair_assignment(
         args.pipelines, args.parallel_pairs, args.training_replicate)
     ppo = dict(config.get("ppo") or {})
@@ -2134,10 +2337,26 @@ def main(*, primary_only: bool = False):
                         raise RuntimeError(
                             f"{name} requires {spec.adaptive_reward_architecture} "
                             f"weights, artifact is {artifact_architecture}")
+                # A measured pipeline flies every pair assigned to its method;
+                # the reward-design source run stays on the single pair it was
+                # handed, because nothing batches its collection.
+                replica_pairs = (list(training_pair_replicas.get(name, [pair_index]))
+                                 if primary else [pair_index])
+
+                def live_environment(index):
+                    return lambda: LiveShinEnvironment(
+                        pair_cfgs[index], cameras[index],
+                        horizon_steps=int(pair_cfgs[index].sim.max_steps))
+
+                replica_factories = [live_environment(index)
+                                     for index in replica_pairs]
+                if len(replica_factories) > 1:
+                    local_monitor.stage(
+                        "parallel training" if args.parallel_pairs > 1 else "training",
+                        f"pairs {', '.join(str(i) for i in replica_pairs)} · "
+                        f"recurrent PPO · {name}")
                 history = train_live(
-                    lambda: LiveShinEnvironment(
-                        pair_cfgs[pair_index], cameras[pair_index],
-                        horizon_steps=int(pair_cfgs[pair_index].sim.max_steps)),
+                    replica_factories[0],
                     model, name,
                     training_seeds,
                     target_dir, config_hash=config_hash,
@@ -2152,7 +2371,9 @@ def main(*, primary_only: bool = False):
                         {} if demonstrations is None else
                         anchor),
                     optimizer_lock=gpu_update_lock,
-                    training_contract_id=training_contract_id)
+                    training_contract_id=training_contract_id,
+                    scenarios=training_scenarios,
+                    env_factories=replica_factories)
                 if primary:
                     for row in history:
                         row["training_replicate"] = args.training_replicate
@@ -2275,11 +2496,12 @@ def main(*, primary_only: bool = False):
                         episodes_override=args.rgat_data_episodes,
                         max_episodes_override=args.rgat_max_data_episodes,
                         source_pipeline=source_name, system=system,
-                        datastore=datastore,
+                        datastore=datastore, scenarios=training_scenarios,
                         keypoint_implementation=(
                             None if keypoint_pretraining is None
                             else keypoint_pretraining["implementation"]),
-                        validation_fraction=fov_validation_fraction))
+                        validation_fraction=fov_validation_fraction,
+                        peer_health=peer_training_health(training_futures)))
                 fov_design_episodes = int(fov_manifest["episodes"])
                 settings = dict(config.get("fov_risk_design") or {})
                 settings["epochs"] = int(

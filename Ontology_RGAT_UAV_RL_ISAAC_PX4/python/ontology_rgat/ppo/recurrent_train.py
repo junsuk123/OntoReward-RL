@@ -6,8 +6,10 @@ import copy
 import csv
 import json
 import math
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import ExitStack
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Sequence
 
 import numpy as np
 import torch
@@ -935,6 +937,73 @@ def collect_episode_resilient(env, model: PipelineActorCritic, method: str,
     raise AssertionError("unreachable infrastructure-recovery state")
 
 
+def flown_episode_batches(envs, model, method, seed_list, completed, *,
+                          scenarios, warmup_episodes, curriculum,
+                          collect_episode_kwargs,
+                          warmup_is_deterministic=False):
+    """Yield episodes flown against the shared pre-batch policy, in order.
+
+    With one environment this is exactly the sequential loop it replaces: fly
+    an episode, hand it back, update on it, fly the next. With several it
+    becomes a vectorised PPO rollout -- ``len(envs)`` episodes flown at once on
+    their own UAV/UGV pairs, then updated one after another in episode order.
+
+    That is worth doing because the shared Isaac stage runs several pairs
+    faster in total than it runs one: measured on this machine, total simulated
+    seconds per wall second are 1.00x with one pair, 2.60x with two and 3.28x
+    with three. A single pair leaves most of that on the floor.
+
+    Two consequences the caller must accept, both inherent to a vectorised
+    rollout and both absent when ``len(envs) == 1``:
+
+    * every episode in a batch is flown by the *same* policy, the one in place
+      before the batch started, rather than by a policy updated after each
+      flight;
+    * the curriculum level is likewise fixed for the batch, since the episodes
+      are in the air simultaneously and there is no order in which to advance
+      it between them.
+
+    An exception in any flight propagates out of the batch: infrastructure
+    recovery already happens inside ``collect_episode_resilient``, so anything
+    reaching here ends training for this method, as it did sequentially.
+    """
+    pending = list(enumerate(seed_list[completed:], start=completed + 1))
+    width = max(1, len(envs))
+    while pending:
+        batch, pending = pending[:width], pending[width:]
+        lead_episode = batch[0][0]
+        perception_warmup = lead_episode <= warmup_episodes
+        ppo_episode = max(0, lead_episode - warmup_episodes)
+        level = (curriculum.update(0) if perception_warmup
+                 else curriculum.update(ppo_episode - 1))
+        # The rollout metric describes this pre-update policy. Keep its exact
+        # weights so deployment selection never attributes a good flight to the
+        # subsequent PPO update.
+        rollout_model_state = copy.deepcopy(model.state_dict())
+
+        def fly(task):
+            slot, (episode, seed) = task
+            scenario = scenarios[(episode - 1) % len(scenarios)]
+            warming = episode <= warmup_episodes
+            rows, metric = collect_episode_resilient(
+                envs[slot], model, method, seed, scenario=scenario,
+                curriculum=level,
+                phase="perception warm-up" if warming else "training",
+                deterministic=bool(warming and warmup_is_deterministic),
+                **collect_episode_kwargs)
+            return episode, seed, scenario, rows, metric
+
+        if width == 1:
+            flights = [fly((0, batch[0]))]
+        else:
+            with ThreadPoolExecutor(max_workers=len(batch)) as pool:
+                # list() re-raises the first failure here rather than leaving it
+                # to surface as a missing result later.
+                flights = list(pool.map(fly, list(enumerate(batch))))
+        for episode, seed, scenario, rows, metric in flights:
+            yield episode, seed, scenario, level, rollout_model_state, rows, metric
+
+
 def _gae(rows, gamma, gae_lambda):
     rewards = np.asarray([row["reward"] for row in rows], dtype=np.float32)
     values = np.asarray([row["value"] for row in rows], dtype=np.float32)
@@ -1380,8 +1449,33 @@ def train_live(env_factory: Callable, model, method, seeds, output_dir,
                *, config_hash, potential=None, ppo=None, curriculum_config=None,
                monitor=None, restart_incompatible=False,
                demonstration_dataset=None, demonstration_anchor=None,
-               optimizer_lock=None, training_contract_id=None):
+               optimizer_lock=None, training_contract_id=None,
+               scenarios=None, env_factories=None):
     ppo = ppo or {}
+    # Deck motion the episodes are flown against. One analytic scenario per
+    # episode, rotated by episode index rather than drawn, so a resumed run
+    # continues the same cycle and both paired arms fly the identical deck on
+    # the identical seed -- the pairing the comparison rests on.
+    # One factory per physical UAV/UGV pair this method flies on. The default
+    # is the single sequential environment this function started with.
+    env_factories = list(env_factories or [env_factory])
+    if not env_factories:
+        raise ValueError("train_live needs at least one environment factory")
+    scenarios = tuple(scenarios or ("training_random_walk",))
+    # The gateway is the authority on the scenario vocabulary and rejects an
+    # unknown one, but it only does so on the first reset -- minutes into a
+    # booted stack. Fail here instead when its package is importable, and stay
+    # quiet when it is not: the learner does not otherwise depend on it.
+    try:
+        from ontology_rgat_px4.protocol import BENCHMARK_SCENARIOS
+    except ImportError:
+        BENCHMARK_SCENARIOS = None
+    if BENCHMARK_SCENARIOS is not None:
+        unknown = [name for name in scenarios if name not in BENCHMARK_SCENARIOS]
+        if unknown:
+            raise ValueError(
+                f"unknown training scenario(s): {', '.join(sorted(unknown))}; "
+                f"known: {', '.join(sorted(BENCHMARK_SCENARIOS))}")
     demonstration_anchor = dict(demonstration_anchor or {})
     anchor_enabled = bool(
         demonstration_dataset is not None
@@ -1554,30 +1648,32 @@ def train_live(env_factory: Callable, model, method, seeds, output_dir,
                   f"{model._selected_checkpoint_episode}.")
         return history
 
-    with open_live_env_resilient(env_factory, method) as env:
-        for episode, seed in enumerate(seed_list[completed:], start=completed + 1):
+    collect_episode_kwargs = dict(
+        potential=potential,
+        gamma=float(ppo.get("gamma", .99)),
+        shaping_lambda=float(ppo.get("shaping_lambda", 1.0)),
+        fov_risk_lambda=float(ppo.get("fov_risk_lambda", 0.1)),
+        reward_normalizer=reward_normalizer,
+        monitor=monitor)
+    # Deterministic collection belongs to the perception warm-up alone: a PPO
+    # episode flown without sampling collects no exploration at all. Kept out
+    # of the shared kwargs above because it is decided per episode, and a batch
+    # can straddle the warm-up boundary.
+    warmup_is_deterministic = not ppo.get(
+        "perception_warmup_safe_exploration", True)
+    with ExitStack() as env_stack:
+        envs = [env_stack.enter_context(
+                    open_live_env_resilient(factory, method))
+                for factory in env_factories]
+        for (episode, seed, scenario, c, rollout_model_state, rows,
+             metric) in flown_episode_batches(
+                envs, model, method, seed_list, completed,
+                scenarios=scenarios, warmup_episodes=warmup_episodes,
+                curriculum=curriculum,
+                collect_episode_kwargs=collect_episode_kwargs,
+                warmup_is_deterministic=warmup_is_deterministic):
             perception_warmup = episode <= warmup_episodes
             ppo_episode = max(0, episode - warmup_episodes)
-            c = (curriculum.update(0) if perception_warmup
-                 else curriculum.update(ppo_episode - 1))
-            # The rollout metric describes this pre-update policy. Keep its
-            # exact weights so deployment selection never attributes a good
-            # flight to the subsequent PPO update.
-            rollout_model_state = copy.deepcopy(model.state_dict())
-            rows, metric = collect_episode_resilient(
-                env, model, method, seed, curriculum=c, potential=potential,
-                gamma=float(ppo.get("gamma", .99)),
-                shaping_lambda=float(ppo.get("shaping_lambda", 1.0)),
-                fov_risk_lambda=float(ppo.get("fov_risk_lambda", 0.1)),
-                reward_normalizer=reward_normalizer,
-                monitor=monitor, phase=("perception warm-up" if perception_warmup
-                                        else "training"),
-                # Position-backed velocity setpoints bound this exploration.
-                # Sampling during the short Shin-only estimator warm-up avoids
-                # collecting copies of an almost perfectly static trajectory.
-                deterministic=bool(
-                    perception_warmup and not ppo.get(
-                        "perception_warmup_safe_exploration", True)))
             if perception_warmup:
                 loss = _call_with_optional_lock(
                     optimizer_lock, update_estimator_episode,
@@ -1655,7 +1751,7 @@ def train_live(env_factory: Callable, model, method, seeds, output_dir,
             prior_steps = sum(
                 int(float(row.get("steps", 0))) for row in history
                 if row.get("optimization_phase") == "ppo")
-            metric.update({"method": method, "scenario": "training_random_walk",
+            metric.update({"method": method, "scenario": scenario,
                            "episode": episode, "curriculum_level": curriculum.level,
                            "curriculum": float(c),
                            "optimization_phase": ("perception_warmup"
@@ -1676,7 +1772,7 @@ def train_live(env_factory: Callable, model, method, seeds, output_dir,
                             "method": method,
                             "phase": ("perception_warmup" if perception_warmup else "ppo"),
                             "landing_phase": transition.get("landing_phase", "unknown"),
-                            "scenario": "training_random_walk",
+                            "scenario": scenario,
                             "success": int(metric["paper_success"]),
                             "failure": int(metric["failure"]),
                             "failure_type": metric["status"],

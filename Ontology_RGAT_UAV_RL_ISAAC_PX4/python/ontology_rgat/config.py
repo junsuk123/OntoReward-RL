@@ -477,10 +477,25 @@ def default_config(mode: str = "quick", target: str = "sitl") -> Config:
         # only brings it back to within nine metres -- so a fixed budget times
         # out vehicles that are still travelling at PX4's own speed limit.
         # Pay for the measured distance at this closing speed, on top of the
-        # fixed budget. MPC_XY_VEL_MAX is 2.0 m/s in this SITL profile; the
-        # allowance assumes less so acceleration and the climb are covered.
-        "entry_travel_speed": 1.2,        # m/s of assumed closing speed
-        "entry_travel_budget_max": 60.0,  # s of simulated PX4 time, at most
+        # fixed budget.
+        #
+        # This is the speed the *gap* closes at, not the speed the vehicle
+        # flies at. MPC_XY_VEL_MAX is 2.0 m/s here, but the deck is driving
+        # away for the whole trip: pad.benchmark_speed_scale maps the paper's
+        # fastest scenario onto the carrier's 1.0 m/s ceiling, so a stern
+        # chase nets a fraction of the airframe's own limit. Assuming the
+        # cruise speed instead cost the 2026-09-18 four-pair run twelve hours.
+        # All 23 of that run's entry failures began 21-52 m out; the gap
+        # closed at a measured 0.31 m/s; and 20 of the 23 expired while still
+        # travelling, with 85-98% of the distance already covered. Every one
+        # was reported as an infrastructure fault and rebuilt the shared
+        # simulator, taking the other pair's episode with it -- for a budget
+        # short by a factor of four against a vehicle that was flying the
+        # trip correctly.
+        "entry_travel_speed": 0.35,       # m/s of measured closing speed
+        # 39 m was the longest transit that run attempted, which is 110 s at
+        # the speed above: the cap has to clear it rather than truncate it.
+        "entry_travel_budget_max": 180.0,  # s of simulated PX4 time, at most
         # A gateway-classified recoverable SITL link failsafe (OFFBOARD
         # heartbeat loss and its benign status-clear race) clears on its own
         # in well under a second: the gateway keeps streaming setpoints and
@@ -498,11 +513,11 @@ def default_config(mode: str = "quick", target: str = "sitl") -> Config:
         # entry_sim_budget above, plus at most entry_travel_budget_max. This
         # bounds a simulator that has stopped publishing time at all, so it
         # must outlast that sum at the slowest stage rate the run is expected
-        # to reach -- the measured two-pair city stage advances roughly one
-        # simulated second per wall second, so 240 s covers the 120 s ceiling
-        # with room to spare -- and PX4's post-boot arm refusal, which
-        # entry_arm_grace cuts short anyway.
-        "entry_timeout": 240.0,           # s of wall clock
+        # to reach -- the measured multi-pair stage advances roughly one
+        # simulated second per wall second, so this has to clear the 240 s
+        # ceiling those two now add up to -- and PX4's post-boot arm refusal,
+        # which entry_arm_grace cuts short anyway.
+        "entry_timeout": 480.0,           # s of wall clock
         "arm_retry": 2.0,                 # s between arm attempts during the climb
         # PX4 SITL stops accepting arm commands after hours of lockstep; a
         # pipeline that owns the simulator cycles it rather than losing the run.

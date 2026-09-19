@@ -743,3 +743,258 @@ def test_the_retired_binary_readout_keeps_its_own_id_and_cannot_be_run():
     revived["pipelines"] = ["shin_se_fixed", "shin_se_onto_rgat_fov"]
     with pytest.raises(ValueError, match="retired FOV reward readout"):
         validate_pipeline_configuration(revived)
+
+
+def test_flown_episode_batches_is_sequential_with_one_environment(monkeypatch):
+    """One env must behave exactly as the loop this replaced: fly, hand back."""
+    import ontology_rgat.ppo.recurrent_train as rt
+
+    order = []
+
+    def fake_collect(env, model, method, seed, **kwargs):
+        order.append((env, seed, kwargs["curriculum"], kwargs["scenario"]))
+        return [f"rows{seed}"], {"seed": seed}
+    monkeypatch.setattr(rt, "collect_episode_resilient", fake_collect)
+
+    class Curriculum:
+        level = 1
+        def __init__(self): self.seen = []
+        def update(self, index):
+            self.seen.append(index)
+            return 0.5 + 0.1 * len(self.seen)
+
+    class Model:
+        def state_dict(self): return {"w": 1}
+
+    curriculum = Curriculum()
+    flown = list(rt.flown_episode_batches(
+        ["envA"], Model(), "m", [10, 11, 12], 0,
+        scenarios=("circle", "zigzag"), warmup_episodes=0,
+        curriculum=curriculum, collect_episode_kwargs={}))
+    assert [row[0] for row in flown] == [1, 2, 3]
+    assert [row[1] for row in flown] == [10, 11, 12]
+    # Scenario rotates by episode index, not by batch.
+    assert [row[2] for row in flown] == ["circle", "zigzag", "circle"]
+    # One env means one curriculum step per episode, as before.
+    assert curriculum.seen == [0, 1, 2]
+
+
+def test_flown_episode_batches_shares_one_policy_across_a_batch(monkeypatch):
+    """The defining property of a vectorised rollout, and the risk in it."""
+    import ontology_rgat.ppo.recurrent_train as rt
+
+    def fake_collect(env, model, method, seed, **kwargs):
+        return [], {"seed": seed, "env": env, "curriculum": kwargs["curriculum"]}
+    monkeypatch.setattr(rt, "collect_episode_resilient", fake_collect)
+
+    class Curriculum:
+        level = 1
+        def __init__(self): self.calls = 0
+        def update(self, index):
+            self.calls += 1
+            return float(index)
+
+    class Model:
+        def __init__(self): self.version = 0
+        def state_dict(self): return {"version": self.version}
+
+    curriculum, model = Curriculum(), Model()
+    flown = list(rt.flown_episode_batches(
+        ["envA", "envB"], model, "m", [10, 11, 12, 13], 0,
+        scenarios=("circle",), warmup_episodes=0,
+        curriculum=curriculum, collect_episode_kwargs={}))
+    assert [row[0] for row in flown] == [1, 2, 3, 4]
+    # Two batches of two: one weight snapshot and one curriculum step each.
+    assert curriculum.calls == 2
+    first, second = flown[0][4], flown[1][4]
+    assert first is second, "a batch must be flown by a single policy snapshot"
+    assert flown[2][4] is not first, "a new batch must re-snapshot the policy"
+    # Every episode of a batch is flown at the same curriculum level.
+    assert flown[0][3] == flown[1][3] and flown[2][3] == flown[3][3]
+    # Each episode of a batch goes to its own physical pair.
+    assert {flown[0][6]["env"], flown[1][6]["env"]} == {"envA", "envB"}
+
+
+def test_flown_episode_batches_propagates_a_failed_flight(monkeypatch):
+    """A flight that fails past its own recovery must stop training, not vanish."""
+    import ontology_rgat.ppo.recurrent_train as rt
+
+    def fake_collect(env, model, method, seed, **kwargs):
+        if seed == 11:
+            raise RuntimeError("boom")
+        return [], {"seed": seed}
+    monkeypatch.setattr(rt, "collect_episode_resilient", fake_collect)
+
+    class Curriculum:
+        level = 1
+        def update(self, index): return 0.0
+
+    class Model:
+        def state_dict(self): return {}
+
+    with pytest.raises(RuntimeError, match="boom"):
+        list(rt.flown_episode_batches(
+            ["envA", "envB"], Model(), "m", [10, 11], 0,
+            scenarios=("circle",), warmup_episodes=0,
+            curriculum=Curriculum(), collect_episode_kwargs={}))
+
+
+def test_automatic_parallel_pairs_keeps_the_arms_budget_matched():
+    """Every method must fly the same number of pairs or the comparison tilts."""
+    from run_three_pipeline import automatic_parallel_pairs
+
+    for methods in (1, 2, 3):
+        pairs, _, _ = automatic_parallel_pairs(
+            methods, cpu_count=64, total_ram_gb=256.0, total_vram_gb=48.0,
+            offsets_available=8)
+        assert pairs % methods == 0
+        assert pairs >= methods
+
+
+def test_automatic_parallel_pairs_is_bounded_by_what_was_measured():
+    """A resource model that allows more than was ever measured must not win."""
+    from run_three_pipeline import (MEASURED_PAIR_CEILING,
+                                    automatic_parallel_pairs)
+
+    pairs, binding, limits = automatic_parallel_pairs(
+        2, cpu_count=256, total_ram_gb=1024.0, total_vram_gb=80.0,
+        offsets_available=8)
+    assert pairs <= MEASURED_PAIR_CEILING
+    assert binding == "measured throughput ceiling"
+    assert limits["system RAM"] > MEASURED_PAIR_CEILING
+
+
+def test_automatic_parallel_pairs_respects_the_profile_it_must_place_them_in():
+    """A profile defining two pair offsets cannot host four pairs."""
+    from run_three_pipeline import automatic_parallel_pairs
+
+    pairs, binding, _ = automatic_parallel_pairs(
+        2, cpu_count=64, total_ram_gb=256.0, total_vram_gb=48.0,
+        offsets_available=2)
+    assert (pairs, binding) == (2, "profile pair offsets")
+
+
+def test_automatic_parallel_pairs_never_starves_a_method_of_its_own_pair():
+    """Below one pair per method, parallel training has nothing to divide."""
+    from run_three_pipeline import automatic_parallel_pairs
+
+    pairs, reason, _ = automatic_parallel_pairs(
+        2, cpu_count=1, total_ram_gb=9.2, total_vram_gb=1.7,
+        offsets_available=8)
+    assert pairs == 2
+    assert "one pair per method" in reason
+
+
+def test_deterministic_collection_stays_inside_the_perception_warm_up(monkeypatch):
+    """A PPO episode flown without sampling collects no exploration at all."""
+    import ontology_rgat.ppo.recurrent_train as rt
+
+    seen = {}
+
+    def fake_collect(env, model, method, seed, **kwargs):
+        seen[seed] = kwargs["deterministic"]
+        return [], {"seed": seed}
+    monkeypatch.setattr(rt, "collect_episode_resilient", fake_collect)
+
+    class Curriculum:
+        level = 1
+        def update(self, index): return 0.0
+
+    class Model:
+        def state_dict(self): return {}
+
+    # Two warm-up episodes then two PPO episodes, batched two at a time so a
+    # batch straddles the boundary.
+    list(rt.flown_episode_batches(
+        ["a", "b"], Model(), "m", [10, 11, 12, 13], 0,
+        scenarios=("circle",), warmup_episodes=2, curriculum=Curriculum(),
+        collect_episode_kwargs={}, warmup_is_deterministic=True))
+    assert seen == {10: True, 11: True, 12: False, 13: False}
+
+
+def test_safe_exploration_keeps_even_the_warm_up_sampling(monkeypatch):
+    import ontology_rgat.ppo.recurrent_train as rt
+
+    seen = {}
+
+    def fake_collect(env, model, method, seed, **kwargs):
+        seen[seed] = kwargs["deterministic"]
+        return [], {"seed": seed}
+    monkeypatch.setattr(rt, "collect_episode_resilient", fake_collect)
+
+    class Curriculum:
+        level = 1
+        def update(self, index): return 0.0
+
+    class Model:
+        def state_dict(self): return {}
+
+    list(rt.flown_episode_batches(
+        ["a"], Model(), "m", [10, 11], 0, scenarios=("circle",),
+        warmup_episodes=2, curriculum=Curriculum(),
+        collect_episode_kwargs={}, warmup_is_deterministic=False))
+    assert seen == {10: False, 11: False}
+
+
+def _recovery_env(connect_results, stack):
+    """A LiveShinEnvironment stub exercising only recover_infrastructure."""
+    from ontology_rgat.benchmarks.live_env import LiveShinEnvironment
+
+    env = LiveShinEnvironment.__new__(LiveShinEnvironment)
+    env._stack_generation = 0
+    env.bridge = type("B", (), {"close": lambda self: None})()
+    attempts = iter(connect_results)
+
+    def _connect():
+        outcome = next(attempts)
+        if isinstance(outcome, Exception):
+            raise outcome
+    env._connect = _connect
+    return env
+
+
+class _Stack:
+    def __init__(self):
+        self.generation = 0
+        self.cycles = 0
+
+    def restart_if_generation(self, generation):
+        self.cycles += 1
+        self.generation += 1
+        return True
+
+
+def test_recovery_retries_a_gateway_that_is_not_back_yet(monkeypatch):
+    """One hello landing in a peer's rebuild window must not end the run."""
+    from ontology_rgat import stack as stack_module
+    from ontology_rgat.bridge import GatewayTimeout
+
+    stack = _Stack()
+    monkeypatch.setattr(stack_module, "current", lambda *a, **k: stack)
+    env = _recovery_env([GatewayTimeout("hello timed out"), None], stack)
+    assert env.recover_infrastructure() is True
+    # One cycle to recover, one more because the first hello found nothing.
+    assert stack.cycles == 2
+
+
+def test_recovery_gives_up_after_its_budget(monkeypatch):
+    """A simulator that never answers still has to stop the run, not spin."""
+    from ontology_rgat import stack as stack_module
+    from ontology_rgat.bridge import GatewayTimeout
+
+    stack = _Stack()
+    monkeypatch.setattr(stack_module, "current", lambda *a, **k: stack)
+    env = _recovery_env([GatewayTimeout("1"), GatewayTimeout("2"),
+                         GatewayTimeout("3")], stack)
+    with pytest.raises(GatewayTimeout):
+        env.recover_infrastructure(attempts=3)
+
+
+def test_recovery_still_refuses_a_stack_this_run_does_not_own(monkeypatch):
+    from ontology_rgat import stack as stack_module
+    from ontology_rgat.bridge import BridgeError
+
+    monkeypatch.setattr(stack_module, "current", lambda *a, **k: None)
+    env = _recovery_env([None], None)
+    with pytest.raises(BridgeError, match="does not own"):
+        env.recover_infrastructure()

@@ -1149,3 +1149,25 @@ def test_a_stage_that_stops_advancing_still_hits_the_wall_guard(monkeypatch):
     message = str(excinfo.value)
     assert "12.0 s wall" in message
     assert "slower than real time" in message
+
+
+def test_entry_gate_reports_the_heading_it_never_showed(monkeypatch):
+    """Offset and speed inside tolerance with the view out is ambiguous.
+
+    It is either a geometry fault or a heading the vehicle never turned to,
+    and the two need opposite fixes, so the failure has to name the heading.
+    """
+    import math
+
+    import ontology_rgat.bridge as bridge_module
+
+    quaternion = [math.cos(math.radians(90) / 2), 0.0, 0.0,
+                  math.sin(math.radians(90) / 2)]
+    assert math.degrees(bridge_module._yaw_from_quaternion_wxyz(
+        quaternion)) == pytest.approx(90.0)
+    # A 359 degree error is a 1 degree error the other way round.
+    assert math.degrees(bridge_module._wrap_to_pi(
+        math.radians(359.0))) == pytest.approx(-1.0)
+    # Unusable attitude must not break the diagnostic itself.
+    assert bridge_module._yaw_from_quaternion_wxyz(None) is None
+    assert bridge_module._yaw_from_quaternion_wxyz([float("nan")] * 4) is None

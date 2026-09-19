@@ -47,9 +47,15 @@ fov_risk:
 fov_risk_design:
   source_pipeline: shin_se_fixed
   episodes_quick: 8
-  episodes_full: 40000
+  # The collection loop exits on ``len(episodes) >= episodes_full AND
+  # target coverage``, so this is a floor on episodes, not on samples. The
+  # 2026-09-18 run reached coverage at 233 episodes / 56,459 supervised
+  # samples and then kept flying against a 40,000-episode floor it could not
+  # reach in under three months. 400 is roughly twice the set that already
+  # covered both regimes -- about 96,000 samples for a hidden_dim 24 readout.
+  episodes_full: 400
   max_episodes_quick: 24
-  max_episodes_full: 120000
+  max_episodes_full: 1200
   validation_fraction: 0.2
   epochs_quick: 10
   epochs_full: 80
@@ -69,15 +75,62 @@ seeds:
 
 training:
   episodes_quick: 8
-  episodes_full: 40000
+  # Measured throughput on this machine is ~20 episodes per hour per pair,
+  # and the two arms train on their own pairs in parallel: 1,000 episodes per
+  # arm is ~50 h of flying, ~2 days of wall clock. The 40,000 this replaced
+  # was ~83 days, which is why the dashboard's "학습 checkpoint" tile could
+  # only ever read a handful against 80,016. The accumulated datastore lets a
+  # later run extend this rather than restart it.
+  episodes_full: 1000
+  # Deck motion the PPO episodes are flown against, one analytic scenario per
+  # episode rotated by episode index, replacing the single
+  # ``training_random_walk`` deck. All six are closed form in
+  # pad_motion._prepare_benchmark_motion, so an episode is decided by its seed
+  # and its scenario alone.
+  #
+  # REQUIRES pad.motion: random_walk in the system profile. pad_motion.pose()
+  # dispatches on pad.motion, and only its random_walk branch reads the
+  # per-scenario trajectory; under pad.motion: waypoints the scenario name is
+  # recorded but the deck follows the waypoint route regardless. The campus
+  # profile (config/shin2026-system.yaml) uses waypoints, so these names have
+  # no effect there -- see the minimal profile.
+  #
+  # The rotation is by index, not drawn, so a resumed run continues the same
+  # cycle and both paired arms fly the identical deck on the identical seed --
+  # which is what paired_seeds rests on.
+  #
+  # NOTE: evaluation below now uses this same six-scenario set, so no deck
+  # motion is held out. Cross-motion generalization cannot be claimed from this
+  # configuration; the comparison between the two arms remains paired and fair.
+  scenarios:
+    - straight_8mps
+    - circle
+    - linear_acceleration_wave
+    - zigzag
+    - u_turn
+    - vertical_heave_boat
   independent_seeds_full: [42, 1042, 2042]
 
 evaluation:
-  training_random_walk: 10000
-  straight_8mps: 1000
-  linear_acceleration_wave: 1000
-  circle: 1000
-  zigzag: 1000
-  u_turn: 1000
-  vertical_heave_boat: 1000
+  # Equal weight per scenario, matching training.scenarios exactly.
+  # ``training_random_walk`` is retired from both: 10,000 of the previous
+  # 16,000 evaluation flights per arm were that one deck.
+  #
+  # Sized against measured throughput, not against a round number. Every
+  # seed here is flown twice -- once per arm, same seed, same deck, policy
+  # crossed -- so the count below is per arm and the run flies 2x it. At the
+  # ~20 episodes per hour per pair this stage measures, 1,000 per scenario
+  # was 6,000 per arm and 12.5 days of evaluation behind 2 days of training.
+  #
+  # 200 per scenario is 1,200 paired seeds per arm. A success rate near 0.5
+  # then carries a 95% interval of about +/-2.8%p per arm, and the paired
+  # difference -- the quantity the experiment exists to report -- is tighter
+  # still, because both arms fly the identical seed and deck and the seed's
+  # own difficulty cancels.
+  straight_8mps: 200
+  linear_acceleration_wave: 200
+  circle: 200
+  zigzag: 200
+  u_turn: 200
+  vertical_heave_boat: 200
 

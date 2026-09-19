@@ -1,0 +1,91 @@
+extends: shin2026-system.yaml
+
+# Minimal stage for the analytic-scenario benchmark.
+#
+# The campus profile exists to render a photoreal place. Nothing in the six
+# named deck scenarios needs one: they are closed-form ground tracks, and the
+# landing target is a six-keypoint fiducial painted on the deck itself, which
+# is identical on every map. What the campus does cost is a USD whose collision
+# meshes fill isaac.log with schema errors and which has to be traversed every
+# physics step.
+#
+# Everything the benchmark measures -- the seeded Table-I entry pose, the
+# pad-relative task, the keypoint perception path, the energy model -- is
+# inherited unchanged from shin2026-system.yaml.
+
+metasejong:
+  # MetaSejongScene.spawn() returns immediately when this is false, leaving the
+  # Pegasus 'Flat Plane' environment that config/system.yaml selects.
+  enabled: false
+
+pad:
+  # REQUIRED for the named scenarios to reach the deck at all. pad_motion.pose()
+  # dispatches on this value and only its random_walk branch reads the
+  # per-scenario track that _prepare_benchmark_motion builds; under 'waypoints'
+  # the scenario name is recorded and then ignored.
+  motion: random_walk
+
+  # The scenarios are written at the paper's 4-8 m/s. This carrier is a RANGER
+  # MINI capped at 1.0 m/s, and a 30 s episode at 8 m/s covers 240 m against a
+  # 60 m landing.world_xy_limit_m. 0.125 maps the fastest scenario exactly onto
+  # the carrier ceiling (8.0 -> 1.00 m/s) and the longest run to 30 m. Every
+  # switching time is untouched: a scaled zigzag still reverses every 3 s and a
+  # scaled u-turn still turns through pi between t=5 s and t=10 s.
+  benchmark_speed_scale: 0.125
+
+  # Scaling the deck down without shrinking this would leave 'circle' a shallow
+  # arc: the stock 8 m radius completes 0.45 of a lap in 30 s at 0.75 m/s. 3.6 m
+  # restores roughly one full lap per episode, and is still more than twice the
+  # 1.5 m deck driving it.
+  benchmark_circle_radius_m: 3.6
+
+  # The campus route is absolute Gwanggaeto-plaza coordinates on terrain 21 m
+  # up. On a flat plane the deck starts at the origin, and the arena clamp is
+  # re-enabled inside the drone's own 60 m world limit.
+  start_position_enu_m: [0.0, 0.0, 0.0]
+  # The deck is left where each episode ends (route_start below), so the
+  # episode sequence walks. straight_8mps alone covers 30 m per episode, and a
+  # bound tight enough to stop that walk would instead pin the deck on the
+  # arena clamp with zero velocity -- a stationary target dressed up as a
+  # moving one. Measured over 300 episodes with the inward steering in
+  # pad_motion, the deck stays inside 99 m, so 120 m is never reached and the
+  # clamp never fires.
+  arena_radius_m: 120.0
+  # 'continue' leaves the deck where the previous episode ended instead of
+  # snapping it back to the origin under the drone that is deliberately kept
+  # flying between episodes. The campus profile relies on the same setting for
+  # its surveyed route.
+  route_start: continue
+  route_waypoints_enu_m: null
+
+parallel:
+  # The campus profile separates pairs by arc-length along one surveyed route.
+  # There is no route here, so pairs are separated in space instead. Isaac adds
+  # this offset to the deck pose *after* PadTrajectory.pose() has applied the
+  # arena clamp, so each pair gets its own 50 m arena centred on its own tile
+  # rather than being dragged back toward the world origin.
+  #
+  # 150 m spacing against a 29.5 m worst-case deck excursion leaves roughly a
+  # 90 m gap between neighbouring arenas, so no pair's camera can see another
+  # pair's deck and no two UAVs share airspace. Flat Plane is unbounded, so the
+  # grid costs nothing to extend.
+  pair_offsets_enu_m:
+    - [0.0, 0.0, 0.0]
+    - [150.0, 0.0, 0.0]
+    - [0.0, 150.0, 0.0]
+    - [150.0, 150.0, 0.0]
+    - [300.0, 0.0, 0.0]
+    - [0.0, 300.0, 0.0]
+    - [300.0, 150.0, 0.0]
+    - [150.0, 300.0, 0.0]
+  # Unused under pad.motion: random_walk (it phases a waypoint route), but the
+  # length check in landing_world runs before the mode is consulted.
+  route_phase_fractions: [0.0, 0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875]
+
+landing:
+  # The drone has to be allowed wherever the deck legitimately drives. On the
+  # campus route that was a local loop inside 60 m; on an open plane with an
+  # analytic deck it is not. This is the stray-too-far termination bound, not
+  # a benchmark quantity: the task, its tolerances and its scoring are
+  # unchanged.
+  world_xy_limit_m: 200.0

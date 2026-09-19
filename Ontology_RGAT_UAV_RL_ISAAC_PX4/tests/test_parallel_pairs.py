@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from ontology_rgat.config import default_config
 from ontology_rgat_px4.config import load_gateway_config
 from ontology_rgat_px4.ros2_gateway import parallel_gateway_config
@@ -130,3 +132,84 @@ def test_rviz_is_still_skipped_without_a_display(monkeypatch, capsys):
     process, stream = _start_rviz(True, parallel_pairs=2)
     assert (process, stream) == (None, None)
     assert "DISPLAY is unset" in capsys.readouterr().out
+
+
+def test_a_dead_training_arm_stops_the_reward_design_stage_immediately():
+    """The twelve hours the 2026-09-18 run spent after its baseline had died.
+
+    ``training_futures`` is submitted before the reward-design stages and
+    joined only after them, so a PPO arm that raises in its first minutes
+    leaves its exception unread inside the future while the FOV-risk loop
+    keeps flying episodes for a comparison that can no longer be made. The
+    loop has to read the futures itself.
+    """
+    import sys
+    from concurrent.futures import ThreadPoolExecutor
+
+    sys.path.insert(0, str(ROOT / "python"))
+    from run_three_pipeline import peer_training_health
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        def die():
+            raise RuntimeError("PX4 gateway timeout after 2.00 s")
+
+        futures = {"shin_se_fixed": pool.submit(die)}
+        futures["shin_se_fixed"].exception()          # let it settle
+        check = peer_training_health(futures)
+        with pytest.raises(RuntimeError) as excinfo:
+            check()
+
+    assert "shin_se_fixed" in str(excinfo.value)
+    # The worker's own failure has to survive as the cause, or the report
+    # names the symptom and loses the gateway timeout that produced it.
+    assert isinstance(excinfo.value.__cause__, RuntimeError)
+    assert "PX4 gateway timeout" in str(excinfo.value.__cause__)
+
+
+def test_a_healthy_or_absent_training_arm_never_stops_the_reward_design_stage():
+    """A finished arm is not a failed one, and a single-pair run has none."""
+    import sys
+    from concurrent.futures import ThreadPoolExecutor
+
+    sys.path.insert(0, str(ROOT / "python"))
+    from run_three_pipeline import peer_training_health
+
+    # ``training_futures`` is an empty dict until a parallel run submits to it.
+    peer_training_health({})()
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        futures = {"shin_se_fixed": pool.submit(lambda: "trained")}
+        futures["shin_se_fixed"].result()
+        peer_training_health(futures)()
+
+
+def test_the_entry_travel_budget_is_paid_at_the_closing_speed_not_the_cruise():
+    """The deck drives away for the whole trip, so the gap closes slowly.
+
+    Assuming the airframe's own cruise timed out vehicles that were flying
+    the transit correctly, and every expiry rebuilt the shared simulator
+    under both pairs. The allowance has to cover the longest transit the
+    profile can produce at the speed the gap actually closes at.
+    """
+    from config_loader import load_config
+
+    external = default_config().external
+    system = load_config(ROOT / "config/shin2026-minimal-system.yaml")
+    deck_ceiling = (8.0 * float(system["pad"]["benchmark_speed_scale"]))
+
+    closing = float(external["entry_travel_speed"])
+    assert 0.0 < closing < deck_ceiling, (
+        "a stern chase cannot close faster than the deck runs away")
+
+    # The worst transit observed on the four-pair run was 39 m; truncating the
+    # allowance below it is the same failure with an extra step.
+    longest_transit_m = 39.0
+    needed = (longest_transit_m - float(external["entry_tolerance"])) / closing
+    assert float(external["entry_travel_budget_max"]) >= needed
+
+    # The wall-clock hang guard must outlast the whole simulated ceiling; the
+    # measured multi-pair stage advances roughly one simulated second per wall
+    # second, so anything less cuts the budget off before it expires.
+    ceiling = (float(external["entry_sim_budget"])
+               + float(external["entry_travel_budget_max"]))
+    assert float(external["entry_timeout"]) > ceiling

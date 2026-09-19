@@ -7,6 +7,7 @@ did not have to move with it.
 from __future__ import annotations
 
 import json
+import math
 import socket
 import time
 from typing import Any, Iterable, Sequence
@@ -100,6 +101,23 @@ NUMERIC_STATE_FIELDS = (
     "position", "velocity", "quaternion_wxyz", "angular_velocity",
     "acceleration", "wind", "aero_force", "marker_quality",
 )
+
+
+def _wrap_to_pi(angle: float) -> float:
+    """Signed angle in (-pi, pi], so a 359 deg error reads as -1 deg."""
+    return (float(angle) + math.pi) % (2.0 * math.pi) - math.pi
+
+
+def _yaw_from_quaternion_wxyz(quaternion) -> float | None:
+    """ENU heading from a w-x-y-z quaternion, or None if it is unusable."""
+    try:
+        w, x, y, z = (float(v) for v in np.asarray(
+            quaternion, dtype=float).reshape(-1)[:4])
+    except (TypeError, ValueError):
+        return None
+    if not all(math.isfinite(v) for v in (w, x, y, z)):
+        return None
+    return math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
 
 
 class PX4Bridge:
@@ -330,7 +348,8 @@ class PX4Bridge:
             send_goto()
 
         state = self.wait_at_entry(np.asarray(entry["position"], dtype=float),
-                                   reissue=reissue)
+                                   reissue=reissue,
+                                   target_yaw=float(entry["yaw"]))
         # The episode clock starts at handover, not at the reset.
         self.last_px4_time_us = int(state["px4_time_us"])
         return state
@@ -422,7 +441,7 @@ class PX4Bridge:
                 float(np.linalg.norm(state["velocity"])))
 
     def wait_at_entry(self, target: np.ndarray, *,
-                      reissue=None) -> dict[str, Any]:
+                      reissue=None, target_yaw: float | None = None) -> dict[str, Any]:
         """Hand over only once PX4 holds the entry pose.
 
         The outer timeout is deliberately wall-clock bounded so a stalled
@@ -711,12 +730,34 @@ class PX4Bridge:
                        f"({', '.join(failsafe_reasons) or 'unknown'}) for "
                        f"{failsafe_seconds:.1f} s of the climb, during which it "
                        "ignores the entry setpoint")
+        # The gate scores position, speed and pad visibility, but visibility
+        # also depends on where the aircraft is *pointing*, and that was the
+        # one quantity it never reported. A run whose offset and speed are
+        # both inside tolerance and whose view is not is either a geometry
+        # fault or a heading the vehicle never turned to, and those need
+        # opposite fixes.
+        heading = ""
+        if target_yaw is not None:
+            actual_yaw = _yaw_from_quaternion_wxyz(state.get("quaternion_wxyz"))
+            if actual_yaw is not None:
+                error = math.degrees(_wrap_to_pi(actual_yaw - float(target_yaw)))
+                heading = (f"; heading {math.degrees(actual_yaw):.0f} deg against "
+                           f"a commanded {math.degrees(float(target_yaw)):.0f} deg "
+                           f"({error:+.0f} deg out)")
         raise EntryResetError(
             f"PX4 did not hold the entry pose within {budget} "
             f"(last sample: offset {final_offset:.2f} m, "
             f"speed {speed:.2f} m/s, "
             "geometric pad-centre view offset "
-            f"{'n/a' if view_margin is None else format(view_margin, '.2f')}; "
+            f"{'n/a' if view_margin is None else format(view_margin, '.2f')}"
+            f"{heading}"
+            # The distance to the target says nothing about *where* the pair
+            # actually is. Offline the same entry geometry always leaves the
+            # pad in view, so a live failure means these two vectors are not
+            # the ones the reproduction assumed; print them rather than guess.
+            f"; pad-relative [{here[0]:+.2f} {here[1]:+.2f} {here[2]:+.2f}] m"
+            f" against a commanded [{target[0]:+.2f} {target[1]:+.2f} "
+            f"{target[2]:+.2f}] m; "
             f"limits {limits}; longest hold {longest_streak:.2f} s of "
             f"{float(self.cfg.entry_settle):.2f} s; {cause}"
             + travel

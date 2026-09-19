@@ -282,6 +282,13 @@ const CARDS=[
   series:BENCHMARK_TRAIN,x:'episode',y:'episode_return',smooth:20},
  {id:'benchmark_eval_scenario',view:'benchmark',kind:'evalbars',
   title:'[평가] scenario별 성공률'},
+ // Training now rotates one analytic deck motion per episode instead of
+ // flying a single random walk, so the aggregate training curves above mix six
+ // difficulties. This separates them.
+ {id:'benchmark_train_scenario',view:'benchmark',kind:'evalbars',
+  series:BENCHMARK_TRAIN,metric:'paper_success',
+  empty:'아직 학습 scenario 데이터가 없다',
+  title:'[학습] scenario별 성공률'},
 
  {id:'head_ontology',view:'benchmark',kind:'heading',
   title:'2 · 온톨로지-R-GAT의 영향력',
@@ -923,22 +930,29 @@ function benchmarkPanel(state){
   document.getElementById('benchmark-methods').innerHTML=methodChips;
 }
 function drawEvaluationBars(card,state){
+  // Charts one metric per deck-motion scenario. Training rotates through the
+  // same scenario list the evaluation uses, so the same grouping answers both
+  // "which decks does the policy land on" and "which decks is it learning on".
+  const names=card.series||BENCHMARK_EVAL;
+  const seriesFor=method=>names.find(name=>name.endsWith(method));
+  const metric=card.metric||'paper_success';
   const cv=document.getElementById('cv-'+card.id),lg=document.getElementById('lg-'+card.id);
   if(!cv)return;
   const dpr=window.devicePixelRatio||1,w=cv.clientWidth,h=cv.clientHeight;
   cv.width=w*dpr;cv.height=h*dpr;
   const g=cv.getContext('2d');g.setTransform(dpr,0,0,dpr,0,0);g.clearRect(0,0,w,h);
   const methods=(state.scalars.benchmark_methods||[]).filter(method=>
-    (state.series['benchmark_eval_'+method]||[]).length);
+    (state.series[seriesFor(method)]||[]).length);
   const preferred=['training_random_walk','straight_8mps','linear_acceleration_wave',
     'circle','zigzag','u_turn','vertical_heave_boat'];
   const present=new Set();
-  for(const method of methods)for(const row of state.series['benchmark_eval_'+method]||[])
+  for(const method of methods)for(const row of state.series[seriesFor(method)]||[])
     present.add(row.scenario);
   const scenarios=preferred.filter(x=>present.has(x));
   for(const value of present)if(!scenarios.includes(value))scenarios.push(value);
   if(!methods.length||!scenarios.length){g.fillStyle='#666';g.font='12px Arial';
-    g.fillText('no paired evaluation data yet',12,h/2);lg.innerHTML='';return;}
+    g.fillText(card.empty||'no paired evaluation data yet',12,h/2);
+    lg.innerHTML='';return;}
   const pad={l:48,r:12,t:10,b:67},pw=w-pad.l-pad.r,ph=h-pad.t-pad.b;
   g.strokeStyle='#D8D8D8';g.lineWidth=.7;g.setLineDash([1.5,2.5]);
   g.fillStyle='#666';g.font='10px Arial';
@@ -949,9 +963,9 @@ function drawEvaluationBars(card,state){
   const group=pw/scenarios.length,barWidth=Math.min(24,group*.76/methods.length);
   scenarios.forEach((scenario,si)=>{
     methods.forEach((method,mi)=>{
-      const rows=(state.series['benchmark_eval_'+method]||[]).filter(r=>r.scenario===scenario);
+      const rows=(state.series[seriesFor(method)]||[]).filter(r=>r.scenario===scenario);
       if(!rows.length)return;
-      const mean=rows.reduce((sum,row)=>sum+Number(row.paper_success||0),0)/rows.length;
+      const mean=rows.reduce((sum,row)=>sum+Number(row[metric]||0),0)/rows.length;
       const x=pad.l+group*si+(group-barWidth*methods.length)/2+mi*barWidth;
       const height=Math.max(0,Math.min(1,mean))*ph;
       g.fillStyle=PALETTE[BENCHMARK_METHODS.indexOf(method)%PALETTE.length];
@@ -965,7 +979,7 @@ function drawEvaluationBars(card,state){
   lg.innerHTML=methods.map(method=>{
     const index=BENCHMARK_METHODS.indexOf(method);
     return `<span><i style="background:${PALETTE[index%PALETTE.length]}"></i>`+
-      `${escapeHTML(LABELS['benchmark_eval_'+method]||method)}</span>`;}).join('');
+      `${escapeHTML(LABELS[seriesFor(method)]||method)}</span>`;}).join('');
 }
 // ------------------------------------------------------------ 3D ontology
 // Hand-rolled: the page has to work with no network, so there is no three.js

@@ -41,6 +41,15 @@ BENCHMARK_SCENARIOS = (
     "circle", "zigzag", "u_turn", "vertical_heave_boat",
 )
 
+# Fastest ground speed any named scenario asks for, before
+# ``pad.benchmark_speed_scale``. straight_8mps and the peak of
+# linear_acceleration_wave both reach it.
+BENCHMARK_PEAK_SPEED_M_S = 8.0
+# Radius the ``circle`` scenario turns at. Held fixed under scaling so a slower
+# deck drives the same circle more slowly, rather than shrinking it onto a
+# radius smaller than the landing pad itself.
+BENCHMARK_CIRCLE_RADIUS_M = 8.0
+
 
 @dataclass(frozen=True)
 class PadMotionConfig:
@@ -64,6 +73,15 @@ class PadMotionConfig:
     heading_follows_velocity: bool
     yaw_rate_limit_rad_s: float
     arena_radius_m: float
+    # Multiplies the closed-form ground speed of the six named benchmark
+    # scenarios. They are written at the paper's 4-8 m/s, which a small UGV
+    # cannot drive and which would leave the arena inside one episode; this
+    # scales them onto the configured carrier without touching their timing.
+    benchmark_speed_scale: float
+    # Radius the ``circle`` scenario turns at. Exposed because scaling the deck
+    # down without shrinking this turns the episode into a shallow arc: at
+    # scale 0.125 the stock 8 m circle completes under half a lap in 30 s.
+    benchmark_circle_radius_m: float
     # --- road mode -------------------------------------------------------
     # The route rectangle is the street the city was built around, so these
     # default to the urban block rather than to numbers of their own: a deck
@@ -132,6 +150,29 @@ class PadMotionConfig:
             raise ValueError("the supported UGV is 'agilex_ranger_mini_v3'")
         if carrier == "ugv" and high > vehicle_max_speed + 1e-9:
             raise ValueError("pad.speed_range_m_s exceeds the RANGER MINI 3.0 limit")
+        benchmark_speed_scale = float(pad.get("benchmark_speed_scale", 1.0))
+        if not math.isfinite(benchmark_speed_scale) or benchmark_speed_scale <= 0.0:
+            raise ValueError("pad.benchmark_speed_scale must be positive and finite")
+        benchmark_circle_radius_m = float(pad.get(
+            "benchmark_circle_radius_m", BENCHMARK_CIRCLE_RADIUS_M))
+        if (not math.isfinite(benchmark_circle_radius_m)
+                or benchmark_circle_radius_m <= 0.0):
+            raise ValueError(
+                "pad.benchmark_circle_radius_m must be positive and finite")
+        # The named scenarios set their own speed and bypass speed_range_m_s
+        # entirely, so the carrier limit has to be enforced against them too --
+        # otherwise a 1 m/s rover is silently driven at the scenario's 8 m/s.
+        # Only ``random_walk`` reaches that code: under every other mode
+        # ``pose`` ignores the scenario, so the campus waypoint profile is not
+        # inconsistent for leaving the scale at 1.0.
+        if (mode == "random_walk" and carrier == "ugv"
+                and BENCHMARK_PEAK_SPEED_M_S * benchmark_speed_scale
+                > vehicle_max_speed + 1e-9):
+            raise ValueError(
+                f"pad.benchmark_speed_scale {benchmark_speed_scale:g} drives the "
+                f"named scenarios at "
+                f"{BENCHMARK_PEAK_SPEED_M_S * benchmark_speed_scale:.2f} m/s, "
+                f"past this carrier's {vehicle_max_speed:g} m/s limit")
         start = tuple(float(v) for v in pad.get("start_position_enu_m", (0.0, 0.0, 0.0)))
         if len(start) != 3:
             raise ValueError("pad.start_position_enu_m must have three components")
@@ -141,9 +182,12 @@ class PadMotionConfig:
             "route_size_m", urban.get("block_size_m", (90.0, 60.0))))
         if len(route) != 2 or min(route) <= 0.0:
             raise ValueError("pad.route_size_m must be two positive lengths")
+        # ``null`` is how an overlay profile clears an inherited key here (see
+        # the vision block of config/shin2026-system.yaml), so a profile that
+        # drops the campus route must not fall over on None.
         waypoints = tuple(
             tuple(float(component) for component in point)
-            for point in pad.get("route_waypoints_enu_m", ())
+            for point in (pad.get("route_waypoints_enu_m") or ())
         )
         if mode == "waypoints":
             if len(waypoints) < 2 or any(len(point) != 3 for point in waypoints):
@@ -228,6 +272,8 @@ class PadMotionConfig:
             heading_follows_velocity=bool(pad.get("heading_follows_velocity", True)),
             yaw_rate_limit_rad_s=math.radians(float(pad.get("yaw_rate_limit_deg_s", 60.0))),
             arena_radius_m=float(pad.get("arena_radius_m", 8.0)),
+            benchmark_speed_scale=benchmark_speed_scale,
+            benchmark_circle_radius_m=benchmark_circle_radius_m,
             route_size_m=route,
             route_start=route_start,
             route_corner_radius_m=float(pad.get("route_corner_radius_m",
@@ -476,6 +522,14 @@ class PadTrajectory:
         self.wander_phase = 0.0
         self._driven = False
         self.random_walk_position = np.zeros((1, 3))
+        # Where the analytic track is anchored. ``_prepare_benchmark_motion``
+        # always rebuilds the track from zero, so without this the deck would
+        # snap back to ``start_position_enu_m`` at every reset while the drone,
+        # which is deliberately left flying between episodes, stayed where the
+        # last episode ended. That gap is the whole distance the deck covered:
+        # 30 m for straight_8mps, which no entry budget can close against a
+        # deck that then drives away again.
+        self.random_walk_origin = np.zeros(3)
         self.random_walk_velocity = np.zeros((1, 3))
         self.benchmark_scenario = "training_random_walk"
 
@@ -564,11 +618,45 @@ class PadTrajectory:
                 % (2.0 * math.pi))
         else:
             self.wander_phase = seeded_phase
+        # Read before t0 moves and before the track is rebuilt: this is where
+        # the deck actually stands right now.
+        carried_offset = (np.asarray(self.pose(sim_time)[0], dtype=float)
+                          - self.start if self._driven else np.zeros(3))
         self.t0 = float(sim_time)
         self._driven = True
         self._yaw_initialised = False
         if cfg.mode == "random_walk":
             self._prepare_benchmark_motion(rng, max(float(speed_scale), 0.0))
+            # ``continue`` means the same thing it means for the surveyed
+            # route: leave the deck where it stands rather than teleporting it
+            # under whatever is parked on its roof. Only the horizontal anchor
+            # carries; height is re-derived from the start and the deck height.
+            if cfg.route_start == "continue":
+                self.random_walk_origin = np.array(
+                    [carried_offset[0], carried_offset[1], 0.0])
+                # Leaving the deck where it stands turns the episode sequence
+                # into a 2-D random walk, because each episode draws its own
+                # heading. Expected distance from the origin grows without
+                # bound, and the arena clamp does not push back -- it pins the
+                # deck on the boundary with zero velocity, which would quietly
+                # turn the benchmark into a stationary target.
+                #
+                # So steer rather than teleport: past half the arena the drawn
+                # heading is rotated toward the origin, fully so at the edge.
+                # The draw still comes from the episode seed, no position ever
+                # jumps, and inside the half-radius nothing is changed at all.
+                radius = float(np.linalg.norm(self.random_walk_origin[:2]))
+                limit = float(cfg.arena_radius_m)
+                if limit > 0.0 and radius > 0.5 * limit:
+                    inward = math.atan2(-self.random_walk_origin[1],
+                                        -self.random_walk_origin[0])
+                    pull = min(1.0, (radius - 0.5 * limit) / (0.5 * limit))
+                    delta = (inward - self.heading0 + math.pi) % (2.0 * math.pi) - math.pi
+                    self.heading0 = self.heading0 + pull * delta
+                    self._prepare_benchmark_motion(
+                        rng, max(float(speed_scale), 0.0))
+            else:
+                self.random_walk_origin = np.zeros(3)
         position, velocity = self.pose(sim_time)
         fallback = self.heading0
         if cfg.mode == "waypoints":
@@ -614,26 +702,35 @@ class PadTrajectory:
                                            -cfg.yaw_rate_limit_rad_s,
                                            cfg.yaw_rate_limit_rad_s)
                 headings[index] = headings[index - 1] + yaw_rates[index] * dt
-        elif scenario == "straight_8mps":
-            speeds[:] = 8.0
+        # ``benchmark_speed_scale`` slows the deck onto the configured carrier
+        # without redefining any scenario: every switching time below is left
+        # alone, so a scaled zigzag still reverses every 3 s and a scaled u-turn
+        # still turns through pi between t=5 s and t=10 s. Only the distance
+        # covered in that time shrinks.
+        speed_scale = cfg.benchmark_speed_scale
+        if scenario == "straight_8mps":
+            speeds[:] = 8.0 * speed_scale
         elif scenario == "linear_acceleration_wave":
-            speeds[:] = 4.0 * (1.0 + np.sin(0.5 * time_axis))
+            speeds[:] = 4.0 * speed_scale * (1.0 + np.sin(0.5 * time_axis))
         elif scenario == "circle":
-            speeds[:] = 6.0
-            yaw_rates[:] = 6.0 / 8.0
+            speeds[:] = 6.0 * speed_scale
+            # Derived from the radius rather than scaled with the speed: at
+            # scale 0.125 a scaled yaw rate would turn a 1 m circle, which is
+            # smaller than the 1.5 m deck driving it.
+            yaw_rates[:] = speeds / cfg.benchmark_circle_radius_m
             headings[:] = self.heading0 + yaw_rates * time_axis
         elif scenario == "zigzag":
-            speeds[:] = 6.0
+            speeds[:] = 6.0 * speed_scale
             headings[:] = self.heading0 + np.where(
                 (np.floor(time_axis / 3.0).astype(int) % 2) == 0,
                 math.radians(45.0), -math.radians(45.0))
         elif scenario == "u_turn":
-            speeds[:] = 6.0
+            speeds[:] = 6.0 * speed_scale
             turn_time = np.clip(time_axis - 5.0, 0.0, 5.0)
             headings[:] = self.heading0 + math.pi * turn_time / 5.0
             yaw_rates[(time_axis >= 5.0) & (time_axis <= 10.0)] = math.pi / 5.0
         elif scenario == "vertical_heave_boat":
-            speeds[:] = 4.0
+            speeds[:] = 4.0 * speed_scale
         velocity = np.c_[speeds * np.cos(headings), speeds * np.sin(headings),
                          np.zeros(samples)]
         if scenario == "vertical_heave_boat":
@@ -756,8 +853,10 @@ class PadTrajectory:
             elif cfg.mode == "random_walk":
                 u = max(0.0, t) / cfg.motion_update_dt_s
                 index = min(int(math.floor(u)), len(self.random_walk_position) - 1)
+                # anchored at wherever the previous episode left the deck
                 fraction = min(max(u - index, 0.0), 1.0)
-                offset = self.random_walk_position[index].copy()
+                offset = (self.random_walk_position[index]
+                          + self.random_walk_origin).copy()
                 velocity = self.random_walk_velocity[index].copy()
                 if index + 1 < len(self.random_walk_position):
                     offset += fraction * (self.random_walk_position[index + 1] - offset)

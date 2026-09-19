@@ -10,11 +10,18 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --parallel-pairs)
       [[ $# -ge 2 ]] || { echo "ERROR: --parallel-pairs needs a value" >&2; exit 2; }
-      [[ "$2" =~ ^[12]$ ]] || {
-        echo "ERROR: --parallel-pairs must be 1 or 2 for the primary comparison" >&2; exit 2;
+      [[ "$2" =~ ^[1-8]$ ]] || {
+        echo "ERROR: --parallel-pairs must be between 1 and 8" >&2; exit 2;
       }
-      if (( $2 > 1 )); then
+      if (( $2 == 2 )); then
         layout="$workspace_root/rviz/ontology_rgat_parallel.rviz"
+      elif (( $2 > 2 )); then
+        # The checked-in layout defines two pairs. Beyond that, clone its pair
+        # group so every flying pair gets a camera and a trail instead of only
+        # the first two being shown.
+        layout="$(mktemp -t ontology_rgat_rviz_XXXXXX.rviz)"
+        python3 "$workspace_root/scripts/make_rviz_layout.py" \
+          --pairs "$2" --output "$layout"
       fi
       shift 2
       ;;

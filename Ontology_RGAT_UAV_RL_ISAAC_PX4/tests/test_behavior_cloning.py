@@ -75,3 +75,60 @@ def test_encoded_demonstrations_are_hash_bound_and_restartable(tmp_path):
         assert "config mismatch" in str(exc)
     else:
         raise AssertionError("mismatched demonstration config was accepted")
+
+
+def test_demonstrations_with_retained_frames_survive_an_encoder_change(tmp_path):
+    """The 2026-09-20 encoder redesign had to re-fly every teacher attempt
+    because the stored set held only the old embeddings. Frames are now kept
+    (PNG) and a mismatched set is re-embedded rather than rejected."""
+    import numpy as np
+
+    from ontology_rgat.ppo.behavior_cloning import (
+        FRAME_FIELD, encoded_demonstration_episode, merge_encoded_demonstrations)
+
+    old_model, new_model = _model("no_se_fixed"), _model("no_se_fixed")
+    torch.manual_seed(5)
+    with torch.no_grad():
+        for parameter in new_model.encoder.parameters():
+            parameter.add_(0.05 * torch.randn_like(parameter))
+    rng = np.random.default_rng(3)
+    rows = [{"image": rng.integers(0, 120, (320, 512), dtype=np.uint8),
+             "proprioception": np.zeros(7), "action": np.zeros(4), "truth": np.zeros(6)}
+            for _ in range(5)]
+    first = encoded_demonstration_episode(old_model, rows[:3], episode_id=1)
+    second = encoded_demonstration_episode(old_model, rows[3:], episode_id=2)
+    dataset = merge_encoded_demonstrations(merge_encoded_demonstrations(None, first), second)
+    assert len(dataset[FRAME_FIELD]) == 5
+    path = tmp_path / "demos.pt"
+    saved = save_encoded_demonstrations(
+        path, dataset, config_hash="cfg", encoder_sha256="old",
+        attempted_seeds=[1, 2], environment_steps=5)
+    assert saved["frames_retained"] is True
+
+    # Same encoder: nothing changes.
+    same = load_encoded_demonstrations(path, config_hash="cfg", encoder_sha256="old")
+    torch.testing.assert_close(same["dataset"]["embedding"], dataset["embedding"])
+
+    # New encoder, frames retained: re-embedded with the new model.
+    loaded = load_encoded_demonstrations(
+        path, config_hash="cfg", encoder_sha256="new", model=new_model)
+    assert loaded["encoder_sha256"] == "new"
+    assert loaded["re_embedded_from_encoder_sha256"] == "old"
+    expected = new_model.encoder(torch.as_tensor(
+        np.stack([row["image"] for row in rows])[:, None], dtype=torch.float32) / 255.0)
+    torch.testing.assert_close(loaded["dataset"]["embedding"], expected.embedding,
+                               atol=1e-5, rtol=0)
+    assert not torch.allclose(loaded["dataset"]["embedding"], dataset["embedding"])
+
+    # New encoder but no model to re-embed with: still refused.
+    with pytest.raises(ValueError, match="encoder mismatch"):
+        load_encoded_demonstrations(path, config_hash="cfg", encoder_sha256="new")
+
+    # A set without frames cannot be re-embedded either.
+    bare = {name: dataset[name] for name in dataset if name != FRAME_FIELD}
+    bare_path = tmp_path / "bare.pt"
+    save_encoded_demonstrations(bare_path, bare, config_hash="cfg", encoder_sha256="old",
+                                attempted_seeds=[1], environment_steps=5)
+    with pytest.raises(ValueError, match="encoder mismatch"):
+        load_encoded_demonstrations(bare_path, config_hash="cfg", encoder_sha256="new",
+                                    model=new_model)

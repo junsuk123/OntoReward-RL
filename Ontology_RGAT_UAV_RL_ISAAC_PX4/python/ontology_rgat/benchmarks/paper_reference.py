@@ -165,7 +165,10 @@ BACKEND_DEVIATIONS: tuple[Deviation, ...] = (
         item="Keypoint encoder weights",
         paper="pre-trained frozen PACMAN encoder of Park et al. [17] (Sec. III-A)",
         repository="an equivalent six-keypoint/descriptor path pre-trained on "
-                   "projections of this run's own pad, then frozen",
+                   "projections of this run's own pad (landmarks ordered "
+                   "canonically in the image plane, since the hexagon's "
+                   "identities are unobservable at approach altitude), then "
+                   "frozen",
         reason="PACMAN weights are not public.",
         identical_across_arms=True,
         evidence=(("experiment", "estimator.keypoint_pretraining.enabled"),),

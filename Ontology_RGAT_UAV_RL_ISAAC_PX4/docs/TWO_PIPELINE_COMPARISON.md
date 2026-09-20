@@ -118,6 +118,70 @@ label 로만 쓰인다. PPO actor 관측과 온라인 R-GAT graph 입력에는 �
 PACMAN의 자산·landmark 표·가중치는 공개되어 있지 않다. 여기의 표적과 encoder는
 같은 *인터페이스*를 갖는 문서화된 호환 근사이며 PACMAN 재현이 아니다.
 
+### 5.1 Keypoint label 규약과 encoder v4 (2026-09-20)
+
+2026-09-20까지의 동결 encoder는 여섯 landmark를 모두 패드 중심 한 점으로 예측했다
+(48장의 기하 label Isaac 프레임에서 예측 산포 12.9 px, 실제 44.5 px; PCK@20 15 %).
+원인은 두 가지였다.
+
+* **Landmark identity는 관측 불가능하다.** 육각형 배치는 60° 회전 대칭이고 identity
+  pip(1~6개 점)은 6 m에서 0.8 px, 4 m에서 1.2 px, 1.6 m에서 3 px다. 패드 좌표계의
+  landmark 번호를 그대로 지도학습 target으로 쓰면 여섯 가지 순환 배정이 모두 동등하게
+  가능하므로 index별 MSE·heatmap CE 손실의 최적해는 그 평균, 즉 패드 중심이다.
+* **수용 영역 31 px.** 이전 trunk(stride-2 conv 4개, 정규화 없음)의 stride-16 셀은
+  31×31 px만 보므로 1.6 m에서 300 px인 육각형 전체를 볼 수 없었다.
+
+현재 규약(`keypoint_pretrain.LABEL_CONVENTION`): label은 **image plane에서 정규화**된다.
+index 0은 투영된 패드 중심을 기준으로 image +x 축에서 반시계 방향 각도가 가장 작은
+꼭짓점이고, 패드의 순환 순서는 유지된다(위에서 본 평면 볼록 육각형의 순환 방향은
+카메라 자세와 무관하다). 따라서 target은 영상만의 결정적 함수가 되며, encoder의 k번
+채널은 "패드 좌표계 landmark k"가 아니라 "+x에서 반시계 k번째 꼭짓점"을 뜻한다.
+하류 소비자(centroid, apparent scale, 여섯 descriptor의 pooling, 가시성)는 모두
+identity 비의존이므로 계약이 바뀌지 않는다. 합성·실측 label과 held-out 지표는 같은
+규약을 쓴다.
+
+Encoder v4(`ShinKeypointEncoder.implementation` = `isaac-canonical-six-keypoint-unet-v4-stride8-visibility`)는
+프레임별 표준화 입력, GroupNorm을 가진 stride-2 단계 5개(10×16, 수용 영역 > 프레임),
+bottleneck의 global-average context, skip이 있는 decoder 2단계로 stride-8(40×64)
+heatmap을 낸다. 합성 렌더러 v2는 Isaac 실측처럼 어두운 배경(건물 모서리, 기둥,
+그림자, 로버 본체·마스트) 위의 회색 표적을 그리고, 실측 보정은 label을 정확히 변환한
+similarity warp·재노출 증강과 합성 재생(replay)을 섞는다. Held-out viewpoint에서
+recall 게이트에 더해 **spread ratio 게이트**(예측 산포 / label 산포 ≥ 0.5)가 중심
+수축 encoder를 거부한다.
+
+48장 Isaac 프레임, viewpoint 단위 4-fold 교차검증(프레임 1회씩 검증) 측정치:
+
+| 레시피 | CV RMSE px | CV PCK@20 | recall | 예측/실제 산포 px | 합성 전용 PCK@20 |
+|---|---|---|---|---|---|
+| v5 encoder + 기존 합성 512×6 + 무증강 미세조정(대조군) | 63.7 | 16.0 % | 81 % | 22.7 / 44.5 | 7 % |
+| **참조**: v4 + 정규 label + 렌더러 v2 4096×15 + 증강·재생 800 step | 18.2 | 93.1 % | 97 % | 45.8 / 44.5 | 64 % |
+| 참조 + 강한 증강(scale 0.45–2.0, ±60°) + 1600 step **(채택)** | 21.9 | 96.6 % | 98 % | 46.1 / 44.5 | 64 % |
+| 참조 + 윈도우 soft-argmax(r=4 cell) **(채택)** | 25.9 | 94.7 % | 97 % | 47.5 / 44.5 | 78 % |
+| 참조 + 실측 배경 합성 패드 합성(composite) | 16.4 | 92.4 % | 95 % | 45.5 / 44.5 | 64 % |
+| 참조, decoder만 미세조정 | 26.1 | 85.9 % | 96 % | 46.7 / 44.5 | 64 % |
+| 참조, 무증강·무재생 미세조정 60 epoch | 31.3 | 95.0 % | 98 % | 47.1 / 44.5 | 64 % |
+| 소거: v3(구) 아키텍처 + 정규 label + 렌더러 v2 + 증강 | 57.8 | 17.9 % | 97 % | 24.2 / 44.5 | 8 % |
+| 소거: v4 + **identity label**(패드 좌표계 번호) + 렌더러 v2 + 증강 | 32.4 | 98.1 % | 99 % | 47.5 / 44.5 | 38 % |
+
+(측정 2026-09-20, 스크래치 하네스 `kp/harness.py`; RMSE는 소수 이상치에 민감하므로
+PCK@20과 산포를 함께 본다.) 아키텍처 소거는 결정적이다: 구 trunk는 정규 label·새
+렌더러·증강을 모두 주어도 산포 24 px로 다시 중심에 수축한다. identity label 소거는
+해석에 주의가 필요하다. 새 아키텍처에서는 identity label도 실측 held-out에서 가장 높은
+PCK@20을 내는데, 이는 실측 프레임의 yaw가 {0°, ±35°}로 제한되고 로버 마스트가 항상
+같은 landmark 옆에 있어 identity를 추론할 단서가 실측에만 존재하기 때문이다. yaw가
+임의인 합성 데이터에서는 identity가 학습되지 않아 합성 전용 전이가 38 %(정규 label
+64~78 %)에 그치고, cv1에서 순서 뒤바뀜 이상치(RMSE 66 px)가 난다. 비행 중 상대 yaw는
+임의이므로 정규 label을 채택한다. 하류 소비자(centroid, scale, 가시성)는 어느 규약에도
+무관하다.
+
+채택 레시피(정규 label + 윈도우 soft-argmax + 강한 증강 1600 step)의 고정 held-out 분할
+성적은 RMSE 6.4~6.9 px, PCK@20 100 %, PCK@10 82~86 %다(참조 14.9 px / 95 % / 73 %).
+같은 v4 합성 가중치는 실측 프레임을 한 장도 보기 전에 PCK@20 64~78 %를 낸다(v5 합성
+전용: 4~7 %). 저장된 보정 viewpoint는 영상과 자세만 담으므로 datastore 지문에서 encoder
+architecture 키를 제거했고, v5 지문으로 저장된 24개 viewpoint는 재비행 없이 다시
+label된다. 시연(behavior-cloning) 파일은 v3부터 PNG 프레임을 보존하므로 encoder가 바뀌어도
+교사 비행을 반복하지 않고 재임베딩한다.
+
 ## 6. 평가 프로토콜
 
 * **시나리오**: `training_random_walk`, `straight_8mps`,

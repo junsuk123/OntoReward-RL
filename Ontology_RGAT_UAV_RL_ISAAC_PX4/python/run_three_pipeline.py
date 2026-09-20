@@ -339,7 +339,8 @@ def _behavior_transform(variant: int, *, policy_blend: float = .35,
 def _privileged_velocity_teacher_action(
         relative_state, body_velocity, semantic, velocity_limit,
         *, position_gain: float = .35, velocity_gain: float = .75,
-        horizontal_speed_limit: float = .60,
+        horizontal_speed_limit: float = .60, energy_urgency: float = 0.0,
+        touchdown_speed_limit: float = .55, urgency_alignment_m: float = .25,
         noise_std: float = .01, rng=None):
     """Return a stable training-only velocity label for deadline warm starts.
 
@@ -348,6 +349,28 @@ def _privileged_velocity_teacher_action(
     ``v_uav + v_relative`` and adds a damped position correction. A
     position-only image servo commands zero at image centre, lets a moving UGV
     escape, and repeatedly crosses the target.
+
+    ``energy_urgency`` scales the descent with how little charge is left, the
+    way ``expert.expert_action`` already does and for the reason its comment
+    gives: without it every low-reserve episode is a negative example and
+    nothing downstream has a successful one to learn from. The pack is drawn
+    per episode and the draw is wide -- measured over 11 teacher flights on
+    2026-09-19, 5 began with a reduced pack (0.42 to 0.85 of full, 2300 to
+    4700 J against the 6000-7500 J a nominal descent actually spends) and this
+    teacher landed none of them, three of those while *already inside* the
+    0.35 m position criterion. It was aligned and simply could not get down
+    before the pack ran out.
+
+    ``semantic.battery_risk`` is ``1 - reserve`` read live, so the urgency
+    ramps through *every* flight as the charge goes down rather than only on
+    episodes dealt a small pack. That is the intent -- a vehicle with half a
+    pack left has less reason to dawdle whatever it started with -- and it is
+    visible in the flights: full-pack seed 90000 landed in 173 steps with this
+    on against 258 with it off, from the same entry and to the same 0.13 m.
+
+    Left at 0 this is exactly the previous controller, which is how it ships:
+    turning it on changes the demonstrations, so it is a deliberate config
+    edit rather than a silent default.
     """
     relative = np.asarray(relative_state, dtype=np.float64).reshape(-1)
     velocity = np.asarray(body_velocity, dtype=np.float64).reshape(-1)
@@ -380,6 +403,11 @@ def _privileged_velocity_teacher_action(
     # camera at the end of a correct flare. Treating that expected low-altitude
     # disappearance as a recovery event traps the vehicle centimetres above
     # the deck. Only climb on loss while still high or laterally displaced.
+    # ``battery_risk`` is the estimator-free reading of how little is left, so
+    # the urgency comes from what the student can also see rather than from
+    # the pack itself.
+    urgency = float(np.clip(
+        float(energy_urgency) * float(semantic.battery_risk), 0.0, 1.0))
     if visual_lost and (altitude > 0.80 or lateral_error > 0.40):
         target_vz = 0.22
     elif lateral_error > 0.50 or relative_speed > 0.45:
@@ -390,6 +418,21 @@ def _privileged_velocity_teacher_action(
         target_vz = -0.14
     else:
         target_vz = -0.04
+    # Only compress a descent that is already well aligned. Coming down faster
+    # magnifies the bearing to a deck that is not directly below, and the deck
+    # then leaves the frame: measured over the first four flights with this on,
+    # geometric FOV loss ran 0.284 against 0.124 over the 24 flights before it,
+    # and a seed that had landed twice at 0.12 m timed out at 0.74 m instead.
+    # The ladder above already refuses to descend beyond 0.50 m, which is wide
+    # enough to include that. The episodes this feature exists to save are the
+    # ones that ran out of charge while *inside* the position criterion --
+    # 0.084 m, 0.192 m, 0.222 m -- so the gate only has to clear those.
+    if (target_vz < 0.0 and urgency > 0.0
+            and lateral_error < float(urgency_alignment_m)):
+        # Never ask for a touchdown speed the criteria would reject: a landing
+        # that arrives too fast to pass the gate is not a demonstration.
+        ceiling = .95 * float(touchdown_speed_limit)
+        target_vz = -min(ceiling, abs(target_vz) * (1.0 + 2.0 * urgency))
 
     target_velocity = np.r_[target_xy, target_vz]
     action = np.r_[target_velocity / limit, 0.0]
@@ -415,6 +458,9 @@ def _privileged_velocity_teacher(environment, *, settings):
             velocity_gain=float(settings.get("velocity_gain", .75)),
             horizontal_speed_limit=float(settings.get(
                 "horizontal_speed_limit_m_s", .60)),
+            energy_urgency=float(settings.get("energy_urgency", 0.0)),
+            urgency_alignment_m=float(settings.get(
+                "urgency_alignment_m", .25)),
             noise_std=float(settings.get("noise_std", .01)),
             rng=rng)
     return transform
@@ -1052,11 +1098,30 @@ def _prepare_fast_demonstrations(*, cfg, camera, config, config_hash,
         str(row.get("status", "")) != "infrastructure_failure"
         for row in attempts)
     environment_steps = sum(int(float(row.get("steps", 0))) for row in attempts)
+    teacher_model = None
     if artifact_path.is_file():
         try:
+            # Built before loading so a set encoded by an earlier encoder can
+            # be re-embedded from its retained frames instead of re-flown.
+            torch.manual_seed(int(model_seed))
+            teacher_model = _build_model(
+                config, device, keypoint_pretraining, pipeline=source_pipeline)
             payload = load_encoded_demonstrations(
                 artifact_path, config_hash=config_hash,
-                encoder_sha256=encoder_sha)
+                encoder_sha256=encoder_sha, model=teacher_model,
+                batch_size=int(settings.get("encoding_batch_size", 64)))
+            if payload.get("re_embedded_from_encoder_sha256"):
+                payload = save_encoded_demonstrations(
+                    artifact_path, payload["dataset"], config_hash=config_hash,
+                    encoder_sha256=encoder_sha,
+                    attempted_seeds=payload.get("attempted_seeds", ()),
+                    environment_steps=int(payload.get("environment_steps", 0)),
+                    teacher=str(payload.get("teacher", teacher_id)))
+                print(
+                    "Re-embedded the stored training-teacher demonstrations "
+                    f"({payload['transitions']} transitions) with the current "
+                    "keypoint encoder from their retained frames; no teacher "
+                    "flight is repeated.")
             dataset = payload["dataset"]
             attempted_seeds = list(dict.fromkeys(
                 [*payload.get("attempted_seeds", ()), *attempted_seeds]))
@@ -1075,9 +1140,10 @@ def _prepare_fast_demonstrations(*, cfg, camera, config, config_hash,
     successes = (0 if dataset is None else
                  int(torch.unique(dataset["episode_id"]).numel()))
     if successes < required and flight_attempts < maximum_flights:
-        torch.manual_seed(int(model_seed))
-        teacher_model = _build_model(
-            config, device, keypoint_pretraining, pipeline=source_pipeline)
+        if teacher_model is None:
+            torch.manual_seed(int(model_seed))
+            teacher_model = _build_model(
+                config, device, keypoint_pretraining, pipeline=source_pipeline)
         seed0 = int((config.get("seeds") or {}).get(
             "behavior_cloning_start", 90000))
         monitor.stage(
@@ -1188,9 +1254,9 @@ def _prepare_fast_demonstrations(*, cfg, camera, config, config_hash,
         cfg.external.entry_sim_budget = original_entry_sim_budget
         cfg.external.reset_recoveries = original_reset_recoveries
         cfg.external.episode_recoveries = original_episode_recoveries
-        del teacher_model
-        if torch.cuda.is_available() and str(device).startswith("cuda"):
-            torch.cuda.empty_cache()
+    del teacher_model
+    if torch.cuda.is_available() and str(device).startswith("cuda"):
+        torch.cuda.empty_cache()
     if payload is None or int(payload["successful_episodes"]) < required:
         raise RuntimeError(
             "training teacher did not produce enough real successful landings "

@@ -398,7 +398,7 @@ def test_live_config_copies_the_rendered_camera_into_the_geometric_gate(tmp_path
 def test_keypoint_heatmaps_drive_the_descriptor_embedding():
     encoder = ShinKeypointEncoder(embedding_dim=32, keypoints=6)
     output = encoder(torch.rand(2, 1, 320, 512))
-    assert output.heatmaps.shape == (2, 6, 20, 32)
+    assert output.heatmaps.shape == (2, 6, *ShinKeypointEncoder.heatmap_shape(320, 512))
     assert output.keypoints.shape == (2, 6, 2)
     assert output.visibility.shape == (2, 6)
     assert torch.all((output.visibility >= 0.0) & (output.visibility <= 1.0))
@@ -412,7 +412,7 @@ def test_synthetic_pretraining_labels_six_deployed_board_keypoints():
     config = load_config(ROOT / "config" / "shin2026-system.yaml")
     dataset = synthetic_keypoint_dataset(config, samples=4, seed=9)
     assert dataset["images"].shape == (4, 320, 512)
-    assert dataset["heatmaps"].shape == (4, 6, 20, 32)
+    assert dataset["heatmaps"].shape == (4, 6, *ShinKeypointEncoder.heatmap_shape(320, 512))
     assert dataset["coordinates"].shape == (4, 6, 2)
     assert float(dataset["visible"].mean()) > 0.3
     visible_heatmaps = dataset["heatmaps"][dataset["visible"].astype(bool)]
@@ -495,7 +495,7 @@ def test_empirical_keypoint_labelling_projects_known_pad_landmarks():
 
     assert labelled["images"].shape[1:] == (320, 512)
     assert labelled["coordinates"].shape[1:] == (6, 2)
-    assert labelled["heatmaps"].shape[1:] == (6, 20, 32)
+    assert labelled["heatmaps"].shape[1:] == (6, *ShinKeypointEncoder.heatmap_shape(320, 512))
     # Every frame whose pose projects a landmark into the image is labelled,
     # and the coordinates are identical to the synthetic supervision because
     # both come from the same projection.
@@ -555,11 +555,13 @@ def _calibration_experiment(**overrides):
     keypoint = {
         "enabled": True, "samples_quick": 24, "epochs_quick": 2,
         "batch_size": 8, "learning_rate": 1e-3, "seed": 17,
-        "empirical_samples_quick": 24, "empirical_epochs": 1,
-        "empirical_learning_rate": 1e-3,
+        "empirical_samples_quick": 24, "empirical_steps": 4,
+        "empirical_learning_rate": 1e-3, "empirical_replay_samples": 16,
+        "empirical_eval_interval": 2, "render_workers": 1,
         # The quality of a 32-dimensional encoder trained for two epochs is
         # not what these tests are about; the split and the gates are.
         "minimum_holdout_visibility_recall": 0.0,
+        "minimum_holdout_spread_ratio": 0.0,
     }
     keypoint.update(overrides)
     return {"estimator": {"image_embedding": 32, "keypoint_pretraining": keypoint}}

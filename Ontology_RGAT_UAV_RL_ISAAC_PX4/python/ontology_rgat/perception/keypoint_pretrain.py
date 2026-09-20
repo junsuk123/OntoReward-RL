@@ -11,9 +11,37 @@ No ArUco dictionary, marker id or ``cv2.aruco`` call takes part in this path.
 Both the synthetic and the empirical labels are *projections of known pad
 geometry*, which makes them ``training-label-only`` simulator truth; they are
 never concatenated into the actor observation.
+
+Label convention (v6, 2026-09-20)
+---------------------------------
+The six landmarks sit on a regular hexagon.  Seen from the air the layout is
+60-degree symmetric and the only cue to *which* vertex is pad-frame landmark 0
+is the pip count painted next to each landmark: 0.8 px at 6 m, 1.2 px at 4 m,
+3 px at 1.6 m.  Landmark identity is therefore not observable over most of the
+approach, and a per-index loss whose target could be any of six cyclic
+assignments has the pad centre as its optimum.  That is exactly what the
+previous encoder learned: measured on 48 geometry-labelled Isaac frames its six
+predictions had a spread of 12.9 px around a true spread of 44.5 px, i.e. it
+reported the centroid six times (PCK@20 15 %).
+
+Labels are now *canonical in the image plane*: index 0 is the projected vertex
+with the smallest counter-clockwise angle from the +x image axis about the
+projected pad centre, and the pad's cyclic order is kept (the projected order
+around the centre is the same for every camera pose above the deck).  The
+target is then a deterministic function of the image and the six channels
+mean "the k-th vertex counter-clockwise", which is all the downstream consumers
+-- centroid, apparent scale, pooled descriptors -- ever needed.
+
+Synthetic frames (renderer v2) imitate what Isaac actually shows the camera: a
+grey target on a dark, cluttered scene (building edges, poles, shadows, the
+rover body and its mast next to the deck) rather than a white pad on a flat
+gradient, and the empirical fine-tune warps and re-exposes the surveyed frames
+with the labels transformed exactly, interleaved with synthetic replay so the
+touchdown-scale views the survey never reaches are not forgotten.
 """
 from __future__ import annotations
 
+from dataclasses import asdict, dataclass, fields
 import math
 import os
 from pathlib import Path
@@ -27,24 +55,28 @@ from torch.nn import functional as F
 from ..datastore import KIND_KEYPOINT_CALIBRATION, data_fingerprint
 from ..initialization import (camera_centered_hover_offset,
                               yaw_aligned_hover_offset)
-from .keypoint_encoder import ShinKeypointEncoder
+from .keypoint_encoder import KeypointEncoderOutput, ShinKeypointEncoder
 from .pad_geometry import (KEYPOINT_LAYOUT_ID, LANDING_PAD_VISUAL_VERSION,
                            PAD_LANDMARK_COUNT, PAD_LANDMARK_RADIUS_M,
                            CameraModel, camera_pose_in_pad,
                            landing_pad_texture, project_landing_pad)
 
 
-# v5 is the first format whose empirical half is surveyed across poses. The
-# bump deliberately invalidates every v4 artifact: a v4 encoder was fine-tuned
-# on one hover pose and its "validated" flag means nothing.
-PRETRAIN_FORMAT = "shin2026-six-keypoint-fiducial-pretrain-v5"
-# Stamped into ``empirical_calibration`` so an artifact calibrated under the
-# old single-pose procedure is recalibrated instead of silently reused.
-EMPIRICAL_CALIBRATION_FORMAT = "isaac-pose-surveyed-holdout-v1"
+# v6: canonical image-plane landmark order, renderer v2, stride-8 heatmaps.
+# The bump invalidates every v5 artifact: a v5 encoder was supervised on
+# unobservable landmark identities and predicts the pad centre six times.
+PRETRAIN_FORMAT = "shin2026-six-keypoint-fiducial-pretrain-v6-canonical"
+# Stamped into ``empirical_calibration`` so an artifact calibrated under an
+# older procedure is recalibrated instead of silently reused.
+EMPIRICAL_CALIBRATION_FORMAT = "isaac-pose-surveyed-holdout-augmented-v2"
+LABEL_CONVENTION = ("image-plane canonical cyclic order: index 0 is the projected "
+                    "vertex with the smallest counter-clockwise angle from +x about "
+                    "the projected pad centre; pad cyclic order kept")
 # Training-label-only pose payload published by the simulator alongside each
 # empirical frame: pad-relative UAV position (3) and ENU/FLU attitude (4).
 EMPIRICAL_POSE_LENGTH = 7
-_HEATMAP_SIGMA = 0.85
+# Gaussian target width in heatmap cells (8 px at stride 8).
+_HEATMAP_SIGMA_CELLS = 1.0
 # The survey's default pad-relative viewpoints. Altitudes span the Table-I
 # approach band and the lateral offsets are fractions of altitude, which is
 # how the synthetic generator jitters the pad across the image plane.
@@ -63,6 +95,15 @@ _SURVEY_MIN_VISIBLE_LANDMARKS = 4
 # mis-parameterised survey is rejected on this side rather than by the gateway.
 _SURVEY_MAX_RADIUS_M = 9.5
 _SURVEY_MAX_ALTITUDE_M = 24.0
+# Calibration frames stored by the superseded procedures. Their pixels and
+# poses are exactly what the current labeller consumes, so they are read back
+# under these fingerprints rather than re-flown (see
+# :func:`keypoint_calibration_fingerprints`).
+_LEGACY_CALIBRATION_FINGERPRINT_KEYS = (
+    {"pretrain_format": "shin2026-six-keypoint-fiducial-pretrain-v5",
+     "encoder_implementation":
+         "hybrid-isaac-validated-six-keypoint-descriptor-v3-visibility"},
+)
 
 
 def _balanced_visibility_loss(prediction, target):
@@ -86,6 +127,20 @@ def _rotation_z(yaw: float) -> np.ndarray:
 def _quat_wxyz_from_yaw(yaw: float) -> np.ndarray:
     half = float(yaw) / 2.0
     return np.array([math.cos(half), 0.0, 0.0, math.sin(half)])
+
+
+def _quat_wxyz_from_euler(yaw: float, pitch: float = 0.0, roll: float = 0.0) -> np.ndarray:
+    """ZYX Euler angles to a ``[w, x, y, z]`` quaternion."""
+    cy, sy = math.cos(yaw / 2.0), math.sin(yaw / 2.0)
+    cp, sp = math.cos(pitch / 2.0), math.sin(pitch / 2.0)
+    cr, sr = math.cos(roll / 2.0), math.sin(roll / 2.0)
+    return np.array([cr * cp * cy + sr * sp * sy, sr * cp * cy - cr * sp * sy,
+                     cr * sp * cy + sr * cp * sy, cr * cp * sy - sr * sp * cy])
+
+
+def _yaw_from_quat_wxyz(quaternion) -> float:
+    w, x, y, z = (float(v) for v in np.asarray(quaternion, dtype=float).reshape(4))
+    return math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
 
 
 def camera_model(system: Mapping[str, Any]) -> CameraModel:
@@ -140,38 +195,47 @@ def _texture_pyramid(texture: np.ndarray) -> list:
     return levels
 
 
-def _render_landing_target(image: np.ndarray, pyramid, deck_size_m,
-                           position_pad, quaternion, model: CameraModel):
-    """Paint the deck by intersecting each camera ray with the pad plane.
+_PYRAMID_CACHE: dict[tuple, list] = {}
 
-    Warping the four deck corners is only valid while all four are in front of
-    the camera.  At touchdown altitude the near corners of a 1.5 m deck pass
-    behind a 60-degree pitched camera, and a corner-warp then silently paints
-    nothing at all -- producing frames with no visible target but with valid
-    landmark labels, which is exactly the wrong thing to train on.  Ray-plane
-    intersection is correct at every altitude and needs no special case.
+
+def _cached_pyramid(settings: Mapping[str, Any]) -> list:
+    key = (tuple(settings["deck_size_m"]), float(settings["landmark_radius_m"]),
+           float(settings["landmark_diameter_m"]), int(settings["texture_pixels"]))
+    pyramid = _PYRAMID_CACHE.get(key)
+    if pyramid is None:
+        pyramid = _texture_pyramid(_pad_texture(settings))
+        _PYRAMID_CACHE[key] = pyramid
+    return pyramid
+
+
+def _plane_hits(position_pad, quaternion, model: CameraModel):
+    """For every pixel: the pad-plane hit ``(x, y)`` and whether the ray hits.
+
+    Ray-plane intersection is correct at every altitude: warping the deck's
+    four corners is only valid while all four are in front of the camera, and
+    at touchdown altitude the near corners of a 1.5 m deck pass behind a
+    60-degree pitched camera.
     """
-    import cv2
-
     origin, pad_from_optical = camera_pose_in_pad(position_pad, quaternion, model)
-    half_x, half_y = (float(v) / 2.0 for v in deck_size_m)
     focal = model.focal_px
     columns, rows = np.meshgrid(np.arange(model.width, dtype=np.float64),
                                 np.arange(model.height, dtype=np.float64))
-    rays_optical = np.stack((
-        (columns - model.width / 2.0) / focal,
-        (rows - model.height / 2.0) / focal,
-        np.ones_like(columns)), axis=-1)
-    rays_pad = rays_optical @ pad_from_optical.T
+    rays = np.stack(((columns - model.width / 2.0) / focal,
+                     (rows - model.height / 2.0) / focal,
+                     np.ones_like(columns)), axis=-1) @ pad_from_optical.T
     with np.errstate(divide="ignore", invalid="ignore"):
-        distance = -float(origin[2]) / rays_pad[..., 2]
-    x = float(origin[0]) + distance * rays_pad[..., 0]
-    y = float(origin[1]) + distance * rays_pad[..., 1]
-    inside = (np.isfinite(distance) & (distance > 0.0)
-              & (np.abs(x) <= half_x) & (np.abs(y) <= half_y))
-    if not inside.any():
-        return image
+        distance = -float(origin[2]) / rays[..., 2]
+    x = float(origin[0]) + distance * rays[..., 0]
+    y = float(origin[1]) + distance * rays[..., 1]
+    hit = np.isfinite(distance) & (distance > 0.0)
+    return x, y, hit
 
+
+def _sample_texture(x, y, inside, pyramid, deck_size_m) -> np.ndarray:
+    """Texture values (0-255 float) at the plane hits, pyramid level matched."""
+    import cv2
+
+    half_x, half_y = (float(v) / 2.0 for v in deck_size_m)
     # Pick the pyramid level whose texel spacing matches the projected deck, so
     # a pad a few pixels wide is averaged rather than point-sampled.
     span = max(int(inside.sum(axis=1).max()), int(inside.sum(axis=0).max()), 1)
@@ -184,15 +248,71 @@ def _render_landing_target(image: np.ndarray, pyramid, deck_size_m,
     # Texture row 0 is pad north, column 0 is pad west, matching the USD quad.
     map_x = np.where(inside, (x + half_x) / (2.0 * half_x) * (width - 1), 0.0)
     map_y = np.where(inside, (half_y - y) / (2.0 * half_y) * (height - 1), 0.0)
-    sampled = cv2.remap(level, map_x.astype(np.float32), map_y.astype(np.float32),
-                        interpolation=cv2.INTER_LINEAR,
-                        borderMode=cv2.BORDER_REPLICATE)
+    return cv2.remap(level, map_x.astype(np.float32), map_y.astype(np.float32),
+                     interpolation=cv2.INTER_LINEAR,
+                     borderMode=cv2.BORDER_REPLICATE).astype(np.float32)
+
+
+def _render_landing_target(image: np.ndarray, pyramid, deck_size_m,
+                           position_pad, quaternion, model: CameraModel):
+    """Paint the deck (texture values as-is) into ``image`` by ray casting."""
+    x, y, hit = _plane_hits(position_pad, quaternion, model)
+    half_x, half_y = (float(v) / 2.0 for v in deck_size_m)
+    inside = hit & (np.abs(x) <= half_x) & (np.abs(y) <= half_y)
+    if not inside.any():
+        return image
+    sampled = _sample_texture(x, y, inside, pyramid, deck_size_m)
     image[inside] = sampled[inside]
     return image
 
 
+# --------------------------------------------------------------------------
+# canonical labels and heatmap targets
+# --------------------------------------------------------------------------
+def canonical_landmark_shift(pixels, center_pixels) -> int:
+    """Roll amount ``s`` such that ``np.roll(labels, -s, 0)[0]`` is the vertex
+    with the smallest counter-clockwise image-plane angle from +x about the
+    projected pad centre (rows point down, so they are negated).
+
+    Every projected vertex takes part, in frame or not, so the choice depends
+    on the pad's image-plane pose and not on what happens to be visible.  A
+    projection with a non-finite vertex or centre is left in pad order.
+    """
+    pixels = np.asarray(pixels, dtype=np.float64).reshape(-1, 2)
+    center = np.asarray(center_pixels, dtype=np.float64).reshape(2)
+    if not np.isfinite(pixels).all() or not np.isfinite(center).all():
+        return 0
+    angles = np.arctan2(-(pixels[:, 1] - center[1]), pixels[:, 0] - center[0])
+    return int(np.argmin(np.mod(angles, 2.0 * math.pi)))
+
+
+def canonicalize_landmarks(pixels, visible, center_pixels):
+    """Return ``(pixels, visible, shift)`` rolled to the canonical order."""
+    shift = canonical_landmark_shift(pixels, center_pixels)
+    return (np.roll(np.asarray(pixels, dtype=np.float64), -shift, axis=0),
+            np.roll(np.asarray(visible, dtype=bool), -shift, axis=0), shift)
+
+
+def _normalized(pixels: np.ndarray, model: CameraModel) -> np.ndarray:
+    pixels = np.asarray(pixels, dtype=np.float64)
+    return np.column_stack((2.0 * pixels[:, 0] / (model.width - 1.0) - 1.0,
+                            2.0 * pixels[:, 1] / (model.height - 1.0) - 1.0))
+
+
+def _in_frame(pixels: np.ndarray, model: CameraModel) -> np.ndarray:
+    pixels = np.asarray(pixels, dtype=np.float64)
+    return (np.isfinite(pixels).all(axis=1)
+            & (pixels[:, 0] >= 0.0) & (pixels[:, 0] <= model.width - 1.0)
+            & (pixels[:, 1] >= 0.0) & (pixels[:, 1] <= model.height - 1.0))
+
+
+def _heatmap_grid(model: CameraModel) -> tuple[int, int]:
+    return ShinKeypointEncoder.heatmap_shape(model.height, model.width)
+
+
 def _heatmap_targets(pixels: np.ndarray, visible: np.ndarray, model: CameraModel,
-                     feature_h: int, feature_w: int) -> np.ndarray:
+                     feature_h: int, feature_w: int,
+                     sigma_cells: float = _HEATMAP_SIGMA_CELLS) -> np.ndarray:
     grid_y, grid_x = np.mgrid[0:feature_h, 0:feature_w]
     heatmaps = np.zeros((PAD_LANDMARK_COUNT, feature_h, feature_w),
                         dtype=np.float32)
@@ -200,110 +320,329 @@ def _heatmap_targets(pixels: np.ndarray, visible: np.ndarray, model: CameraModel
         px = pixels[point, 0] / (model.width - 1.0) * (feature_w - 1.0)
         py = pixels[point, 1] / (model.height - 1.0) * (feature_h - 1.0)
         gaussian = np.exp(-((grid_x - px) ** 2 + (grid_y - py) ** 2)
-                          / (2.0 * _HEATMAP_SIGMA ** 2))
+                          / (2.0 * float(sigma_cells) ** 2))
         heatmaps[point] = gaussian / max(float(gaussian.sum()), 1e-9)
     return heatmaps
 
 
-def synthetic_keypoint_dataset(system: Mapping[str, Any], *, samples: int,
-                               seed: int) -> dict[str, np.ndarray]:
-    """Render deployed-target views and exact six-landmark supervision."""
+def _canonical_projection(position_pad, quaternion, model: CameraModel,
+                          landmark_radius_m: float):
+    """Project the pad and return canonical ``(pixels, visible, center, shift)``."""
+    projection = project_landing_pad(
+        position_pad, quaternion, camera=model, landmark_radius_m=landmark_radius_m)
+    pixels, visible, shift = canonicalize_landmarks(
+        projection.keypoint_pixels, projection.keypoint_visible,
+        projection.pad_center_pixels)
+    return pixels, visible, np.asarray(projection.pad_center_pixels, dtype=float), shift
+
+
+# --------------------------------------------------------------------------
+# synthetic renderer v2
+# --------------------------------------------------------------------------
+@dataclass
+class RenderSettings:
+    """Domain randomisation matched to the Isaac calibration frames.
+
+    Measured on the 48 surveyed frames: per-image mean 20-52/255, pad white
+    ~100-126, pad black ~20-40, background 15-60 with hard-edged facades, thin
+    poles and wires, soft shadows, a dark rover body touching the deck and a
+    dark disc (the mast) next to one landmark.
+    """
+
+    altitude_range: tuple = (0.4, 8.0)
+    touchdown_fraction: float = 0.2          # extra weight on 0.3-1.6 m
+    tilt_sigma_deg: float = 6.0
+    tilt_max_deg: float = 16.0
+    jitter_fraction: tuple = (0.34, 0.25)    # of altitude, body x / y
+    edge_fraction: float = 0.15              # push the pad partly out of frame
+    negative_fraction: float = 0.15
+    pad_white: tuple = (75.0, 145.0)
+    pad_black: tuple = (8.0, 45.0)
+    pad_min_contrast: float = 40.0
+    pad_shading: float = 0.2
+    background_base: tuple = (12.0, 65.0)
+    bright_scene_probability: float = 0.2
+    rover_body_probability: float = 0.8
+    mast_probability: float = 0.8
+    mast_radius_m: tuple = (0.06, 0.16)
+    quads_max: int = 3
+    lines_max: int = 6
+    blobs_max: int = 3
+    stripes_max: int = 2
+    text_probability: float = 0.5
+    noise_sigma: tuple = (0.5, 5.0)
+    blur_probability: float = 0.7
+    blur_sigma: tuple = (0.2, 1.3)
+    gain_range: tuple = (0.8, 1.2)
+    gamma_range: tuple = (0.85, 1.2)
+    cutout_probability: float = 0.3
+
+    @classmethod
+    def from_mapping(cls, mapping: Mapping[str, Any] | None) -> "RenderSettings":
+        values = {}
+        names = {f.name for f in fields(cls)}
+        for key, value in dict(mapping or {}).items():
+            if key not in names:
+                raise ValueError(f"unknown synthetic rendering setting {key!r}")
+            values[key] = tuple(value) if isinstance(value, (list, tuple)) else value
+        return cls(**values)
+
+
+def _background(rng: np.random.Generator, model: CameraModel,
+                cfg: RenderSettings) -> np.ndarray:
     import cv2
 
-    model = camera_model(system)
-    settings = landing_pad_settings(system)
-    width, height = model.width, model.height
+    H, W = model.height, model.width
+    bright = rng.random() < cfg.bright_scene_probability
+    base = rng.uniform(*cfg.background_base) + (rng.uniform(40, 110) if bright else 0.0)
+    xx = np.linspace(-1.0, 1.0, W)[None, :]
+    yy = np.linspace(-1.0, 1.0, H)[:, None]
+    image = (base + rng.uniform(-25, 25) * xx + rng.uniform(-25, 25) * yy).astype(np.float32)
+    # Large flat regions with hard edges: facades, road, grass.
+    for _ in range(rng.integers(0, cfg.quads_max + 1)):
+        points = np.array([[rng.uniform(-0.3, 1.3) * W, rng.uniform(-0.3, 1.3) * H]
+                           for _ in range(4)], dtype=np.int32)
+        hull = cv2.convexHull(points)
+        level = rng.uniform(5, 110) + (rng.uniform(0, 80) if bright else 0.0)
+        layer = image.copy()
+        cv2.fillConvexPoly(layer, hull, float(level))
+        alpha = rng.uniform(0.6, 1.0)
+        image = (1.0 - alpha) * image + alpha * layer
+        if rng.random() < 0.7:
+            edge = rng.uniform(0, 30) if rng.random() < 0.5 else rng.uniform(90, 170)
+            cv2.polylines(image, [hull], True, float(edge), int(rng.integers(1, 4)),
+                          cv2.LINE_AA)
+    # Thin straight structures: poles, wires, kerbs.
+    for _ in range(rng.integers(0, cfg.lines_max + 1)):
+        p0 = (int(rng.uniform(-0.2, 1.2) * W), int(rng.uniform(-0.2, 1.2) * H))
+        p1 = (int(rng.uniform(-0.2, 1.2) * W), int(rng.uniform(-0.2, 1.2) * H))
+        level = rng.uniform(0, 40) if rng.random() < 0.6 else rng.uniform(90, 170)
+        cv2.line(image, p0, p1, float(level), int(rng.integers(1, 6)), cv2.LINE_AA)
+    # Wide bright stripes: road markings, pavement.
+    for _ in range(rng.integers(0, cfg.stripes_max + 1)):
+        p0 = (int(rng.uniform(0, W)), int(rng.uniform(0, H)))
+        p1 = (int(rng.uniform(0, W)), int(rng.uniform(0, H)))
+        cv2.line(image, p0, p1, float(rng.uniform(70, 125)),
+                 int(rng.integers(6, 22)), cv2.LINE_AA)
+    # Text-like clutter on facades.
+    if rng.random() < cfg.text_probability:
+        x = int(rng.uniform(0, W * 0.8))
+        y = int(rng.uniform(0, H * 0.9))
+        level = rng.uniform(60, 140)
+        glyph_h = int(rng.integers(6, 26))
+        for _ in range(rng.integers(3, 9)):
+            glyph_w = int(rng.integers(4, 18))
+            cv2.rectangle(image, (x, y), (min(W - 1, x + glyph_w), min(H - 1, y + glyph_h)),
+                          float(level), -1)
+            x += glyph_w + int(rng.integers(2, 8))
+            if x >= W:
+                break
+    # Soft dark blobs: tree shadows.
+    if cfg.blobs_max:
+        shadow = np.zeros_like(image)
+        for _ in range(rng.integers(0, cfg.blobs_max + 1)):
+            centre = (int(rng.uniform(0, W)), int(rng.uniform(0, H)))
+            axes = (int(rng.uniform(10, 90)), int(rng.uniform(10, 60)))
+            cv2.ellipse(shadow, centre, axes, float(rng.uniform(0, 180)), 0, 360,
+                        float(rng.uniform(10, 40)), -1)
+        if shadow.any():
+            image = image - cv2.GaussianBlur(shadow, (0, 0), rng.uniform(3, 12))
+    image = image * (1.0 + rng.normal(0.0, 0.04, image.shape)).astype(np.float32)
+    return np.clip(image, 0.0, 255.0).astype(np.float32)
+
+
+def render_synthetic_frame(rng: np.random.Generator, model: CameraModel,
+                           pad: Mapping[str, Any], cfg: RenderSettings):
+    """One synthetic frame.
+
+    Returns ``(image uint8, pixels (6,2) canonical, visible (6,) canonical,
+    center (2,), pose7, body_relative (3,))`` where ``pose7`` is the exact
+    ``[x, y, z, qw, qx, qy, qz]`` layout the simulator publishes and
+    ``body_relative`` is the pad relative to the vehicle in its yaw frame.
+    """
+    import cv2
+
+    deck = tuple(float(v) for v in pad["deck_size_m"])
+    landmark_radius = float(pad["landmark_radius_m"])
     mount = np.asarray(model.mount_translation_flu_m, dtype=float)
-    pitch_down = model.pitch_down_deg
-    pyramid = _texture_pyramid(_pad_texture(settings))
-    deck_size = settings["deck_size_m"]
-    landmark_radius = float(settings["landmark_radius_m"])
+    image = _background(rng, model, cfg)
+    negative = rng.random() < cfg.negative_fraction
 
-    rng = np.random.default_rng(int(seed))
-    feature_h, feature_w = height // 16, width // 16
+    if rng.random() < cfg.touchdown_fraction:
+        altitude = float(rng.uniform(0.3, 1.6))
+    else:
+        altitude = float(rng.uniform(*cfg.altitude_range))
+    yaw = float(rng.uniform(-math.pi, math.pi))
+    tilt = np.clip(rng.normal(0.0, math.radians(cfg.tilt_sigma_deg), 2),
+                   -math.radians(cfg.tilt_max_deg), math.radians(cfg.tilt_max_deg))
+    quaternion = _quat_wxyz_from_euler(yaw, float(tilt[0]), float(tilt[1]))
+    rotation = _rotation_z(yaw)
+    centred = camera_centered_hover_offset(altitude, model.pitch_down_deg, mount)
+    jx, jy = cfg.jitter_fraction
+    if rng.random() < cfg.edge_fraction:
+        jitter = np.array([
+            rng.uniform(-1, 1) * rng.uniform(jx, 2.2 * jx) * altitude,
+            rng.uniform(-1, 1) * rng.uniform(jy, 2.2 * jy) * altitude, 0.0])
+    else:
+        jitter = np.array([rng.uniform(-jx, jx) * altitude,
+                           rng.uniform(-jy, jy) * altitude, 0.0])
+    body_pad = centred + jitter
+    position = rotation @ body_pad
 
-    images = np.empty((int(samples), height, width), dtype=np.uint8)
-    heatmaps = np.zeros((int(samples), PAD_LANDMARK_COUNT, feature_h, feature_w),
-                        dtype=np.float32)
-    coordinates = np.zeros((int(samples), PAD_LANDMARK_COUNT, 2), dtype=np.float32)
-    visible = np.zeros((int(samples), PAD_LANDMARK_COUNT), dtype=np.float32)
-    poses = np.empty((int(samples), 5), dtype=np.float32)
-    # The training-label-only pose each frame was rendered from, in the exact
-    # ``[x, y, z, qw, qx, qy, qz]`` layout the simulator publishes, so the
-    # empirical labeller can be round-tripped against the synthetic one.
-    pad_relative_pose = np.empty(
-        (int(samples), EMPIRICAL_POSE_LENGTH), dtype=np.float32)
+    x, y, hit = _plane_hits(position, quaternion, model)
+    half_x, half_y = deck[0] / 2.0, deck[1] / 2.0
+    if not negative:
+        inside = hit & (np.abs(x) <= half_x) & (np.abs(y) <= half_y)
+        if inside.any():
+            texture = _sample_texture(x, y, inside, _cached_pyramid(pad), deck)
+            white = rng.uniform(*cfg.pad_white)
+            black = rng.uniform(*cfg.pad_black)
+            if white - black < cfg.pad_min_contrast:
+                white = black + cfg.pad_min_contrast + rng.uniform(0, 30)
+            shade = 1.0 + cfg.pad_shading * (rng.uniform(-1, 1) * x / half_x
+                                             + rng.uniform(-1, 1) * y / half_y) / 2.0
+            painted = (black + texture / 255.0 * (white - black)) * shade
+            image[inside] = painted[inside]
+    # Rover body: a dark region touching the deck on one side, in the plane.
+    if rng.random() < cfg.rover_body_probability:
+        side = int(rng.integers(0, 4))
+        length = rng.uniform(0.3, 1.2)
+        width = rng.uniform(0.7, 1.15)
+        if side == 0:
+            body = (x > half_x) & (x <= half_x + length) & (np.abs(y) <= half_y * width)
+        elif side == 1:
+            body = (x < -half_x) & (x >= -half_x - length) & (np.abs(y) <= half_y * width)
+        elif side == 2:
+            body = (y > half_y) & (y <= half_y + length) & (np.abs(x) <= half_x * width)
+        else:
+            body = (y < -half_y) & (y >= -half_y - length) & (np.abs(x) <= half_x * width)
+        body &= hit
+        if negative and rng.random() < 0.5:
+            # A dark deck-shaped quad with no target is a useful negative.
+            body |= hit & (np.abs(x) <= half_x) & (np.abs(y) <= half_y)
+        image[body] = rng.uniform(3, 30)
+    # Mast: a dark disc next to one landmark, on the pad plane.
+    if rng.random() < cfg.mast_probability and not negative:
+        k = int(rng.integers(0, PAD_LANDMARK_COUNT))
+        angle = math.pi / 6.0 + k * math.pi / 3.0 + rng.uniform(-0.3, 0.3)
+        radius = landmark_radius * rng.uniform(0.75, 1.15)
+        mx, my = radius * math.cos(angle), radius * math.sin(angle)
+        disc_radius = rng.uniform(*cfg.mast_radius_m)
+        disc = hit & ((x - mx) ** 2 + (y - my) ** 2 <= disc_radius ** 2)
+        image[disc] = rng.uniform(0, 20)
 
-    for index in range(int(samples)):
-        altitude = float(rng.uniform(0.45, 8.0))
-        yaw = float(rng.uniform(-math.pi, math.pi))
-        rotation = _rotation_z(yaw)
-        centred = camera_centered_hover_offset(altitude, pitch_down, mount)
-        # Image-plane jitter produces centred, edge and partially visible pads.
-        jitter_body = np.array([
-            rng.uniform(-0.34, 0.34) * altitude,
-            rng.uniform(-0.25, 0.25) * altitude, 0.0])
-        body_pad = rotation @ (centred + jitter_body)
-        quaternion = _quat_wxyz_from_yaw(yaw)
+    pixels, visible, center, _shift = _canonical_projection(
+        position, quaternion, model, landmark_radius)
+    if negative:
+        visible = np.zeros(PAD_LANDMARK_COUNT, dtype=bool)
 
-        base = float(rng.uniform(45.0, 145.0))
-        gx, gy = rng.uniform(-35.0, 35.0, 2)
-        xx = np.linspace(-1.0, 1.0, width)[None, :]
-        yy = np.linspace(-1.0, 1.0, height)[:, None]
-        image = base + gx * xx + gy * yy
-        image = image + rng.normal(0.0, rng.uniform(2.0, 10.0), (height, width))
-        image = np.clip(image, 0.0, 255.0).astype(np.uint8)
+    if rng.random() < cfg.cutout_probability:
+        # Partial occlusion; labels are kept so the descriptors learn to infer
+        # the rest, exactly as the empirical visibility label (in frame) does.
+        cw = int(rng.uniform(0.06, 0.3) * model.width)
+        ch = int(rng.uniform(0.06, 0.3) * model.height)
+        cx = int(rng.integers(0, model.width - cw))
+        cy = int(rng.integers(0, model.height - ch))
+        image[cy:cy + ch, cx:cx + cw] = rng.uniform(5, 150)
+    if rng.random() < cfg.blur_probability:
+        image = cv2.GaussianBlur(image, (0, 0), rng.uniform(*cfg.blur_sigma))
+    image = image * rng.uniform(*cfg.gain_range)
+    image = 255.0 * (np.clip(image, 0.0, 255.0) / 255.0) ** rng.uniform(*cfg.gamma_range)
+    image = image + rng.normal(0.0, rng.uniform(*cfg.noise_sigma), image.shape)
+    image = np.clip(image, 0.0, 255.0).astype(np.uint8)
+    pose = np.r_[position, quaternion].astype(np.float32)
+    body_relative = rotation.T @ -position
+    return image, pixels, visible, center, pose, body_relative
 
-        image = _render_landing_target(
-            image, pyramid, deck_size, body_pad, quaternion, model)
 
-        if rng.random() < 0.55:
-            # Partial visibility is the point of a keypoint encoder; keep the
-            # landmark labels so descriptors learn to infer the rest.
-            ow = int(rng.uniform(0.08, 0.30) * width)
-            oh = int(rng.uniform(0.08, 0.30) * height)
-            ox = int(rng.integers(0, max(1, width - ow)))
-            oy = int(rng.integers(0, max(1, height - oh)))
-            image[oy:oy + oh, ox:ox + ow] = int(rng.uniform(30, 170))
-        if rng.random() < 0.6:
-            image = cv2.GaussianBlur(image, (3, 3), rng.uniform(0.25, 1.1))
-        image = np.clip(
-            image.astype(np.float32) * rng.uniform(0.65, 1.25)
-            + rng.normal(0.0, rng.uniform(0.0, 4.0), image.shape),
-            0.0, 255.0).astype(np.uint8)
+def _render_chunk(seeds, system: Mapping[str, Any], rendering: Mapping[str, Any]):
+    """Worker entry point: render one frame per seed (spawn-safe)."""
+    import cv2
 
-        projection = project_landing_pad(
-            body_pad, quaternion, camera=model,
-            landmark_radius_m=landmark_radius)
-        keypoint_visible = projection.keypoint_visible.copy()
-        if rng.random() < 0.20:
-            # Fully negative target-absent frames teach an explicit visibility
-            # head. A heatmap soft-argmax alone always returns six coordinates
-            # and cannot distinguish a blank/textured background from a pad.
-            image = np.clip(
-                rng.uniform(25.0, 225.0)
-                + rng.normal(0.0, rng.uniform(3.0, 18.0), image.shape),
-                0.0, 255.0).astype(np.uint8)
-            keypoint_visible[:] = False
-        coordinates[index] = projection.keypoint_normalized
-        visible[index] = keypoint_visible.astype(np.float32)
-        heatmaps[index] = _heatmap_targets(
-            projection.keypoint_pixels, keypoint_visible, model,
-            feature_h, feature_w)
+    cv2.setNumThreads(1)
+    model = camera_model(system)
+    pad = landing_pad_settings(system)
+    cfg = RenderSettings.from_mapping(rendering)
+    return [render_synthetic_frame(np.random.default_rng(int(seed)), model, pad, cfg)
+            for seed in seeds]
 
-        relative_platform_body = rotation.T @ -body_pad
-        poses[index, :3] = np.clip(
-            relative_platform_body / np.array([8.0, 8.0, 8.0]), -1.0, 1.0)
-        poses[index, 3:] = (math.sin(yaw), math.cos(yaw))
-        pad_relative_pose[index, :3] = body_pad
-        pad_relative_pose[index, 3:] = quaternion
-        images[index] = image
+
+def _render_frames(seeds, system, rendering: Mapping[str, Any], workers: int | None):
+    """Render inline unless ``workers`` > 1 was asked for explicitly.
+
+    Inline rendering costs ~25 ms a frame (4096 frames in under two minutes),
+    which is cheap next to the flight it precedes.  A spawn pool is faster
+    but re-imports the caller's ``__main__`` in every worker; started from a
+    stdin script it hung forever on 2026-09-20 instead of raising, and inside
+    the flight runner it would re-import the whole learner.  So the pool is
+    opt-in (``render_workers`` in the keypoint settings), never the default.
+    """
+    count = len(seeds)
+    if workers is None or count < 256 or int(workers) <= 1:
+        return _render_chunk(seeds, system, rendering)
+    try:
+        from concurrent.futures import ProcessPoolExecutor
+        import multiprocessing
+
+        chunks = [seeds[i::int(workers)] for i in range(int(workers))]
+        with ProcessPoolExecutor(
+                max_workers=int(workers),
+                mp_context=multiprocessing.get_context("spawn")) as pool:
+            rendered = list(pool.map(_render_chunk, chunks,
+                                     [dict(system)] * len(chunks),
+                                     [dict(rendering)] * len(chunks)))
+        # Restore the seed order so the result does not depend on the worker count.
+        ordered = [None] * count
+        for offset, chunk in enumerate(rendered):
+            for index, frame in enumerate(chunk):
+                ordered[offset + index * int(workers)] = frame
+        return ordered
+    except Exception as exc:  # pragma: no cover - depends on the host
+        print(f"Parallel synthetic rendering unavailable ({exc}); rendering inline.")
+        return _render_chunk(seeds, system, rendering)
+
+
+def synthetic_keypoint_dataset(system: Mapping[str, Any], *, samples: int,
+                               seed: int, workers: int | None = None,
+                               rendering: Mapping[str, Any] | None = None,
+                               ) -> dict[str, np.ndarray]:
+    """Render deployed-target views and exact six-landmark supervision.
+
+    Labels follow :data:`LABEL_CONVENTION`.  ``poses`` is the training-only
+    auxiliary target of the synthetic pose head: the pad relative to the
+    vehicle in its yaw frame, normalised by 8 m, plus ``sin 6*yaw``,
+    ``cos 6*yaw`` -- the heading modulo the hexagon's own symmetry, which is
+    what the image actually determines.
+    """
+    model = camera_model(system)
+    feature_h, feature_w = _heatmap_grid(model)
+    rendering = dict(rendering or {})
+    RenderSettings.from_mapping(rendering)  # validate early
+    seeds = np.random.default_rng(int(seed)).integers(0, 2**31 - 1, int(samples))
+    frames = _render_frames([int(s) for s in seeds], system, rendering, workers)
+
+    images = np.stack([frame[0] for frame in frames])
+    pixels = np.stack([frame[1] for frame in frames]).astype(np.float32)
+    visible = np.stack([frame[2] for frame in frames]).astype(np.float32)
+    center = np.stack([frame[3] for frame in frames]).astype(np.float32)
+    pad_relative_pose = np.stack([frame[4] for frame in frames]).astype(np.float32)
+    body_relative = np.stack([frame[5] for frame in frames])
+    heatmaps = np.stack([
+        _heatmap_targets(pixels[i], visible[i] > 0.5, model, feature_h, feature_w)
+        for i in range(len(frames))])
+    coordinates = np.stack([_normalized(pixels[i], model) for i in range(len(frames))]
+                           ).astype(np.float32)
+    yaw = np.array([_yaw_from_quat_wxyz(pose[3:]) for pose in pad_relative_pose])
+    poses = np.column_stack((
+        np.clip(body_relative / 8.0, -1.0, 1.0),
+        np.sin(6.0 * yaw), np.cos(6.0 * yaw))).astype(np.float32)
 
     if int(np.count_nonzero(visible)) < int(samples) * 2:
         raise RuntimeError("synthetic keypoint generator produced too few visible landmarks")
     return {"images": images, "heatmaps": heatmaps,
             "coordinates": coordinates, "visible": visible, "poses": poses,
-            "pad_relative_pose": pad_relative_pose}
+            "pad_relative_pose": pad_relative_pose,
+            "pixels": pixels, "center": center}
 
 
 def empirical_keypoint_dataset(samples: Sequence, system: Mapping[str, Any],
@@ -316,8 +655,9 @@ def empirical_keypoint_dataset(samples: Sequence, system: Mapping[str, Any],
     ``[x, y, z, qw, qx, qy, qz]``, the UAV body origin in the gravity-aligned
     pad frame and its ENU/FLU attitude.  The labels are therefore produced by
     the same projection that defines the synthetic targets -- no detector, no
-    homography and no marker id is involved.  Frames whose pose payload is
-    missing, malformed or places every landmark outside the frame are dropped.
+    homography and no marker id is involved -- and ordered by the same
+    :data:`LABEL_CONVENTION`.  Frames whose pose payload is missing, malformed
+    or places every landmark outside the frame are dropped.
 
     ``rejections`` is filled, when given, with why each sample was dropped.
     Five separate conditions silently discard a frame here, and "0 labelled
@@ -334,7 +674,7 @@ def empirical_keypoint_dataset(samples: Sequence, system: Mapping[str, Any],
     model = camera_model(system)
     settings = landing_pad_settings(system)
     width, height = model.width, model.height
-    feature_h, feature_w = height // 16, width // 16
+    feature_h, feature_w = _heatmap_grid(model)
     landmark_radius = float(settings["landmark_radius_m"])
     counts = {"unpaired": 0, "no_image": 0, "no_pose": 0,
               "degenerate_attitude": 0, "no_landmark_in_frame": 0}
@@ -367,21 +707,20 @@ def empirical_keypoint_dataset(samples: Sequence, system: Mapping[str, Any],
         if float(np.linalg.norm(pose[3:])) < 1e-8:
             counts["degenerate_attitude"] += 1
             continue
-        projection = project_landing_pad(
-            pose[:3], pose[3:], camera=model,
-            landmark_radius_m=landmark_radius)
-        if not np.any(projection.keypoint_visible):
+        pixels, visible, center, _shift = _canonical_projection(
+            pose[:3], pose[3:], model, landmark_radius)
+        if not np.any(visible):
             counts["no_landmark_in_frame"] += 1
             continue
         labelled.append((
             image.copy(),
-            _heatmap_targets(projection.keypoint_pixels,
-                             projection.keypoint_visible, model,
-                             feature_h, feature_w),
-            projection.keypoint_normalized.astype(np.float32),
-            projection.keypoint_visible.astype(np.float32),
+            _heatmap_targets(pixels, visible, model, feature_h, feature_w),
+            _normalized(pixels, model).astype(np.float32),
+            visible.astype(np.float32),
             pose.astype(np.float32),
-            viewpoint))
+            viewpoint,
+            pixels.astype(np.float32),
+            center.astype(np.float32)))
     if rejections is not None:
         rejections.clear()
         rejections.update(counts)
@@ -395,16 +734,122 @@ def empirical_keypoint_dataset(samples: Sequence, system: Mapping[str, Any],
             "pad_relative_pose": np.empty((0, EMPIRICAL_POSE_LENGTH),
                                           dtype=np.float32),
             "viewpoint": np.empty((0,), dtype=np.int64),
+            "pixels": np.empty((0, PAD_LANDMARK_COUNT, 2), dtype=np.float32),
+            "center": np.empty((0, 2), dtype=np.float32),
         }
+    names = ("images", "heatmaps", "coordinates", "visible", "pad_relative_pose",
+             "viewpoint", "pixels", "center")
     dataset = {name: np.stack([item[index] for item in labelled])
-               for index, name in enumerate(
-                   ("images", "heatmaps", "coordinates", "visible",
-                    "pad_relative_pose"))}
-    dataset["viewpoint"] = np.asarray(
-        [item[5] for item in labelled], dtype=np.int64)
+               for index, name in enumerate(names)}
+    dataset["viewpoint"] = np.asarray(dataset["viewpoint"], dtype=np.int64)
     return dataset
 
 
+# --------------------------------------------------------------------------
+# empirical augmentation (labels transformed exactly)
+# --------------------------------------------------------------------------
+@dataclass
+class AugmentationSettings:
+    """Similarity warps and re-exposure of the surveyed Isaac frames.
+
+    Two frames of one hover are one measurement; 24 hovers are 24.  A warp that
+    moves the labels with the pixels turns each into a family of views at
+    other scales, roll angles and image positions, which is what lets the
+    fine-tune generalise to poses it never flew.  Mirroring is deliberately
+    absent: it would turn the hexagon's chirality into a target that never
+    exists.
+    """
+
+    scale_range: tuple = (0.6, 1.6)          # log-uniform
+    rotation_deg: float = 30.0
+    recenter_probability: float = 0.7        # move the pad centre anywhere in frame
+    recenter_margin: float = 0.08
+    jitter_fraction: float = 0.06            # otherwise: small translation
+    gain_range: tuple = (0.7, 1.35)
+    bias_range: tuple = (-15.0, 15.0)
+    gamma_range: tuple = (0.8, 1.25)
+    noise_sigma_max: float = 5.0
+    blur_probability: float = 0.4
+    blur_sigma_max: float = 1.0
+    cutout_max: int = 2
+    cutout_fraction: tuple = (0.05, 0.25)
+    geometric_probability: float = 0.9
+    photometric_probability: float = 0.9
+
+    @classmethod
+    def from_mapping(cls, mapping: Mapping[str, Any] | None) -> "AugmentationSettings":
+        values = {}
+        names = {f.name for f in fields(cls)}
+        for key, value in dict(mapping or {}).items():
+            if key not in names:
+                raise ValueError(f"unknown empirical augmentation setting {key!r}")
+            values[key] = tuple(value) if isinstance(value, (list, tuple)) else value
+        return cls(**values)
+
+
+def augment_labelled_frame(image, pixels, center, visible, rng: np.random.Generator,
+                           cfg: AugmentationSettings, model: CameraModel):
+    """Return ``(image, pixels, center, visible)`` after a random similarity
+    warp and photometric perturbation.
+
+    Landmarks outside the source frame stay invisible (there is no pixel
+    content for them) and landmarks the warp pushes out of frame become
+    invisible.  The returned labels are in canonical order for the new image.
+    """
+    import cv2
+
+    width, height = model.width, model.height
+    img = np.asarray(image).astype(np.float32)
+    pts = np.asarray(pixels, dtype=np.float64).copy()
+    ctr = np.asarray(center, dtype=np.float64).copy()
+    vis = np.asarray(visible, dtype=bool).copy()
+    finite_centre = bool(np.isfinite(ctr).all())
+    if rng.random() < cfg.geometric_probability:
+        scale = math.exp(rng.uniform(math.log(cfg.scale_range[0]),
+                                     math.log(cfg.scale_range[1])))
+        theta = math.radians(rng.uniform(-cfg.rotation_deg, cfg.rotation_deg))
+        c, s = math.cos(theta), math.sin(theta)
+        A = np.array([[scale * c, -scale * s], [scale * s, scale * c]])
+        pivot = ctr if finite_centre else np.array([width / 2.0, height / 2.0])
+        if finite_centre and rng.random() < cfg.recenter_probability:
+            m = cfg.recenter_margin
+            target = np.array([rng.uniform(m * width, (1.0 - m) * width),
+                               rng.uniform(m * height, (1.0 - m) * height)])
+        else:
+            target = pivot + np.array([
+                rng.uniform(-1, 1) * cfg.jitter_fraction * width,
+                rng.uniform(-1, 1) * cfg.jitter_fraction * height])
+        t = target - A @ pivot
+        M = np.hstack((A, t[:, None]))
+        fill = float(np.clip(img.mean() + rng.normal(0.0, 8.0), 0.0, 255.0))
+        img = cv2.warpAffine(img, M, (width, height), flags=cv2.INTER_LINEAR,
+                             borderMode=cv2.BORDER_CONSTANT, borderValue=fill)
+        pts = pts @ A.T + t
+        ctr = A @ ctr + t
+        vis = vis & _in_frame(pts, model)
+    if rng.random() < cfg.photometric_probability:
+        img = np.clip(img * rng.uniform(*cfg.gain_range) + rng.uniform(*cfg.bias_range),
+                      0.0, 255.0)
+        img = 255.0 * (img / 255.0) ** rng.uniform(*cfg.gamma_range)
+        if rng.random() < cfg.blur_probability:
+            img = cv2.GaussianBlur(img, (0, 0), rng.uniform(0.2, cfg.blur_sigma_max))
+        sigma = rng.uniform(0.0, cfg.noise_sigma_max)
+        if sigma > 0.0:
+            img = img + rng.normal(0.0, sigma, img.shape)
+        for _ in range(rng.integers(0, cfg.cutout_max + 1)):
+            cw = int(rng.uniform(*cfg.cutout_fraction) * width)
+            ch = int(rng.uniform(*cfg.cutout_fraction) * height)
+            cx = int(rng.integers(0, max(1, width - cw)))
+            cy = int(rng.integers(0, max(1, height - ch)))
+            img[cy:cy + ch, cx:cx + cw] = rng.uniform(5.0, 120.0)
+    img = np.clip(img, 0.0, 255.0).astype(np.uint8)
+    pts, vis, _shift = canonicalize_landmarks(pts, vis, ctr)
+    return img, pts, ctr, vis
+
+
+# --------------------------------------------------------------------------
+# metrics and gates
+# --------------------------------------------------------------------------
 @torch.no_grad()
 def _empirical_metrics(encoder, dataset, indices, device) -> dict:
     images = torch.as_tensor(dataset["images"][indices, None],
@@ -421,10 +866,25 @@ def _empirical_metrics(encoder, dataset, indices, device) -> dict:
     scale = torch.tensor([511.0 / 2.0, 319.0 / 2.0], device=device)
     pixel_error = torch.linalg.vector_norm((predicted - target) * scale, dim=-1)
     selected = pixel_error[visible]
+    # Spread of the six predictions around their centroid against the labels'
+    # spread: an encoder that reports the pad centre six times has a ratio
+    # near zero whatever its coordinate error looks like.
+    ratios = []
+    for frame in range(images.shape[0]):
+        mask = visible[frame]
+        if int(mask.sum()) < 2:
+            continue
+        pred_points = predicted[frame][mask] * scale
+        true_points = target[frame][mask] * scale
+        pred_spread = torch.sqrt(((pred_points - pred_points.mean(0)) ** 2).sum(-1).mean())
+        true_spread = torch.sqrt(((true_points - true_points.mean(0)) ** 2).sum(-1).mean())
+        ratios.append(float((pred_spread / true_spread.clamp_min(1e-6)).cpu()))
+    spread_ratio = float(np.mean(ratios)) if ratios else 0.0
     if selected.numel() == 0:
         return {"coordinate_rmse_px": float("inf"), "pck_20px": 0.0,
                 "visibility_accuracy": 0.0, "visibility_recall": 0.0,
-                "absent_false_positive_rate": false_positive_rate}
+                "absent_false_positive_rate": false_positive_rate,
+                "spread_ratio": spread_ratio}
     return {
         "coordinate_rmse_px": float(torch.sqrt(selected.square().mean()).cpu()),
         "pck_20px": float((selected <= 20.0).float().mean().cpu()),
@@ -437,6 +897,7 @@ def _empirical_metrics(encoder, dataset, indices, device) -> dict:
         "visibility_recall": float(
             (output.visibility >= 0.5)[visible].float().mean().cpu()),
         "absent_false_positive_rate": false_positive_rate,
+        "spread_ratio": spread_ratio,
     }
 
 
@@ -510,23 +971,12 @@ def calibration_viewpoints(system: Mapping[str, Any],
     return viewpoints
 
 
-def keypoint_calibration_fingerprint(system: Mapping[str, Any],
-                                     settings: Mapping[str, Any]) -> str:
-    """What a stored calibration frame means, for deciding reuse across runs.
-
-    The camera it was rendered by, the target painted on the deck, the encoder
-    architecture it supervises and the survey that decides where the vehicle
-    stands. Not the experiment's configuration hash: an edit to the PPO budget
-    does not change a pixel of a calibration frame, and invalidating hours of
-    surveying for it is how a run ends up certifying an encoder on one hover
-    again.
-    """
+def _calibration_fingerprint_parts(system: Mapping[str, Any],
+                                   settings: Mapping[str, Any]) -> dict:
     model = camera_model(system)
     pad = landing_pad_settings(system)
-    return data_fingerprint({
-        "pretrain_format": PRETRAIN_FORMAT,
-        "calibration_format": EMPIRICAL_CALIBRATION_FORMAT,
-        "encoder_implementation": ShinKeypointEncoder.implementation,
+    return {
+        "calibration_format": "isaac-pose-surveyed-holdout-v1",
         "landmark_layout": KEYPOINT_LAYOUT_ID,
         "landing_pad_visual": LANDING_PAD_VISUAL_VERSION,
         "camera": {"width": model.width, "height": model.height,
@@ -545,7 +995,37 @@ def keypoint_calibration_fingerprint(system: Mapping[str, Any],
             "yaws_deg": list(settings.get(
                 "survey_yaws_deg", _DEFAULT_SURVEY_YAWS_DEG)),
         },
-    })
+    }
+
+
+def keypoint_calibration_fingerprint(system: Mapping[str, Any],
+                                     settings: Mapping[str, Any]) -> str:
+    """What a stored calibration frame means, for deciding reuse across runs.
+
+    The camera it was rendered by, the target painted on the deck and the
+    survey that decides where the vehicle stands.  Not the experiment's
+    configuration hash: an edit to the PPO budget does not change a pixel of a
+    calibration frame.  And -- since v6 -- not the encoder architecture or the
+    label format either: a stored viewpoint is an image and a pose, and every
+    label is re-projected from that pose when the frames are read back, so a
+    new encoder or a new label convention consumes the same frames.  Keying
+    the frames on the encoder made every perception fix cost a fresh survey
+    flight for nothing.
+    """
+    return data_fingerprint(_calibration_fingerprint_parts(system, settings))
+
+
+def keypoint_calibration_fingerprints(system: Mapping[str, Any],
+                                      settings: Mapping[str, Any]) -> list[str]:
+    """Current fingerprint first, then the superseded ones whose frames are
+    still exactly what the labeller consumes.  New viewpoints are stored under
+    the first; all of them are read."""
+    parts = _calibration_fingerprint_parts(system, settings)
+    current = data_fingerprint(parts)
+    legacy = []
+    for extra in _LEGACY_CALIBRATION_FINGERPRINT_KEYS:
+        legacy.append(data_fingerprint({**parts, **extra}))
+    return [current, *legacy]
 
 
 def _even_subset(items: Sequence, count: int) -> list:
@@ -696,9 +1176,8 @@ def _held_out_viewpoints(groups: Mapping[int, Sequence[int]],
 def needs_empirical_calibration(artifact: Mapping[str, Any] | None) -> bool:
     """Whether this artifact still has to be surveyed against live Isaac.
 
-    Also true for an artifact certified under the superseded single-pose
-    procedure, so an old ``validated`` flag cannot carry a blind encoder into
-    a new run.
+    Also true for an artifact certified under a superseded procedure, so an
+    old ``validated`` flag cannot carry a blind encoder into a new run.
     """
     if artifact is None:
         return False
@@ -741,6 +1220,89 @@ def _calibration_diagnosis(attempted: int, rejections: Mapping[str, int]) -> str
     return f"Of {attempted} polled frames: {detail}. Most likely {remedy}."
 
 
+# --------------------------------------------------------------------------
+# training helpers shared by pretraining and calibration
+# --------------------------------------------------------------------------
+def _autocast(device: torch.device):
+    if device.type == "cuda":
+        return torch.autocast("cuda", dtype=torch.bfloat16)
+    import contextlib
+    return contextlib.nullcontext()
+
+
+def _float_output(output: KeypointEncoderOutput) -> KeypointEncoderOutput:
+    return KeypointEncoderOutput(
+        output.embedding.float(), output.keypoints.float(),
+        output.heatmaps.float(), output.visibility.float())
+
+
+def _keypoint_losses(output: KeypointEncoderOutput, coordinates, mask, heatmaps):
+    denominator = mask.sum().clamp_min(1.0)
+    heatmap_loss = (-(heatmaps.flatten(2)
+                      * F.log_softmax(output.heatmaps.flatten(2), -1))
+                    .sum(-1) * mask).sum() / denominator
+    coordinate_loss = (((output.keypoints - coordinates).square().sum(-1) * mask)
+                       .sum() / denominator)
+    visibility_loss = _balanced_visibility_loss(output.visibility, mask)
+    return heatmap_loss, coordinate_loss, visibility_loss
+
+
+def _absent_loss(encoder, images, device):
+    """A flat frame at the image mean must report no landmark."""
+    negative = images.mean(dim=(-1, -2), keepdim=True).expand_as(images)
+    negative = torch.clamp(negative + 0.08 * torch.randn_like(negative), 0.0, 1.0)
+    with _autocast(device):
+        visibility = encoder(negative).visibility
+    visibility = visibility.float()
+    return _balanced_visibility_loss(visibility, torch.zeros_like(visibility))
+
+
+def _cosine_learning_rate(optimizer, base_lr: float, step: int, total: int,
+                          warmup: int) -> None:
+    if step < warmup:
+        lr = base_lr * (step + 1) / max(1, warmup)
+    else:
+        progress = (step - warmup) / max(1, total - warmup)
+        lr = 0.5 * base_lr * (1.0 + math.cos(math.pi * min(1.0, progress)))
+    for group in optimizer.param_groups:
+        group["lr"] = lr
+
+
+def _batch_tensors(dataset: Mapping[str, np.ndarray], indices, device):
+    images = torch.as_tensor(dataset["images"][indices, None],
+                             dtype=torch.float32, device=device) / 255.0
+    heatmaps = torch.as_tensor(dataset["heatmaps"][indices], dtype=torch.float32,
+                               device=device)
+    coordinates = torch.as_tensor(dataset["coordinates"][indices],
+                                  dtype=torch.float32, device=device)
+    mask = torch.as_tensor(dataset["visible"][indices], dtype=torch.float32,
+                           device=device)
+    return images, heatmaps, coordinates, mask
+
+
+def _augmented_batch(dataset: Mapping[str, np.ndarray], indices, rng,
+                     augmentation: AugmentationSettings, model: CameraModel, device):
+    feature_h, feature_w = _heatmap_grid(model)
+    images, heatmaps, coordinates, masks = [], [], [], []
+    for index in indices:
+        image, pixels, center, visible = augment_labelled_frame(
+            dataset["images"][index], dataset["pixels"][index],
+            dataset["center"][index], dataset["visible"][index] > 0.5, rng,
+            augmentation, model)
+        images.append(image)
+        heatmaps.append(_heatmap_targets(pixels, visible, model, feature_h, feature_w))
+        coordinates.append(_normalized(pixels, model).astype(np.float32))
+        masks.append(visible.astype(np.float32))
+    return (torch.as_tensor(np.stack(images)[:, None], dtype=torch.float32,
+                            device=device) / 255.0,
+            torch.as_tensor(np.stack(heatmaps), dtype=torch.float32, device=device),
+            torch.as_tensor(np.stack(coordinates), dtype=torch.float32, device=device),
+            torch.as_tensor(np.stack(masks), dtype=torch.float32, device=device))
+
+
+# --------------------------------------------------------------------------
+# empirical calibration
+# --------------------------------------------------------------------------
 def calibrate_keypoint_encoder(
         path: str | Path, artifact: dict, labelled_source,
         *, system: Mapping[str, Any], experiment: Mapping[str, Any],
@@ -758,6 +1320,14 @@ def calibrate_keypoint_encoder(
     :func:`calibration_viewpoints` and returns whether it arrived.  Without it
     the frames all come from wherever the vehicle happens to be sitting, which
     the degeneracy gate below then refuses to certify.
+
+    The fine-tune warps and re-exposes the training frames (labels transformed
+    exactly) and interleaves synthetic replay so the synthetic trunk is
+    adapted to the renderer without forgetting the touchdown-scale views the
+    survey never reaches.  Two gates certify the result on held-out
+    viewpoints: landmark recall, and the spread of the six predictions
+    relative to the labels' spread, which is what catches an encoder that
+    reports the pad centre six times.
     """
     if artifact is None:
         return None
@@ -776,11 +1346,14 @@ def calibrate_keypoint_encoder(
     planned: list[dict] = []
     frames_per_viewpoint = 0
     fingerprint = None
+    fingerprints: list[str] = []
     stored_records = []
     if datastore is not None:
-        fingerprint = keypoint_calibration_fingerprint(system, settings)
-        stored_records = datastore.episodes(
-            KIND_KEYPOINT_CALIBRATION, fingerprint)
+        fingerprints = keypoint_calibration_fingerprints(system, settings)
+        fingerprint = fingerprints[0]
+        for candidate in fingerprints:
+            stored_records.extend(datastore.episodes(
+                KIND_KEYPOINT_CALIBRATION, candidate))
         for record in stored_records:
             payload = record.payload()
             images = np.asarray(payload["images"], dtype=np.uint8)
@@ -789,10 +1362,13 @@ def calibrate_keypoint_encoder(
             for frame in range(images.shape[0]):
                 samples.append((images[frame], poses[frame], index))
         if stored_records:
+            legacy = sum(record.fingerprint != fingerprint for record in stored_records)
             print(f"Reusing {len(stored_records)} accumulated calibration "
                   f"viewpoints ({sum(record.samples for record in stored_records)} "
                   f"frames) from {len({record.run_id for record in stored_records})} "
-                  f"run(s); fingerprint {fingerprint[:12]}.")
+                  f"run(s); fingerprint {fingerprint[:12]}"
+                  + (f", {legacy} of them stored under a superseded encoder key "
+                     "and relabelled from their poses." if legacy else "."))
     if survey is not None:
         planned = calibration_viewpoints(system, settings)
         frame_stride = int(settings.get("survey_frame_stride", 4))
@@ -876,14 +1452,17 @@ def calibrate_keypoint_encoder(
     frozen_split = None
     if datastore is not None:
         fraction = float(settings.get("empirical_validation_fraction", .25))
-        frozen_split = {
-            int(record.provenance.get("viewpoint", record.seed))
-            for record in datastore.episodes(
-                KIND_KEYPOINT_CALIBRATION, fingerprint, payloads=False)
-            if record.split(fraction) == "validation"}
+        frozen_split = set()
+        for candidate in fingerprints:
+            frozen_split.update(
+                int(record.provenance.get("viewpoint", record.seed))
+                for record in datastore.episodes(
+                    KIND_KEYPOINT_CALIBRATION, candidate, payloads=False)
+                if record.split(fraction) == "validation")
     training, validation, held_out = _held_out_viewpoints(
         groups, settings, rng, frozen=frozen_split)
     torch_device = torch.device(device)
+    model = camera_model(system)
     encoder = ShinKeypointEncoder(
         int(estimator.get("image_embedding", 512)), keypoints=6).to(torch_device)
     # Always restart from the synthetic weights. Fine-tuning on top of a
@@ -893,56 +1472,67 @@ def calibrate_keypoint_encoder(
     best = {name: value.detach().cpu().clone()
             for name, value in encoder.state_dict().items()}
     best_metrics = before
-    optimizer = torch.optim.Adam(
-        encoder.parameters(), lr=float(settings.get(
-            "empirical_learning_rate", 1e-4)))
-    batch_size = int(settings.get("batch_size", 16))
-    epochs = int(settings.get("empirical_epochs", 2))
-    for _ in range(max(1, epochs)):
-        order = rng.permutation(len(training))
-        shuffled = training[order]
-        for start in range(0, len(shuffled), batch_size):
-            indices = shuffled[start:start + batch_size]
-            images = torch.as_tensor(
-                dataset["images"][indices, None], dtype=torch.float32,
-                device=torch_device) / 255.0
-            target_heatmaps = torch.as_tensor(
-                dataset["heatmaps"][indices], dtype=torch.float32,
-                device=torch_device)
-            target_coordinates = torch.as_tensor(
-                dataset["coordinates"][indices], dtype=torch.float32,
-                device=torch_device)
-            mask = torch.as_tensor(
-                dataset["visible"][indices], dtype=torch.float32,
-                device=torch_device)
-            output = encoder(images)
-            denominator = mask.sum().clamp_min(1.0)
-            heatmap_loss = (-(target_heatmaps.flatten(2)
-                              * F.log_softmax(output.heatmaps.flatten(2), -1))
-                            .sum(-1) * mask).sum() / denominator
-            coordinate_loss = (((output.keypoints - target_coordinates)
-                                .square().sum(-1) * mask).sum() / denominator)
-            visibility_loss = _balanced_visibility_loss(output.visibility, mask)
-            # Retain the synthetic target-absent decision boundary while the
-            # shared convolutional trunk adapts to the live Isaac renderer.
-            negative = images.mean(dim=(-1, -2), keepdim=True).expand_as(images)
-            negative = torch.clamp(
-                negative + 0.08 * torch.randn_like(negative), 0.0, 1.0)
-            negative_visibility = encoder(negative).visibility
-            absent_loss = _balanced_visibility_loss(
-                negative_visibility, torch.zeros_like(negative_visibility))
-            loss = (heatmap_loss + 3.0 * coordinate_loss
-                    + 3.0 * visibility_loss + absent_loss)
-            optimizer.zero_grad(set_to_none=True)
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(encoder.parameters(), 5.0)
-            optimizer.step()
-        candidate = _empirical_metrics(
-            encoder, dataset, validation, torch_device)
-        if calibration_score(candidate) < calibration_score(best_metrics):
-            best_metrics = candidate
-            best = {name: value.detach().cpu().clone()
-                    for name, value in encoder.state_dict().items()}
+
+    augmentation = AugmentationSettings.from_mapping(
+        settings.get("empirical_augmentation"))
+    real_batch = max(1, int(settings.get("empirical_real_batch", 8)))
+    replay_batch = max(0, int(settings.get("empirical_replay_batch", 8)))
+    replay_samples = int(settings.get("empirical_replay_samples", 1024))
+    replay = None
+    if replay_batch > 0 and replay_samples > 0:
+        replay = synthetic_keypoint_dataset(
+            system, samples=replay_samples, seed=seed + 11,
+            workers=settings.get("render_workers"),
+            rendering=settings.get("synthetic_rendering"))
+    else:
+        replay_batch = 0
+    if settings.get("empirical_steps") is not None:
+        steps = max(1, int(settings["empirical_steps"]))
+    else:
+        epochs = max(1, int(settings.get("empirical_epochs", 60)))
+        steps = epochs * max(1, math.ceil(len(training) / real_batch))
+    learning_rate = float(settings.get("empirical_learning_rate", 3e-4))
+    eval_interval = max(1, int(settings.get("empirical_eval_interval", 50)))
+    optimizer = torch.optim.AdamW(encoder.parameters(), lr=learning_rate,
+                                  weight_decay=1e-4)
+    encoder.train()
+    for step in range(steps):
+        real_indices = training[rng.integers(0, len(training), real_batch)]
+        images, heatmaps, coordinates, mask = _augmented_batch(
+            dataset, real_indices, rng, augmentation, model, torch_device)
+        if replay_batch:
+            replay_indices = np.sort(rng.integers(0, len(replay["images"]), replay_batch))
+            r_images, r_heatmaps, r_coordinates, r_mask = _batch_tensors(
+                replay, replay_indices, torch_device)
+            images = torch.cat((images, r_images))
+            heatmaps = torch.cat((heatmaps, r_heatmaps))
+            coordinates = torch.cat((coordinates, r_coordinates))
+            mask = torch.cat((mask, r_mask))
+        with _autocast(torch_device):
+            raw = encoder(images)
+        output = _float_output(raw)
+        heatmap_loss, coordinate_loss, visibility_loss = _keypoint_losses(
+            output, coordinates, mask, heatmaps)
+        # Retain the target-absent decision boundary while the trunk adapts
+        # to the live Isaac renderer.
+        absent_loss = _absent_loss(encoder, images[:real_batch], torch_device)
+        loss = (heatmap_loss + 3.0 * coordinate_loss
+                + 3.0 * visibility_loss + absent_loss)
+        _cosine_learning_rate(optimizer, learning_rate, step, steps,
+                              warmup=min(30, steps // 10))
+        optimizer.zero_grad(set_to_none=True)
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(encoder.parameters(), 5.0)
+        optimizer.step()
+        if (step + 1) % eval_interval == 0 or step + 1 == steps:
+            encoder.eval()
+            candidate = _empirical_metrics(
+                encoder, dataset, validation, torch_device)
+            encoder.train()
+            if calibration_score(candidate) < calibration_score(best_metrics):
+                best_metrics = candidate
+                best = {name: value.detach().cpu().clone()
+                        for name, value in encoder.state_dict().items()}
     minimum_recall = float(settings.get(
         "minimum_holdout_visibility_recall", 0.50))
     if float(best_metrics["visibility_recall"]) < minimum_recall:
@@ -952,17 +1542,31 @@ def calibrate_keypoint_encoder(
             f"landmarks on the {len(held_out)} held-out viewpoints "
             f"(minimum {minimum_recall:.1%}). It would fly blind: the "
             "semantic observation counts an unreported landmark as no "
-            "landmark. Collect more viewpoints or raise empirical_epochs "
+            "landmark. Collect more viewpoints or raise empirical_steps "
             "rather than starting PPO on it.")
+    minimum_spread = float(settings.get("minimum_holdout_spread_ratio", 0.50))
+    if float(best_metrics.get("spread_ratio", 0.0)) < minimum_spread:
+        raise RuntimeError(
+            "Isaac keypoint calibration produced an encoder whose six "
+            "predictions have collapsed onto the pad centre: their spread on "
+            f"the {len(held_out)} held-out viewpoints is "
+            f"{best_metrics['spread_ratio']:.2f} of the labels' spread "
+            f"(minimum {minimum_spread:.2f}). Such an encoder reports the "
+            "same point six times and the apparent target scale is zero, so "
+            "no policy can learn from it. Check the label convention and the "
+            "synthetic pretraining rather than starting PPO on it.")
     artifact = dict(artifact)
     artifact["encoder"] = best
     artifact["training_source"] = (
-        "synthetic six-keypoint fiducial projections plus geometry-labelled "
-        "Isaac camera frames surveyed across pad-relative viewpoints")
+        "synthetic six-keypoint fiducial projections (renderer v2) plus "
+        "geometry-labelled Isaac camera frames surveyed across pad-relative "
+        "viewpoints, warped and re-exposed with exact label transforms")
+    artifact["label_convention"] = LABEL_CONVENTION
     artifact["empirical_calibration"] = {
         "validated": True,
         "format": EMPIRICAL_CALIBRATION_FORMAT,
         "label_source": "simulator pad-landmark projection (training-only)",
+        "label_convention": LABEL_CONVENTION,
         "samples": count,
         "training_samples": int(len(training)),
         "validation_samples": int(len(validation)),
@@ -973,9 +1577,16 @@ def calibrate_keypoint_encoder(
         "held_out_viewpoints": held_out,
         "pose_span": span,
         "datastore_fingerprint": fingerprint,
+        "datastore_fingerprints_read": fingerprints,
         "reused_viewpoints": len(stored_records),
         "split_source": ("frozen per-viewpoint datastore split"
                          if frozen_split is not None else "seeded per-run draw"),
+        "steps": int(steps),
+        "learning_rate": learning_rate,
+        "real_batch": real_batch,
+        "replay_batch": replay_batch,
+        "replay_samples": int(replay_samples if replay_batch else 0),
+        "augmentation": asdict(augmentation),
         "before": before, "after": best_metrics,
         "selection_score": ("coordinate_rmse_px + 50*absent_false_positive_rate"
                             " + 50*(1 - visibility_recall), on held-out "
@@ -994,20 +1605,24 @@ def calibrate_keypoint_encoder(
         f"{count} frames from {len(groups)} viewpoints "
         f"({span['altitude_min_m']:.1f}-{span['altitude_max_m']:.1f} m "
         f"altitude, {span['lateral_span_m']:.1f} m lateral spread), "
-        f"{len(held_out)} viewpoints held out; "
+        f"{len(held_out)} viewpoints held out, {steps} fine-tune steps; "
         f"{before['coordinate_rmse_px']:.1f}px -> "
         f"{best_metrics['coordinate_rmse_px']:.1f}px, "
         f"PCK@20 {before['pck_20px']:.1%} -> {best_metrics['pck_20px']:.1%}, "
         f"landmark recall {before['visibility_recall']:.1%} -> "
         f"{best_metrics['visibility_recall']:.1%}, "
+        f"spread ratio {best_metrics['spread_ratio']:.2f}, "
         "target-absent false positives "
         f"{best_metrics['absent_false_positive_rate']:.1%}.")
-    del encoder, optimizer
+    del encoder, optimizer, replay
     if torch_device.type == "cuda":
         torch.cuda.empty_cache()
     return artifact
 
 
+# --------------------------------------------------------------------------
+# synthetic pretraining
+# --------------------------------------------------------------------------
 def _train_encoder(system: Mapping[str, Any], settings: Mapping[str, Any],
                    *, mode: str, device: torch.device) -> tuple[dict, dict]:
     samples = int(settings.get(
@@ -1018,51 +1633,49 @@ def _train_encoder(system: Mapping[str, Any], settings: Mapping[str, Any],
     seed = int(settings.get("seed", 41026))
     if samples < 4 or epochs < 1 or batch_size < 1:
         raise ValueError("keypoint pretraining needs >=4 samples and positive epochs/batch")
-    dataset = synthetic_keypoint_dataset(system, samples=samples, seed=seed)
+    dataset = synthetic_keypoint_dataset(
+        system, samples=samples, seed=seed,
+        workers=settings.get("render_workers"),
+        rendering=settings.get("synthetic_rendering"))
     torch.manual_seed(seed)
     encoder = ShinKeypointEncoder(
         int(settings.get("image_embedding", 512)), keypoints=6).to(device)
     pose_head = nn.Linear(int(settings.get("image_embedding", 512)), 5).to(device)
-    optimizer = torch.optim.Adam(
-        [*encoder.parameters(), *pose_head.parameters()],
-        lr=float(settings.get("learning_rate", 1e-3)))
+    parameters = [*encoder.parameters(), *pose_head.parameters()]
+    learning_rate = float(settings.get("learning_rate", 1e-3))
+    optimizer = torch.optim.AdamW(parameters, lr=learning_rate, weight_decay=1e-4)
     rng = np.random.default_rng(seed + 1)
+    total_steps = epochs * math.ceil(samples / batch_size)
+    step = 0
     last = {}
+    encoder.train()
     for _ in range(epochs):
         order = rng.permutation(samples)
         totals = {"loss": 0.0, "heatmap": 0.0, "coordinate": 0.0,
                   "visibility": 0.0, "pose": 0.0, "batches": 0}
         for start in range(0, samples, batch_size):
-            indices = order[start:start + batch_size]
-            images = torch.as_tensor(
-                dataset["images"][indices, None], dtype=torch.float32,
-                device=device) / 255.0
-            target_heatmaps = torch.as_tensor(
-                dataset["heatmaps"][indices], dtype=torch.float32, device=device)
-            target_coordinates = torch.as_tensor(
-                dataset["coordinates"][indices], dtype=torch.float32, device=device)
-            mask = torch.as_tensor(
-                dataset["visible"][indices], dtype=torch.float32, device=device)
+            indices = np.sort(order[start:start + batch_size])
+            images, target_heatmaps, target_coordinates, mask = _batch_tensors(
+                dataset, indices, device)
             pose = torch.as_tensor(
                 dataset["poses"][indices], dtype=torch.float32, device=device)
-            output = encoder(images)
-            log_prob = F.log_softmax(output.heatmaps.flatten(2), dim=-1)
-            heatmap_per_point = -(target_heatmaps.flatten(2) * log_prob).sum(-1)
-            denominator = mask.sum().clamp_min(1.0)
-            heatmap_loss = (heatmap_per_point * mask).sum() / denominator
-            coordinate_loss = (((output.keypoints - target_coordinates).square().sum(-1)
-                                * mask).sum() / denominator)
-            visibility_loss = _balanced_visibility_loss(output.visibility, mask)
+            with _autocast(device):
+                raw = encoder(images)
+            output = _float_output(raw)
+            heatmap_loss, coordinate_loss, visibility_loss = _keypoint_losses(
+                output, target_coordinates, mask, target_heatmaps)
             pose_mask = (mask.sum(-1) > 0.0).float()
             pose_error = (pose_head(output.embedding) - pose).square().mean(-1)
             pose_loss = (pose_error * pose_mask).sum() / pose_mask.sum().clamp_min(1.0)
             loss = (heatmap_loss + 3.0 * coordinate_loss
                     + 3.0 * visibility_loss + 2.0 * pose_loss)
+            _cosine_learning_rate(optimizer, learning_rate, step, total_steps,
+                                  warmup=min(50, total_steps // 10))
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(
-                [*encoder.parameters(), *pose_head.parameters()], 5.0)
+            torch.nn.utils.clip_grad_norm_(parameters, 5.0)
             optimizer.step()
+            step += 1
             for name, value in (("loss", loss), ("heatmap", heatmap_loss),
                                 ("coordinate", coordinate_loss),
                                 ("visibility", visibility_loss),
@@ -1071,13 +1684,14 @@ def _train_encoder(system: Mapping[str, Any], settings: Mapping[str, Any],
             totals["batches"] += 1
         last = {name: value / totals["batches"]
                 for name, value in totals.items() if name != "batches"}
+    encoder.eval()
     state = {name: value.detach().cpu() for name, value in encoder.state_dict().items()}
     metrics = {**last, "samples": samples, "epochs": epochs,
                "visible_fraction": float(dataset["visible"].mean())}
     # Isaac Sim starts immediately after this phase and shares the GPU. Keep
     # only the CPU artifact so the temporary pose head and optimizer do not
     # reserve an otherwise invisible CUDA block during simulator startup.
-    del encoder, pose_head, optimizer
+    del encoder, pose_head, optimizer, dataset
     if device.type == "cuda":
         torch.cuda.empty_cache()
     return state, metrics
@@ -1133,7 +1747,7 @@ def prepare_keypoint_encoder(
                       f"{bootstrap} into {path}.")
                 return copied
     print("Pretraining six-keypoint descriptor encoder on synthetic "
-          "deployed fiducial-target views...")
+          "deployed fiducial-target views (renderer v2, canonical labels)...")
     state, metrics = _train_encoder(
         system, settings, mode=str(mode), device=torch.device(device))
     payload = {
@@ -1144,9 +1758,12 @@ def prepare_keypoint_encoder(
         "frozen_for_ppo": True,
         "landmark_layout": KEYPOINT_LAYOUT_ID,
         "landing_pad_visual": LANDING_PAD_VISUAL_VERSION,
+        "label_convention": LABEL_CONVENTION,
+        "heatmap_stride": int(ShinKeypointEncoder.heatmap_stride),
         "training_source": (
-            "synthetic projections and target-absent negatives of the "
-            "configured six-keypoint fiducial landing target"),
+            "synthetic projections (renderer v2: Isaac-like photometry and "
+            "clutter) and target-absent negatives of the configured "
+            "six-keypoint fiducial landing target"),
         "empirical_calibration": None,
         "metrics": metrics,
         "encoder": state,

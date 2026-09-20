@@ -10,26 +10,68 @@ import torch
 from torch.nn import functional as F
 
 
-DEMONSTRATION_FORMAT = "ontology-rgat-encoded-behavior-demonstrations-v2"
+# v3 retains the camera frames (PNG-encoded) next to the embeddings, so a
+# demonstration set survives an encoder change by re-embedding instead of by
+# re-flying the teacher. v2 files (embeddings only) are still readable.
+DEMONSTRATION_FORMAT = "ontology-rgat-encoded-behavior-demonstrations-v3"
+_LEGACY_DEMONSTRATION_FORMATS = ("ontology-rgat-encoded-behavior-demonstrations-v2",)
 DATA_FIELDS = ("embedding", "proprioception", "action", "truth", "episode_id")
+# One PNG per transition, aligned with the DATA_FIELDS rows. Optional: a set
+# assembled before v3, or one whose frames were deliberately dropped, has none.
+FRAME_FIELD = "frames_png"
+
+
+def _encode_frames(images) -> list:
+    import cv2
+
+    blobs = []
+    for image in np.asarray(images, dtype=np.uint8):
+        ok, encoded = cv2.imencode(".png", image)
+        if not ok:
+            raise ValueError("could not PNG-encode a demonstration frame")
+        blobs.append(encoded.tobytes())
+    return blobs
+
+
+def _decode_frames(blobs) -> np.ndarray:
+    import cv2
+
+    frames = []
+    for blob in blobs:
+        image = cv2.imdecode(np.frombuffer(blob, dtype=np.uint8), cv2.IMREAD_GRAYSCALE)
+        if image is None:
+            raise ValueError("could not decode a stored demonstration frame")
+        frames.append(image)
+    return np.stack(frames)
+
+
+def embed_frames(model, images, *, batch_size: int = 64) -> torch.Tensor:
+    """Run the frozen encoder over uint8 frames ``(N, H, W)`` in batches."""
+    embeddings = []
+    with torch.no_grad():
+        for start in range(0, len(images), max(1, int(batch_size))):
+            chunk = np.asarray(images[start:start + max(1, int(batch_size))])[:, None]
+            output = model.encoder(torch.as_tensor(
+                chunk, dtype=torch.float32, device=model.device) / 255.0)
+            embeddings.append(output.embedding.detach().float().cpu())
+    return torch.cat(embeddings)
 
 
 def encoded_demonstration_episode(model, rows, *, episode_id: int,
-                                  batch_size: int = 64) -> dict[str, torch.Tensor]:
-    """Encode one real flight without retaining hundreds of camera frames."""
+                                  batch_size: int = 64,
+                                  keep_frames: bool = True) -> dict:
+    """Encode one real flight; keep its frames as PNG so it can be re-embedded.
+
+    A 300-step episode of dark 512x320 frames is roughly 10-15 MB as PNG.
+    The 2026-09-20 encoder redesign had to re-fly 26 teacher attempts because
+    the demonstrations held only the old encoder's embeddings.
+    """
     if not rows:
         raise ValueError("a behavior-cloning episode cannot be empty")
-    embeddings = []
-    with torch.no_grad():
-        for start in range(0, len(rows), max(1, int(batch_size))):
-            chunk = rows[start:start + max(1, int(batch_size))]
-            images = np.stack([row["image"] for row in chunk])[:, None]
-            output = model.encoder(torch.as_tensor(
-                images, dtype=torch.float32, device=model.device) / 255.0)
-            embeddings.append(output.embedding.detach().cpu())
+    images = np.stack([np.asarray(row["image"], dtype=np.uint8) for row in rows])
     count = len(rows)
-    return {
-        "embedding": torch.cat(embeddings).float(),
+    episode = {
+        "embedding": embed_frames(model, images, batch_size=batch_size),
         "proprioception": torch.as_tensor(np.stack([
             row["proprioception"] for row in rows]), dtype=torch.float32),
         "action": torch.as_tensor(np.stack([
@@ -38,16 +80,27 @@ def encoded_demonstration_episode(model, rows, *, episode_id: int,
             row["truth"] for row in rows]), dtype=torch.float32),
         "episode_id": torch.full((count,), int(episode_id), dtype=torch.int64),
     }
+    if keep_frames:
+        episode[FRAME_FIELD] = _encode_frames(images)
+    return episode
 
 
 def merge_encoded_demonstrations(current, episode):
     if current is None:
-        return {name: episode[name].detach().cpu() for name in DATA_FIELDS}
+        merged = {name: episode[name].detach().cpu() for name in DATA_FIELDS}
+        if episode.get(FRAME_FIELD) is not None:
+            merged[FRAME_FIELD] = list(episode[FRAME_FIELD])
+        return merged
     for name in DATA_FIELDS:
         if name not in current or name not in episode:
             raise ValueError(f"encoded demonstration is missing {name}")
-    return {name: torch.cat((current[name], episode[name].detach().cpu()))
-            for name in DATA_FIELDS}
+    merged = {name: torch.cat((current[name], episode[name].detach().cpu()))
+              for name in DATA_FIELDS}
+    # Frames are kept only while every episode carries them: a partially
+    # framed set could not be re-embedded as a whole.
+    if current.get(FRAME_FIELD) is not None and episode.get(FRAME_FIELD) is not None:
+        merged[FRAME_FIELD] = list(current[FRAME_FIELD]) + list(episode[FRAME_FIELD])
+    return merged
 
 
 def validate_encoded_demonstrations(dataset) -> int:
@@ -72,6 +125,10 @@ def validate_encoded_demonstrations(dataset) -> int:
             raise ValueError(f"encoded demonstration {name} contains non-finite values")
     if count < 1 or torch.unique(dataset["episode_id"]).numel() < 1:
         raise ValueError("encoded demonstrations contain no episodes")
+    frames = dataset.get(FRAME_FIELD)
+    if frames is not None and len(frames) != count:
+        raise ValueError(
+            f"encoded demonstrations carry {len(frames)} frames for {count} transitions")
     return count
 
 
@@ -90,8 +147,11 @@ def save_encoded_demonstrations(path, dataset, *, config_hash: str,
         "attempted_seeds": [int(value) for value in attempted_seeds],
         "environment_steps": int(environment_steps),
         "transitions": count,
+        "frames_retained": dataset.get(FRAME_FIELD) is not None,
         "dataset": {name: dataset[name].detach().cpu() for name in DATA_FIELDS},
     }
+    if dataset.get(FRAME_FIELD) is not None:
+        payload["dataset"][FRAME_FIELD] = list(dataset[FRAME_FIELD])
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
     temporary = target.with_suffix(target.suffix + ".tmp")
@@ -101,15 +161,33 @@ def save_encoded_demonstrations(path, dataset, *, config_hash: str,
 
 
 def load_encoded_demonstrations(path, *, config_hash: str,
-                                encoder_sha256: str) -> dict:
+                                encoder_sha256: str, model=None,
+                                batch_size: int = 64) -> dict:
+    """Load a demonstration set bound to ``config_hash`` and the encoder.
+
+    With ``model`` given and the stored frames retained, a set encoded by a
+    *different* encoder is re-embedded with ``model.encoder`` instead of being
+    rejected; the returned payload then carries the new ``encoder_sha256`` and
+    ``re_embedded_from_encoder_sha256`` so the caller can save it back.
+    Without frames (or without a model) an encoder mismatch is still an error,
+    because embeddings of one encoder mean nothing to another.
+    """
     payload = torch.load(Path(path), map_location="cpu", weights_only=False)
-    if payload.get("format") != DEMONSTRATION_FORMAT:
+    if payload.get("format") not in (DEMONSTRATION_FORMAT, *_LEGACY_DEMONSTRATION_FORMATS):
         raise ValueError("unsupported behavior demonstration format")
     if payload.get("config_hash") != str(config_hash):
         raise ValueError("behavior demonstration config mismatch")
+    dataset = payload.get("dataset")
     if payload.get("encoder_sha256") != str(encoder_sha256):
-        raise ValueError("behavior demonstration encoder mismatch")
-    count = validate_encoded_demonstrations(payload.get("dataset"))
+        frames = dataset.get(FRAME_FIELD) if isinstance(dataset, dict) else None
+        if model is None or not frames:
+            raise ValueError("behavior demonstration encoder mismatch")
+        dataset["embedding"] = embed_frames(
+            model, _decode_frames(frames), batch_size=batch_size)
+        payload["re_embedded_from_encoder_sha256"] = str(payload.get("encoder_sha256"))
+        payload["encoder_sha256"] = str(encoder_sha256)
+        payload["format"] = DEMONSTRATION_FORMAT
+    count = validate_encoded_demonstrations(dataset)
     if count != int(payload.get("transitions", -1)):
         raise ValueError("behavior demonstration transition count mismatch")
     return payload

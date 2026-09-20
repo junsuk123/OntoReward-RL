@@ -95,8 +95,19 @@ behavior_cloning:
   #
   # To switch back: set the teacher below and restore position_gain to 0.55.
   teacher: privileged_relative_state_velocity_pd_v4
-  successful_episodes: 6
-  max_attempts: 14
+  # 4 is what the recorded successful runs used; 6 was this session's choice
+  # and it is not worth the extra flights. The attempt budget is sized from
+  # the rate actually measured on this profile rather than from those runs':
+  # they landed 4/4, this stack is landing about 1 in 3 because a flight that
+  # converges can still lose the marker, climb, and spend the rest of its 30 s
+  # recovering. At 1/3, 24 attempts clear 4 successes with ~98% probability
+  # where 14 would have been a coin toss.
+  successful_episodes: 4
+  # About 46% of episodes are dealt a reduced pack and this teacher lands none
+  # of them, so the budget has to be sized on the full-pack draws alone:
+  # measured 3 successes in 18 flights overall, or roughly one in six. 24
+  # attempts was a coin toss against 4 successes; 40 clears it.
+  max_attempts: 40
   # The teacher stage is warm-start data collection, not the experiment, so it
   # may fly an easier deck than PPO will: the demonstrations only have to be
   # successful landings for the policy to start from.
@@ -110,7 +121,20 @@ behavior_cloning:
   # with, without raising a loop gain that has already been shown not to take
   # it. The entry draw is correspondingly gentler, which is also what a
   # demonstration pass wants.
-  curriculum: 0.40
+  # Lowered again 2026-09-19 after 21 flights landed 2. The dominant failure
+  # is not energy and not the descent: 10 of 11 timeouts ended *outside* the
+  # 0.35 m position criterion, between 0.42 m and 1.57 m. The teacher simply
+  # cannot close the seeded entry offset against a moving deck inside a 30 s
+  # episode often enough.
+  #
+  #   0.40 -> deck 0.366 m/s, entry offsets +-1.20 m
+  #   0.20 -> deck 0.288 m/s, entry offsets +-0.60 m
+  #
+  # Halving the offset it has to close while slowing what it is closing on
+  # attacks that directly, where the budget only absorbs it. The cost is that
+  # the demonstrations come from an easier regime than PPO will train in --
+  # acceptable for a warm start, and the same trade already made at 0.40.
+  curriculum: 0.20
 
   # Servo gains. The proportional path is multiplied by
   # reference_scale / raw_scale, so these are the gains at the apparent size a
@@ -121,6 +145,46 @@ behavior_cloning:
   # servo wants 0.55 and ignores velocity_gain.
   position_gain: 0.35
   velocity_gain: 0.75
+
+  # Scale the descent with how little charge is left. Enabled 2026-09-19 after
+  # 20 teacher flights split perfectly on the pack the episode was dealt:
+  #
+  #   full pack (1.000),   8 flights : 3 landed, 0 ran out of energy
+  #   reduced pack (<1.0), 9 flights : 0 landed, 9 ran out of energy
+  #
+  # A nominal descent spends 5500-6800 J; a reduced pack carries 2300-4700 J,
+  # so those episodes cannot be flown at the nominal rate by anyone. Three of
+  # them ran out while *already inside* the 0.35 m position criterion.
+  #
+  # urgency = energy_urgency * battery_risk, and battery_risk is 1 - reserve
+  # read *live* each step, so this is not only about the pack an episode is
+  # dealt: urgency ramps through every flight as the charge goes down. A half
+  # pack is urgent from its first step; a full one becomes urgent on the way
+  # in. Measured on the same seed and entry, full-pack 90000 landed in 173
+  # steps with this on against 258 with it off, at 0.13 m of lateral error
+  # either way -- it simply stopped dawdling once the pack was half gone.
+  #
+  # The compressed rate is still capped under the touchdown criterion: a
+  # landing too fast to pass the gate is not a demonstration.
+  # DISABLED 2026-09-19, by its own evidence. The premise was that a thin pack
+  # is survived by getting down sooner. It is not: this energy model charges
+  # far more for the faster vertical manoeuvre than the shorter flight saves.
+  # Same seed, same 2882.5 J:
+  #
+  #   off : 152 steps (15.2 s) -> 190 W, which is the 186 W hover figure
+  #   on  :  57 steps ( 5.7 s) -> 506 W
+  #
+  # It died nearly three times sooner. Gating the compression on alignment did
+  # not help either -- a seeded entry already inside the gate starts hurrying
+  # immediately. The implementation and its tests are kept because the finding
+  # is worth keeping, not because the setting is worth turning on.
+  #
+  # Reduced-pack episodes therefore remain unwinnable for this teacher, and
+  # the attempt budget below absorbs them instead.
+  energy_urgency: 0.0
+  # Recorded explicitly rather than left to the code default, so config_hash
+  # keeps meaning "this configuration produced these demonstrations".
+  urgency_alignment_m: 0.25
 
   # ---- image_based_visual_servo_v1 only; ignored by the PD above ----
   # The integrator is slowed, not weakened. Its authority is gain x limit and

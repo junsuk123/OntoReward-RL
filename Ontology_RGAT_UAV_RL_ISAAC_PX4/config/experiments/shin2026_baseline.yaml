@@ -20,10 +20,26 @@ estimator:
   # reproduction of PACMAN.
   keypoint_pretraining:
     enabled: true
+    # ---- synthetic pretraining (renderer v2, canonical image-plane labels) ----
+    # Rewritten 2026-09-20 after the frozen encoder was found to predict the
+    # pad centre six times (predicted spread 12.9 px against 44.5 px true on
+    # the 48 surveyed Isaac frames, PCK@20 15 %). Two causes, both fixed in
+    # perception/keypoint_pretrain.py: (1) the hexagon is 60-degree symmetric
+    # and its identity pips are 1-3 px at approach altitude, so pad-frame
+    # landmark identities are unobservable and a per-index loss has the
+    # centroid as its optimum -- labels are now ordered in the image plane;
+    # (2) the trunk's 31 px receptive field could not see the hexagon as a
+    # whole -- the encoder is now a small U-Net with global context and
+    # stride-8 heatmaps. The renderer paints a grey target on dark, cluttered
+    # scenes (facades, poles, shadows, the rover body and mast) the way Isaac
+    # does; with the old white-pad-on-gradient frames more synthetic data made
+    # Isaac accuracy *worse*. 4096 x 15 epochs is ~9 GPU minutes and, before
+    # any real frame is seen, scores PCK@20 64 % on the surveyed Isaac frames
+    # where the previous 512 x 6 recipe scored 4 %.
     samples_quick: 64
-    samples_full: 512
+    samples_full: 4096
     epochs_quick: 2
-    epochs_full: 6
+    epochs_full: 15
     batch_size: 16
     learning_rate: 0.001
     seed: 41026
@@ -76,22 +92,35 @@ estimator:
     # never trained on would fly blind: the semantic observation counts an
     # unreported landmark as no landmark.
     minimum_holdout_visibility_recall: 0.50
-    # Calibrated on a held-out live-Isaac split: the previous 2 x 1e-4 pass
-    # made no measurable change; 20 x 1e-3 reduced 23.2 px to <=16.8 px in
-    # the stage-5 audit while the best validation checkpoint was retained.
-    #
-    # 20 was then raised to 60 because it left the recall gate above a
-    # coin flip. Replaying a real 24-viewpoint survey off the datastore (the
-    # frozen split, the same seed), held-out recall oscillates epoch to epoch
-    # and only 9 of 20 epochs sit above the 0.50 minimum, so which epoch the
-    # best-checkpoint rule happens to select decides whether the run starts at
-    # all -- one live run selected 0.387 and aborted PPO. At 60 epochs 45 of 60
-    # are above it, the selected checkpoint reaches 0.758, and held-out
-    # coordinate error improves from 64 px to 50 px. 120 epochs is no better
-    # than 60 (0.758, 49 px), and the learning rate is not the lever: 1e-4,
-    # 3e-4 and 1e-3 all behave the same. Cost is seconds of CPU, not flight.
-    empirical_epochs: 60
-    empirical_learning_rate: 0.001
+    # An encoder whose six predictions have collapsed onto the pad centre is
+    # refused too: its apparent target scale is zero and no policy can learn
+    # from it. The shipped v5 encoder measured 0.29 here.
+    minimum_holdout_spread_ratio: 0.50
+    # ---- empirical fine-tune ----
+    # 36 training frames are 18 hovers. Each step takes 8 of them, warped by a
+    # random similarity (scale 0.45-2.0, +-60 deg, re-centred anywhere in the
+    # frame) and re-exposed, with the labels transformed exactly, plus 8
+    # synthetic replay frames so the touchdown-scale views the survey never
+    # reaches (0.3-1.6 m, pad filling the frame) are not forgotten. Cosine
+    # schedule; the held-out score picks the checkpoint every 50 steps. The
+    # previous 60 un-augmented epochs at 1e-3 memorised the 36 frames
+    # (train 52 px, held-out 64 px) and never left the centre-collapse.
+    empirical_steps: 1600
+    empirical_learning_rate: 0.0003
+    empirical_real_batch: 8
+    empirical_replay_batch: 8
+    empirical_replay_samples: 1024
+    empirical_eval_interval: 50
+    # Heavier warps than the code defaults and twice the steps: on the frozen
+    # held-out split this took 14.9 px / PCK@20 95 % to 6.4 px / 100 % with
+    # nothing else changed (2026-09-20 variant study, docs section 5.1).
+    empirical_augmentation:
+      scale_range: [0.45, 2.0]
+      rotation_deg: 60.0
+      recenter_probability: 0.85
+      cutout_max: 3
+      noise_sigma_max: 8.0
+      gain_range: [0.6, 1.5]
 control:
   dt_seconds: 0.1
   horizon_steps: 300

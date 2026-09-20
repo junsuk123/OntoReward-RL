@@ -136,6 +136,11 @@ keypoint 위치 + heatmap + keypoint 가시성
 + 그 이력에서 파생된 측정 유효성과 경과시간
 ```
 
+Keypoint 채널 k는 패드 좌표계 landmark k가 아니라 image plane 정규 순서의 k번째
+꼭짓점이다(`docs/TWO_PIPELINE_COMPARISON.md` §5.1). 육각형의 60° 대칭 때문에 landmark
+identity는 고도 2 m 위에서 관측 불가능하고, graph 입력(centroid, apparent scale,
+가시성)은 어차피 identity에 의존하지 않는다.
+
 `build_fov_graph`의 유일한 인자는 `FOVSemanticObservation`이며 그 10개 필드는 모두
 `[0,1]`로 검증된다. Payload validator는 `truth`, `relative_position`,
 `relative_velocity`, `platform_pose`, `critic`, `privileged` 등 metric/privileged

@@ -204,3 +204,78 @@ def test_benchmark_scene_and_telemetry_show_proposed_fov_branch():
     assert telemetry["active_perception_reward"] == -0.01
     assert telemetry["predicted_fov_unavailability"] == 0.6
     assert telemetry["ontology_fov_reward"] == -0.06
+
+
+def _benchmark_publisher(pad_frame="landing_pad_2"):
+    """A publisher with only what ``publish_benchmark_step`` touches."""
+    rviz = RvizPublisher.__new__(RvizPublisher)
+    rviz.cfg = SimpleNamespace(criteria=SimpleNamespace(xy=0.35))
+    rviz.opt = SimpleNamespace(
+        pad_frame=pad_frame, publish_rate_hz=10.0, trail_length=20,
+        deck_size_m=(1.5, 1.5), route_waypoints_enu_m=(),
+        publish_ontology_graph=False, graph_origin_pad_m=(0.0, -2.6, 1.6),
+        graph_scale_m=0.42)
+    rviz.node = SimpleNamespace(
+        get_clock=lambda: SimpleNamespace(
+            now=lambda: SimpleNamespace(to_msg=lambda: 0)))
+    rviz.m = {"Marker": _Message, "MarkerArray": _MarkerArray, "Point": _Message,
+              "String": _Message, "Path": _Message, "PoseStamped": _Message}
+    rviz.scene_pub = _Publisher()
+    rviz.graph_pub = _Publisher()
+    rviz.telemetry_pub = _Publisher()
+    rviz.uav_path_pub = _Publisher()
+    rviz.pad_path_pub = _Publisher()
+    rviz._uav_trail = []
+    rviz._pad_trail = []
+    rviz._counter = 0
+    rviz._graph_every = 5
+    rviz.potential = None
+    rviz._broadcast_tf = lambda *_args: None
+    rviz._publish_path = lambda *_args: None
+    return rviz
+
+
+def _hud(rviz, **overrides):
+    arguments = {
+        "state": {"pad": {"position": [0.0, 0.0, 0.0]},
+                  "truth": {"valid": True, "position": [0.1, -0.2, 1.3]},
+                  "quaternion_wxyz": [1.0, 0.0, 0.0, 0.0]},
+        "method": "no_se_fixed",
+        "scenario": "training_random_walk_escape_burst",
+        "step": 1, "dt": 0.1, "geometric_in_fov": True, "status": "running",
+    }
+    arguments.update(overrides)
+    rviz.publish_benchmark_step(**arguments)
+    scene = rviz.scene_pub.messages[-1].markers
+    return next(marker for marker in scene
+                if marker.type == _Message.TEXT_VIEW_FACING).text
+
+
+def test_the_scene_hud_names_the_stage_and_the_physical_pair():
+    """Four pair views render the same layout; the HUD says what each one is.
+
+    During the warm start every pair flies the teacher on the same pipeline,
+    so without the stage the four views read as four baseline PPO episodes of
+    the arm the panel happens to be titled after.
+    """
+    rviz = _benchmark_publisher()
+    demonstration = _hud(
+        rviz, phase="training-only teacher demonstration", pair_index=2)
+    assert demonstration.startswith(
+        "TEACHER DEMONSTRATION · PAIR 3 · BASELINE · Shin SE fixed")
+    assert "training_random_walk_escape_burst" in demonstration
+
+    # A PPO training episode is the unannotated case: the arm and its pair.
+    training = _hud(rviz, phase="training", pair_index=0,
+                    method="shin_se_onto_rgat_recovery")
+    assert training.startswith("PAIR 1 · PROPOSED · Shin + Ontology-R-GAT FOV")
+
+    # Stages the banner table does not name still say which stage they are.
+    design = _hud(rviz, phase="FOV-risk offline data", pair_index=3)
+    assert design.startswith("FOV-RISK DESIGN DATA · PAIR 4 · ")
+    unknown = _hud(rviz, phase="hardware rehearsal", pair_index=1)
+    assert unknown.startswith("HARDWARE REHEARSAL · PAIR 2 · ")
+
+    # A single-pair run publishes no pair index and reads as it always did.
+    solo = _hud(_benchmark_publisher("landing_pad"), phase="evaluation")
+    assert solo.startswith("EVALUATION · BASELINE · Shin SE fixed")

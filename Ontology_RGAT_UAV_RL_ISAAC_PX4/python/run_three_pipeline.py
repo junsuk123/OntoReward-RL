@@ -1342,6 +1342,10 @@ def _prepare_fast_demonstrations(*, cfg, camera, config, config_hash,
     pair_limit = int(settings.get("parallel_pairs", 0) or 0)
     if pair_limit > 0:
         collection_contexts = collection_contexts[:pair_limit]
+    # Physical pairs this stage flies on, for the dashboard's warm-start panel.
+    collection_pair_indices = [
+        int(context["cfg"].external.get("pair_index", position))
+        for position, context in enumerate(collection_contexts)]
     required = max(1, int(settings.get("successful_episodes", 6)))
     maximum_flights = max(required, int(settings.get("max_attempts", 12)))
     maximum_infrastructure_skips = max(0, int(settings.get(
@@ -1443,7 +1447,8 @@ def _prepare_fast_demonstrations(*, cfg, camera, config, config_hash,
                     max_flights=int(maximum_flights),
                     skips=int(len(attempted_seeds) - flight_attempts),
                     teacher=teacher_id, scenario=demonstration_scenario,
-                    fingerprint=fingerprint[:12], attempts=attempts)
+                    fingerprint=fingerprint[:12], attempts=attempts,
+                    collection_pairs=collection_pair_indices)
         except Exception as exc:              # pragma: no cover - defensive
             print(f"WARNING: demonstration progress was not published: {exc}")
 
@@ -2905,8 +2910,13 @@ def main(*, primary_only: bool = False):
             "max_geometric_fov_loss_fraction", 0.50)),
     }
 
+    # One RViz view per *physical pair*: ``pair_training_methods`` has one
+    # entry per pair (a method repeats when it flies several replicas), where
+    # ``args.pipelines`` has one per arm and left pairs 2..N sharing pair 0/1's
+    # topics and TF frames.
     rviz = (RvizPublisher.create(
-        cfg, pair_methods=(args.pipelines if args.parallel_pairs > 1 else None))
+        cfg, pair_methods=(pair_training_methods if args.parallel_pairs > 1
+                           else None))
         if not args.no_rviz else None)
     monitor = BenchmarkMonitor(STORE, rviz=rviz)
     monitor.configure(

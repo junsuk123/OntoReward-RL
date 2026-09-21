@@ -253,10 +253,10 @@ random walk를 그대로 두고(대시 전까지 위치가 동일) 한 번의 �
 그대로).
 
 시연 단계는 대시보드에서 실시간으로 볼 수 있다(2026-09-21). "교사 시연 비행" 패널은 채택
-/필요 착륙 수, 비행/최대 시도, 인프라 스킵, 최근 비행 표(seed·결과·step·착지 측방오차·FOV
-손실 비율)와 현재 비행의 교사 진단(고도, 측방 오차, 목표 vz, 기하 FOV, 시야 이탈 횟수,
-이탈 후 최고 고도, 모드: 추종/이탈·상승/재포착/하강)을 step마다 갱신한다(`BenchmarkMonitor.
-teacher_step`, `demonstration_progress`). "실시간 궤적" 패널은 pair마다 현재 episode의
+/필요 착륙 수, 비행/최대 시도, 인프라 스킵, 최근 비행 표(seed·pair·결과·step·착지 측방오차
+·FOV 손실 비율)와 **수집 중인 pair마다** 현재 비행의 교사 진단(고도, 측방 오차, 목표 vz,
+기하 FOV, 시야 이탈 횟수, 이탈 후 최고 고도, 모드: 추종/이탈·상승/재포착/하강)을 step마다
+갱신한다(`BenchmarkMonitor.teacher_step`, `demonstration_progress`; 5.5절). "실시간 궤적" 패널은 pair마다 현재 episode의
 UAV(실선)와 착륙 패드(점선) world ENU top-down 궤적을 그린다. 좌표는 매 step 점에
 `uav_x/y/z`, `pad_x/y/z`로 함께 발행되므로 시연·FOV 수집·PPO·평가 어느 단계에서나 같은
 패널이 동작한다.
@@ -297,6 +297,55 @@ pair 수만큼 seed를 한 배치로 동시에 날린다. 저장 규약은 순�
 
 pair를 덜 쓰고 싶으면 `behavior_cloning.parallel_pairs`로 상한을 줄 수 있고, 기본값은
 넘겨받은 pair 전부다.
+
+### 5.5 네 pair 시연을 대시보드와 RViz 2에서 (2026-09-21)
+
+병렬 수집은 관측 경로도 같이 바꿔야 한다. 네 대가 동시에 날면 "현재 비행" 하나로는 세 대가
+보이지 않고, RViz 2의 네 panel은 서로 구분되지 않는다.
+
+**대시보드.** "교사 시연 비행" 패널은 이제 왼쪽에 단계 전체의 진척(채택/필요, 비행/최대 시도,
+인프라 스킵, 최근 비행 표)을, 오른쪽에 **수집 중인 pair마다 하나씩** 현재 비행 타일(seed,
+step, 모드, 고도, 측방 오차, 목표 vz, 기하 FOV, 시야 이탈 횟수, 이탈 후 최고 고도)을 그린다.
+진척은 pair 수와 무관한 하나의 값이므로 한 번만 발행하고(`collection_pairs`가 어느 물리
+pair가 날고 있는지 말한다), 비행별 진단은 각 pair가 자기 panel로 발행한다
+(`teacher_step`, pair_index 주입은 `_LockedMonitor`). 최근 비행 표에는 `pair` 열이 생겨
+어느 기체가 그 seed를 날았는지 남는다(`physical_pair_index`, attempts CSV에도 기록).
+
+**RViz 2.** 두 가지를 고쳤다.
+
+* `RvizPublisher.create`는 publisher를 **물리 pair마다** 만든다. 이전에는 method마다
+  만들어(`pair_methods=args.pipelines`) 4-pair 실행에서 두 개뿐이었고, pair 2·3의 trail과
+  marker와 `map -> landing_pad` TF가 pair 0·1의 namespace로 들어갔다. 생성된 4-pair
+  레이아웃(`scripts/make_rviz_layout.py`)의 pair 3·4 panel은 그동안 비어 있었다. 이제
+  `pair_methods`는 pair별 method 목록(`_balanced_training_pair_assignment`)이고 이름이
+  반복돼도 각 pair가 자기 `/landing_rl/pair_N`, `landing_pad_N`, `uav_body_N`을 갖는다.
+* scene HUD의 첫 줄에 **단계와 물리 pair**를 붙였다(`TEACHER DEMONSTRATION · PAIR 3 ·
+  BASELINE · Shin SE fixed`). 시연 단계에서는 네 pair가 모두 같은 warm-start 파이프라인을
+  날기 때문에, 단계 표시가 없으면 네 panel이 전부 "그 panel 제목의 arm이 PPO episode를
+  날고 있다"로 읽혔다. PPO 학습 episode는 단계 접두사 없이 pair와 arm만 쓴다.
+  `BenchmarkMonitor.step`이 그 pair의 현재 phase를 함께 넘긴다.
+
+에피소드 초기화 때 지우는 trail도 해석된 pair index로 지우도록 고쳤다. 한 method가 여러
+물리 pair를 나는 병렬 학습에서, method만으로는 그 method의 첫 pair 것이 지워졌다.
+
+### 5.6 시연 교사를 image_based_visual_servo_v1로 (2026-09-21)
+
+`behavior_cloning.teacher`를 특권 PD에서 추정기 없는 영상 서보로 바꿨다(`position_gain`
+0.35 → 0.55; PD 전용 값은 그대로 남겨 한 줄로 되돌릴 수 있다). 서보는 고정된 keypoint
+encoder의 centroid와 겉보기 크기만 읽으므로, 복제되는 사상(寫像)이 학생이 시뮬레이터 없이
+자기 관측만으로 재현할 수 있는 것이다 — PD는 시뮬레이터 상대 상태를 읽는다(어느 쪽이든
+label은 training-only이고 학생 관측에는 들어가지 않는다).
+
+기록상 착륙은 PD 쪽에 있다(4/4, 4/4, 4/4, 3/3, 4/8 대 서보 0/16). 다만 그 16회는 5.x의
+서보 튜닝(적분 0.45x0.60 → 0.20x3.00, 댐핑 0.12 → 0.35, reference_scale 0.25 → 0.06,
+베어링 하강 게이트와 flare) *이전* 기록이다. 그리고 재비행 비용이 5.4로 약 1/5이 됐다.
+
+**리스크(명시)**: `_prepare_fast_demonstrations`는 `max_attempts` 안에
+`successful_episodes`를 못 채우면 RuntimeError를 내고 실험이 거기서 멈춘다. 서보가 하나도
+착륙시키지 못하면 `teacher:`를 `privileged_relative_state_velocity_pd_v4`,
+`position_gain`을 0.35로 되돌리면 된다 — PD 시연은 자기 지문으로 저장돼 있어 재비행 없이
+재사용된다. 교사와 gain은 지문에 포함되므로(`_DEMONSTRATION_FLIGHT_KEYS`) 이번 전환은
+새 시연 집합을 뜻한다(지문 6b29351d93b6 → 6fdd99e3926f).
 
 ## 6. 평가 프로토콜
 

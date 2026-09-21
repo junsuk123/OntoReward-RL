@@ -155,6 +155,84 @@ def test_the_bare_launcher_budget_is_the_one_the_experiment_config_declares():
     assert int(config["fov_risk_design"]["max_episodes_full"]) >= design
 
 
+def test_rviz_gives_every_physical_pair_its_own_view_not_every_method():
+    """Four spawned pairs are four RViz views, even with two arms.
+
+    Keying the publishers by method collapsed four pairs to two: pairs 2 and 3
+    then published their trails, markers and ``map -> landing_pad`` transforms
+    into pair 0 and 1's namespaces, while the generated four-pair layout showed
+    their own panels empty.
+    """
+    from types import SimpleNamespace
+
+    from ontology_rgat.viz.rviz import RvizPublisher, RvizPublisherGroup
+
+    class Recording(RvizPublisher):
+        made: list = []
+
+        @classmethod
+        def create(cls, cfg, potential=None, node_name="ontology_rgat_viz",
+                   pair_methods=None):
+            if pair_methods:
+                return super().create(cfg, potential=potential,
+                                      node_name=node_name,
+                                      pair_methods=pair_methods)
+            stub = SimpleNamespace(
+                namespace=str(cfg.viz.rviz.namespace),
+                pad_frame=str(cfg.viz.rviz.pad_frame),
+                body_frame=str(cfg.viz.rviz.body_frame),
+                node_name=str(node_name), potential=None, closed=0,
+                cleared=0, steps=[])
+            stub.close = lambda: setattr(stub, "closed", stub.closed + 1)
+            stub.clear_trails = lambda: setattr(stub, "cleared", stub.cleared + 1)
+            stub.publish_benchmark_step = lambda **kwargs: stub.steps.append(kwargs)
+            cls.made.append(stub)
+            return stub
+
+    methods = ["shin_se_fixed", "shin_se_fixed",
+               "shin_se_onto_rgat_recovery", "shin_se_onto_rgat_recovery"]
+    group = Recording.create(default_config(), pair_methods=methods)
+
+    assert isinstance(group, RvizPublisherGroup)
+    assert len(group.publishers_by_index) == 4
+    assert [stub.namespace for stub in Recording.made] == [
+        f"/landing_rl/pair_{index}" for index in range(4)]
+    assert [stub.pad_frame for stub in Recording.made] == [
+        f"landing_pad_{index}" for index in range(4)]
+    assert [stub.body_frame for stub in Recording.made] == [
+        f"uav_body_{index}" for index in range(4)]
+
+    # Routing follows the physical pair; a method that flies two pairs resolves
+    # to its first one only when no pair is named.
+    group.publish_benchmark_step(method="shin_se_fixed", pair_index=3, state={},
+                                 scenario="x", step=1, dt=.1,
+                                 geometric_in_fov=True, status="running")
+    assert Recording.made[3].steps and not Recording.made[0].steps
+    group.clear_trails(method="shin_se_onto_rgat_recovery")
+    assert Recording.made[2].cleared == 1 and Recording.made[3].cleared == 0
+    group.clear_trails()
+    assert [stub.cleared for stub in Recording.made] == [1, 1, 2, 1]
+    group.potential = "frozen"
+    assert all(stub.potential == "frozen" for stub in Recording.made)
+    group.close()
+    assert [stub.closed for stub in Recording.made] == [1, 1, 1, 1]
+
+
+def test_the_runner_hands_rviz_the_per_pair_method_list():
+    import inspect
+
+    import run_three_pipeline
+
+    source = inspect.getsource(run_three_pipeline.main)
+    assert "RvizPublisher.create(" in source
+    assert "pair_methods=(pair_training_methods" in source, (
+        "RViz must be built from the per-pair method list, not args.pipelines")
+    methods = ["shin_se_fixed", "shin_se_onto_rgat_recovery"]
+    _, pair_methods = run_three_pipeline._balanced_training_pair_assignment(
+        methods, 4, 0)
+    assert len(pair_methods) == 4
+
+
 def test_a_headless_flight_still_opens_the_operator_rviz_view():
     # ``--headless`` is Isaac Sim's own window. RViz 2 is a separate process
     # reading ROS topics the run publishes in either mode, so a headless

@@ -708,7 +708,10 @@ class BenchmarkMonitor:
                             else "FOV 데이터" if "FOV" in phase_name
                             else "설계 데이터")
         if self.rviz is not None:
-            self.rviz.clear_trails(method=method, pair_index=pair_index)
+            # The resolved index, not the raw argument: a method that flies
+            # several physical pairs would otherwise clear whichever pair the
+            # method resolves to first.
+            self.rviz.clear_trails(method=method, pair_index=resolved_pair_index)
         try:
             from ..pipelines import get_pipeline
             pipeline = get_pipeline(method)
@@ -882,6 +885,12 @@ class BenchmarkMonitor:
             uav_xyz=uav_xyz, pad_xyz=pad_xyz,
             pair_index=resolved_pair_index)
         if self.rviz is not None and state is not None:
+            # The stage this flight belongs to, so an RViz pair view says
+            # whether it is watching a PPO episode, a teacher demonstration or
+            # a design-data rollout. Set by reset_episode on this pair.
+            with self._state_lock:
+                phase = str((self.pair_status.get(int(resolved_pair_index))
+                             or {}).get("phase", ""))
             self.rviz.publish_benchmark_step(
                 state=state, method=method, scenario=scenario, step=index,
                 dt=dt, geometric_in_fov=geometric_in_fov, status=status,
@@ -890,7 +899,7 @@ class BenchmarkMonitor:
                 visible_keypoint_fraction=point["visible_keypoint_fraction"],
                 semantic_graph=semantic_graph,
                 potential=self.potential_for(method),
-                pair_index=resolved_pair_index)
+                phase=phase, pair_index=resolved_pair_index)
 
     @staticmethod
     def _finite(value: Any) -> float | None:
@@ -969,12 +978,18 @@ class BenchmarkMonitor:
                                teacher: str = "", scenario: str = "",
                                fingerprint: str = "",
                                attempts: Sequence[Mapping[str, Any]] = (),
+                               collection_pairs: Sequence[int] = (),
                                pair_index: int | None = None) -> None:
         """Where the behaviour-cloning warm start stands, flight by flight.
 
         Published at resume and after every flight or infrastructure skip, so
         the operator can tell "three more landings needed" from "the teacher
         has landed nothing in twenty flights" without reading the console.
+
+        The progress itself is one number for the whole stage however many
+        pairs fly it, so it is published once; ``collection_pairs`` says which
+        physical pairs are flying, and each flight's own pair is carried on
+        its row and on that pair's live panel (:meth:`teacher_step`).
         """
         resolved = self._resolve_pair_index(method, pair_index)
         recent = []
@@ -989,10 +1004,13 @@ class BenchmarkMonitor:
                 "lateral_error_m": self._finite(row.get("touchdown_lateral_error")),
                 "fov_loss_fraction": self._finite(
                     row.get("geometric_fov_loss_fraction")),
+                "pair_index": self._finite(row.get("physical_pair_index")),
                 "scenario": str(row.get("scenario", "")),
             })
+        pairs = [int(index) for index in collection_pairs]
         self.store.set(teacher_demonstrations={
             "method": str(method), "pair_index": int(resolved),
+            "collection_pairs": pairs or [int(resolved)],
             "required": int(required), "accepted": int(accepted),
             "flights": int(flights), "max_flights": int(max_flights),
             "skips": int(skips), "teacher": str(teacher),

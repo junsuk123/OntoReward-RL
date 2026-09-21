@@ -198,14 +198,20 @@ border-left-color:var(--warn);color:var(--ink);font-weight:600}
 color:var(--bad)}
 .pair-state.complete{color:var(--good)}
 /* teacher demonstrations: progress on the left, the live flight on the right */
-.teacher{display:grid;grid-template-columns:1.15fr 1fr;gap:10px}
+.teacher{display:grid;grid-template-columns:minmax(250px,1fr) 1.7fr;gap:10px}
 .teacher .tprog{border:1px solid #b8b8b8;background:#fafafa;padding:8px 10px;min-width:0}
+/* one live tile per physical pair flying the warm start */
+.teacher .tgrid{display:grid;gap:8px;min-width:0;
+grid-template-columns:repeat(auto-fit,minmax(215px,1fr))}
+.teacher .tgrid .tprog{padding:6px 8px}
+.teacher .tgrid h4{margin:0 0 3px;font-size:11px;font-weight:700}
+.teacher .tgrid h4 span{color:var(--muted);font-weight:400}
 .teacher .tbar{height:10px;background:#e3e3e3;border:1px solid #b8b8b8;margin:6px 0}
 .teacher .tbar i{display:block;height:100%;background:var(--good)}
 .teacher table{width:100%;border-collapse:collapse;font-size:10.5px;margin-top:6px}
 .teacher th,.teacher td{border-bottom:1px solid #e0e0e0;padding:2px 4px;text-align:right;
 font-variant-numeric:tabular-nums}.teacher th:first-child,.teacher td:first-child{text-align:left}
-.teacher .tlive{display:grid;grid-template-columns:repeat(3,1fr);gap:5px;margin-top:6px}
+.teacher .tlive{display:grid;grid-template-columns:repeat(2,1fr);gap:5px;margin-top:6px}
 .teacher .tlive div{background:#fff;border:1px solid #d0d0d0;padding:4px 5px}
 .teacher .tlive b{display:block;font-size:13px;font-variant-numeric:tabular-nums}
 .teacher .tlive small{display:block;font-size:9px;color:var(--muted)}
@@ -937,51 +943,69 @@ function pairPanel(state){
 }
 const TEACHER_MODE={following:'패드 추종',aligned:'정렬 · 하강 대기',descending:'하강',
   lost:'시야 이탈',lost_climbing:'시야 이탈 · 상승 회복 중',reacquired:'재포착 · 재추종'};
-function teacherPanel(state){
-  const box=document.getElementById('teacher-demos');if(!box)return;
-  const s=state.scalars||{},demo=s.teacher_demonstrations||null;
-  const pairs=s.parallel_pair_status||[];
-  const pair=demo?(pairs.find(p=>Number(p.index)===Number(demo.pair_index))||{})
-    :(pairs.find(p=>p.teacher)||{});
+function teacherTile(pair,index){
+  // One live flight, on the physical pair flying it. The warm start runs on
+  // every idle pair, so there is one of these per collecting pair.
   const live=pair.teacher||null;
-  if(!demo&&!live){box.innerHTML='<div class="tprog">시연 단계 대기 중 · 저장된 시연이 '
-    +'그대로 재사용되면 비행이 없어 이 패널은 비어 있습니다.</div>';return;}
-  const d=demo||{};
   const num=(v,digits)=>Number.isFinite(Number(v))?Number(v).toFixed(digits):'--';
-  const ratio=d.required?Math.min(1,Number(d.accepted||0)/Number(d.required)):0;
-  const rows=(d.recent||[]).slice().reverse();
-  const table=rows.length?'<table><tr><th>seed</th><th>결과</th><th>step</th>'
-    +'<th>착지 측방오차 m</th><th>FOV 손실 비율</th></tr>'
-    +rows.map(r=>{const color=r.accepted?'var(--good)'
-        :(r.status==='infrastructure_failure'?'var(--muted)':'var(--bad)');
-      const label=r.accepted?'착륙 · 채택':(r.status==='infrastructure_failure'?'인프라 스킵':'실패');
-      return `<tr><td>${escapeHTML(num(r.seed,0))}</td><td style="color:${color}">${label}</td>`
-        +`<td>${escapeHTML(num(r.steps,0))}</td><td>${escapeHTML(num(r.lateral_error_m,2))}</td>`
-        +`<td>${Number.isFinite(Number(r.fov_loss_fraction))
-          ?(100*Number(r.fov_loss_fraction)).toFixed(0)+'%':'--'}</td></tr>`;}).join('')
-    +'</table>':'<div class="tnote">아직 완료된 비행이 없습니다.</div>';
   const mode=live?String(live.mode||''):'';
   const cls=mode.startsWith('lost')?'lost':mode==='reacquired'?'reacquired':'';
   const fov=live?(live.geometric_in_fov===false?'프레임 이탈'
     :live.geometric_in_fov===true?'프레임 내':'--'):'--';
+  return `<div class="tprog"><h4>물리 Pair ${Number(index)+1}`
+    +` <span>· seed ${escapeHTML(live?live.seed??'--':'--')}`
+    +` · step ${escapeHTML(live?live.step??'--':'--')}</span></h4>`
+    +`<div class="tmode ${cls}">${escapeHTML(TEACHER_MODE[mode]||mode||'대기')}</div>`
+    +`<div class="tlive"><div><b>${num(live&&live.altitude_m,2)} m</b><small>고도 (패드 기준)</small></div>`
+    +`<div><b>${num(live&&live.lateral_error_m,2)} m</b><small>측방 오차</small></div>`
+    +`<div><b>${num(live&&live.target_vz_m_s,2)} m/s</b><small>목표 vz (+ 상승)</small></div>`
+    +`<div><b>${escapeHTML(fov)}</b><small>기하 FOV (패드 중심)</small></div>`
+    +`<div><b>${escapeHTML(live?live.losses??0:0)}</b><small>시야 이탈 횟수</small></div>`
+    +`<div><b>${num(live&&live.max_altitude_after_loss_m,2)} m</b><small>이탈 후 최고 고도</small></div>`
+    +`</div></div>`;
+}
+function teacherPanel(state){
+  const box=document.getElementById('teacher-demos');if(!box)return;
+  const s=state.scalars||{},demo=s.teacher_demonstrations||null;
+  const pairs=s.parallel_pair_status||[];
+  const flying=pairs.filter(p=>p.teacher).map(p=>Number(p.index));
+  if(!demo&&!flying.length){box.innerHTML='<div class="tprog">시연 단계 대기 중 · 저장된 시연이 '
+    +'그대로 재사용되면 비행이 없어 이 패널은 비어 있습니다.</div>';return;}
+  const d=demo||{};
+  // Which physical pairs are collecting: what the stage published, else the
+  // pairs that have live teacher telemetry, else the single reported pair.
+  const declared=(d.collection_pairs||[]).map(Number).filter(Number.isFinite);
+  const indices=declared.length?declared
+    :(flying.length?flying:[Number(d.pair_index||0)]);
+  const num=(v,digits)=>Number.isFinite(Number(v))?Number(v).toFixed(digits):'--';
+  const ratio=d.required?Math.min(1,Number(d.accepted||0)/Number(d.required)):0;
+  const rows=(d.recent||[]).slice().reverse();
+  const table=rows.length?'<table><tr><th>seed</th><th>pair</th><th>결과</th><th>step</th>'
+    +'<th>착지 측방오차 m</th><th>FOV 손실 비율</th></tr>'
+    +rows.map(r=>{const color=r.accepted?'var(--good)'
+        :(r.status==='infrastructure_failure'?'var(--muted)':'var(--bad)');
+      const label=r.accepted?'착륙 · 채택':(r.status==='infrastructure_failure'?'인프라 스킵':'실패');
+      const pair=Number.isFinite(Number(r.pair_index))?Number(r.pair_index)+1:'--';
+      return `<tr><td>${escapeHTML(num(r.seed,0))}</td><td>${escapeHTML(pair)}</td>`
+        +`<td style="color:${color}">${label}</td>`
+        +`<td>${escapeHTML(num(r.steps,0))}</td><td>${escapeHTML(num(r.lateral_error_m,2))}</td>`
+        +`<td>${Number.isFinite(Number(r.fov_loss_fraction))
+          ?(100*Number(r.fov_loss_fraction)).toFixed(0)+'%':'--'}</td></tr>`;}).join('')
+    +'</table>':'<div class="tnote">아직 완료된 비행이 없습니다.</div>';
+  const collecting=indices.map(i=>Number(i)+1).join('·');
+  const tiles=indices.map(index=>teacherTile(
+    pairs.find(p=>Number(p.index)===Number(index))||{},index)).join('');
   box.innerHTML=`<div class="tprog"><b>${d.complete?'시연 확보 완료':'시연 비행 중'}`
     +` · 채택 ${escapeHTML(d.accepted??0)} / ${escapeHTML(d.required??'--')}</b>`
     +`<div class="tbar"><i style="width:${(100*ratio).toFixed(0)}%"></i></div>`
     +`<div class="tnote">비행 ${escapeHTML(d.flights??0)} / ${escapeHTML(d.max_flights??'--')}`
     +` · 인프라 스킵 ${escapeHTML(d.skips??0)} · 교사 ${escapeHTML(d.teacher||'--')}<br>`
     +`시나리오 ${escapeHTML(String(d.scenario||'--').replaceAll('_',' '))}`
-    +` · 지문 ${escapeHTML(d.fingerprint||'--')} · 물리 Pair ${Number(d.pair_index??0)+1}</div>${table}</div>`
-    +`<div class="tprog"><b>현재 비행 · seed ${escapeHTML(live?live.seed??'--':'--')}`
-    +` · step ${escapeHTML(live?live.step??'--':'--')}</b>`
-    +`<div class="tmode ${cls}">${escapeHTML(TEACHER_MODE[mode]||mode||'대기')}</div>`
-    +`<div class="tlive"><div><b>${num(live&&live.altitude_m,2)} m</b><small>고도 (패드 기준)</small></div>`
-    +`<div><b>${num(live&&live.lateral_error_m,2)} m</b><small>측방 오차</small></div>`
-    +`<div><b>${num(live&&live.target_vz_m_s,2)} m/s</b><small>목표 vz (+ 상승)</small></div>`
-    +`<div><b>${escapeHTML(fov)}</b><small>기하 FOV (패드 중심)</small></div>`
-    +`<div><b>${escapeHTML(live?live.losses??0:0)}</b><small>이 비행의 시야 이탈 횟수</small></div>`
-    +`<div><b>${num(live&&live.max_altitude_after_loss_m,2)} m</b><small>이탈 후 최고 고도</small></div></div>`
+    +` · 지문 ${escapeHTML(d.fingerprint||'--')}`
+    +` · 수집 물리 Pair ${escapeHTML(collecting)} (${indices.length}대 동시)</div>${table}`
     +`<div class="tnote">교사 행동은 training-only label입니다. 학생에게는 image embedding과 `
-    +`proprioception만 전달됩니다.</div></div>`;
+    +`proprioception만 전달됩니다.</div></div>`
+    +`<div class="tgrid">${tiles}</div>`;
 }
 function drawTrajectories(state){
   const grid=document.getElementById('traj-grid');if(!grid)return;

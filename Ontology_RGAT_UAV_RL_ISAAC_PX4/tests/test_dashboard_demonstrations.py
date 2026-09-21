@@ -21,9 +21,9 @@ from run_three_pipeline import _LockedMonitor
 METHODS = ["shin_se_fixed", "shin_se_onto_rgat_recovery"]
 
 
-def _monitor(pair_count=2):
+def _monitor(pair_count=2, rviz=None):
     store = LiveStore()
-    monitor = BenchmarkMonitor(store)
+    monitor = BenchmarkMonitor(store, rviz=rviz)
     monitor.configure(
         methods=METHODS, mode="quick", config_hash="0" * 16,
         training_total=8, evaluation_total=4,
@@ -166,8 +166,82 @@ def test_the_locked_pair_monitor_routes_teacher_telemetry_to_its_pair():
     assert store.snapshot()["scalars"]["teacher_demonstrations"]["pair_index"] == 2
 
 
+def test_every_collecting_pair_shows_its_own_demonstration_flight():
+    """Four pairs fly the warm start, so four live flights are published.
+
+    The progress itself (accepted/required, the attempt ledger) belongs to the
+    stage rather than to a pair and stays a single reading; which pairs are
+    flying it, and what each of them is doing right now, are per pair.
+    """
+    monitor, store = _monitor(pair_count=4)
+    locked = [_LockedMonitor(monitor, threading.Lock(),
+                             method=METHODS[index % len(METHODS)],
+                             pair_index=index, pair_count=4)
+              for index in range(4)]
+    for index, worker in enumerate(locked):
+        worker.teacher_step(method="no_se_fixed", step=10 + index,
+                            seed=90000 + index, altitude_m=3.0 - index,
+                            lateral_error_m=0.4, target_vz_m_s=-0.3,
+                            visual_lost=False, geometric_in_fov=True)
+    attempts = [{"seed": 90000 + index, "steps": 120, "status": "success",
+                 "accepted_for_cloning": float(index == 0),
+                 "physical_pair_index": index,
+                 "touchdown_lateral_error": 0.08,
+                 "geometric_fov_loss_fraction": 0.12}
+                for index in range(4)]
+    locked[0].demonstration_progress(
+        method="no_se_fixed", required=4, accepted=1, flights=4, max_flights=40,
+        teacher="image_based_visual_servo_v1",
+        scenario="training_random_walk_escape_burst", fingerprint="6fdd99e3926f",
+        attempts=attempts, collection_pairs=[0, 1, 2, 3])
+
+    pairs = store.snapshot()["scalars"]["parallel_pair_status"]
+    assert [pairs[index]["teacher"]["seed"] for index in range(4)] == [
+        90000, 90001, 90002, 90003]
+    assert [pairs[index]["teacher"]["step"] for index in range(4)] == [
+        10, 11, 12, 13]
+    demo = store.snapshot()["scalars"]["teacher_demonstrations"]
+    assert demo["collection_pairs"] == [0, 1, 2, 3]
+    assert demo["teacher"] == "image_based_visual_servo_v1"
+    assert [row["pair_index"] for row in demo["recent"]] == [0.0, 1.0, 2.0, 3.0]
+
+
+def test_a_single_pair_stage_still_names_the_pair_it_flew():
+    monitor, store = _monitor(pair_count=1)
+    monitor.demonstration_progress(
+        method="no_se_fixed", required=4, accepted=0, flights=0, max_flights=40,
+        attempts=(), pair_index=0)
+    demo = store.snapshot()["scalars"]["teacher_demonstrations"]
+    assert demo["collection_pairs"] == [0]
+
+
+def test_the_rviz_pair_view_is_told_which_stage_it_is_watching():
+    """RViz renders one identical panel per pair; the stage tells them apart."""
+    calls = []
+
+    class FakeRviz:
+        def clear_trails(self, **kwargs):
+            calls.append(("clear", kwargs))
+
+        def publish_benchmark_step(self, **kwargs):
+            calls.append(("step", kwargs))
+
+    monitor, _store = _monitor(pair_count=4, rviz=FakeRviz())
+    monitor.reset_episode(method="no_se_fixed", seed=90003, curriculum=0.2,
+                          phase="training-only teacher demonstration",
+                          scenario="training_random_walk_escape_burst",
+                          pair_index=3)
+    _step(monitor, 1, (1.0, 2.0, 5.0), (0.5, 2.5, 0.42), pair_index=3)
+
+    assert ("clear", {"method": "no_se_fixed", "pair_index": 3}) in calls
+    published = [kwargs for kind, kwargs in calls if kind == "step"][-1]
+    assert published["pair_index"] == 3
+    assert published["phase"] == "training-only teacher demonstration"
+
+
 def test_the_page_renders_the_demonstration_and_trajectory_panels():
     for marker in ('id="teacher-demos"', 'id="traj-grid"', "function teacherPanel",
+                   "function teacherTile", "collection_pairs", "class=\"tgrid\"",
                    "function drawTrajectories", "function drawTrajectory",
                    "benchmark_step_pair_", "uav_x", "pad_x", "teacher_demonstrations",
                    "lost_climbing", "kind:'teacher'", "kind:'trajectories'"):

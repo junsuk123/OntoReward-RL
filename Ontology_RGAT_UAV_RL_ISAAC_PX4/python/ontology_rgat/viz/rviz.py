@@ -77,6 +77,21 @@ def _outcome_style(status: str):
     return "LANDING FAILED", (0.96, 0.12, 0.10)
 
 
+# What a flight is, for the operator reading one of several identical pair
+# views. Training episodes say nothing extra; everything else is a stage whose
+# flights are not the experiment's own episodes.
+_PHASE_BANNERS = {
+    "training": "",
+    "perception warm-up": "PERCEPTION WARM-UP",
+    "training-only teacher demonstration": "TEACHER DEMONSTRATION",
+    "adaptive reward-design data": "REWARD-DESIGN DATA",
+    "semantic reward-design data": "R-GAT DESIGN DATA",
+    "FOV-risk offline data": "FOV-RISK DESIGN DATA",
+    "checkpoint validation": "CHECKPOINT VALIDATION",
+    "evaluation": "EVALUATION",
+}
+
+
 class RvizPublisher:
     """Publishes one episode's live state for RViz 2.
 
@@ -115,9 +130,17 @@ class RvizPublisher:
     def create(cls, cfg, potential=None, node_name: str = "ontology_rgat_viz",
                pair_methods: Sequence[str] | None = None):
         """Return a publisher, or ``None`` if ROS 2 is unavailable or refused."""
+        # One entry per *physical pair*, not per method: with four pairs and
+        # two arms the same method names two pairs each, and keying the
+        # publishers by method collapsed them to two. Pairs 2 and 3 then
+        # published into pair 0 and 1's namespaces and TF frames while the
+        # generated layout (scripts/make_rviz_layout.py) showed their own
+        # panels empty. ``pair_methods`` is therefore the per-pair method list
+        # (run_three_pipeline._balanced_training_pair_assignment), and it may
+        # repeat.
         methods = tuple(str(method) for method in (pair_methods or ()))
         if len(methods) > 1:
-            publishers = {}
+            publishers: list[tuple[str, "RvizPublisher"]] = []
             for index, method in enumerate(methods):
                 pair_cfg = cfg.derive(**{
                     "viz.rviz.namespace": f"{str(cfg.viz.rviz.namespace).rstrip('/')}/pair_{index}",
@@ -128,10 +151,10 @@ class RvizPublisher:
                     pair_cfg, potential=potential,
                     node_name=f"{node_name}_pair_{index}")
                 if publisher is None:
-                    for created in publishers.values():
+                    for _, created in publishers:
                         created.close()
                     return None
-                publishers[method] = publisher
+                publishers.append((method, publisher))
             print(
                 f"RViz 2 parallel view configured for {len(publishers)} pairs "
                 f"under {cfg.viz.rviz.namespace}/pair_N.")
@@ -523,6 +546,7 @@ class RvizPublisher:
                                keypoint_confidence: float = 0.0,
                                visible_keypoint_fraction: float = 0.0,
                                semantic_graph=None, potential=None,
+                               phase: str = "",
                                pair_index: int | None = None) -> None:
         """Publish the recurrent Shin benchmark without its legacy log type.
 
@@ -618,6 +642,17 @@ class RvizPublisher:
         _rgba(text, colour, 0.96)
         method_label = ("PROPOSED · Shin + Ontology-R-GAT FOV"
                         if is_proposed else "BASELINE · Shin SE fixed")
+        # What this flight is, and which pair is flying it. Four pairs render
+        # four identical-looking views, and outside PPO training they are not
+        # even flying the arm the panel is titled after: the warm start flies
+        # the teacher on every pair, on the arm's own pipeline.
+        banner_phase = _PHASE_BANNERS.get(str(phase))
+        if banner_phase is None and str(phase) not in ("", "training"):
+            banner_phase = str(phase).upper()
+        if pair_index is not None:
+            method_label = f"PAIR {int(pair_index) + 1} · {method_label}"
+        if banner_phase:
+            method_label = f"{banner_phase} · {method_label}"
         common = (f"COMMON Shin: r={float(reward):+.3f}  "
                   f"r_active={active_reward:+.3f}")
         # Geometric FOV and perception quality are separate variables, so show
@@ -686,19 +721,29 @@ class RvizPublisherGroup:
     other.
     """
 
-    def __init__(self, publishers: dict[str, RvizPublisher]):
-        if not publishers:
+    def __init__(self, publishers) -> None:
+        # A mapping of method -> publisher (one pair per method) or, when a
+        # method flies several physical pairs, a sequence of
+        # ``(method, publisher)`` in pair order. Routing is by pair index
+        # first; the method map keeps the first pair of each method for the
+        # calls that name only a method.
+        entries = (list(publishers.items()) if hasattr(publishers, "items")
+                   else [(str(method), publisher)
+                         for method, publisher in publishers])
+        if not entries:
             raise ValueError("an RViz publisher group needs at least one pair")
-        self.publishers = dict(publishers)
-        self.publishers_by_index = list(publishers.values())
+        self.publishers_by_index = [publisher for _, publisher in entries]
+        self.publishers: dict[str, RvizPublisher] = {}
+        for method, publisher in entries:
+            self.publishers.setdefault(str(method), publisher)
 
     @property
     def potential(self):
-        return next(iter(self.publishers.values())).potential
+        return self.publishers_by_index[0].potential
 
     @potential.setter
     def potential(self, value) -> None:
-        for publisher in self.publishers.values():
+        for publisher in self.publishers_by_index:
             publisher.potential = value
 
     def _for(self, method: str | None,
@@ -709,12 +754,12 @@ class RvizPublisherGroup:
                 return self.publishers_by_index[index]
         if method in self.publishers:
             return self.publishers[str(method)]
-        return next(iter(self.publishers.values()))
+        return self.publishers_by_index[0]
 
     def clear_trails(self, method: str | None = None,
                      pair_index: int | None = None) -> None:
         if method is None and pair_index is None:
-            for publisher in self.publishers.values():
+            for publisher in self.publishers_by_index:
                 publisher.clear_trails()
             return
         self._for(method, pair_index).clear_trails()
@@ -728,5 +773,5 @@ class RvizPublisherGroup:
         self._for(None).publish_step(log, cur, info)
 
     def close(self) -> None:
-        for publisher in self.publishers.values():
+        for publisher in self.publishers_by_index:
             publisher.close()

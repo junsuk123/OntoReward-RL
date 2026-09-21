@@ -88,34 +88,32 @@ behavior_cloning:
   # deployed actor has and nothing else.
   source_pipeline: no_se_fixed
 
-  # The estimator-free image servo, selected 2026-09-21.
+  # Back to the privileged PD (2026-09-21, second reversal).
   #
-  # image_based_visual_servo_v1 is the better *kind* of teacher: it reads only
-  # the frozen encoder's centroid and apparent scale, so the mapping being
-  # cloned is one the student can reproduce from its own observation, without
-  # the simulator. The privileged PD below is the one with the recorded
-  # landings (4/4, 4/4, 4/4, 3/3, 4/8), and the servo's own record is 0 of 16
-  # over seven tunings -- but those 16 predate the gains in the servo section
-  # below (integral 0.45x0.60 -> 0.20x3.00, damping 0.12 -> 0.35, reference
-  # scale 0.25 -> 0.06, the bearing descent gate and the flare), which were
-  # measured against the standing lateral error that caused them.
+  # image_based_visual_servo_v1 is still the better *kind* of teacher -- it
+  # reads only the frozen encoder's centroid and apparent scale, so the
+  # mapping being cloned is one the student can reproduce from its own
+  # observation -- and section 5.7 of docs/TWO_PIPELINE_COMPARISON.md found
+  # and fixed a real defect in it: the damping term differentiated the
+  # vehicle's own tilt, which is positive feedback through the airframe
+  # (offline: 1% of 160 flights landed raw, 94% filtered).
   #
-  # What changed the cost of trying it is the collection itself: the warm
-  # start now flies on every spawned pair at once (parallel_pairs below), so
-  # re-flying the whole set costs about a fifth of the wall clock it did when
-  # one pair flew all 40 attempts.
+  # It still does not land on this stack. Flown filtered, on four pairs:
+  # 4 flights, 0 landings, final lateral error 9.0-23.6 m -- collision,
+  # battery, two timeouts. That is not the hunting the filter addressed; the
+  # vehicle loses the deck outright and never re-acquires it, which points at
+  # the encoder rather than at the loop (raw_scale, and therefore the range
+  # gain, collapses when the landmarks leave the frame). Unfiltered, the same
+  # day: 26 flights, 0 landings.
   #
-  # RISK, stated plainly: this stage raises RuntimeError if it cannot land
-  # ``successful_episodes`` inside ``max_attempts``, and the experiment stops
-  # there. If the servo lands nothing, switch this line back to
-  # privileged_relative_state_velocity_pd_v4 and position_gain to 0.35; the
-  # PD's demonstrations are still keyed by their own fingerprint, so the
-  # stored set is reused rather than re-flown.
+  # The PD has 4/4, 4/4, 4/4, 3/3 and 4/8 on recorded runs and 3 of 4 already
+  # stored for this exact configuration. The demonstrations are training-only
+  # under either teacher, and nothing from them reaches the deployed actor
+  # beyond the image embedding and proprioception.
   #
-  # The demonstrations are training-only under either teacher, and nothing
-  # from them reaches the deployed actor beyond the image embedding and
-  # proprioception.
-  teacher: image_based_visual_servo_v1
+  # To switch back to the servo: this line, position_gain to 0.55, and see
+  # the servo block below.
+  teacher: privileged_relative_state_velocity_pd_v4
   # 4 is what the recorded successful runs used; 6 was this session's choice
   # and it is not worth the extra flights. The attempt budget is sized from
   # the rate actually measured on this profile rather than from those runs':
@@ -169,10 +167,9 @@ behavior_cloning:
   # target has partway through the approach; the flare inherits smaller ones
   # and the far field larger, bounded either side.
   # CAREFUL: both teachers read position_gain and mean different things by it.
-  # 0.55 is the image servo's value (it ignores velocity_gain); 0.35 with
-  # velocity_gain 0.75 is the privileged PD's proven pair, kept below so
-  # switching the teacher line back is a one-line change.
-  position_gain: 0.55
+  # 0.35 with velocity_gain 0.75 is the privileged PD's proven pair; the image
+  # servo wants 0.55 and ignores velocity_gain.
+  position_gain: 0.35
   velocity_gain: 0.75
 
   # Scale the descent with how little charge is left. Enabled 2026-09-19 after
@@ -281,6 +278,40 @@ behavior_cloning:
   horizon_steps: 600
 
   # ---- image_based_visual_servo_v1 only; ignored by the PD above ----
+  # STABILISATION (2026-09-21). The servo's damping term differentiated a
+  # one-step centroid difference, and most of that image motion was the
+  # vehicle's own tilt: a multirotor delivers a velocity command by tilting
+  # (about atan(a/g), ~10 deg for 0.6 m/s over 0.35 s, against a 45 deg half
+  # width) and the camera is bolted to it, so the loop commanded against its
+  # own tilt and tilted further. Positive feedback through the airframe.
+  #
+  # Measured offline on the configured deck, 160 flights per variant
+  # (tools/visual_servo_offline.py, which reproduces the servo's 0-of-16
+  # flight record only once the airframe tilt is modelled):
+  #
+  #                              landed   late swing   integral on its clamp
+  #   raw derivative (as flown)     1%      2.44 m            72-78%
+  #   + rate_filter_s 0.30         94%      0.89 m       100% in the dash
+  #   + anti_windup                92%      1.09 m              0%
+  #   + authority 1.20 m/s         74%      1.30 m             81-94%
+  #
+  # The fix therefore ships as the code default in
+  # ``_visual_servo_teacher_action``: rate_filter_s 0.30 (the airframe's own
+  # tilt time constant; 0.15 gave 89%, 0.45 nothing more), anti_windup true
+  # (conditional integration -- back-calculation unwinds the integrator's
+  # legitimate steady state against a driving deck and lost 20 points),
+  # integral_leak_s 0.0 (12-25 s measured 2-3 points better, inside the
+  # sampling spread, and 6 s collapses the loop to 2.5%).
+  #
+  # They are deliberately NOT written here while the PD is the teacher. All
+  # three are in _DEMONSTRATION_FLIGHT_KEYS, so recording them would change
+  # the fingerprint of PD demonstrations that no servo knob can affect --
+  # the same mistake the transport budgets were excluded for, and it would
+  # re-fly a stored set. Write them here when switching the teacher back, so
+  # servo demonstrations are keyed on the gains that flew them.
+  #
+  # It still does not land on this stack even filtered: see the teacher note
+  # above and section 5.7 of docs/TWO_PIPELINE_COMPARISON.md.
   # The integrator is slowed, not weakened. Its authority is gain x limit and
   # still has to clear the deck (below), but a fast integrator on a loop with
   # almost no derivative term is what makes it hunt: the sampled lateral error

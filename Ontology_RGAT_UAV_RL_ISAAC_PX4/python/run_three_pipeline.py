@@ -607,10 +607,11 @@ PRIVILEGED_VELOCITY_TEACHER = "privileged_relative_state_velocity_pd_v4"
 
 def _visual_servo_teacher_action(
         semantic, previous, velocity_limit, *, setpoint, dt, integral,
-        tan_half=(1.0, .625), committed_already=False,
+        tan_half=(1.0, .625), committed_already=False, image_rate=None,
         position_gain=.55, integral_gain=.20, damping_gain=.35,
         integral_limit=3.0, horizontal_speed_limit=.60,
         reference_scale=.06, range_gain_bounds=(.35, 2.2),
+        rate_filter_s=.30, integral_leak_s=0.0, anti_windup=True,
         alignment_tolerance=.30, cone_widening=1.2,
         rate_tolerance=.60, flare_scale=.20, approach_scale=.12,
         approach_descent=.50, descent_rate=.30, flare_descent=.25,
@@ -685,8 +686,8 @@ def _visual_servo_teacher_action(
     correct flare, so loss of visibility commands a climb only while the
     target still looks small; past ``flare_scale`` the vehicle is committed.
 
-    Returns ``(action, integral)``; the caller carries ``integral`` between
-    steps.
+    Returns ``(action, integral, committed, image_rate)``; the caller carries
+    the integral, the commit latch and the filtered image rate between steps.
     """
     limit = np.asarray(velocity_limit, dtype=np.float64).reshape(-1)
     target = np.asarray(setpoint, dtype=np.float64).reshape(-1)
@@ -715,12 +716,44 @@ def _visual_servo_teacher_action(
     # are pinned by ``pad_image_position`` rather than asserted here.
     plane_error = np.array([error[0], -error[1]])
     if previous is None:
-        plane_rate = np.zeros(2)
+        measured_rate = np.zeros(2)
     else:
         previous_centroid = np.asarray(
             previous.centroid_xy, dtype=np.float64).reshape(-1)
         rate = (centroid - previous_centroid) * half_angle / step
-        plane_rate = np.array([rate[0], -rate[1]])
+        measured_rate = np.array([rate[0], -rate[1]])
+    # Filter the image rate. This is the change that made the servo land.
+    #
+    # The damping term is the one path where image motion reaches the command
+    # directly, and a one-step centroid difference at dt = 0.1 s multiplies it
+    # by ten. The motion it differentiates is not only the deck's: a
+    # multirotor delivers a velocity command by tilting, and the camera is
+    # bolted to the airframe, so every correction swings the image by roughly
+    # atan(a / g) -- about 10 degrees against a 45-degree half width for
+    # 0.6 m/s over 0.35 s, which is several times the alignment cone. Raw, the
+    # damping term reads that swing as deck motion and commands against it,
+    # which tilts the airframe further: positive feedback through the
+    # airframe, and the hunting and climb-aways this teacher was retired for.
+    #
+    # Offline, on the configured deck (tools/visual_servo_offline.py, 160
+    # flights per variant): the raw derivative lands 1% with a late-flight
+    # lateral swing of 2.44 m; the same gains with this filter at 0.30 s land
+    # 94% at 0.89 m. Nothing else in the loop had to move -- raising the
+    # authority to 1.00-1.60 m/s, the obvious reading of "the deck is as fast
+    # as the clamp", measured worse (74% at 1.20) because more authority is
+    # more tilt.
+    #
+    # The caller hands back what this returns; ``rate_filter_s`` = 0 is the
+    # raw difference this used to use.
+    filter_seconds = max(float(rate_filter_s), 0.0)
+    if image_rate is None or previous is None or filter_seconds <= 0.0:
+        plane_rate = measured_rate
+    else:
+        prior = np.asarray(image_rate, dtype=np.float64).reshape(-1)
+        if prior.shape != (2,) or not np.isfinite(prior).all():
+            raise ValueError("visual servo teacher needs a finite 2-D image rate")
+        plane_rate = prior + (measured_rate - prior) * (
+            step / (filter_seconds + step))
 
     scale = max(float(semantic.raw_scale), 1e-3)
     low, high = (float(bound) for bound in range_gain_bounds)
@@ -728,22 +761,44 @@ def _visual_servo_teacher_action(
         raise ValueError("visual servo range gain bounds must be positive and ordered")
     range_gain = float(np.clip(float(reference_scale) / scale, low, high))
     metric_error = range_gain * plane_error
-    metric_rate = range_gain * plane_rate
 
     # A centroid nobody can see is not evidence about where the deck is, and
     # integrating it winds the chase velocity up while the vehicle is blind.
     trustworthy = (float(semantic.visible_keypoint_fraction) >= 0.5
                    and float(semantic.visual_loss_risk) <= 0.0)
-    if trustworthy:
+
+    # The command is formed from the integral the *previous* step ended with,
+    # so the saturation below is the one this step actually commands and the
+    # integrator can be corrected against it.
+    unsaturated = (float(position_gain) * metric_error
+                   + float(integral_gain) * carried
+                   - float(damping_gain) * plane_rate * range_gain)
+    speed = float(np.linalg.norm(unsaturated))
+    target_xy = (unsaturated * (speed_limit / speed)
+                 if speed > speed_limit else unsaturated)
+    # Conditional integration ("clamping"): hold the integrator wherever the
+    # command is already saturated and this error would drive it further in.
+    #
+    # Integrating through saturation is what made this loop hunt -- at the old
+    # 0.20 x 3.00 the integral alone could command the entire 0.60 m/s clamp,
+    # and the offline flights measured it sitting on its limit in 94% of the
+    # flights against a 0.60 m/s deck, none of which landed. Back-calculation
+    # was tried first and is wrong here: against a deck that keeps driving,
+    # a saturated command is often the integrator doing exactly its job --
+    # cancelling the deck -- and unwinding it lost 20 points of landing rate
+    # against this rule at the same authority. Holding it costs nothing when
+    # the saturation is legitimate and stops the accumulation when it is not.
+    pushing = float(np.dot(metric_error, unsaturated)) > 0.0
+    windup = bool(anti_windup) and speed > speed_limit and pushing
+    if trustworthy and not windup:
         carried = np.clip(carried + metric_error * step,
                           -float(integral_limit), float(integral_limit))
-
-    target_xy = (float(position_gain) * metric_error
-                 + float(integral_gain) * carried
-                 - float(damping_gain) * metric_rate)
-    speed = float(np.linalg.norm(target_xy))
-    if speed > speed_limit:
-        target_xy = target_xy * (speed_limit / speed)
+    # An optional slow leak, so an integral wound up against a deck that has
+    # since changed direction need not be integrated back out. Off by default:
+    # the deck the integral is cancelling is usually still there.
+    leak = max(float(integral_leak_s), 0.0)
+    if trustworthy and leak > 0.0:
+        carried = carried * max(0.0, 1.0 - step / leak)
 
     alignment = float(np.linalg.norm(plane_error))
     # ``apparent_target_scale`` is the saturated [0, 1] reading the rest of the
@@ -801,6 +856,9 @@ def _visual_servo_teacher_action(
         # at 0.37 m and stopped. A floor makes it creep instead of stall, at a
         # rate small enough not to be the destabilising descent above.
         margin = max(margin, float(descent_floor))
+    # Hold the descent while the image is moving fast. This reads the same
+    # filtered rate the damping term does, so a single noisy frame -- or one
+    # frame of the vehicle's own tilt -- no longer chops the descent off.
     if float(np.linalg.norm(plane_rate)) > float(rate_tolerance):
         margin = 0.0
     if committed:
@@ -828,7 +886,7 @@ def _visual_servo_teacher_action(
     if float(noise_std) > 0.0:
         generator = rng if rng is not None else np.random.default_rng()
         action = action + generator.normal(0.0, float(noise_std), 4)
-    return np.clip(action, -.90, .90), carried, committed
+    return np.clip(action, -.90, .90), carried, committed, plane_rate
 
 
 def _visual_servo_teacher(environment, *, settings, monitor=None):
@@ -852,20 +910,26 @@ def _visual_servo_teacher(environment, *, settings, monitor=None):
     tan_half_h = math.tan(math.radians(
         float(camera.get("horizontal_fov_deg", 90.0))) / 2.0)
     tan_half = (tan_half_h, tan_half_h * height / width)
-    state = {"integral": np.zeros(2), "previous": None, "committed": False}
+    state = {"integral": np.zeros(2), "previous": None, "committed": False,
+             "image_rate": np.zeros(2)}
 
     def transform(step, policy_action, semantic, rng):
         if int(step) == 0:
             state["integral"] = np.zeros(2)
             state["previous"] = None
             state["committed"] = False
+            state["image_rate"] = np.zeros(2)
         controller = environment.adapter.controller
-        action, integral, committed = _visual_servo_teacher_action(
+        action, integral, committed, image_rate = _visual_servo_teacher_action(
             semantic, state["previous"],
             controller.max_velocity * controller.action_scale,
             setpoint=setpoint, dt=float(environment.cfg.sim.dt),
             integral=state["integral"], tan_half=tan_half,
             committed_already=state["committed"],
+            image_rate=state["image_rate"],
+            rate_filter_s=float(settings.get("rate_filter_s", .30)),
+            integral_leak_s=float(settings.get("integral_leak_s", 0.0)),
+            anti_windup=bool(settings.get("anti_windup", True)),
             position_gain=float(settings.get("position_gain", .55)),
             integral_gain=float(settings.get("integral_gain", .20)),
             damping_gain=float(settings.get("damping_gain", .35)),
@@ -887,6 +951,7 @@ def _visual_servo_teacher(environment, *, settings, monitor=None):
         state["integral"] = integral
         state["previous"] = semantic
         state["committed"] = committed
+        state["image_rate"] = image_rate
         current = environment.last_step
         if monitor is not None and current is not None:
             relative = np.asarray(current.critic.true_relative_state,
@@ -1263,7 +1328,11 @@ _DEMONSTRATION_FLIGHT_KEYS = (
     "noise_std",
     "integral_gain", "damping_gain", "integral_limit", "reference_scale",
     "alignment_tolerance", "cone_widening", "rate_tolerance", "flare_scale",
-    "approach_scale", "source_pipeline", "scenario")
+    "approach_scale", "source_pipeline", "scenario",
+    # The image-rate filter and the anti-windup rule change what the teacher
+    # flies, not merely how long it is given to fly it, so demonstrations made
+    # without them are a different set.
+    "rate_filter_s", "integral_leak_s", "anti_windup")
 
 
 # Wall-clock and retry budgets for the bridge and the shared stack. They

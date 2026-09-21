@@ -64,7 +64,7 @@ def _when_the_servo_is_the_configured_teacher(test):
 
 def command(centroid, previous=None, *, integral=(0.0, 0.0),
             committed_already=False, **kwargs):
-    action, carried, _ = _visual_servo_teacher_action(
+    action, carried, *_ = _visual_servo_teacher_action(
         observation(centroid, **kwargs), previous, LIMIT,
         setpoint=SETPOINT, dt=0.1, integral=np.asarray(integral, dtype=float),
         committed_already=committed_already, noise_std=0.0)
@@ -284,7 +284,7 @@ def test_tangent_angle_units_aim_better_than_raw_frame_fractions():
         toward_pad = -np.asarray(position[:2], dtype=float)
 
         def bearing(tan_half):
-            action, _, _ = _visual_servo_teacher_action(
+            action, *_ = _visual_servo_teacher_action(
                 observation(centroid), None, LIMIT, setpoint=SETPOINT, dt=0.1,
                 integral=np.zeros(2), tan_half=tan_half, noise_std=0.0)
             commanded = action[:2] * LIMIT[:2]
@@ -446,3 +446,83 @@ def test_the_integrator_can_actually_hold_the_deck_velocity():
     assert authority > deck, (
         f"the integrator tops out at {authority:.2f} m/s against a "
         f"{deck:.2f} m/s deck")
+
+
+def _servo(centroid, previous=None, *, integral=(0.0, 0.0), image_rate=None,
+           scale=0.25, visible=1.0, loss=0.0, **gains):
+    """The raw call, for the tests that need the carried state back."""
+    return _visual_servo_teacher_action(
+        observation(centroid, scale=scale, visible=visible, loss=loss),
+        previous, LIMIT, setpoint=SETPOINT, dt=0.1,
+        integral=np.asarray(integral, dtype=float), image_rate=image_rate,
+        noise_std=0.0, **gains)
+
+
+def test_the_image_rate_is_filtered_rather_than_differenced():
+    """A one-frame jump must not reach the damping term at full size.
+
+    Most of the image motion this loop sees is its own airframe: a velocity
+    command is delivered by tilting, and the camera is bolted on. Raw, the
+    damping term commands against that tilt and tilts further -- the positive
+    feedback the servo's 0-of-16 record came from.
+    """
+    settled = observation((SETPOINT[0], 0.0))
+    jumped = (SETPOINT[0] + 0.20, 0.0)
+    _action, _carried, _committed, raw = _servo(
+        jumped, settled, rate_filter_s=0.0)
+    _action, _carried, _committed, filtered = _servo(
+        jumped, settled, image_rate=np.zeros(2), rate_filter_s=0.30)
+
+    assert abs(raw[0]) > 1.0, "a 0.20 jump in 0.1 s is a large raw rate"
+    # dt / (tau + dt) of it on the first step, and no more.
+    assert filtered[0] == pytest.approx(raw[0] * 0.1 / 0.4, rel=1e-6)
+
+    # It converges on a rate that persists, so real deck motion is still damped.
+    carried_rate = filtered
+    for _ in range(40):
+        _a, _c, _m, carried_rate = _servo(
+            jumped, settled, image_rate=carried_rate, rate_filter_s=0.30)
+    assert carried_rate[0] == pytest.approx(raw[0], rel=0.05)
+
+
+def test_the_filter_moves_the_commanded_velocity():
+    """The filtered rate is what the damping term actually uses."""
+    settled = observation((SETPOINT[0], 0.0))
+    jumped = (SETPOINT[0] + 0.20, 0.0)
+    raw_action, *_ = _servo(jumped, settled, rate_filter_s=0.0)
+    filtered_action, *_ = _servo(jumped, settled, image_rate=np.zeros(2),
+                                 rate_filter_s=0.30)
+    assert not np.allclose(raw_action[:2], filtered_action[:2])
+    # Damping opposes the jump, so filtering it leaves more of the correction.
+    assert filtered_action[0] > raw_action[0]
+
+
+def test_a_saturated_command_stops_the_integrator_growing():
+    """Conditional integration, which is what keeps it off its clamp."""
+    far = (SETPOINT[0] + 0.85, 0.35)
+    wound = (2.5, 1.0)
+    _action, held, *_ = _servo(far, integral=wound, anti_windup=True)
+    _action, grown, *_ = _servo(far, integral=wound, anti_windup=False)
+
+    assert np.allclose(held, wound), "a saturated command must hold the integral"
+    assert np.linalg.norm(grown) > np.linalg.norm(wound)
+
+
+def test_the_integrator_still_builds_when_the_command_is_unsaturated():
+    """Anti-windup must not cost the type-1 behaviour the loop is built on."""
+    gentle = (SETPOINT[0] + 0.05, 0.0)
+    _action, carried, *_ = _servo(gentle, integral=(0.0, 0.0), anti_windup=True)
+    assert np.linalg.norm(carried) > 0.0
+
+    # And an error that unwinds a saturated command is still integrated: the
+    # clamp only holds what would drive the command further in.
+    opposed = (SETPOINT[0] - 0.40, -0.35)
+    _action, unwound, *_ = _servo(opposed, integral=(2.5, 1.0), anti_windup=True)
+    assert np.linalg.norm(unwound) < np.linalg.norm((2.5, 1.0))
+
+
+def test_a_blind_frame_neither_integrates_nor_filters_stale_motion():
+    """Nothing about the new state may resurrect the blind-frame rule."""
+    lost = (SETPOINT[0] + 0.3, 0.2)
+    _action, carried, *_ = _servo(lost, integral=(0.4, -0.2), visible=0.2)
+    assert np.allclose(carried, (0.4, -0.2))

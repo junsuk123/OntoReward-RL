@@ -469,6 +469,29 @@ reference 예산의 10%인 4,000으로 둔다. 코드 기본값 120은 preview �
 이 설정은 `publication_claim_allowed: false`인 예비 비교이므로 full 결과와 섞어
 집계하지 않는다.
 
+### 7.1 진입 예산 두 가지: 벽시계 guard와 게이트웨이 hold (2026-09-21)
+
+`benchmark.entry_timeout_s`는 **멈춘 시뮬레이터**를 잡기 위한 벽시계 guard다. 4개
+카메라를 렌더하는 stage에서는 길어야 해서 현재 1200 s이고, `_pair_live_config`가
+pair 수에 따라 한 번 더 키운다(4-pair에서 1320 s).
+
+게이트웨이가 진입 setpoint를 자율 유지하는 시간은 별개의 예산이며 프로토콜이
+`GOTO_MAX_HOLD_S = 900 s`로 제한한다(`ros2_ws/.../protocol.py`). 학습기가 guard를
+그대로 `hold_s`로 보내면 게이트웨이는 요청 자체를 거부한다:
+
+```
+ontology_rgat.bridge.GatewayRejected: PX4 gateway rejected request: hold_s must be in (0, 900.0]
+```
+
+이 거부는 시연 이후 **모든 단계의 첫 reset**을 실패시킨다. 오늘까지 보이지 않았던
+이유는 시연 단계가 자기 비행을 위해 guard를 120 s로 줄여 쓰기 때문이고, 그래서
+warm start를 처음으로 끝낸 실행(교사 4/4 확보 직후 FOV-risk 수집)에서 드러났다.
+
+`bridge.entry_hold_seconds`가 요청을 프로토콜 상한으로 자른다(초과 시 1회 경고).
+guard 자체는 건드리지 않는다 — 두 예산은 서로 다른 것을 지키고, 실제 진입은 수십 초
+안에 끝나므로 900 s hold는 충분하다. 학습기 쪽 상수는 테스트가 게이트웨이 프로토콜
+값과 같은지 고정한다(`test_the_entry_hold_never_exceeds_what_the_gateway_accepts`).
+
 ## 8. 산출물
 
 `evaluation/per_episode.csv`(원자료), `evaluation/paired_summary.csv`(시나리오별

@@ -337,3 +337,39 @@ def test_the_entry_travel_budget_is_paid_at_the_closing_speed_not_the_cruise():
     ceiling = (float(external["entry_sim_budget"])
                + float(external["entry_travel_budget_max"]))
     assert float(external["entry_timeout"]) > ceiling
+
+
+def test_the_entry_hold_never_exceeds_what_the_gateway_accepts():
+    """The wall guard and the gateway's autonomous hold are different budgets.
+
+    ``benchmark.entry_timeout_s`` is a wall-clock guard on a stopped simulator
+    and is 1200 s on the shipped profile -- 1320 s once the parallel scale is
+    applied. The gateway rejects a hold beyond GOTO_MAX_HOLD_S outright, which
+    on 2026-09-21 failed the first reset of every stage after the warm start
+    (the warm start shortens the guard to 120 s, which is what hid it).
+    """
+    import sys
+
+    from ontology_rgat.bridge import (GATEWAY_MAX_HOLD_S, entry_hold_seconds)
+    from ontology_rgat_px4.protocol import GOTO_MAX_HOLD_S
+    from run_shin2026_pipeline import _live_config
+    from run_three_pipeline import _pair_live_config
+
+    assert GATEWAY_MAX_HOLD_S == GOTO_MAX_HOLD_S, (
+        "the learner's copy of the gateway hold limit has drifted")
+
+    # Short guards are passed through untouched.
+    assert entry_hold_seconds(120.0, 2.55) == pytest.approx(122.55)
+
+    cfg = _live_config("full", Path("/tmp/ontology_rgat_entry_hold"),
+                       ROOT / "config/shin2026-minimal-system.yaml")
+    for pairs in (1, 2, 3, 4):
+        live = _pair_live_config(cfg, 0, pairs)
+        margin = max(2.0, float(live.external.prestream_count)
+                     / float(live.external.control_hz)
+                     + float(live.external.reset_settle))
+        hold = entry_hold_seconds(live.external.entry_timeout, margin)
+        assert 0.0 < hold <= GOTO_MAX_HOLD_S, pairs
+
+    with pytest.raises(Exception):
+        entry_hold_seconds(float("nan"), 2.0)

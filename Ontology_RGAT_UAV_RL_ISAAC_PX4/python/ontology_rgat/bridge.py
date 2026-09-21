@@ -131,6 +131,45 @@ _LIVE_LOCAL_PORTS: dict[tuple[str, int], int] = {}
 _LIVE_LOCAL_PORTS_LOCK = threading.Lock()
 
 
+# The gateway will hold an entry setpoint autonomously for at most this long
+# (``ontology_rgat_px4.protocol.GOTO_MAX_HOLD_S``; the two are pinned equal by
+# a test). The learner's own wall-clock guard is a different quantity and may
+# legitimately be longer on a slowly rendered multi-pair stage -- this profile
+# asks for 1200 s, and 1320 s once the parallel scale is applied -- but asking
+# the gateway for more hold than the protocol admits is rejected outright.
+#
+# Unclamped, that rejection failed *every* reset: 2026-09-21, the first run to
+# finish its warm start died on the next stage's first episode. It had been
+# invisible until then only because the demonstration stage shortens the guard
+# to 120 s for its own flights.
+GATEWAY_MAX_HOLD_S = 900.0
+_HOLD_CLAMP_REPORTED = False
+
+
+def entry_hold_seconds(entry_timeout: float, hold_margin_s: float) -> float:
+    """How long to ask the gateway to hold the entry pose, within protocol.
+
+    Clamping rather than failing is deliberate: the hold only has to outlast a
+    real entry, which takes tens of seconds, while the wall guard exists to
+    bound a stopped simulator.
+    """
+    global _HOLD_CLAMP_REPORTED
+    requested = float(entry_timeout) + float(hold_margin_s)
+    if not math.isfinite(requested) or requested <= 0.0:
+        raise BridgeError(
+            f"entry hold must be positive and finite, not {requested}")
+    if requested <= GATEWAY_MAX_HOLD_S:
+        return requested
+    if not _HOLD_CLAMP_REPORTED:
+        _HOLD_CLAMP_REPORTED = True
+        print(
+            f"WARNING: the entry wall-clock guard ({float(entry_timeout):.0f} s) "
+            f"exceeds the gateway's maximum autonomous hold "
+            f"({GATEWAY_MAX_HOLD_S:.0f} s); asking for the maximum. The guard "
+            "itself is unchanged.")
+    return GATEWAY_MAX_HOLD_S
+
+
 class PX4Bridge:
     """One episode's link to the gateway.
 
@@ -357,11 +396,12 @@ class PX4Bridge:
         prestream_s = (float(self.cfg.prestream_count)
                        / float(self.cfg.control_hz))
         hold_margin_s = max(2.0, prestream_s + float(self.cfg.reset_settle))
+        hold_s = entry_hold_seconds(self.cfg.entry_timeout, hold_margin_s)
+
         def send_goto(timeout: float | None = None) -> None:
             self.transact("goto", {"position": list(entry["position"]),
                                    "yaw": entry["yaw"], "frame": entry["frame"],
-                                   "hold_s": (float(self.cfg.entry_timeout)
-                                              + hold_margin_s)}, ("ack",),
+                                   "hold_s": hold_s}, ("ack",),
                           timeout=timeout)
 
         # The first setpoint may still be waiting on a booting stack. The

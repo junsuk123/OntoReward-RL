@@ -114,6 +114,11 @@ behavior_cloning:
   # measured 3 successes in 18 flights overall, or roughly one in six. 24
   # attempts was a coin toss against 4 successes; 40 clears it.
   max_attempts: 40
+  # 시연 단계는 PPO worker가 제출되기 전에 돌아 스폰된 pair가 모두 비어 있으므로,
+  # 기본값은 그 pair 전부에서 동시에 비행하는 것이다(seed 단위 배치, 기록은 배치 합류 후
+  # seed 순서대로 -- 저장되는 시연 집합과 지문은 pair 수와 무관하다). 예: 40회 시도가
+  # 4대에서는 10 배치. 0/미지정은 "넘겨받은 pair 전부", 양수는 그 수로 제한한다.
+  parallel_pairs: 0
   # The teacher stage is warm-start data collection, not the experiment, so it
   # may fly an easier deck than PPO will: the demonstrations only have to be
   # successful landings for the policy to start from.
@@ -233,7 +238,29 @@ behavior_cloning:
   pd_approach_descent_m_s: 0.20
   pd_approach_min_altitude_m: 2.5
   pd_approach_lateral_m: 1.5
-  horizon_steps: 450
+  # Deck motion the demonstrations are flown against (2026-09-21). The
+  # training walk alone gives flights that never lose the deck: from the 5 m
+  # entry the PD teacher is aligned by step 15, at 1.5 m by step 30 and on
+  # the pad by step 80 (trace of seed 90000), so the student is cloned from
+  # approaches only. ``training_random_walk_escape_burst`` is the same walk
+  # (same seed, same deck until the burst) with one straight dash that Isaac
+  # starts the moment the vehicle is following the deck -- within 0.9 m, at
+  # 0.5-2.5 m, after handover (pad.escape_burst_trigger: following; fallback
+  # 25 s) -- heading straight out behind the camera: the deck accelerates to
+  # the carrier's scenario peak (1.0 m/s on this profile, against the
+  # teacher's 0.60 m/s clamp), covers 5 m and eases off. The pad leaves the
+  # frame while it is being followed, the teacher's geometric visual-loss
+  # rule climbs at 0.22 m/s while it keeps tracking, the wider footprint
+  # re-acquires the pad, and the flight follows it down again -- the recovery
+  # the student has to be shown, not just told about. A seed-timed dash at
+  # 4-7 s (first version) caught the teacher at 3.6-4.4 m and never left the
+  # frame. Defined in isaac_sim/pad_motion.py; the scenario and the pad block
+  # are both part of the demonstration fingerprint.
+  scenario: training_random_walk_escape_burst
+  # 450 fitted the walk-only flights. The burst adds roughly a 5 s dash, a
+  # climb and a chase at 0.3 m/s of closing speed over 3-4 m before the
+  # descent can restart, so the recovered flight needs about 25 s more.
+  horizon_steps: 600
 
   # ---- image_based_visual_servo_v1 only; ignored by the PD above ----
   # The integrator is slowed, not weakened. Its authority is gain x limit and

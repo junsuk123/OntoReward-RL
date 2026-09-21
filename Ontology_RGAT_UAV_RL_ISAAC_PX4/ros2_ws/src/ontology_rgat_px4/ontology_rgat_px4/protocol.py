@@ -11,6 +11,10 @@ MAX_DATAGRAM = 32_768
 BENCHMARK_SCENARIOS = {
     "training_random_walk", "straight_8mps", "linear_acceleration_wave",
     "circle", "zigzag", "u_turn", "vertical_heave_boat",
+    # The training walk with one straight dash to the carrier's peak speed,
+    # for behaviour-cloning demonstrations that lose and recover the pad
+    # (isaac_sim/pad_motion.py, 2026-09-21).
+    "training_random_walk_escape_burst",
 }
 
 

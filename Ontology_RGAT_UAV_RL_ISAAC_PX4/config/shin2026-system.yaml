@@ -176,6 +176,15 @@ pad:
   # default visual/empirical-data run on this curved road.
   vehicle_max_speed_m_s: 1.0
   vehicle_visual_origin_from_road_m: [0.0, 0.0, 0.31]
+  # training_random_walk_escape_burst (behaviour-cloning demonstrations,
+  # 2026-09-21): the deck's one dash starts when Isaac sees the vehicle
+  # following it -- within 0.9 m laterally, 0.5-2.5 m up, after policy
+  # handover -- and heads straight out behind the camera, so the pad leaves
+  # the frame while it is being followed. A seed-timed dash at 4-7 s caught
+  # the PD teacher still 3.6-4.4 m up and never left the frame (3 of 3
+  # flights). "timed" keeps that closed-form variant for tests. Part of the
+  # demonstration fingerprint through system.pad.
+  escape_burst_trigger: following
   deck_height_m: 0.42
   # The centreline below is sampled from the S5_CarRoad_002 mesh itself.  Its
   # Z coordinates are the rendered asphalt surface, so the carrier neither

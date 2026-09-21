@@ -36,10 +36,53 @@ _erf = np.vectorize(math.erf)
 MODES = ("static", "constant", "circular", "lissajous", "road", "waypoints",
          "random_walk")
 CARRIERS = ("lorry", "ugv")
+# The training random walk with one straight dash laid over it: the deck
+# accelerates to the carrier's scenario peak speed, holds it for
+# ESCAPE_BURST_DISTANCE_M and eases back onto the walk. Written for the
+# behaviour-cloning demonstrations (2026-09-21): the teacher follows the pad,
+# the pad leaves the camera frame, the teacher climbs, re-acquires it and
+# follows again, so the student sees a recovery it will need rather than only
+# approaches that never lose the deck.
+ESCAPE_BURST_SCENARIO = "training_random_walk_escape_burst"
 BENCHMARK_SCENARIOS = (
     "training_random_walk", "straight_8mps", "linear_acceleration_wave",
     "circle", "zigzag", "u_turn", "vertical_heave_boat",
+    ESCAPE_BURST_SCENARIO,
 )
+# How the dash is started (``pad.escape_burst_trigger``).
+#   following -- Isaac fires it the moment the vehicle is actually following
+#                the deck: within ESCAPE_BURST_FOLLOW_LATERAL_M and inside the
+#                ESCAPE_BURST_FOLLOW_ALTITUDE_M band after policy handover,
+#                with the deck heading straight out behind the camera. A
+#                seed-timed dash (first version, 2026-09-21) fired at 4-7 s,
+#                when the privileged PD teacher was still 3.6-4.4 m up on its
+#                slow approach descent, and from there a 60-deg camera keeps a
+#                deck 2.4 m away comfortably in frame: three flights landed
+#                without ever losing the pad, which was the whole point.
+#   timed     -- the seed-drawn start below, kept for closed-form tests.
+ESCAPE_BURST_TRIGGERS = ("following", "timed")
+# The vehicle counts as following when it is this close laterally and this
+# low: from 2.5 m the frame reaches only ~4.7 m ahead and nothing behind, so a
+# dash out behind the camera leaves it within a second or two of relative
+# motion. Below 0.5 m the flare is committed and a loss there is the expected
+# end of a landing, not a recovery to demonstrate.
+ESCAPE_BURST_FOLLOW_LATERAL_M = 0.9
+ESCAPE_BURST_FOLLOW_ALTITUDE_M = (0.5, 2.5)
+# Never in the first moments after handover, and always by this long after it
+# even if the teacher never closes: a demonstration without the event is the
+# walk-only flight the scenario exists to replace.
+ESCAPE_BURST_MIN_FOLLOW_S = 2.0
+ESCAPE_BURST_FALLBACK_S = 25.0
+# ``timed`` only: when the dash begins, drawn per episode from the seed.
+ESCAPE_BURST_START_WINDOW_S = (4.0, 7.0)
+# Acceleration and deceleration time of the dash. 0.3 -> 1.0 m/s in 1 s is a
+# brisk pull-away for a small UGV, not a teleport.
+ESCAPE_BURST_RAMP_S = 1.0
+# Ground covered at the peak before the deck eases off. A 60-deg camera with
+# a 32-deg vertical half-angle sees about 1.9 x altitude ahead, 1 x altitude
+# to the side and nothing behind, so against a 0.6 m/s pursuer this is enough
+# to leave the frame from every direction below about 1.5 m of altitude.
+ESCAPE_BURST_DISTANCE_M = 5.0
 
 # Fastest ground speed any named scenario asks for, before
 # ``pad.benchmark_speed_scale``. straight_8mps and the peak of
@@ -49,6 +92,26 @@ BENCHMARK_PEAK_SPEED_M_S = 8.0
 # deck drives the same circle more slowly, rather than shrinking it onto a
 # radius smaller than the landing pad itself.
 BENCHMARK_CIRCLE_RADIUS_M = 8.0
+
+
+def escape_burst_due(*, lateral_m: float, altitude_m: float,
+                     elapsed_s: float) -> bool:
+    """Whether the simulator should start the escape dash now.
+
+    ``elapsed_s`` is simulated time since the policy took the vehicle over.
+    True once the vehicle has been following -- close and low -- for at least
+    ``ESCAPE_BURST_MIN_FOLLOW_S``, and unconditionally after
+    ``ESCAPE_BURST_FALLBACK_S`` so every demonstration carries the event.
+    """
+    if not all(math.isfinite(float(v)) for v in (lateral_m, altitude_m, elapsed_s)):
+        return False
+    if float(elapsed_s) >= ESCAPE_BURST_FALLBACK_S:
+        return True
+    if float(elapsed_s) < ESCAPE_BURST_MIN_FOLLOW_S:
+        return False
+    low, high = ESCAPE_BURST_FOLLOW_ALTITUDE_M
+    return (float(lateral_m) <= ESCAPE_BURST_FOLLOW_LATERAL_M
+            and low <= float(altitude_m) <= high)
 
 
 @dataclass(frozen=True)
@@ -118,6 +181,8 @@ class PadMotionConfig:
     speed_step_range_m_s: tuple[float, float]
     yaw_rate_step_range_rad_s: tuple[float, float]
     motion_update_dt_s: float
+    # How the escape-burst scenario starts its dash, see ESCAPE_BURST_TRIGGERS.
+    escape_burst_trigger: str = "following"
 
     @classmethod
     def from_mapping(cls, data: dict[str, Any]) -> "PadMotionConfig":
@@ -249,6 +314,11 @@ class PadMotionConfig:
             raise ValueError("pad random-walk perturbation ranges must be ordered pairs")
         if not math.isfinite(motion_dt) or motion_dt <= 0.0:
             raise ValueError("pad.motion_update_dt_s must be positive and finite")
+        escape_burst_trigger = str(pad.get("escape_burst_trigger", "following")).lower()
+        if escape_burst_trigger not in ESCAPE_BURST_TRIGGERS:
+            raise ValueError(
+                f"pad.escape_burst_trigger must be one of {ESCAPE_BURST_TRIGGERS}, "
+                f"got {escape_burst_trigger!r}")
         return cls(
             mode=mode,
             carrier=carrier,
@@ -291,6 +361,7 @@ class PadMotionConfig:
             speed_step_range_m_s=speed_steps,
             yaw_rate_step_range_rad_s=yaw_steps,
             motion_update_dt_s=motion_dt,
+            escape_burst_trigger=escape_burst_trigger,
         )
 
     @property
@@ -532,6 +603,16 @@ class PadTrajectory:
         self.random_walk_origin = np.zeros(3)
         self.random_walk_velocity = np.zeros((1, 3))
         self.benchmark_scenario = "training_random_walk"
+        # Timing of the escape dash of the current episode, or None until it
+        # has happened; reported so a flight trace can be read against it.
+        self.escape_burst: dict[str, float] | None = None
+        # True while the escape-burst scenario is waiting for Isaac to fire the
+        # dash (``following`` trigger); the drawn track is kept so the dash can
+        # be laid over it at whatever instant that turns out to be.
+        self.escape_burst_armed = False
+        self._track_speeds = np.zeros(0)
+        self._track_yaw_rates = np.zeros(0)
+        self._track_headings = np.zeros(0)
 
     def initial_pose(self) -> tuple[np.ndarray, np.ndarray]:
         """Return the parked pose before the first seeded reset.
@@ -675,6 +756,7 @@ class PadTrajectory:
             "arc_length_m": self.s0,
             "lane_offset_m": self.lane_base,
             "benchmark_scenario": self.benchmark_scenario,
+            "escape_burst": self.escape_burst,
         }
 
     def _prepare_benchmark_motion(self, rng, scale: float,
@@ -691,7 +773,9 @@ class PadTrajectory:
         time_axis = np.arange(samples) * dt
         headings[:] = self.heading0
         yaw_rates[:] = 0.0
-        if scenario == "training_random_walk":
+        self.escape_burst = None
+        self.escape_burst_armed = False
+        if scenario in ("training_random_walk", ESCAPE_BURST_SCENARIO):
             dv = scale * rng.uniform(*cfg.speed_step_range_m_s, size=samples - 1)
             dw = scale * rng.uniform(*cfg.yaw_rate_step_range_rad_s, size=samples - 1)
             speeds[0], yaw_rates[0] = self.speed, 0.0
@@ -702,6 +786,16 @@ class PadTrajectory:
                                            -cfg.yaw_rate_limit_rad_s,
                                            cfg.yaw_rate_limit_rad_s)
                 headings[index] = headings[index - 1] + yaw_rates[index] * dt
+            if scenario == ESCAPE_BURST_SCENARIO:
+                if cfg.escape_burst_trigger == "timed":
+                    # Drawn after the walk so the walk itself is the one the
+                    # same seed gives under training_random_walk.
+                    begin = min(int(round(float(rng.uniform(
+                        *ESCAPE_BURST_START_WINDOW_S)) / dt)), samples - 1)
+                    self._overlay_escape_burst(speeds, yaw_rates, headings, dt,
+                                               begin=begin)
+                else:
+                    self.escape_burst_armed = True
         # ``benchmark_speed_scale`` slows the deck onto the configured carrier
         # without redefining any scenario: every switching time below is left
         # alone, so a scaled zigzag still reverses every 3 s and a scaled u-turn
@@ -740,6 +834,105 @@ class PadTrajectory:
         position[1:] = np.cumsum(velocity[:-1] * dt, axis=0)
         self.random_walk_position = position
         self.random_walk_velocity = velocity
+        self._track_speeds = speeds
+        self._track_yaw_rates = yaw_rates
+        self._track_headings = headings
+
+    def trigger_escape_burst(self, sim_time: float,
+                             heading: float | None = None) -> dict[str, float] | None:
+        """Start the escape dash now, from wherever the deck is on its walk.
+
+        Called by the simulator once the vehicle is following the deck (see
+        ``ESCAPE_BURST_FOLLOW_*``), with ``heading`` the direction to dash in
+        -- straight out behind the camera, so the pad leaves the frame within
+        a second or two rather than after metres of forward footprint. The
+        track is rewritten from the next sample onward, so the deck's position
+        and the interpolation of the sample it is currently between are left
+        untouched: nothing jumps. The deck's yaw still turns toward the new
+        velocity under its rate limit, as it does for every other manoeuvre.
+
+        Returns the dash's timing, or None when this episode's scenario has no
+        dash waiting (any other scenario, ``timed`` trigger, or already fired).
+        """
+        if not self.escape_burst_armed or self.cfg.mode != "random_walk":
+            return None
+        dt = self.cfg.motion_update_dt_s
+        samples = len(self._track_speeds)
+        if samples < 3:
+            return None
+        u = max(0.0, float(sim_time) - self.t0) / dt
+        begin = min(int(math.floor(u)) + 1, samples - 1)
+        if begin >= samples - 2:
+            return None
+        self._overlay_escape_burst(self._track_speeds, self._track_yaw_rates,
+                                   self._track_headings, dt, begin=begin,
+                                   heading=heading)
+        speeds, headings = self._track_speeds, self._track_headings
+        velocity = self.random_walk_velocity
+        velocity[begin:, 0] = speeds[begin:] * np.cos(headings[begin:])
+        velocity[begin:, 1] = speeds[begin:] * np.sin(headings[begin:])
+        position = self.random_walk_position
+        position[begin + 1:] = position[begin] + np.cumsum(
+            velocity[begin:-1] * dt, axis=0)
+        self.escape_burst_armed = False
+        return dict(self.escape_burst)
+
+    def _overlay_escape_burst(self, speeds, yaw_rates, headings, dt: float, *,
+                              begin: int, heading: float | None = None) -> None:
+        """Lay one straight dash over the drawn random walk, in place.
+
+        From sample ``begin`` the deck accelerates over ``ESCAPE_BURST_RAMP_S``
+        from whatever the walk was doing to the carrier's scenario peak (the
+        speed ``straight_8mps`` drives at on this carrier), holds it until it
+        has covered ``ESCAPE_BURST_DISTANCE_M`` since the dash began, then
+        eases back onto the walk's own speed over another ramp. The heading is
+        held for the dash -- the walk's own heading at ``begin``, or
+        ``heading`` when the caller chooses the direction -- and the walk's
+        yaw increments resume from it afterwards, so the track has no jump.
+
+        The dash deliberately ignores the curriculum ``scale``: it exists so
+        the demonstration shows the pad leaving the frame, and a dash that
+        shrank with the entry curriculum would not leave it at all.
+        """
+        cfg = self.cfg
+        samples = len(speeds)
+        peak = float(BENCHMARK_PEAK_SPEED_M_S * cfg.benchmark_speed_scale)
+        ramp = max(1, int(round(ESCAPE_BURST_RAMP_S / dt)))
+        begin = int(min(max(begin, 0), samples - 1))
+        base = float(speeds[begin])
+        top = min(begin + ramp, samples - 1)
+        hold_end = top
+        distance = 0.0
+        for index in range(begin, samples):
+            speed = (peak if index >= top
+                     else base + (peak - base) * (index - begin) / ramp)
+            distance += speed * dt
+            hold_end = index
+            if index >= top and distance >= ESCAPE_BURST_DISTANCE_M:
+                break
+        end = min(hold_end + ramp, samples - 1)
+        resume = float(speeds[end])
+        for index in range(begin, end + 1):
+            if index < top:
+                speeds[index] = base + (peak - base) * (index - begin) / ramp
+            elif index <= hold_end:
+                speeds[index] = peak
+            else:
+                speeds[index] = peak + (resume - peak) * (
+                    (index - hold_end) / max(1, end - hold_end))
+        yaw_rates[begin:end + 1] = 0.0
+        if heading is not None and begin >= 1:
+            # The caller's direction: written as the heading at ``begin`` so
+            # the recomputation below carries it through the dash and the
+            # walk's own yaw increments continue from it afterwards.
+            headings[begin - 1] = float(heading)
+        for index in range(max(begin, 1), samples):
+            headings[index] = headings[index - 1] + yaw_rates[index] * dt
+        self.escape_burst = {
+            "start_s": begin * dt, "peak_m_s": peak,
+            "hold_end_s": hold_end * dt, "end_s": end * dt,
+            "distance_m": float(distance),
+            "heading_rad": float(headings[begin])}
 
     def pull_away(self, sim_time: float) -> None:
         """Move off from a standing start, as if from a light.

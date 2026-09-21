@@ -146,6 +146,202 @@ def test_adaptive_reward_rollouts_use_every_live_pair_concurrently(
     assert dataset["episode_id"].tolist() == [1, 2, 3, 4]
 
 
+def _demonstration_pairs(count):
+    """Live configs for ``count`` spawned pairs, as the runner builds them."""
+    from ontology_rgat.config import default_config
+
+    base = default_config()
+    base.sim.max_steps = 40
+    return [pipeline_runner._pair_live_config(base, index, count)
+            for index in range(count)]
+
+
+def _demonstration_config(**overrides):
+    cloning = {
+        "enabled": True, "source_pipeline": "no_se_fixed",
+        "successful_episodes": 2, "max_attempts": 6, "curriculum": 1.0,
+    }
+    cloning.update(overrides)
+    return {"seeds": {"behavior_cloning_start": 90000},
+            "behavior_cloning": cloning}
+
+
+def _stub_demonstration_stage(monkeypatch, collect, *, results_dir,
+                              encoded=None):
+    encoder = Path(results_dir) / "models/shared/keypoint_encoder.pt"
+    encoder.parent.mkdir(parents=True, exist_ok=True)
+    encoder.write_bytes(b"frozen keypoint encoder")
+
+    class Environment:
+        def __init__(self, cfg, _camera, horizon_steps):
+            self.cfg = cfg
+            assert horizon_steps == 40
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+    def encode(_model, rows, *, episode_id, **_kwargs):
+        if encoded is not None:
+            encoded.append((int(episode_id), int(rows[0]["seed"])))
+        return {"episode_id": int(episode_id)}
+
+    monkeypatch.setattr(pipeline_runner, "LiveShinEnvironment", Environment)
+    monkeypatch.setattr(pipeline_runner, "collect_episode_resilient", collect)
+    monkeypatch.setattr(
+        pipeline_runner, "_build_model",
+        lambda *_args, **_kwargs: SimpleNamespace(modules=lambda: ()))
+    monkeypatch.setattr(
+        pipeline_runner, "encoded_demonstration_episode", encode)
+    monkeypatch.setattr(
+        pipeline_runner, "merge_encoded_demonstrations",
+        lambda dataset, episode: [*(dataset or []), episode])
+    monkeypatch.setattr(
+        pipeline_runner, "save_encoded_demonstrations",
+        lambda _path, dataset, **_kwargs: {
+            "successful_episodes": len(dataset), "transitions": len(dataset),
+            "dataset": dataset})
+
+
+class _StageMonitor:
+    def stage(self, *_args, **_kwargs):
+        pass
+
+
+def test_teacher_demonstrations_fly_every_spawned_pair_concurrently(
+        monkeypatch, tmp_path):
+    """The warm start runs before the first PPO worker, so every pair is free.
+
+    Flying it on one pair left three of four spawned UAV/UGV pairs idle for
+    the whole stage -- up to 40 attempts of real Isaac/PX4 flight time.
+    """
+    barrier = threading.Barrier(3)
+    active_pairs = set()
+    encoded = []
+
+    def collect(environment, _model, _method, seed, **_kwargs):
+        active_pairs.add(int(environment.cfg.external.pair_index))
+        barrier.wait(timeout=10.0)
+        return ([{"seed": int(seed)}], {
+            "seed": int(seed), "steps": 7, "strict_success": 0.0,
+            "paper_success": float(int(seed) in {90000, 90002})})
+
+    _stub_demonstration_stage(monkeypatch, collect, results_dir=tmp_path,
+                              encoded=encoded)
+    pairs = _demonstration_pairs(3)
+    contexts = [{"cfg": cfg, "camera": object(), "monitor": _StageMonitor()}
+                for cfg in pairs]
+
+    payload = pipeline_runner._prepare_fast_demonstrations(
+        cfg=pairs[0], camera=contexts[0]["camera"],
+        config=_demonstration_config(), config_hash="test",
+        keypoint_pretraining=None, results_dir=tmp_path, device="cpu",
+        model_seed=3, monitor=contexts[0]["monitor"],
+        parallel_contexts=contexts)
+
+    assert active_pairs == {0, 1, 2}
+    assert payload["successful_episodes"] == 2
+    # Episode ids follow the seeds, not the thread that happened to finish
+    # first, so the stored set is the one those seeds make sequentially.
+    assert encoded == [(1, 90000), (2, 90002)]
+    attempts = pipeline_runner._read_csv(
+        tmp_path / "training" / next(
+            path.name for path in (tmp_path / "training").iterdir()
+            if path.name.startswith("teacher_attempts_")))
+    assert sorted(int(float(row["seed"])) for row in attempts) == [
+        90000, 90001, 90002]
+    assert sorted(int(float(row["physical_pair_index"]))
+                  for row in attempts) == [0, 1, 2]
+
+
+def test_parallel_demonstration_flights_never_exceed_the_attempt_budget(
+        monkeypatch, tmp_path):
+    """A batch is sized by what the attempt budget still pays for."""
+    flown = []
+
+    def collect(environment, _model, _method, seed, **_kwargs):
+        flown.append(int(seed))
+        return ([{"seed": int(seed)}], {
+            "seed": int(seed), "steps": 5, "strict_success": 0.0,
+            "paper_success": 0.0})
+
+    _stub_demonstration_stage(monkeypatch, collect, results_dir=tmp_path)
+    pairs = _demonstration_pairs(3)
+    contexts = [{"cfg": cfg, "camera": object(), "monitor": _StageMonitor()}
+                for cfg in pairs]
+
+    with pytest.raises(RuntimeError, match="did not produce enough"):
+        pipeline_runner._prepare_fast_demonstrations(
+            cfg=pairs[0], camera=contexts[0]["camera"],
+            config=_demonstration_config(successful_episodes=4,
+                                         max_attempts=4),
+            config_hash="test", keypoint_pretraining=None,
+            results_dir=tmp_path, device="cpu", model_seed=3,
+            monitor=contexts[0]["monitor"], parallel_contexts=contexts)
+
+    assert flown == [90000, 90001, 90002, 90003]
+
+
+def test_a_failed_pair_is_recovered_only_once_the_batch_has_landed(
+        monkeypatch, tmp_path):
+    """Rebuilding the shared stack mid-batch would take the siblings' flights.
+
+    The stack is one process for every pair, so a worker that recovers while a
+    sibling is still in step() ends that sibling's episode too. The recovery
+    is therefore deferred to the main thread, after the batch has joined.
+    """
+    flying = set()
+    recoveries = []
+    order = []
+
+    class Environment:
+        def __init__(self, cfg, _camera, horizon_steps):
+            self.cfg = cfg
+            self.index = int(cfg.external.pair_index)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def recover_infrastructure(self):
+            recoveries.append(self.index)
+            assert not flying, "the stack was rebuilt under a flying pair"
+
+    def collect(environment, _model, _method, seed, **_kwargs):
+        flying.add(environment.index)
+        try:
+            barrier.wait(timeout=10.0)
+            if environment.index == 1:
+                raise BridgeError("PX4 preflight refused")
+            order.append(int(seed))
+            return ([{"seed": int(seed)}], {
+                "seed": int(seed), "steps": 6, "strict_success": 0.0,
+                "paper_success": float(int(seed) == 90000)})
+        finally:
+            flying.discard(environment.index)
+
+    barrier = threading.Barrier(3)
+    _stub_demonstration_stage(monkeypatch, collect, results_dir=tmp_path)
+    monkeypatch.setattr(pipeline_runner, "LiveShinEnvironment", Environment)
+    pairs = _demonstration_pairs(3)
+    contexts = [{"cfg": cfg, "camera": object(), "monitor": _StageMonitor()}
+                for cfg in pairs]
+
+    payload = pipeline_runner._prepare_fast_demonstrations(
+        cfg=pairs[0], camera=contexts[0]["camera"],
+        config=_demonstration_config(successful_episodes=1),
+        config_hash="test", keypoint_pretraining=None, results_dir=tmp_path,
+        device="cpu", model_seed=3, monitor=contexts[0]["monitor"],
+        parallel_contexts=contexts)
+
+    assert payload["successful_episodes"] == 1
+    assert recoveries == [1]
+
+
 def test_completed_system_hold_restarts_a_dead_owned_stack():
     events = []
 

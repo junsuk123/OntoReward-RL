@@ -429,6 +429,9 @@ class BenchmarkMonitor:
         self.pair_layout: list[dict[str, Any]] = []
         self.pair_status: dict[int, dict[str, Any]] = {}
         self._phase_episode_counts: dict[tuple[int, str], int] = {}
+        # Per-pair recovery counters of the teacher flight in progress
+        # (losses, climb steps, altitude regained), see ``teacher_step``.
+        self._teacher_flights: dict[int, dict[str, Any]] = {}
         # One method now flies several physical pairs at once, so several
         # collection threads report into the same monitor. Both dictionaries
         # below are read-modify-written, which the GIL does not make atomic:
@@ -527,6 +530,7 @@ class BenchmarkMonitor:
         self.pair_layout = [dict(item) for item in (pair_layout or ())]
         with self._state_lock:
             self._phase_episode_counts.clear()
+            self._teacher_flights.clear()
         self.pair_status = {
             int(item["index"]): {
                 **dict(item),
@@ -699,7 +703,9 @@ class BenchmarkMonitor:
             with self._state_lock:
                 current_episode = self._phase_episode_counts.get(phase_key, 0) + 1
                 self._phase_episode_counts[phase_key] = current_episode
-            episode_kind = ("FOV 데이터" if "FOV" in phase_name
+            episode_kind = ("시연" if ("teacher" in phase_name
+                                      or "demonstration" in phase_name)
+                            else "FOV 데이터" if "FOV" in phase_name
                             else "설계 데이터")
         if self.rviz is not None:
             self.rviz.clear_trails(method=method, pair_index=pair_index)
@@ -831,6 +837,22 @@ class BenchmarkMonitor:
             "battery_energy_used_j": float(battery.get("energy_used_j", 0.0)),
             "battery_power_kw": float(battery.get("power_w", 0.0)) / 1000.0,
         })
+        # World-frame positions of both vehicles, so the dashboard can draw the
+        # trajectories of a pair's flight instead of only its scalar telemetry.
+        uav_position = np.asarray(world.get("position", ()), dtype=float)
+        pad_position = np.asarray(pad.get("position", ()), dtype=float)
+        uav_xyz = (uav_position.tolist()
+                   if uav_position.shape == (3,) and np.isfinite(uav_position).all()
+                   else None)
+        pad_xyz = (pad_position.tolist()
+                   if pad_position.shape == (3,) and np.isfinite(pad_position).all()
+                   else None)
+        if uav_xyz is not None:
+            point.update({"uav_x": uav_xyz[0], "uav_y": uav_xyz[1],
+                          "uav_z": uav_xyz[2]})
+        if pad_xyz is not None:
+            point.update({"pad_x": pad_xyz[0], "pad_y": pad_xyz[1],
+                          "pad_z": pad_xyz[2]})
         if len(self.methods) <= 1:
             self.store.append("benchmark_step", point)
         self.store.append(f"benchmark_step_{method}", point)
@@ -857,6 +879,7 @@ class BenchmarkMonitor:
             fov_margin=point["fov_margin"],
             keypoint_confidence=point["keypoint_confidence"],
             visible_keypoint_fraction=point["visible_keypoint_fraction"],
+            uav_xyz=uav_xyz, pad_xyz=pad_xyz,
             pair_index=resolved_pair_index)
         if self.rviz is not None and state is not None:
             self.rviz.publish_benchmark_step(
@@ -868,6 +891,115 @@ class BenchmarkMonitor:
                 semantic_graph=semantic_graph,
                 potential=self.potential_for(method),
                 pair_index=resolved_pair_index)
+
+    @staticmethod
+    def _finite(value: Any) -> float | None:
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return None
+        return number if np.isfinite(number) else None
+
+    def teacher_step(self, *, method: str, step: int, seed: int | None = None,
+                     pair_index: int | None = None, **info: Any) -> None:
+        """Live diagnostics of the training-only teacher flying a demonstration.
+
+        The attempts CSV records only a flight's last step and the per-step
+        trace lands in a file nobody reads during the run, so a teacher that
+        loses the pad, climbs and re-acquires it -- the sequence the
+        escape-burst scenario exists to demonstrate -- was invisible until
+        the flight had ended. ``info`` is the teacher's own ``info`` dict
+        (altitude, lateral error, target vz, visual loss, geometric FOV);
+        the recovery counters are kept here per pair and per flight.
+        """
+        resolved = self._resolve_pair_index(method, pair_index)
+        altitude = self._finite(info.get("altitude_m"))
+        lateral = self._finite(info.get("lateral_error_m"))
+        target_vz = self._finite(info.get("target_vz_m_s"))
+        lost = info.get("visual_lost")
+        lost = None if lost is None else bool(lost)
+        in_fov = info.get("geometric_in_fov")
+        in_fov = None if in_fov is None else bool(in_fov)
+        with self._state_lock:
+            flight = self._teacher_flights.get(resolved)
+            if (flight is None or flight.get("seed") != seed
+                    or int(step) <= int(flight.get("step", 0))):
+                flight = {"seed": seed, "losses": 0, "climb_steps": 0,
+                          "lost_now": False, "lost_ever": False,
+                          "max_altitude_after_loss_m": None}
+                self._teacher_flights[resolved] = flight
+            flight["step"] = int(step)
+            if lost and not flight["lost_now"]:
+                flight["losses"] += 1
+                flight["lost_ever"] = True
+            flight["lost_now"] = bool(lost)
+            if target_vz is not None and target_vz > 0.05:
+                flight["climb_steps"] += 1
+            if flight["lost_ever"] and altitude is not None:
+                previous = flight["max_altitude_after_loss_m"]
+                flight["max_altitude_after_loss_m"] = (
+                    altitude if previous is None else max(previous, altitude))
+            counters = dict(flight)
+        if lost and target_vz is not None and target_vz > 0.05:
+            mode = "lost_climbing"
+        elif lost:
+            mode = "lost"
+        elif counters["lost_ever"] and lateral is not None and lateral > 0.40:
+            mode = "reacquired"
+        elif target_vz is not None and target_vz < -0.05:
+            mode = "descending"
+        elif lateral is not None and lateral > 0.50:
+            mode = "following"
+        else:
+            mode = "aligned"
+        self._update_pair(method, pair_index=resolved, teacher={
+            "step": int(step), "seed": seed, "mode": mode,
+            "altitude_m": altitude, "lateral_error_m": lateral,
+            "target_vz_m_s": target_vz, "visual_lost": lost,
+            "geometric_in_fov": in_fov,
+            "relative_speed_m_s": self._finite(info.get("relative_speed_m_s")),
+            "battery_risk": self._finite(info.get("battery_risk")),
+            "losses": int(counters["losses"]),
+            "climb_steps": int(counters["climb_steps"]),
+            "max_altitude_after_loss_m": counters["max_altitude_after_loss_m"],
+        })
+
+    def demonstration_progress(self, *, method: str, required: int, accepted: int,
+                               flights: int, max_flights: int, skips: int = 0,
+                               teacher: str = "", scenario: str = "",
+                               fingerprint: str = "",
+                               attempts: Sequence[Mapping[str, Any]] = (),
+                               pair_index: int | None = None) -> None:
+        """Where the behaviour-cloning warm start stands, flight by flight.
+
+        Published at resume and after every flight or infrastructure skip, so
+        the operator can tell "three more landings needed" from "the teacher
+        has landed nothing in twenty flights" without reading the console.
+        """
+        resolved = self._resolve_pair_index(method, pair_index)
+        recent = []
+        for row in list(attempts)[-12:]:
+            accepted_flag = self._finite(row.get(
+                "accepted_for_cloning", row.get("paper_success", 0.0)))
+            recent.append({
+                "seed": self._finite(row.get("seed")),
+                "steps": self._finite(row.get("steps")),
+                "status": str(row.get("status", "")),
+                "accepted": bool(accepted_flag is not None and accepted_flag >= 1.0),
+                "lateral_error_m": self._finite(row.get("touchdown_lateral_error")),
+                "fov_loss_fraction": self._finite(
+                    row.get("geometric_fov_loss_fraction")),
+                "scenario": str(row.get("scenario", "")),
+            })
+        self.store.set(teacher_demonstrations={
+            "method": str(method), "pair_index": int(resolved),
+            "required": int(required), "accepted": int(accepted),
+            "flights": int(flights), "max_flights": int(max_flights),
+            "skips": int(skips), "teacher": str(teacher),
+            "scenario": str(scenario), "fingerprint": str(fingerprint),
+            "complete": bool(int(accepted) >= int(required)),
+            "recent": recent,
+        })
 
     def restore_training(self, method: str, history: Sequence[dict[str, Any]]) -> None:
         rows = [self._plain(dict(row)) for row in history]

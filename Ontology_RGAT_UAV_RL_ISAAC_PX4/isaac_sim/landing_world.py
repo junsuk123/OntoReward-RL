@@ -131,7 +131,7 @@ from marker_vision import (
     intrinsics_from_fov,
     texture_side_ratio,
 )
-from pad_motion import (BENCHMARK_SCENARIOS, PadMotionConfig, PadTrajectory,
+from pad_motion import (BENCHMARK_SCENARIOS, escape_burst_due, PadMotionConfig, PadTrajectory,
                         lorry_parts, ugv_parts)
 from urban_scene import UrbanConfig, UrbanLayout, UrbanScene
 from gnss import GnssConfig, UrbanGnss
@@ -1444,6 +1444,9 @@ class LandingWorld:
         # Keep the field and sensor alive, but apply aerodynamic force only
         # after the first policy action marks the true episode handover.
         self.policy_handover = False
+        # Simulated time the policy took the vehicle over this episode; the
+        # escape-burst scenario times its dash from here.
+        self.policy_handover_sim_s = None
         self.domain_randomization = None
         self.domain_px4_gains = {}
         self.domain_initial_perturbation_pending = False
@@ -1571,6 +1574,9 @@ class LandingWorld:
         """
         req, self.pending_reset = self.pending_reset, None
         self.policy_handover = False
+        # Simulated time the policy took the vehicle over this episode; the
+        # escape-burst scenario times its dash from here.
+        self.policy_handover_sim_s = None
         rng = np.random.default_rng(req["seed"])
         benchmark = CONFIG.get("benchmark") or {}
         domain_cfg = CONFIG.get("domain_randomization") or {}
@@ -1820,6 +1826,8 @@ class LandingWorld:
         elif not self.autopilot_flying:
             self.hover_hold_release_started = None
         self.policy_handover = bool(flying and handover)
+        if self.policy_handover and not previous_handover:
+            self.policy_handover_sim_s = float(self.world.current_time)
         if (self.policy_handover and not previous_handover
                 and self.domain_initial_perturbation_pending
                 and self.domain_randomization is not None):
@@ -1930,11 +1938,51 @@ class LandingWorld:
         self.vehicle.set_angular_velocity(np.zeros(3))
 
     def _advance_deck(self, dt: float) -> None:
+        self._maybe_trigger_escape_burst()
         self.deck.advance(self.world.current_time, dt)
         # After the deck, so the vehicle is held against the pose the deck has
         # this tick rather than the one it had last tick.
         self._hold_prearm_start(dt)
         self._report_deck_carry()
+
+    def _maybe_trigger_escape_burst(self) -> None:
+        """Start the escape dash once the vehicle is following the deck.
+
+        Only the ``training_random_walk_escape_burst`` scenario arms a dash
+        (``PadTrajectory.escape_burst_armed``), and only after the policy has
+        the vehicle. The gate is ``pad_motion.escape_burst_due``: close and
+        low for a moment, or a fallback time so the demonstration always
+        carries the event. The dash heads straight out behind the camera --
+        the camera looks forward and down, so behind it the frame ends at the
+        nadir -- which is what makes the pad leave the frame within a second
+        or two of relative motion instead of after metres of forward footprint.
+        """
+        trajectory = getattr(self.deck, "trajectory", None)
+        if trajectory is None or not getattr(trajectory, "escape_burst_armed", False):
+            return
+        if not self.policy_handover or self.policy_handover_sim_s is None or self.deck.held:
+            return
+        now = float(self.world.current_time)
+        elapsed = now - float(self.policy_handover_sim_s)
+        state = self.vehicle.state
+        pad = self.deck.pad_from_world(np.asarray(state.position, dtype=float))
+        lateral = float(np.hypot(pad[0], pad[1]))
+        altitude = float(pad[2])
+        if not escape_burst_due(lateral_m=lateral, altitude_m=altitude,
+                                elapsed_s=elapsed):
+            return
+        forward = Rotation.from_quat(np.asarray(state.attitude, dtype=float)).apply(
+            [1.0, 0.0, 0.0])
+        heading = math.atan2(float(forward[1]), float(forward[0])) + math.pi
+        info = trajectory.trigger_escape_burst(now, heading=heading)
+        if info is None:
+            return
+        carb.log_warn(
+            f"[pair {self.pair_index}] escape burst: the deck dashes at "
+            f"{info['peak_m_s']:.2f} m/s heading {math.degrees(heading) % 360.0:.0f} deg "
+            f"(out behind the camera) for {info['distance_m']:.1f} m, from lateral "
+            f"{lateral:.2f} m and {altitude:.2f} m above the pad, {elapsed:.1f} s "
+            f"after handover")
 
     def _report_deck_carry(self) -> None:
         """Say out loud when the deck drives out from under a parked vehicle.

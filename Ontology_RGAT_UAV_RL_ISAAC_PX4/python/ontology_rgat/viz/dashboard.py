@@ -197,6 +197,27 @@ border-left-color:var(--warn);color:var(--ink);font-weight:600}
 .pair-state.success{color:var(--good)}.pair-state.failure,.pair-state.unsafe_touchdown{
 color:var(--bad)}
 .pair-state.complete{color:var(--good)}
+/* teacher demonstrations: progress on the left, the live flight on the right */
+.teacher{display:grid;grid-template-columns:1.15fr 1fr;gap:10px}
+.teacher .tprog{border:1px solid #b8b8b8;background:#fafafa;padding:8px 10px;min-width:0}
+.teacher .tbar{height:10px;background:#e3e3e3;border:1px solid #b8b8b8;margin:6px 0}
+.teacher .tbar i{display:block;height:100%;background:var(--good)}
+.teacher table{width:100%;border-collapse:collapse;font-size:10.5px;margin-top:6px}
+.teacher th,.teacher td{border-bottom:1px solid #e0e0e0;padding:2px 4px;text-align:right;
+font-variant-numeric:tabular-nums}.teacher th:first-child,.teacher td:first-child{text-align:left}
+.teacher .tlive{display:grid;grid-template-columns:repeat(3,1fr);gap:5px;margin-top:6px}
+.teacher .tlive div{background:#fff;border:1px solid #d0d0d0;padding:4px 5px}
+.teacher .tlive b{display:block;font-size:13px;font-variant-numeric:tabular-nums}
+.teacher .tlive small{display:block;font-size:9px;color:var(--muted)}
+.teacher .tmode{font-weight:700;color:var(--accent);margin-top:4px}
+.teacher .tmode.lost{color:var(--warn)}.teacher .tmode.reacquired{color:var(--good)}
+.teacher .tnote{color:var(--muted);font-size:10.5px;margin-top:4px}
+/* trajectories: one square top-down plot per physical pair */
+.traj-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:8px}
+.traj-plot{border:1px solid #b8b8b8;background:#fff;padding:7px;min-width:0}
+.traj-plot h3{margin:0 0 3px;font-size:11px;line-height:1.3;text-align:center;height:30px;
+overflow:hidden}
+.traj-plot canvas{height:230px}.traj-plot .legend{justify-content:center}
 .pair-plot{min-width:0;border:1px solid #b8b8b8;background:#fff;padding:7px}
 .pair-plot h3{height:34px;margin:0 0 3px;font-size:11px;line-height:1.3;text-align:center}
 .pair-plot canvas{height:170px}.pair-gates{display:flex;gap:3px;flex-wrap:wrap;margin-top:6px}
@@ -345,6 +366,10 @@ const CARDS=[
       +'여기서의 차이는 결론이 아니라 교란 가능성의 단서로만 읽는다.'},
  {id:'parallel_pairs',view:'benchmark',kind:'pairs',
   title:'동시 비행쌍 · 한 Isaac Sim 월드 / 독립 PX4·PPO'},
+ {id:'teacher_demos',view:'benchmark',kind:'teacher',
+  title:'교사 시연 비행 · 실시간 (behavior-cloning warm start, training-only)'},
+ {id:'trajectories',view:'benchmark',kind:'trajectories',
+  title:'실시간 궤적 · UAV(실선)와 착륙 패드(점선) · world ENU top-down · pair별 현재 episode'},
  {id:'parallel_live_perception',view:'benchmark',kind:'pairplots',plot:'perception',
   title:'실시간 기하 FOV 대 keypoint 인지 품질 · 두 arm 동일 정의'},
  {id:'parallel_live_reward',view:'benchmark',kind:'pairplots',plot:'reward',
@@ -390,7 +415,7 @@ for(const c of CARDS){
   const el=document.createElement('section');
   el.className=(c.kind==='heading'?'card section'
     :'card'+((c.id==='tiles'||['graph','contract','evalbars','pairs','pairplots','phase',
-      'runpipe','algopipe','mdp','fovstatus']
+      'runpipe','algopipe','mdp','fovstatus','teacher','trajectories']
       .includes(c.kind))?' wide':''))
     +(c.kind==='graph'?' g3d':'');
   el.id='card-'+c.id;
@@ -413,6 +438,10 @@ for(const c of CARDS){
     <div class="mdpsum" id="mdp-summary"></div>`;}
   else if(c.kind==='pairs'){el.innerHTML=`<h2>${c.title}</h2>
     <div class="pair-grid" id="parallel-pair-grid"></div>`;}
+  else if(c.kind==='teacher'){el.innerHTML=`<h2>${c.title}</h2>
+    <div class="teacher" id="teacher-demos"></div>`;}
+  else if(c.kind==='trajectories'){el.innerHTML=`<h2>${c.title}</h2>
+    <div class="traj-grid" id="traj-grid"></div>`;}
   else if(c.kind==='pairplots'){el.innerHTML=`<h2>${c.title}</h2><div class="pair-plot-grid">`
     +[0,1].map(index=>`<div class="pair-plot"><h3 id="pair-title-${c.id}-${index}">`
       +`Pair ${index+1} · 초기화 대기</h3><canvas id="cv-${c.id}-${index}"></canvas>`
@@ -906,6 +935,122 @@ function pairPanel(state){
       +`${escapeHTML(pair.rviz_namespace)} · ${escapeHTML(pair.camera_topic)}</div></div>`;
   }).join('');
 }
+const TEACHER_MODE={following:'패드 추종',aligned:'정렬 · 하강 대기',descending:'하강',
+  lost:'시야 이탈',lost_climbing:'시야 이탈 · 상승 회복 중',reacquired:'재포착 · 재추종'};
+function teacherPanel(state){
+  const box=document.getElementById('teacher-demos');if(!box)return;
+  const s=state.scalars||{},demo=s.teacher_demonstrations||null;
+  const pairs=s.parallel_pair_status||[];
+  const pair=demo?(pairs.find(p=>Number(p.index)===Number(demo.pair_index))||{})
+    :(pairs.find(p=>p.teacher)||{});
+  const live=pair.teacher||null;
+  if(!demo&&!live){box.innerHTML='<div class="tprog">시연 단계 대기 중 · 저장된 시연이 '
+    +'그대로 재사용되면 비행이 없어 이 패널은 비어 있습니다.</div>';return;}
+  const d=demo||{};
+  const num=(v,digits)=>Number.isFinite(Number(v))?Number(v).toFixed(digits):'--';
+  const ratio=d.required?Math.min(1,Number(d.accepted||0)/Number(d.required)):0;
+  const rows=(d.recent||[]).slice().reverse();
+  const table=rows.length?'<table><tr><th>seed</th><th>결과</th><th>step</th>'
+    +'<th>착지 측방오차 m</th><th>FOV 손실 비율</th></tr>'
+    +rows.map(r=>{const color=r.accepted?'var(--good)'
+        :(r.status==='infrastructure_failure'?'var(--muted)':'var(--bad)');
+      const label=r.accepted?'착륙 · 채택':(r.status==='infrastructure_failure'?'인프라 스킵':'실패');
+      return `<tr><td>${escapeHTML(num(r.seed,0))}</td><td style="color:${color}">${label}</td>`
+        +`<td>${escapeHTML(num(r.steps,0))}</td><td>${escapeHTML(num(r.lateral_error_m,2))}</td>`
+        +`<td>${Number.isFinite(Number(r.fov_loss_fraction))
+          ?(100*Number(r.fov_loss_fraction)).toFixed(0)+'%':'--'}</td></tr>`;}).join('')
+    +'</table>':'<div class="tnote">아직 완료된 비행이 없습니다.</div>';
+  const mode=live?String(live.mode||''):'';
+  const cls=mode.startsWith('lost')?'lost':mode==='reacquired'?'reacquired':'';
+  const fov=live?(live.geometric_in_fov===false?'프레임 이탈'
+    :live.geometric_in_fov===true?'프레임 내':'--'):'--';
+  box.innerHTML=`<div class="tprog"><b>${d.complete?'시연 확보 완료':'시연 비행 중'}`
+    +` · 채택 ${escapeHTML(d.accepted??0)} / ${escapeHTML(d.required??'--')}</b>`
+    +`<div class="tbar"><i style="width:${(100*ratio).toFixed(0)}%"></i></div>`
+    +`<div class="tnote">비행 ${escapeHTML(d.flights??0)} / ${escapeHTML(d.max_flights??'--')}`
+    +` · 인프라 스킵 ${escapeHTML(d.skips??0)} · 교사 ${escapeHTML(d.teacher||'--')}<br>`
+    +`시나리오 ${escapeHTML(String(d.scenario||'--').replaceAll('_',' '))}`
+    +` · 지문 ${escapeHTML(d.fingerprint||'--')} · 물리 Pair ${Number(d.pair_index??0)+1}</div>${table}</div>`
+    +`<div class="tprog"><b>현재 비행 · seed ${escapeHTML(live?live.seed??'--':'--')}`
+    +` · step ${escapeHTML(live?live.step??'--':'--')}</b>`
+    +`<div class="tmode ${cls}">${escapeHTML(TEACHER_MODE[mode]||mode||'대기')}</div>`
+    +`<div class="tlive"><div><b>${num(live&&live.altitude_m,2)} m</b><small>고도 (패드 기준)</small></div>`
+    +`<div><b>${num(live&&live.lateral_error_m,2)} m</b><small>측방 오차</small></div>`
+    +`<div><b>${num(live&&live.target_vz_m_s,2)} m/s</b><small>목표 vz (+ 상승)</small></div>`
+    +`<div><b>${escapeHTML(fov)}</b><small>기하 FOV (패드 중심)</small></div>`
+    +`<div><b>${escapeHTML(live?live.losses??0:0)}</b><small>이 비행의 시야 이탈 횟수</small></div>`
+    +`<div><b>${num(live&&live.max_altitude_after_loss_m,2)} m</b><small>이탈 후 최고 고도</small></div></div>`
+    +`<div class="tnote">교사 행동은 training-only label입니다. 학생에게는 image embedding과 `
+    +`proprioception만 전달됩니다.</div></div>`;
+}
+function drawTrajectories(state){
+  const grid=document.getElementById('traj-grid');if(!grid)return;
+  const s=state.scalars||{},pairs=s.parallel_pair_status||[];
+  const count=Math.max(1,Number(s.parallel_pair_count||pairs.length||1));
+  if(grid.childElementCount!==count){
+    grid.innerHTML=Array.from({length:count},(_,i)=>`<div class="traj-plot">`
+      +`<h3 id="traj-title-${i}">Pair ${i+1}</h3><canvas id="cv-traj-${i}"></canvas>`
+      +`<div class="legend" id="lg-traj-${i}"></div></div>`).join('');
+  }
+  for(let i=0;i<count;i++){
+    const pair=pairs.find(p=>Number(p.index)===i)||{};
+    const rows=state.series['benchmark_step_pair_'+i]||[];
+    const uav=[],pad=[];
+    for(const r of rows){
+      if(Number.isFinite(Number(r.uav_x))&&Number.isFinite(Number(r.uav_y)))
+        uav.push([Number(r.uav_x),Number(r.uav_y),Number(r.uav_z)]);
+      if(Number.isFinite(Number(r.pad_x))&&Number.isFinite(Number(r.pad_y)))
+        pad.push([Number(r.pad_x),Number(r.pad_y),Number(r.pad_z)]);}
+    const title=document.getElementById(`traj-title-${i}`);
+    if(title)title.textContent=`물리 Pair ${i+1} · ${methodLabel(pair.active_method||pair.method||'')}`
+      +` · ${String(pair.phase||'waiting')} · ${String(pair.episode_kind||'episode')} ${pair.episode??0}`
+      +` · step ${pair.step??0} · ${String(pair.status||'')}`;
+    drawTrajectory(document.getElementById(`cv-traj-${i}`),
+      document.getElementById(`lg-traj-${i}`),uav,pad);
+  }
+}
+function drawTrajectory(cv,lg,uav,pad){
+  if(!cv)return;
+  const dpr=window.devicePixelRatio||1,w=cv.clientWidth,h=cv.clientHeight;
+  cv.width=w*dpr;cv.height=h*dpr;
+  const g=cv.getContext('2d');g.setTransform(dpr,0,0,dpr,0,0);g.clearRect(0,0,w,h);
+  const css=getComputedStyle(document.body);
+  const muted=css.getPropertyValue('--muted').trim(),gridColor=css.getPropertyValue('--grid').trim();
+  if(!uav.length&&!pad.length){g.fillStyle=muted;g.font='12px sans-serif';
+    g.fillText('no trajectory yet',10,h/2);if(lg)lg.innerHTML='';return;}
+  const pts=uav.concat(pad);
+  let x0=Infinity,x1=-Infinity,y0=Infinity,y1=-Infinity;
+  for(const p of pts){x0=Math.min(x0,p[0]);x1=Math.max(x1,p[0]);y0=Math.min(y0,p[1]);y1=Math.max(y1,p[1]);}
+  // Equal aspect: a square window around both tracks, never narrower than 2 m.
+  const span=Math.max(x1-x0,y1-y0,2.0)*1.15,cx=(x0+x1)/2,cy=(y0+y1)/2;
+  const padL=34,padB=16,padT=6,padR=6;
+  const size=Math.max(10,Math.min(w-padL-padR,h-padT-padB));
+  const ox=padL+(w-padL-padR-size)/2,oy=padT+(h-padT-padB-size)/2;
+  const px=v=>ox+(v-(cx-span/2))/span*size,py=v=>oy+size-(v-(cy-span/2))/span*size;
+  const stepM=span>40?10:span>20?5:span>8?2:1;
+  g.strokeStyle=gridColor;g.lineWidth=.6;g.setLineDash([1.5,2.5]);g.fillStyle=muted;g.font='9px Arial';
+  for(let v=Math.ceil((cx-span/2)/stepM)*stepM;v<=cx+span/2;v+=stepM){const X=px(v);
+    g.beginPath();g.moveTo(X,oy);g.lineTo(X,oy+size);g.stroke();g.fillText(v.toFixed(0),X-6,oy+size+11);}
+  for(let v=Math.ceil((cy-span/2)/stepM)*stepM;v<=cy+span/2;v+=stepM){const Y=py(v);
+    g.beginPath();g.moveTo(ox,Y);g.lineTo(ox+size,Y);g.stroke();g.fillText(v.toFixed(0),2,Y+3);}
+  g.setLineDash([]);g.strokeStyle='#262626';g.lineWidth=.8;g.strokeRect(ox,oy,size,size);
+  const poly=(arr,color,dash)=>{if(!arr.length)return;
+    g.strokeStyle=color;g.lineWidth=1.8;g.setLineDash(dash);g.beginPath();
+    arr.forEach((p,k)=>{const X=px(p[0]),Y=py(p[1]);k?g.lineTo(X,Y):g.moveTo(X,Y);});g.stroke();
+    g.setLineDash([]);g.lineWidth=1.2;
+    g.fillStyle='#fff';g.beginPath();g.arc(px(arr[0][0]),py(arr[0][1]),3.5,0,2*Math.PI);g.fill();g.stroke();
+    const last=arr[arr.length-1];g.fillStyle=color;g.beginPath();
+    g.arc(px(last[0]),py(last[1]),4.5,0,2*Math.PI);g.fill();};
+  poly(pad,PALETTE[1],[4,3]);
+  poly(uav,PALETTE[0],[]);
+  if(uav.length){const last=uav[uav.length-1],pz=pad.length?pad[pad.length-1][2]:null;
+    g.fillStyle='#262626';g.font='10px Arial';
+    g.fillText(`UAV z ${last[2].toFixed(2)} m${pz!==null?` · 패드 위 ${(last[2]-pz).toFixed(2)} m`:''}`
+      +` · ${uav.length} step`,ox+4,oy+12);}
+  if(lg)lg.innerHTML=`<span><i style="background:${PALETTE[0]}"></i>UAV</span>`
+    +`<span><i style="background:${PALETTE[1]}"></i>착륙 패드</span>`
+    +`<span>○ 시작 &nbsp;● 현재 &nbsp;· 격자 ${stepM} m · 축 world ENU x/y (m)</span>`;
+}
 function benchmarkPanel(state){
   const s=state.scalars||{},contract=s.actor_contract||{};
   const labels={camera:'Actor image',proprioception:'Actor proprioception',
@@ -943,8 +1088,9 @@ function drawEvaluationBars(card,state){
   const g=cv.getContext('2d');g.setTransform(dpr,0,0,dpr,0,0);g.clearRect(0,0,w,h);
   const methods=(state.scalars.benchmark_methods||[]).filter(method=>
     (state.series[seriesFor(method)]||[]).length);
-  const preferred=['training_random_walk','straight_8mps','linear_acceleration_wave',
-    'circle','zigzag','u_turn','vertical_heave_boat'];
+  const preferred=['training_random_walk','training_random_walk_escape_burst',
+    'straight_8mps','linear_acceleration_wave','circle','zigzag','u_turn',
+    'vertical_heave_boat'];
   const present=new Set();
   for(const method of methods)for(const row of state.series[seriesFor(method)]||[])
     present.add(row.scenario);
@@ -1327,11 +1473,11 @@ async function tick(){
       fovStatusPanel(state);
       algoPipelinePanel(state);
       mdpPanel(state);
-      if(profile==='benchmark')pairPanel(state);
+      if(profile==='benchmark'){pairPanel(state);teacherPanel(state);drawTrajectories(state);}
       for(const c of CARDS){
         if(c.id==='tiles'||c.kind==='graph'||c.kind==='contract'||c.kind==='pairs'||
            c.kind==='phase'||c.kind==='heading'||c.kind==='runpipe'||
-           c.kind==='fovstatus'||
+           c.kind==='fovstatus'||c.kind==='teacher'||c.kind==='trajectories'||
            c.kind==='algopipe'||c.kind==='mdp'||
            c.kind==='pairplots'||
            (c.view&&c.view!=='common'&&c.view!==profile))continue;

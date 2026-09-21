@@ -222,6 +222,82 @@ episode 안에 끝날 수 없었다(seed 90004: step 54에 정렬, step 300에 �
 착륙(seed 90001·90003·90005·90007, 82~195 step, 측방 3.6~10.9 cm; 0.56 팩 seed 90001
 포함). 역대 이 교사는 seed 90000/90002/90004/90025에서만 착륙했었다.
 
+### 5.3 시연 시나리오: 패드 급가속 이탈과 회복 (2026-09-21)
+
+training_random_walk 위에서만 비행한 시연은 패드를 한 번도 놓치지 않는다. 5 m 진입에서 PD
+교사는 step 15에 정렬, step 30에 1.5 m, step 80에 착지한다(seed 90000 트레이스). 학생은
+접근만 복제하고, 실험이 측정하려는 시야 상실·회복은 시연에 없었다.
+
+`behavior_cloning.scenario: training_random_walk_escape_burst`는 같은 seed에서 같은
+random walk를 그대로 두고(대시 전까지 위치가 동일) 한 번의 직선 대시를 덧씌운다
+(`isaac_sim/pad_motion.py`). 대시는 Isaac이 **UAV가 덱을 실제로 추종하는 순간** 발동한다
+(`pad.escape_burst_trigger: following`): 정책 인수 후 2 s 이상 지났고 UAV가 패드 중심에서
+측방 0.9 m 이내, 패드 위 0.5–2.5 m에 있을 때(`escape_burst_due`), 인수 25 s 후에는 무조건.
+방향은 UAV 카메라의 정면 반대(뒤쪽)다. 카메라는 앞·아래를 보므로 뒤쪽 프레임 경계는
+연직점에서 끝나고, 뒤로 달리는 패드는 상대 이동 1 s 남짓에 프레임을 벗어난다. 덱은 1 s 동안
+캐리어의 시나리오 최고 속도(이 프로파일에서 8 m/s × 0.125 = 1.0 m/s, `straight_8mps`와 같은
+값)까지 가속해 5 m를 달린 뒤 1 s에 걸쳐 원래 walk 속도로 돌아온다. 트랙은 현재 샘플 다음부터
+다시 쓰이므로 발동 순간 위치·속도에 점프가 없고, 덱 yaw는 여느 기동처럼 yaw-rate 한계 안에서
+새 속도 방향으로 돈다. 대시는 curriculum 스케일을 무시한다: 진입 curriculum과 함께 줄어드는
+대시는 시야를 벗어나지 못한다.
+
+첫 버전(2026-09-21 오전)은 seed로 추첨한 4–7 s에 대시를 시작했는데, 그 시점의 PD 교사는
+접근 하강 0.2 m/s로 아직 3.6–4.4 m 고도에 있어 2.4 m 떨어진 패드도 프레임 안에 남았다
+(3/3 비행 착륙, 시야 손실 0). 시간이 아니라 상태로 발동해야 하는 이유다. `timed`는 그
+폐형식 변형으로 테스트용으로 남겼다.
+
+대시 후 기하 FOV 손실 규칙(`visual_loss_climb_source: geometric`)이 0.22 m/s 상승을
+명령하는 동안 수평 추종은 계속되고, 대시가 끝나 덱이 0.6 m/s 아래로 돌아오면 교사가
+따라잡아 패드가 다시 프레임(연직점 부근)에 들어오고 정렬 후 하강 사다리가 재시작된다. 회복
+비행은 접근보다 약 25 s 길어 `horizon_steps`를 450 → 600으로 늘렸다(PPO 에피소드는 300 step
+그대로).
+
+시연 단계는 대시보드에서 실시간으로 볼 수 있다(2026-09-21). "교사 시연 비행" 패널은 채택
+/필요 착륙 수, 비행/최대 시도, 인프라 스킵, 최근 비행 표(seed·결과·step·착지 측방오차·FOV
+손실 비율)와 현재 비행의 교사 진단(고도, 측방 오차, 목표 vz, 기하 FOV, 시야 이탈 횟수,
+이탈 후 최고 고도, 모드: 추종/이탈·상승/재포착/하강)을 step마다 갱신한다(`BenchmarkMonitor.
+teacher_step`, `demonstration_progress`). "실시간 궤적" 패널은 pair마다 현재 episode의
+UAV(실선)와 착륙 패드(점선) world ENU top-down 궤적을 그린다. 좌표는 매 step 점에
+`uav_x/y/z`, `pad_x/y/z`로 함께 발행되므로 시연·FOV 수집·PPO·평가 어느 단계에서나 같은
+패널이 동작한다.
+
+시나리오 이름은 게이트웨이(`ros2_ws/.../protocol.py`)와 Isaac(`pad_motion.py`) 양쪽 어휘에
+있어야 하며 `scripts/sync_gateway.sh --check`가 두 복사본의 일치를 강제한다. `scenario`는
+시연 지문(`_DEMONSTRATION_FLIGHT_KEYS`)에 포함되므로 다른 덱에서 비행한 저장 시연은
+재사용되지 않는다. 반대로 순수 전송 예산(`gateway_timeout_s`, `setup_timeout_s`,
+`reset_recoveries`, `entry_timeout_s`)은 같은 날 지문에서 제외했다: 완료된 비행의 의미를
+바꾸지 않는 값이 바뀔 때마다 교사 비행 4회를 반복하고 있었다.
+
+### 5.4 시연 수집을 스폰된 모든 pair에서 (2026-09-21)
+
+시연 단계는 PPO worker가 하나도 제출되기 전에 실행된다(`run_three_pipeline.py`: 교사 시연
+→ behavior cloning → 학습 스레드 제출 → reward-design 수집). 즉 이 시점에는 스폰된 네
+UAV/UGV pair가 전부 놀고 있는데도 수집은 pair 0 한 대에서만 순차로 돌았고, 나머지 세 대는
+`max_attempts`(현재 40회) 전체 구간 동안 비어 있었다. 교사 비행도 Isaac/PX4 비행이므로
+같은 공유 stage 위에서 병렬로 날 수 있다: 측정된 총 시뮬레이션 처리량은 pair 1·2·3·4대에서
+1.00x, 2.60x, 3.28x, 4.96x다(`automatic_parallel_pairs`).
+
+`_prepare_fast_demonstrations`는 이제 `parallel_contexts`(pair별 cfg·카메라·monitor)를 받아
+pair 수만큼 seed를 한 배치로 동시에 날린다. 저장 규약은 순차 실행과 동일하게 유지된다.
+
+* 배치가 **합류한 뒤** 메인 스레드에서 seed 순서대로만 기록한다. episode id·첨부 순서·
+  attempts CSV는 어느 pair가 먼저 끝났는지와 무관하므로, 같은 seed 집합은 pair 수와 상관없이
+  같은 시연 집합을 만든다. 행동 RNG도 seed에서 파생된다(`collect_episode`).
+* 시연 지문(`demonstration_fingerprint`)에 pair 수는 들어가지 않는다. 4-pair로 모은 집합을
+  1-pair 실행이 그대로 재사용하고 그 반대도 성립한다.
+* 배치 폭은 남은 시도 예산(`max_attempts - flight_attempts`)으로 잘라, 병렬이 예산을
+  초과해 비행하지 않는다.
+* pair별로 교사 인스턴스를 따로 묶는다(서보의 적분·직전 centroid, PD의 트레이스 파일은 모두
+  비행 단위 상태다). 병렬 실행에서 PD 트레이스는
+  `training/teacher_trace_<지문>_pair<N>.jsonl`로 분리된다.
+* 인프라 실패(`BridgeError`)는 worker에서 잡아 두고 **배치 합류 후** 메인 스레드에서만
+  복구한다. 공유 stack을 형제 worker가 비행하는 도중에 재건하면 그 episode까지 같이 죽기
+  때문이다(2026-09-21의 26회 재건 사건과 같은 종류의 실패). 같은 stack에서 함께 실패한
+  pair들은 `recover_infrastructure`의 generation 중복 제거로 재시작 1회를 공유한다.
+
+pair를 덜 쓰고 싶으면 `behavior_cloning.parallel_pairs`로 상한을 줄 수 있고, 기본값은
+넘겨받은 pair 전부다.
+
 ## 6. 평가 프로토콜
 
 * **시나리오**: `training_random_walk`, `straight_8mps`,

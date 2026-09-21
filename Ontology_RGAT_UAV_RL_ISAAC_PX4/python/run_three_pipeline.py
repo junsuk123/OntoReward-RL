@@ -113,7 +113,8 @@ class _LockedMonitor:
             with self._lock:
                 if name in {
                         "reset_episode", "step", "training_update",
-                        "evaluation_update"}:
+                        "evaluation_update", "teacher_step",
+                        "demonstration_progress"}:
                     kwargs.setdefault("pair_index", self._pair_index)
                 return value(*args, **kwargs)
         return synchronized
@@ -511,10 +512,12 @@ class _PrivilegedVelocityTeacher:
     ``seed`` is set by the caller before each flight.
     """
 
-    def __init__(self, environment, *, settings, trace_path=None):
+    def __init__(self, environment, *, settings, trace_path=None, monitor=None):
         self.environment = environment
         self.settings = dict(settings)
         self.trace_path = None if trace_path is None else Path(trace_path)
+        self.monitor = monitor
+        self.method = str(self.settings.get("source_pipeline", "no_se_fixed"))
         self.seed = None
         self._trace = None
         if self.trace_path is not None:
@@ -561,6 +564,8 @@ class _PrivilegedVelocityTeacher:
             approach_lateral_m=float(settings.get("pd_approach_lateral_m", 1.5)),
             noise_std=float(settings.get("noise_std", .01)),
             rng=rng, info=info)
+        _publish_teacher_step(self.monitor, method=self.method, step=step,
+                              seed=self.seed, info=info)
         if self._trace is not None:
             state = current.state if isinstance(current.state, dict) else {}
             record = {
@@ -574,10 +579,26 @@ class _PrivilegedVelocityTeacher:
         return action
 
 
-def _privileged_velocity_teacher(environment, *, settings, trace_path=None):
+def _publish_teacher_step(monitor, *, method: str, step, seed, info: dict) -> None:
+    """Hand the teacher's per-step diagnostics to the live dashboard.
+
+    Telemetry must never end a demonstration flight, so a monitor without the
+    method, or one that fails, is reported and otherwise ignored.
+    """
+    publish = getattr(monitor, "teacher_step", None)
+    if not callable(publish):
+        return
+    try:
+        publish(method=str(method), step=int(step), seed=seed, **info)
+    except Exception as exc:                  # pragma: no cover - defensive
+        print(f"WARNING: teacher telemetry was not published: {exc}")
+
+
+def _privileged_velocity_teacher(environment, *, settings, trace_path=None,
+                                 monitor=None):
     """Bind the training-only teacher to the environment's current live step."""
     return _PrivilegedVelocityTeacher(environment, settings=settings,
-                                      trace_path=trace_path)
+                                      trace_path=trace_path, monitor=monitor)
 
 
 VISUAL_SERVO_TEACHER = "image_based_visual_servo_v1"
@@ -810,13 +831,19 @@ def _visual_servo_teacher_action(
     return np.clip(action, -.90, .90), carried, committed
 
 
-def _visual_servo_teacher(environment, *, settings):
+def _visual_servo_teacher(environment, *, settings, monitor=None):
     """Bind the estimator-free image servo to this environment's camera.
 
     The integral and the previous centroid are per-episode state, so the
     binding resets them whenever the environment hands back a step index of
     zero rather than carrying one episode's chase into the next.
+
+    ``monitor`` receives the same per-step diagnostics the privileged teacher
+    publishes. They are read from the live step's simulator truth for the
+    operator's display only; nothing here enters the servo's action.
     """
+    method = str(settings.get("source_pipeline", "no_se_fixed"))
+    flight = {"seed": None}
     camera = dict(getattr(environment.cfg.external, "landing_camera", None) or {})
     setpoint = nadir_image_setpoint(
         float(camera.get("horizontal_fov_deg", 90.0)),
@@ -860,7 +887,25 @@ def _visual_servo_teacher(environment, *, settings):
         state["integral"] = integral
         state["previous"] = semantic
         state["committed"] = committed
+        current = environment.last_step
+        if monitor is not None and current is not None:
+            relative = np.asarray(current.critic.true_relative_state,
+                                  dtype=float).reshape(-1)
+            limit = np.asarray(controller.max_velocity * controller.action_scale,
+                               dtype=float).reshape(-1)
+            _publish_teacher_step(monitor, method=method, step=step,
+                                  seed=flight.get("seed"), info={
+                "altitude_m": max(0.0, -float(relative[2])),
+                "lateral_error_m": float(np.linalg.norm(relative[:2])),
+                "relative_speed_m_s": float(np.linalg.norm(relative[3:5])),
+                "target_vz_m_s": float(action[2]) * float(limit[2]),
+                "visual_lost": bool(
+                    float(semantic.visible_keypoint_fraction) < 0.5
+                    or float(semantic.visual_loss_risk) > 0.0),
+                "geometric_in_fov": bool(current.geometric_pad_center_in_fov),
+                "battery_risk": float(semantic.battery_risk)})
         return action
+    transform.flight = flight
     return transform
 
 
@@ -1218,7 +1263,17 @@ _DEMONSTRATION_FLIGHT_KEYS = (
     "noise_std",
     "integral_gain", "damping_gain", "integral_limit", "reference_scale",
     "alignment_tolerance", "cone_widening", "rate_tolerance", "flare_scale",
-    "approach_scale", "source_pipeline")
+    "approach_scale", "source_pipeline", "scenario")
+
+
+# Wall-clock and retry budgets for the bridge and the shared stack. They
+# decide when a flight is abandoned as infrastructure failure, never how a
+# completed flight was flown, so a stored demonstration means the same thing
+# under any of them. Keying on them re-flew the whole teacher set three times
+# on 2026-09-21 while the budgets were being tuned.
+_DEMONSTRATION_BUDGET_KEYS = frozenset({
+    "gateway_timeout_s", "setup_timeout_s", "reset_recoveries",
+    "entry_timeout_s"})
 
 
 def demonstration_fingerprint(config, settings, *, cfg, system=None) -> str:
@@ -1229,11 +1284,16 @@ def demonstration_fingerprint(config, settings, *, cfg, system=None) -> str:
     flight was made against. Not the experiment's configuration hash: the
     2026-09-20 encoder redesign changed only perception settings, and keying
     the demonstrations on the whole hash threw away 26 teacher attempts that
-    could have been re-embedded from their retained frames.
+    could have been re-embedded from their retained frames. Transport budgets
+    (:data:`_DEMONSTRATION_BUDGET_KEYS`) are left out for the same reason.
     """
     from ontology_rgat.datastore import data_fingerprint
 
     system = dict(system or {})
+    benchmark = system.get("benchmark")
+    if isinstance(benchmark, dict):
+        benchmark = {key: value for key, value in benchmark.items()
+                     if key not in _DEMONSTRATION_BUDGET_KEYS}
     parts = {
         "flight_settings": {key: settings[key] for key in _DEMONSTRATION_FLIGHT_KEYS
                             if key in settings},
@@ -1241,8 +1301,9 @@ def demonstration_fingerprint(config, settings, *, cfg, system=None) -> str:
             "behavior_cloning_start", 90000)),
         "control": config.get("control"),
         "horizon_steps": int(cfg.sim.max_steps),
-        "system": {name: system.get(name) for name in (
-            "pad", "battery", "benchmark", "domain_randomization")},
+        "system": {"pad": system.get("pad"), "battery": system.get("battery"),
+                   "benchmark": benchmark,
+                   "domain_randomization": system.get("domain_randomization")},
         "camera": dict((dict(system.get("vision") or {})).get("camera") or {}),
     }
     return data_fingerprint(parts)
@@ -1250,11 +1311,37 @@ def demonstration_fingerprint(config, settings, *, cfg, system=None) -> str:
 
 def _prepare_fast_demonstrations(*, cfg, camera, config, config_hash,
                                  keypoint_pretraining, results_dir, device,
-                                 model_seed, monitor, system=None):
-    """Collect successful teacher flights once and store compact actor inputs."""
+                                 model_seed, monitor, system=None,
+                                 parallel_contexts=None):
+    """Collect successful teacher flights once and store compact actor inputs.
+
+    ``parallel_contexts`` gives the stage every idle UAV/UGV pair instead of
+    the one it started on. The warm start runs before any PPO worker exists,
+    so at that point every spawned pair is free, and a teacher flight is a
+    flight like any other: the measured stage throughput is the same 4.96x of
+    simulated seconds per wall second four pairs give the training loop.
+    Nothing about the stored set depends on how many pairs flew it -- the
+    seeds, their order and the per-episode RNG are unchanged, and the
+    demonstration fingerprint deliberately does not mention the pair count, so
+    a set collected on four pairs is reused by a one-pair run and back.
+    """
     settings = behavior_cloning_settings(config)
     if not bool(settings.get("enabled", False)):
         return None
+    collection_contexts = list(parallel_contexts or ({
+        "cfg": cfg, "camera": camera, "monitor": monitor,
+    },))
+    if not collection_contexts:
+        raise ValueError("teacher demonstrations need at least one live pair")
+    for context in collection_contexts:
+        if not all(key in context for key in ("cfg", "camera", "monitor")):
+            raise ValueError(
+                "each demonstration context needs cfg/camera/monitor")
+    # A cap for the operator who wants the spare pairs left alone; the default
+    # is every pair handed in.
+    pair_limit = int(settings.get("parallel_pairs", 0) or 0)
+    if pair_limit > 0:
+        collection_contexts = collection_contexts[:pair_limit]
     required = max(1, int(settings.get("successful_episodes", 6)))
     maximum_flights = max(required, int(settings.get("max_attempts", 12)))
     maximum_infrastructure_skips = max(0, int(settings.get(
@@ -1266,6 +1353,11 @@ def _prepare_fast_demonstrations(*, cfg, camera, config, config_hash,
     teacher_id = str(settings.get("teacher", PRIVILEGED_VELOCITY_TEACHER))
     if teacher_id not in (PRIVILEGED_VELOCITY_TEACHER, VISUAL_SERVO_TEACHER):
         raise ValueError(f"unknown behavior teacher: {teacher_id}")
+    # Deck motion the teacher demonstrates against. The default is the
+    # training walk; the experiment flies the escape burst so every stored
+    # flight contains a pad leaving the frame, a recovery climb and the
+    # re-acquired follow (see isaac_sim/pad_motion.py).
+    demonstration_scenario = str(settings.get("scenario", "training_random_walk"))
     fingerprint = demonstration_fingerprint(config, settings, cfg=cfg, system=system)
     artifact_path = (Path(results_dir) / "models/shared"
                      / f"teacher_demonstrations_{fingerprint[:12]}.pt")
@@ -1339,6 +1431,23 @@ def _prepare_fast_demonstrations(*, cfg, camera, config, config_hash,
             flight_attempts = 0
     successes = (0 if dataset is None else
                  int(torch.unique(dataset["episode_id"]).numel()))
+
+    def publish_progress() -> None:
+        """Dashboard view of the warm start; never allowed to end the stage."""
+        publish = getattr(monitor, "demonstration_progress", None)
+        if not callable(publish):
+            return
+        try:
+            publish(method=source_pipeline, required=int(required),
+                    accepted=int(successes), flights=int(flight_attempts),
+                    max_flights=int(maximum_flights),
+                    skips=int(len(attempted_seeds) - flight_attempts),
+                    teacher=teacher_id, scenario=demonstration_scenario,
+                    fingerprint=fingerprint[:12], attempts=attempts)
+        except Exception as exc:              # pragma: no cover - defensive
+            print(f"WARNING: demonstration progress was not published: {exc}")
+
+    publish_progress()
     if successes < required and flight_attempts < maximum_flights:
         if teacher_model is None:
             torch.manual_seed(int(model_seed))
@@ -1346,125 +1455,217 @@ def _prepare_fast_demonstrations(*, cfg, camera, config, config_hash,
                 config, device, keypoint_pretraining, pipeline=source_pipeline)
         seed0 = int((config.get("seeds") or {}).get(
             "behavior_cloning_start", 90000))
-        monitor.stage(
-            "training-only teacher demonstrations",
-            f"successful real Isaac/PX4 flights {successes}/{required}")
-        original_entry_timeout = float(cfg.external.entry_timeout)
-        original_entry_sim_budget = float(cfg.external.entry_sim_budget)
-        original_reset_recoveries = int(cfg.external.reset_recoveries)
-        original_episode_recoveries = int(cfg.external.get(
-            "episode_recoveries", original_reset_recoveries))
-        cfg.external.entry_timeout = min(original_entry_timeout, 120.0)
-        # Fail a demonstration flight fast rather than spending the whole entry
-        # budget on it: this pass only needs successful teacher episodes and
-        # skips the rest. Shorten the budget the gate is judged on, not just
-        # its hang guard, or the shortening does nothing.
-        cfg.external.entry_sim_budget = min(original_entry_sim_budget, 25.0)
-        cfg.external.reset_recoveries = 0
-        cfg.external.episode_recoveries = 0
+        # Every pair that flies the warm start says so on its own panel; the
+        # accepted/required progress stays on the stage monitor.
+        stage_detail = (
+            f"successful real Isaac/PX4 flights {successes}/{required} · "
+            f"{len(collection_contexts)} pair"
+            f"{'s' if len(collection_contexts) > 1 else ''}")
+        for stage_monitor in dict.fromkeys(
+                [monitor, *(context["monitor"] for context in collection_contexts)]):
+            stage_monitor.stage(
+                "training-only teacher demonstrations", stage_detail)
+        # Every pair the stage flies gets the same shortened entry budget. The
+        # contexts hold distinct Config objects (``_pair_live_config`` derives
+        # by deep copy), so each has to be shortened and restored on its own.
+        restore_budgets = []
+        for context in collection_contexts:
+            live = context["cfg"]
+            restore_budgets.append((live, {
+                "entry_timeout": float(live.external.entry_timeout),
+                "entry_sim_budget": float(live.external.entry_sim_budget),
+                "reset_recoveries": int(live.external.reset_recoveries),
+                "episode_recoveries": int(live.external.get(
+                    "episode_recoveries", live.external.reset_recoveries)),
+            }))
+            live.external.entry_timeout = min(
+                float(live.external.entry_timeout), 120.0)
+            # Fail a demonstration flight fast rather than spending the whole entry
+            # budget on it: this pass only needs successful teacher episodes and
+            # skips the rest. Shorten the budget the gate is judged on, not just
+            # its hang guard, or the shortening does nothing.
+            live.external.entry_sim_budget = min(
+                float(live.external.entry_sim_budget), 25.0)
+            live.external.reset_recoveries = 0
+            live.external.episode_recoveries = 0
         # Demonstration flights may run longer than a PPO episode: the clone
         # learns from transitions, and a landing at 38 s is a landing.
         teacher_horizon = int(settings.get("horizon_steps", cfg.sim.max_steps))
-        with LiveShinEnvironment(
-                cfg, camera, horizon_steps=teacher_horizon) as environment:
-            teacher = (
-                _visual_servo_teacher(environment, settings=settings)
-                if teacher_id == VISUAL_SERVO_TEACHER
-                else _privileged_velocity_teacher(
+        with ExitStack() as environment_stack:
+            environments = [environment_stack.enter_context(
+                LiveShinEnvironment(context["cfg"], context["camera"],
+                                    horizon_steps=teacher_horizon))
+                for context in collection_contexts]
+
+            def build_teacher(index, environment):
+                """One teacher per pair: the servo's integral, the previous
+                centroid and the PD's trace file are all per-flight state."""
+                local_monitor = collection_contexts[index]["monitor"]
+                if teacher_id == VISUAL_SERVO_TEACHER:
+                    return _visual_servo_teacher(
+                        environment, settings=settings, monitor=local_monitor)
+                name = (f"teacher_trace_{fingerprint[:12]}.jsonl"
+                        if len(collection_contexts) == 1 else
+                        f"teacher_trace_{fingerprint[:12]}_pair{index}.jsonl")
+                return _privileged_velocity_teacher(
                     environment, settings=settings,
-                    trace_path=(Path(results_dir) / "training"
-                                / f"teacher_trace_{fingerprint[:12]}.jsonl")))
-            for attempt in range(maximum_seed_candidates):
-                if flight_attempts >= maximum_flights:
-                    break
-                seed = seed0 + attempt
-                if seed in attempted_seeds:
-                    continue
+                    trace_path=Path(results_dir) / "training" / name,
+                    monitor=local_monitor)
+
+            teachers = [build_teacher(index, environment)
+                        for index, environment in enumerate(environments)]
+            # Actor inference is read-only, but separate modules avoid any
+            # accidental recurrent state sharing between worker threads. The
+            # encoding below runs on the main thread against ``teacher_model``.
+            worker_models = [teacher_model] + [deepcopy(teacher_model)
+                                               for _ in environments[1:]]
+            for worker_model in worker_models:
+                for module in worker_model.modules():
+                    flatten = getattr(module, "flatten_parameters", None)
+                    if callable(flatten):
+                        flatten()
+
+            def fly(worker_index, seed):
+                """One demonstration flight on one pair, in its own thread."""
+                teacher = teachers[worker_index]
                 if hasattr(teacher, "seed"):
                     teacher.seed = int(seed)
+                if isinstance(getattr(teacher, "flight", None), dict):
+                    teacher.flight["seed"] = int(seed)
                 try:
                     rows, metric = collect_episode_resilient(
-                        environment, teacher_model, source_pipeline, seed,
+                        environments[worker_index], worker_models[worker_index],
+                        source_pipeline, seed,
                         curriculum=float(settings.get("curriculum", 1.0)),
-                        deterministic=True, scenario="training_random_walk",
-                        monitor=monitor,
+                        deterministic=True, scenario=demonstration_scenario,
+                        monitor=collection_contexts[worker_index]["monitor"],
                         phase="training-only teacher demonstration",
                         action_transform=teacher)
                 except BridgeError as exc:
                     # One seeded entry can fail PX4 preflight deterministically.
                     # It is infrastructure downtime, not an RL failure: record
                     # no transition/label, advance to the next seed, and give
-                    # that seed a freshly owned stack.
+                    # that seed a freshly owned stack. The recovery itself is
+                    # deferred to the main thread -- rebuilding the shared
+                    # simulator under a sibling that is still flying would take
+                    # its episode with it.
+                    return worker_index, int(seed), None, None, exc
+                return worker_index, int(seed), rows, metric, None
+
+            already_flown = set(attempted_seeds)
+            candidates = [seed0 + attempt
+                          for attempt in range(maximum_seed_candidates)
+                          if seed0 + attempt not in already_flown]
+            cursor = 0
+            while (cursor < len(candidates) and successes < required
+                   and flight_attempts < maximum_flights):
+                # Never launch more flights than the attempt budget still pays
+                # for, and never more than there are pairs to fly them on.
+                width = min(len(environments), len(candidates) - cursor,
+                            maximum_flights - flight_attempts)
+                batch = candidates[cursor:cursor + width]
+                cursor += width
+                if len(batch) == 1:
+                    completed = [fly(0, batch[0])]
+                else:
+                    with ThreadPoolExecutor(
+                            max_workers=len(batch),
+                            thread_name_prefix="teacher-pair") as executor:
+                        futures = [executor.submit(fly, index, seed)
+                                   for index, seed in enumerate(batch)]
+                        completed = [future.result() for future in futures]
+                # Persist only on the main thread and in seed order, so the
+                # stored set and its episode ids are the ones the same seeds
+                # produce sequentially however many pairs flew them.
+                degraded = []
+                for worker_index, seed, rows, metric, failure in sorted(
+                        completed, key=lambda result: result[1]):
+                    if failure is not None:
+                        attempted_seeds.append(seed)
+                        attempts.append({
+                            "method": "privileged_teacher",
+                            "pipeline": "shared_warm_start",
+                            "episode": len(attempted_seeds),
+                            "seed": seed,
+                            "scenario": demonstration_scenario,
+                            "status": "infrastructure_failure",
+                            "accepted_for_cloning": 0.0,
+                            "paper_success": 0.0,
+                            "strict_success": 0.0,
+                            "steps": 0,
+                            "teacher": teacher_id,
+                            "config_hash": config_hash,
+                            "physical_pair_index": int(worker_index),
+                            "infrastructure_error": str(failure),
+                        })
+                        _write_csv(attempts_path, attempts)
+                        print(
+                            f"training teacher seed {seed} skipped after "
+                            f"PX4/Isaac reset failure on pair {worker_index}: "
+                            f"{failure}")
+                        publish_progress()
+                        degraded.append(worker_index)
+                        continue
                     attempted_seeds.append(seed)
-                    attempts.append({
-                        "method": "privileged_teacher",
+                    flight_attempts += 1
+                    environment_steps += int(metric["steps"])
+                    metric.update({
+                        "method": ("visual_servo_teacher"
+                                   if teacher_id == VISUAL_SERVO_TEACHER
+                                   else "privileged_teacher"),
                         "pipeline": "shared_warm_start",
                         "episode": len(attempted_seeds),
-                        "seed": seed,
-                        "status": "infrastructure_failure",
-                        "accepted_for_cloning": 0.0,
-                        "paper_success": 0.0,
-                        "strict_success": 0.0,
-                        "steps": 0,
+                        "scenario": demonstration_scenario,
+                        "accepted_for_cloning": float(metric["paper_success"]),
                         "teacher": teacher_id,
                         "config_hash": config_hash,
-                        "infrastructure_error": str(exc),
+                        "physical_pair_index": int(worker_index),
+                        "teacher_information": (
+                            "estimator-free image-plane servo on the frozen keypoint "
+                            "encoder's centroid and apparent scale; no relative state "
+                            "of any kind enters the action labels"
+                            if teacher_id == VISUAL_SERVO_TEACHER else
+                            "training-only simulator relative state for action labels; "
+                            "stored/deployed actor inputs are image embedding and UAV "
+                            "proprioception only"),
                     })
+                    attempts.append(metric)
                     _write_csv(attempts_path, attempts)
+                    if bool(metric["paper_success"]):
+                        successes += 1
+                        episode = encoded_demonstration_episode(
+                            teacher_model, rows, episode_id=successes,
+                            batch_size=int(settings.get("encoding_batch_size", 64)))
+                        dataset = merge_encoded_demonstrations(dataset, episode)
+                    if dataset is not None:
+                        payload = save_encoded_demonstrations(
+                            artifact_path, dataset, config_hash=config_hash,
+                            encoder_sha256=encoder_sha,
+                            attempted_seeds=attempted_seeds,
+                            environment_steps=environment_steps,
+                            teacher=teacher_id,
+                            demonstration_fingerprint=fingerprint)
                     print(
-                        f"training teacher seed {seed} skipped after PX4/Isaac "
-                        f"reset failure: {exc}")
-                    environment.recover_infrastructure()
-                    continue
-                attempted_seeds.append(seed)
-                flight_attempts += 1
-                environment_steps += int(metric["steps"])
-                metric.update({
-                    "method": ("visual_servo_teacher"
-                               if teacher_id == VISUAL_SERVO_TEACHER
-                               else "privileged_teacher"),
-                    "pipeline": "shared_warm_start",
-                    "episode": len(attempted_seeds),
-                    "accepted_for_cloning": float(metric["paper_success"]),
-                    "teacher": teacher_id,
-                    "config_hash": config_hash,
-                    "teacher_information": (
-                        "estimator-free image-plane servo on the frozen keypoint "
-                        "encoder's centroid and apparent scale; no relative state "
-                        "of any kind enters the action labels"
-                        if teacher_id == VISUAL_SERVO_TEACHER else
-                        "training-only simulator relative state for action labels; "
-                        "stored/deployed actor inputs are image embedding and UAV "
-                        "proprioception only"),
-                })
-                attempts.append(metric)
-                _write_csv(attempts_path, attempts)
-                if bool(metric["paper_success"]):
-                    successes += 1
-                    episode = encoded_demonstration_episode(
-                        teacher_model, rows, episode_id=successes,
-                        batch_size=int(settings.get("encoding_batch_size", 64)))
-                    dataset = merge_encoded_demonstrations(dataset, episode)
-                if dataset is not None:
-                    payload = save_encoded_demonstrations(
-                        artifact_path, dataset, config_hash=config_hash,
-                        encoder_sha256=encoder_sha,
-                        attempted_seeds=attempted_seeds,
-                        environment_steps=environment_steps,
-                        teacher=teacher_id,
-                        demonstration_fingerprint=fingerprint)
-                print(
-                    f"training teacher flight {flight_attempts}/{maximum_flights} "
-                    f"success={int(metric['paper_success'])} "
-                    f"accepted={successes}/{required}")
-                if successes >= required:
-                    break
-            if hasattr(teacher, "close"):
-                teacher.close()
-        cfg.external.entry_timeout = original_entry_timeout
-        cfg.external.entry_sim_budget = original_entry_sim_budget
-        cfg.external.reset_recoveries = original_reset_recoveries
-        cfg.external.episode_recoveries = original_episode_recoveries
+                        f"training teacher flight {flight_attempts}/{maximum_flights} "
+                        f"pair {worker_index} seed {seed} "
+                        f"success={int(metric['paper_success'])} "
+                        f"accepted={successes}/{required}")
+                    publish_progress()
+                # A batch is joined before any rebuild, so the pair that failed
+                # is reconnected while nothing else is flying. Sibling workers
+                # that failed on the same degraded stack share the one restart:
+                # LiveShinEnvironment.recover_infrastructure cycles by stack
+                # generation, so the later callers only reconnect.
+                for worker_index in degraded:
+                    environments[worker_index].recover_infrastructure()
+            for teacher in teachers:
+                if hasattr(teacher, "close"):
+                    teacher.close()
+        for live, original in restore_budgets:
+            live.external.entry_timeout = original["entry_timeout"]
+            live.external.entry_sim_budget = original["entry_sim_budget"]
+            live.external.reset_recoveries = original["reset_recoveries"]
+            live.external.episode_recoveries = original["episode_recoveries"]
     del teacher_model
     if torch.cuda.is_available() and str(device).startswith("cuda"):
         torch.cuda.empty_cache()
@@ -2844,6 +3045,14 @@ def main(*, primary_only: bool = False):
                             if args.parallel_pairs > 1 else ""),
                     pair_index=index, pair_count=args.parallel_pairs)
                 for index in range(args.parallel_pairs)]
+            # The warm start runs before the first PPO worker is submitted,
+            # so every spawned pair is idle here and none of them is the one
+            # a training arm or the reward-design collector is flying. The
+            # teacher therefore collects on all of them at once.
+            demonstration_contexts = [{
+                "cfg": pair_cfgs[index], "camera": cameras[index],
+                "monitor": worker_monitors[index],
+            } for index in range(args.parallel_pairs)]
             demonstrations = _prepare_fast_demonstrations(
                 cfg=cfg, camera=camera, config=config,
                 config_hash=config_hash,
@@ -2852,7 +3061,8 @@ def main(*, primary_only: bool = False):
                 system=system,
                 model_seed=model_seed,
                 monitor=(worker_monitors[0]
-                         if args.parallel_pairs > 1 else monitor))
+                         if args.parallel_pairs > 1 else monitor),
+                parallel_contexts=demonstration_contexts)
             cloning_metrics = {}
             if demonstrations is not None:
                 manifest["behavior_cloning_demonstrations"] = {

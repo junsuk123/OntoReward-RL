@@ -1515,3 +1515,63 @@ def test_the_launcher_takes_over_a_previous_run_instead_of_refusing():
     assert '[[ "$second" == "-c" ]] && return 1' in launcher
     # Signals escalate; SIGKILL alone leaves Isaac's context and PX4 unclean.
     assert "for signal in INT TERM KILL" in launcher
+
+
+def test_the_shipped_configuration_cannot_ask_the_gateway_for_the_impossible():
+    """Every request the configuration can produce must pass the validators.
+
+    The gateway rejects an out-of-bounds request outright, and the learner
+    meets that rejection on the first reset of whatever stage happens to run
+    first -- on 2026-09-21 a widened ``entry_timeout_s`` (1200 s, 1320 s after
+    the parallel scale) asked for more hold than GOTO_MAX_HOLD_S and killed
+    the first run ever to finish its warm start. Budgets get widened while
+    chasing entry failures, so what the learner can construct is checked
+    here rather than in a flight forty minutes in.
+
+    What this pins is that the request the bridge *sends* is always legal.
+    For the hold that means the clamp in ``entry_hold_seconds`` rather than
+    the configured guard: the guard and the gateway's autonomous hold are
+    different budgets, and the guard is allowed to be the longer one. The
+    rest are checked against the worst corner the shipped profile admits,
+    with no clamp between -- those have to be legal as configured.
+    """
+    import math
+
+    from ontology_rgat_px4.protocol import (GOTO_MAX_HOLD_S, validate_goto)
+    from ontology_rgat.bridge import entry_hold_seconds
+    from run_shin2026_pipeline import _live_config
+    from run_three_pipeline import MAX_PARALLEL_PAIRS, _pair_live_config
+
+    config = load_experiment(
+        ROOT / "config/experiments/two_pipeline_comparison.yaml")
+    system = load_config(ROOT / "config/shin2026-minimal-system.yaml")
+    cfg = _live_config("full", Path("/tmp/ontology_rgat_protocol_bounds"),
+                       ROOT / "config/shin2026-minimal-system.yaml")
+
+    # The entry pose: the worst corner of the configured draw, flown as the
+    # pad-frame goto the bridge sends.
+    initial = ((system.get("benchmark") or {}).get("initial_conditions") or {})
+    x_range = initial.get("relative_lateral_x_m", (-3.0, 3.0))
+    y_range = initial.get("relative_lateral_y_m", (-3.0, 3.0))
+    altitudes = initial.get("relative_altitude_m", (2.0, 8.0))
+    corner = [max(abs(float(v)) for v in x_range),
+              max(abs(float(v)) for v in y_range),
+              max(float(v) for v in altitudes)]
+    for pairs in range(1, MAX_PARALLEL_PAIRS + 1):
+        live = _pair_live_config(cfg, 0, pairs)
+        margin = max(2.0, float(live.external.prestream_count)
+                     / float(live.external.control_hz)
+                     + float(live.external.reset_settle))
+        request = validate_goto({
+            "frame": "pad", "position": corner, "yaw": 0.0,
+            "hold_s": entry_hold_seconds(live.external.entry_timeout, margin)})
+        assert 0.0 < request.hold_s <= GOTO_MAX_HOLD_S, pairs
+
+    # The action path: the full-scale velocity command the control envelope
+    # admits, in the units the gateway validates.
+    control = dict(config.get("control") or {})
+    velocity = [float(v) for v in control.get("max_velocity_m_s", (2.0, 2.0, 1.0))]
+    yaw_rate = math.radians(float(control.get("max_yaw_rate_deg_s", 60.0)))
+    validate_velocity_action({"command": [*velocity, yaw_rate]})
+    validate_velocity_action({"command": [-velocity[0], -velocity[1],
+                                          -velocity[2], -yaw_rate]})

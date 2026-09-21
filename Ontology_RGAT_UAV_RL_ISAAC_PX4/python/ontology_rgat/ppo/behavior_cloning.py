@@ -135,12 +135,19 @@ def validate_encoded_demonstrations(dataset) -> int:
 def save_encoded_demonstrations(path, dataset, *, config_hash: str,
                                 encoder_sha256: str, attempted_seeds,
                                 environment_steps: int,
-                                teacher: str = "unspecified") -> dict:
+                                teacher: str = "unspecified",
+                                demonstration_fingerprint: str | None = None) -> dict:
     count = validate_encoded_demonstrations(dataset)
     episode_count = int(torch.unique(dataset["episode_id"]).numel())
     payload = {
         "format": DEMONSTRATION_FORMAT,
         "config_hash": str(config_hash),
+        # What the flights depended on (teacher, its gains and curriculum, the
+        # deck, the horizon); a PPO budget edit changes config_hash but not
+        # one demonstration. Reuse is keyed on this when it is present.
+        "demonstration_fingerprint": (
+            None if demonstration_fingerprint is None
+            else str(demonstration_fingerprint)),
         "encoder_sha256": str(encoder_sha256),
         "teacher": str(teacher),
         "successful_episodes": episode_count,
@@ -162,8 +169,13 @@ def save_encoded_demonstrations(path, dataset, *, config_hash: str,
 
 def load_encoded_demonstrations(path, *, config_hash: str,
                                 encoder_sha256: str, model=None,
-                                batch_size: int = 64) -> dict:
-    """Load a demonstration set bound to ``config_hash`` and the encoder.
+                                batch_size: int = 64,
+                                demonstration_fingerprint: str | None = None) -> dict:
+    """Load a demonstration set bound to the encoder and to its provenance.
+
+    Provenance is the ``demonstration_fingerprint`` when both sides have one
+    (the teacher, its settings and the deck the flights were made on);
+    otherwise the whole experiment ``config_hash`` as before.
 
     With ``model`` given and the stored frames retained, a set encoded by a
     *different* encoder is re-embedded with ``model.encoder`` instead of being
@@ -175,7 +187,11 @@ def load_encoded_demonstrations(path, *, config_hash: str,
     payload = torch.load(Path(path), map_location="cpu", weights_only=False)
     if payload.get("format") not in (DEMONSTRATION_FORMAT, *_LEGACY_DEMONSTRATION_FORMATS):
         raise ValueError("unsupported behavior demonstration format")
-    if payload.get("config_hash") != str(config_hash):
+    stored_fingerprint = payload.get("demonstration_fingerprint")
+    if demonstration_fingerprint is not None and stored_fingerprint is not None:
+        if str(stored_fingerprint) != str(demonstration_fingerprint):
+            raise ValueError("behavior demonstration provenance mismatch")
+    elif payload.get("config_hash") != str(config_hash):
         raise ValueError("behavior demonstration config mismatch")
     dataset = payload.get("dataset")
     if payload.get("encoder_sha256") != str(encoder_sha256):

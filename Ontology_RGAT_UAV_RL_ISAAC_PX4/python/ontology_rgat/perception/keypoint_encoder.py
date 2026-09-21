@@ -139,7 +139,9 @@ class ShinKeypointEncoder(nn.Module):
         grid_y, grid_x = torch.meshgrid(ys, xs, indexing="ij")
         x = (probabilities * grid_x.reshape(1, 1, -1)).sum(-1)
         y = (probabilities * grid_y.reshape(1, 1, -1)).sum(-1)
-        return torch.stack((x, y), dim=-1).to(heatmaps.dtype)
+        # Kept in fp32: under bfloat16 autocast the heatmaps' dtype would
+        # quantise a coordinate in [-1, 1] to ~2 px steps.
+        return torch.stack((x, y), dim=-1)
 
     def forward(self, image: torch.Tensor) -> KeypointEncoderOutput:
         if image.ndim != 4 or image.shape[1] != 1:

@@ -17,7 +17,8 @@ estimator:
     samples_full: 128
     epochs_full: 3
     empirical_samples_full: 16
-    empirical_epochs: 8
+    # Steps, not epochs: the inherited fine-tune is step based since 2026-09-20.
+    empirical_steps: 200
 
 control:
   # 성공은 일찍 종료하되 안전한 flare를 위해 최대 30초를 허용한다.

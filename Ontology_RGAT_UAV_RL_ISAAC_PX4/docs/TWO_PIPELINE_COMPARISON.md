@@ -140,7 +140,7 @@ index 0은 투영된 패드 중심을 기준으로 image +x 축에서 반시계 
 identity 비의존이므로 계약이 바뀌지 않는다. 합성·실측 label과 held-out 지표는 같은
 규약을 쓴다.
 
-Encoder v4(`ShinKeypointEncoder.implementation` = `isaac-canonical-six-keypoint-unet-v4-stride8-visibility`)는
+Encoder v4(`ShinKeypointEncoder.implementation` = `isaac-canonical-six-keypoint-unet-v4-stride8-window-visibility`)는
 프레임별 표준화 입력, GroupNorm을 가진 stride-2 단계 5개(10×16, 수용 영역 > 프레임),
 bottleneck의 global-average context, skip이 있는 decoder 2단계로 stride-8(40×64)
 heatmap을 낸다. 합성 렌더러 v2는 Isaac 실측처럼 어두운 배경(건물 모서리, 기둥,
@@ -157,15 +157,19 @@ recall 게이트에 더해 **spread ratio 게이트**(예측 산포 / label 산�
 | **참조**: v4 + 정규 label + 렌더러 v2 4096×15 + 증강·재생 800 step | 18.2 | 93.1 % | 97 % | 45.8 / 44.5 | 64 % |
 | 참조 + 강한 증강(scale 0.45–2.0, ±60°) + 1600 step **(채택)** | 21.9 | 96.6 % | 98 % | 46.1 / 44.5 | 64 % |
 | 참조 + 윈도우 soft-argmax(r=4 cell) **(채택)** | 25.9 | 94.7 % | 97 % | 47.5 / 44.5 | 78 % |
+| **최종 채택 조합**: 참조 + 윈도우 soft-argmax + 강한 증강 1600 step | 40.9 | 97.3 % | 99 % | 50.4 / 44.5 | 78 % |
 | 참조 + 실측 배경 합성 패드 합성(composite) | 16.4 | 92.4 % | 95 % | 45.5 / 44.5 | 64 % |
 | 참조, decoder만 미세조정 | 26.1 | 85.9 % | 96 % | 46.7 / 44.5 | 64 % |
 | 참조, 무증강·무재생 미세조정 60 epoch | 31.3 | 95.0 % | 98 % | 47.1 / 44.5 | 64 % |
 | 소거: v3(구) 아키텍처 + 정규 label + 렌더러 v2 + 증강 | 57.8 | 17.9 % | 97 % | 24.2 / 44.5 | 8 % |
+| 소거: v4 + 정규 label + **기존(v5) 합성 생성기** + 증강 | 43.8 | 93.5 % | 98 % | 48.6 / 44.5 | 58 % |
 | 소거: v4 + **identity label**(패드 좌표계 번호) + 렌더러 v2 + 증강 | 32.4 | 98.1 % | 99 % | 47.5 / 44.5 | 38 % |
 
-(측정 2026-09-20, 스크래치 하네스 `kp/harness.py`; RMSE는 소수 이상치에 민감하므로
-PCK@20과 산포를 함께 본다.) 아키텍처 소거는 결정적이다: 구 trunk는 정규 label·새
-렌더러·증강을 모두 주어도 산포 24 px로 다시 중심에 수축한다. identity label 소거는
+(측정 2026-09-20, 스크래치 하네스 `kp/harness.py`; RMSE는 한 폴드(cv1)의 소수 이상치에
+민감하므로 PCK@20·중앙값·산포를 함께 본다.) 아키텍처 소거는 결정적이다: 구 trunk는 정규
+label·새 렌더러·증강을 모두 주어도 산포 24 px로 다시 중심에 수축한다. 렌더러 v2의 기여는
+그보다 작다: 기존 합성 생성기로도 미세조정 후 93.5 %에 이르며, v2는 합성 전용 전이(58 → 64 %)와
+고정 분할 정확도(91.9 → 95.2 %)를 올린다. identity label 소거는
 해석에 주의가 필요하다. 새 아키텍처에서는 identity label도 실측 held-out에서 가장 높은
 PCK@20을 내는데, 이는 실측 프레임의 yaw가 {0°, ±35°}로 제한되고 로버 마스트가 항상
 같은 landmark 옆에 있어 identity를 추론할 단서가 실측에만 존재하기 때문이다. yaw가
@@ -174,13 +178,49 @@ PCK@20을 내는데, 이는 실측 프레임의 yaw가 {0°, ±35°}로 제한�
 임의이므로 정규 label을 채택한다. 하류 소비자(centroid, scale, 가시성)는 어느 규약에도
 무관하다.
 
-채택 레시피(정규 label + 윈도우 soft-argmax + 강한 증강 1600 step)의 고정 held-out 분할
-성적은 RMSE 6.4~6.9 px, PCK@20 100 %, PCK@10 82~86 %다(참조 14.9 px / 95 % / 73 %).
+채택 조합의 고정 held-out 분할 성적은 RMSE 6.3 px(중앙값 3.2 px), PCK@20 100 %, PCK@10
+84 %다(참조 14.9 px / 95 % / 73 %; 단일 요인 변형은 강한 증강 6.4 px / 100 % / 82 %,
+윈도우 soft-argmax 6.9 px / 100 % / 86 %). 파이프라인 자체의 보정 보고(같은 held-out
+분할)도 일치한다: 2026-09-20 실행에서 108.8~112.7 px → 6.7~7.4 px, PCK@20 64~74 % →
+97~100 %, recall 100 %, spread ratio 0.94.
 같은 v4 합성 가중치는 실측 프레임을 한 장도 보기 전에 PCK@20 64~78 %를 낸다(v5 합성
 전용: 4~7 %). 저장된 보정 viewpoint는 영상과 자세만 담으므로 datastore 지문에서 encoder
 architecture 키를 제거했고, v5 지문으로 저장된 24개 viewpoint는 재비행 없이 다시
-label된다. 시연(behavior-cloning) 파일은 v3부터 PNG 프레임을 보존하므로 encoder가 바뀌어도
-교사 비행을 반복하지 않고 재임베딩한다.
+label된다. 시연(behavior-cloning) 파일은 v3부터 PNG 프레임을 보존하고 실험 hash가 아닌
+교사 비행 지문(교사·게인·curriculum·제어 envelope·deck/battery 프로파일)으로 키잉되므로,
+encoder나 PPO 예산이 바뀌어도 교사 비행을 반복하지 않고 재임베딩한다.
+
+### 5.2 정직한 인지가 드러낸 교사 규칙 결함 (2026-09-20)
+
+v4 encoder로 처음 재시작한 실행에서 privileged PD 교사는 40회 비행 중 0회 착륙했다(v5
+뒤에서는 22회 중 4회). 원인은 교사의 시야 상실 상승 규칙이었다. 규칙은 encoder가 보고한
+`visible_keypoint_fraction < 0.5`이면 고도 0.8 m 이상에서 상승했는데, 60° 하향 카메라의
+수직 반시야각은 32°라 PD가 수렴하는 지점(패드 바로 위)에서는 0.4~1.0 m 고도에서 6개 중
+2개 landmark만 프레임에 남는다(1.2~1.5 m에서 4개, 2 m부터 6개). v5 encoder는 프레임
+밖 landmark의 77 %를 "보인다"고 보고해 이 규칙을 가렸고, v4 encoder(15 %)는 규칙을
+정확히 최종 접근 구간에서 발동시켰다.
+
+첫 수정은 규칙을 *지속적 맹목*(landmark 2개 미만이 0.5 s 이상,
+`visual_loss_climb_risk`)으로 좁히는 것이었으나 두 번째 실행도 40회 중 0회였다. 어제
+착륙했던 seed 90025는 측방 12 cm로 정렬된 채 300 step 동안 접지하지 못했다: 패드 바로
+위에서는 landmark 2개만 프레임에 남으므로 정직한 encoder가 그중 하나를 한 프레임만 놓쳐도
+관측이 "blind"가 되어 상승이 걸린다(패드 중심은 frustum 안이라
+`climb_during_geometric_fov_loss` 지표에는 잡히지 않는다). 교사는 이미 시뮬레이터 진실로
+비행하는 특권 교사이므로, 회복 신호도 파이프라인의 유일한 FOV 손실 정의인 기하 패드 중심
+frustum 이탈로 바꿨다(`visual_loss_climb_source: geometric`). 교사의 행동은 어느 경우든
+training-only label이며 학생에게 전달되는 관측은 바뀌지 않는다. 시연 비행마다 step 단위
+트레이스(`training/teacher_trace_<지문>.jsonl`: 고도, 측방 오차, 목표 vz, 가시성,
+기하 FOV, PX4 시각)를 남겨 다음 실패는 비행 중 상태로 진단할 수 있다.
+
+세 번째 실행(기하 신호)의 트레이스는 마지막 구속 조건을 드러냈다: 상승은 사라졌지만
+측방 정렬이 random-walk deck에 대해 간헐적이고, v4 하강 사다리(1.1 m 위 0.35, 0.6~1.1 m
+0.14, 0.6 m 아래 0.04 m/s)는 5 m 진입에서 접지까지 약 30 s의 *연속* 정렬을 요구해 30 s
+episode 안에 끝날 수 없었다(seed 90004: step 54에 정렬, step 300에 고도 1.9 m). 네 번째
+실행은 사다리를 0.50 / 0.25 / 0.10 m/s(접지 기준 0.55 m/s의 1/5)로, 2.5 m 위·1.5 m 이내
+정렬 중에는 0.20 m/s 접근 하강을 허용하고, 시연 비행의 지평선을 450 step으로 늘렸다
+(`behavior_cloning.pd_descent_*`, `pd_approach_*`, `horizon_steps`). 결과: 비행한 4회 전부
+착륙(seed 90001·90003·90005·90007, 82~195 step, 측방 3.6~10.9 cm; 0.56 팩 seed 90001
+포함). 역대 이 교사는 seed 90000/90002/90004/90025에서만 착륙했었다.
 
 ## 6. 평가 프로토콜
 

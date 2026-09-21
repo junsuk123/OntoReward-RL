@@ -51,11 +51,17 @@ fov_risk_design:
   # target coverage``, so this is a floor on episodes, not on samples. The
   # 2026-09-18 run reached coverage at 233 episodes / 56,459 supervised
   # samples and then kept flying against a 40,000-episode floor it could not
-  # reach in under three months. 400 is roughly twice the set that already
+  # reach in under three months. 400 was roughly twice the set that already
   # covered both regimes -- about 96,000 samples for a hidden_dim 24 readout.
-  episodes_full: 400
+  # Lowered to 120 on 2026-09-21: the encoder redesign changed the visual
+  # features, so the 283 stored episodes are no longer reusable and the floor
+  # has to be flown again by one dedicated pair at ~5 wall minutes an
+  # episode (400 -> ~33 h before the proposed arm can start, 120 -> ~10 h).
+  # 120 episodes are ~30,000 supervised samples for a 10-feature, hidden_dim
+  # 24 readout; coverage of both regimes is still required to stop.
+  episodes_full: 120
   max_episodes_quick: 24
-  max_episodes_full: 1200
+  max_episodes_full: 360
   validation_fraction: 0.2
   epochs_quick: 10
   epochs_full: 80
@@ -185,6 +191,49 @@ behavior_cloning:
   # Recorded explicitly rather than left to the code default, so config_hash
   # keeps meaning "this configuration produced these demonstrations".
   urgency_alignment_m: 0.25
+  # Recovery climb trigger (2026-09-20). The teacher climbs on *sustained
+  # blindness* -- fewer than two landmarks reported for climb_risk x 2 s --
+  # and no longer on a partially visible pad. With the honest v4 encoder the
+  # old ``visible fraction < 0.5`` trigger fired exactly where a correct
+  # approach passes: directly above the deck only 2 of 6 landmarks are inside
+  # the 60-deg-pitched camera between 0.4 and 1.0 m, so the teacher climbed at
+  # ~1.1 m, re-acquired at 1.2 m and never touched down (0 of 40 flights; the
+  # collapsed v5 encoder had hidden the rule by calling 77 % of out-of-frame
+  # landmarks visible). Set visual_loss_climb_fraction above 0 to restore a
+  # partial-visibility trigger.
+  visual_loss_climb_risk: 0.25
+  visual_loss_climb_fraction: 0.0
+  # The cue itself (2026-09-21). "perception" reads the frozen encoder's
+  # visibility; "geometric" reads the pipeline's one definition of FOV loss,
+  # the pad centre leaving the camera frustum (simulator truth, which this
+  # privileged teacher already flies on). With "perception" and the honest
+  # v4 encoder the second run still hovered at 0.6-1.0 m over decks it was
+  # aligned on to 12 cm (seed 90025 timed out with no contact where it had
+  # landed at 23.5 s under v5): directly above the deck only two landmarks
+  # are in frame, and one visibility miss makes the observation "blind" for
+  # long enough to trip the climb. The teacher's actions are training-only
+  # labels either way; nothing here reaches the student.
+  visual_loss_climb_source: geometric
+  # Vertical schedule and time budget (2026-09-21), from the per-step traces
+  # of the third v4 run. From the 5 m entry the v4 ladder (0.35 / 0.14 /
+  # 0.04 m/s above 1.1 m, 0.6-1.1 m, below 0.6 m) needs about 30 s of
+  # uninterrupted alignment inside a 30 s episode, and alignment on the
+  # random-walk deck is intermittent: seed 90004 aligned at step 54 and was
+  # still 1.9 m up at step 300 with no contact. The touchdown criterion is
+  # 0.55 m/s vertical, so a 0.10 m/s flare keeps a five-fold margin; the
+  # approach descent lets a vehicle above 2.5 m that is within 1.5 m come
+  # down while it closes (the pad stays inside the 32-deg vertical half-angle
+  # there), and the horizon gives a slow but converging flight the extra
+  # 15 s it needs. Demonstrations are warm-start data, not the experiment:
+  # PPO keeps its 300-step episodes. (``pd_`` prefix: the visual-servo
+  # teacher below owns the unprefixed descent keys.)
+  pd_descent_high_m_s: 0.50
+  pd_descent_mid_m_s: 0.25
+  pd_descent_flare_m_s: 0.10
+  pd_approach_descent_m_s: 0.20
+  pd_approach_min_altitude_m: 2.5
+  pd_approach_lateral_m: 1.5
+  horizon_steps: 450
 
   # ---- image_based_visual_servo_v1 only; ignored by the PD above ----
   # The integrator is slowed, not weakened. Its authority is gain x limit and

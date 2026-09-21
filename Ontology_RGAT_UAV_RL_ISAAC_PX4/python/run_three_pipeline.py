@@ -47,7 +47,8 @@ from ontology_rgat.ppo.behavior_cloning import (
     behavior_clone, encoded_demonstration_episode,
     load_encoded_demonstrations, merge_encoded_demonstrations,
     save_encoded_demonstrations)
-from ontology_rgat.ppo.recurrent_train import (collect_episode_resilient,
+from ontology_rgat.ppo.recurrent_train import (_battery_reserve,
+                                               collect_episode_resilient,
                                                aggregate_deployment_validation,
                                                deployment_validation_key,
                                                train_live)
@@ -341,7 +342,15 @@ def _privileged_velocity_teacher_action(
         *, position_gain: float = .35, velocity_gain: float = .75,
         horizontal_speed_limit: float = .60, energy_urgency: float = 0.0,
         touchdown_speed_limit: float = .55, urgency_alignment_m: float = .25,
-        noise_std: float = .01, rng=None):
+        visual_loss_climb_risk: float = .25,
+        visual_loss_climb_fraction: float = 0.0,
+        visual_loss_climb_source: str = "perception",
+        geometric_in_fov: bool | None = None,
+        descent_high_m_s: float = .35, descent_mid_m_s: float = .14,
+        descent_flare_m_s: float = .04, approach_descent_m_s: float = 0.0,
+        approach_descent_min_altitude_m: float = 2.5,
+        approach_lateral_m: float = 1.5,
+        noise_std: float = .01, rng=None, info: dict | None = None):
     """Return a stable training-only velocity label for deadline warm starts.
 
     ``relative_state`` is platform-in-UAV-body simulator truth and is never an
@@ -397,10 +406,37 @@ def _privileged_velocity_teacher_action(
     lateral_error = float(np.linalg.norm(position_xy))
     relative_speed = float(np.linalg.norm(relative_velocity_xy))
     altitude = max(0.0, -float(relative[2]))
-    visual_lost = (float(semantic.visible_keypoint_fraction) < 0.5
-                   or float(semantic.visual_loss_risk) > 0.0)
-    # The multi-scale marker naturally fills and then leaves the downward
-    # camera at the end of a correct flare. Treating that expected low-altitude
+    # Recovery is triggered by *sustained blindness* -- fewer than two
+    # landmarks reported for ``visual_loss_climb_risk`` x 2 s (0.5 s at the
+    # default) -- and no longer by a partially visible pad. Measured
+    # 2026-09-20: with the honest v4 encoder (it calls 15 % of out-of-frame
+    # landmarks visible; the collapsed v5 encoder called 77 % of them visible)
+    # the old ``visible_keypoint_fraction < 0.5`` trigger fired exactly where
+    # a correct approach must pass. The camera is pitched 60 deg with a 32 deg
+    # vertical half-angle, so directly above the deck -- the point this PD
+    # drives to -- only 2 of 6 landmarks are in frame between 0.4 and 1.0 m
+    # (4 at 1.2-1.5 m, 6 from 2 m). The teacher therefore climbed at ~1.1 m,
+    # re-acquired at 1.2 m, descended, climbed again, and 40 of 40 flights
+    # timed out or ran the pack down without a single touchdown, where the
+    # same teacher behind the v5 encoder had landed 4 of 22. The v5 encoder
+    # was not seeing the deck; it was hiding this rule.
+    if str(visual_loss_climb_source) == "geometric":
+        # Privileged teacher, privileged cue: the pipeline's one definition of
+        # field-of-view loss (pad centre outside the camera frustum), which
+        # no encoder calibration can move. The second v4 run still hovered at
+        # 0.6-1.0 m over a deck it was aligned on to 12 cm (seed 90025:
+        # 300 steps, no contact) because two in-frame landmarks reported by
+        # an honest encoder flicker across the visibility threshold, and one
+        # miss makes the semantic observation "blind".
+        if geometric_in_fov is None:
+            raise ValueError("geometric visual-loss source needs geometric_in_fov")
+        visual_lost = not bool(geometric_in_fov)
+    else:
+        visual_lost = (float(semantic.visual_loss_risk) > float(visual_loss_climb_risk)
+                       or float(semantic.visible_keypoint_fraction)
+                       < float(visual_loss_climb_fraction))
+    # The marker naturally fills and then leaves the downward camera at the
+    # end of a correct flare. Treating that expected low-altitude
     # disappearance as a recovery event traps the vehicle centimetres above
     # the deck. Only climb on loss while still high or laterally displaced.
     # ``battery_risk`` is the estimator-free reading of how little is left, so
@@ -408,16 +444,29 @@ def _privileged_velocity_teacher_action(
     # the pack itself.
     urgency = float(np.clip(
         float(energy_urgency) * float(semantic.battery_risk), 0.0, 1.0))
+    # Vertical schedule. The defaults are the v4 ladder; the experiment sets
+    # a faster one (2026-09-21) because the traced flights showed the ladder
+    # itself was the binding constraint: from the 5 m entry it needs ~30 s of
+    # *uninterrupted* alignment (11 s at 0.35, 3.6 s at 0.14, 15 s at 0.04
+    # m/s) inside a 30 s episode, and alignment against the random-walk deck
+    # is intermittent (seed 90004: aligned at step 54, timed out at 1.9 m).
+    # ``approach_descent_m_s`` lets a high, roughly aligned vehicle come down
+    # while it is still closing, which the old ladder forbade entirely.
     if visual_lost and (altitude > 0.80 or lateral_error > 0.40):
         target_vz = 0.22
     elif lateral_error > 0.50 or relative_speed > 0.45:
-        target_vz = 0.0
+        if (altitude > float(approach_descent_min_altitude_m)
+                and lateral_error < float(approach_lateral_m)
+                and relative_speed < 0.70):
+            target_vz = -abs(float(approach_descent_m_s))
+        else:
+            target_vz = 0.0
     elif altitude > 1.10:
-        target_vz = -0.35
+        target_vz = -abs(float(descent_high_m_s))
     elif altitude > 0.60:
-        target_vz = -0.14
+        target_vz = -abs(float(descent_mid_m_s))
     else:
-        target_vz = -0.04
+        target_vz = -abs(float(descent_flare_m_s))
     # Only compress a descent that is already well aligned. Coming down faster
     # magnifies the bearing to a deck that is not directly below, and the deck
     # then leaves the frame: measured over the first four flights with this on,
@@ -435,6 +484,17 @@ def _privileged_velocity_teacher_action(
         target_vz = -min(ceiling, abs(target_vz) * (1.0 + 2.0 * urgency))
 
     target_velocity = np.r_[target_xy, target_vz]
+    if info is not None:
+        info.update({
+            "altitude_m": altitude, "lateral_error_m": lateral_error,
+            "relative_speed_m_s": relative_speed, "target_vz_m_s": float(target_vz),
+            "target_vxy_m_s": [float(v) for v in target_xy],
+            "visual_lost": bool(visual_lost),
+            "visible_keypoint_fraction": float(semantic.visible_keypoint_fraction),
+            "visual_loss_risk": float(semantic.visual_loss_risk),
+            "geometric_in_fov": (None if geometric_in_fov is None
+                                 else bool(geometric_in_fov)),
+            "battery_risk": float(semantic.battery_risk), "urgency": urgency})
     action = np.r_[target_velocity / limit, 0.0]
     if float(noise_std) > 0.0:
         generator = rng if rng is not None else np.random.default_rng()
@@ -442,14 +502,38 @@ def _privileged_velocity_teacher_action(
     return np.clip(action, -0.90, 0.90)
 
 
-def _privileged_velocity_teacher(environment, *, settings):
-    """Bind the training-only teacher to the environment's current live step."""
-    def transform(step, policy_action, semantic, rng):
+class _PrivilegedVelocityTeacher:
+    """Bind the training-only teacher to the environment's current live step.
+
+    Optionally writes one JSON line per control step to ``trace_path``: the
+    attempts CSV records only the final step of a flight, which cannot tell
+    a teacher that never converged from one that converged and then hovered.
+    ``seed`` is set by the caller before each flight.
+    """
+
+    def __init__(self, environment, *, settings, trace_path=None):
+        self.environment = environment
+        self.settings = dict(settings)
+        self.trace_path = None if trace_path is None else Path(trace_path)
+        self.seed = None
+        self._trace = None
+        if self.trace_path is not None:
+            self.trace_path.parent.mkdir(parents=True, exist_ok=True)
+            self._trace = self.trace_path.open("a", encoding="utf-8")
+
+    def close(self):
+        if self._trace is not None:
+            self._trace.close()
+            self._trace = None
+
+    def __call__(self, step, policy_action, semantic, rng):
+        environment, settings = self.environment, self.settings
         current = environment.last_step
         if current is None:
             raise RuntimeError("privileged teacher requires a reset live environment")
         controller = environment.adapter.controller
-        return _privileged_velocity_teacher_action(
+        info = {}
+        action = _privileged_velocity_teacher_action(
             current.critic.true_relative_state,
             current.actor.body_velocity,
             semantic,
@@ -461,9 +545,39 @@ def _privileged_velocity_teacher(environment, *, settings):
             energy_urgency=float(settings.get("energy_urgency", 0.0)),
             urgency_alignment_m=float(settings.get(
                 "urgency_alignment_m", .25)),
+            visual_loss_climb_risk=float(settings.get(
+                "visual_loss_climb_risk", .25)),
+            visual_loss_climb_fraction=float(settings.get(
+                "visual_loss_climb_fraction", 0.0)),
+            visual_loss_climb_source=str(settings.get(
+                "visual_loss_climb_source", "perception")),
+            geometric_in_fov=bool(current.geometric_pad_center_in_fov),
+            descent_high_m_s=float(settings.get("pd_descent_high_m_s", .35)),
+            descent_mid_m_s=float(settings.get("pd_descent_mid_m_s", .14)),
+            descent_flare_m_s=float(settings.get("pd_descent_flare_m_s", .04)),
+            approach_descent_m_s=float(settings.get("pd_approach_descent_m_s", 0.0)),
+            approach_descent_min_altitude_m=float(settings.get(
+                "pd_approach_min_altitude_m", 2.5)),
+            approach_lateral_m=float(settings.get("pd_approach_lateral_m", 1.5)),
             noise_std=float(settings.get("noise_std", .01)),
-            rng=rng)
-    return transform
+            rng=rng, info=info)
+        if self._trace is not None:
+            state = current.state if isinstance(current.state, dict) else {}
+            record = {
+                "seed": self.seed, "step": int(step), "wall": time.time(),
+                "px4_time_us": state.get("px4_time_us"),
+                "battery_reserve": _battery_reserve(state) if state else None,
+                "action": [float(v) for v in np.asarray(action).reshape(-1)],
+                **info}
+            self._trace.write(json.dumps(record, default=float) + "\n")
+            self._trace.flush()
+        return action
+
+
+def _privileged_velocity_teacher(environment, *, settings, trace_path=None):
+    """Bind the training-only teacher to the environment's current live step."""
+    return _PrivilegedVelocityTeacher(environment, settings=settings,
+                                      trace_path=trace_path)
 
 
 VISUAL_SERVO_TEACHER = "image_based_visual_servo_v1"
@@ -901,6 +1015,31 @@ def _training_pair_replicas(pipelines, pair_count: int,
         for method_index, name in enumerate(methods)}
 
 
+def _reward_design_pair_indices(independent_pipelines, training_pair_replicas,
+                                training_pair_for, pair_count: int) -> list[int]:
+    """Physical pairs left free for reward-design collection beside early arms.
+
+    A measured pipeline flies *every* replica pair assigned to it, not only the
+    primary pair that stands for it elsewhere. Counting just the primary as
+    occupied handed the FOV-risk collector a pair the baseline PPO arm was
+    already flying. Two bridges then bound one local UDP port (SO_REUSEADDR
+    admits the second bind) and the kernel delivered each gateway reply to one
+    of them: the other saw only hello and state timeouts, and every timeout
+    rebuilt the shared simulator for all four pairs -- 26 rebuilds in four
+    hours on 2026-09-21, the arm dying each run before the comparison began.
+    """
+    occupied: set[int] = set()
+    for name in independent_pipelines:
+        occupied.update(int(index) for index in training_pair_replicas.get(
+            name, [training_pair_for[name]]))
+    free = [index for index in range(int(pair_count)) if index not in occupied]
+    if not free:
+        raise RuntimeError(
+            "parallel reward design needs one unoccupied physical pair; pairs "
+            f"{sorted(occupied)} are all flown by {list(independent_pipelines)}")
+    return free
+
+
 def _balanced_training_pair_assignment(pipelines, pair_count: int,
                                        replicate: int) -> tuple[dict, list]:
     """Counterbalance method-to-route-phase assignment across replicates.
@@ -1066,9 +1205,52 @@ def behavior_cloning_settings(config):
     return dict((config.get("seminar_fast") or {}).get("behavior_cloning") or {})
 
 
+# Settings a demonstration flight actually depends on. Anything else in the
+# behavior_cloning block (epochs, learning rate, post_log_std, ...) shapes how
+# the clone is *trained* from the flights and must not invalidate them.
+_DEMONSTRATION_FLIGHT_KEYS = (
+    "teacher", "curriculum", "position_gain", "velocity_gain",
+    "horizontal_speed_limit_m_s", "energy_urgency", "urgency_alignment_m",
+    "visual_loss_climb_risk", "visual_loss_climb_fraction",
+    "visual_loss_climb_source", "pd_descent_high_m_s", "pd_descent_mid_m_s",
+    "pd_descent_flare_m_s", "pd_approach_descent_m_s",
+    "pd_approach_min_altitude_m", "pd_approach_lateral_m", "horizon_steps",
+    "noise_std",
+    "integral_gain", "damping_gain", "integral_limit", "reference_scale",
+    "alignment_tolerance", "cone_widening", "rate_tolerance", "flare_scale",
+    "approach_scale", "source_pipeline")
+
+
+def demonstration_fingerprint(config, settings, *, cfg, system=None) -> str:
+    """What a stored teacher flight means, for deciding reuse across runs.
+
+    The teacher and its gains, the entry curriculum, the seed range, the
+    control envelope and horizon, and the deck/battery/benchmark profile the
+    flight was made against. Not the experiment's configuration hash: the
+    2026-09-20 encoder redesign changed only perception settings, and keying
+    the demonstrations on the whole hash threw away 26 teacher attempts that
+    could have been re-embedded from their retained frames.
+    """
+    from ontology_rgat.datastore import data_fingerprint
+
+    system = dict(system or {})
+    parts = {
+        "flight_settings": {key: settings[key] for key in _DEMONSTRATION_FLIGHT_KEYS
+                            if key in settings},
+        "seed_start": int((config.get("seeds") or {}).get(
+            "behavior_cloning_start", 90000)),
+        "control": config.get("control"),
+        "horizon_steps": int(cfg.sim.max_steps),
+        "system": {name: system.get(name) for name in (
+            "pad", "battery", "benchmark", "domain_randomization")},
+        "camera": dict((dict(system.get("vision") or {})).get("camera") or {}),
+    }
+    return data_fingerprint(parts)
+
+
 def _prepare_fast_demonstrations(*, cfg, camera, config, config_hash,
                                  keypoint_pretraining, results_dir, device,
-                                 model_seed, monitor):
+                                 model_seed, monitor, system=None):
     """Collect successful teacher flights once and store compact actor inputs."""
     settings = behavior_cloning_settings(config)
     if not bool(settings.get("enabled", False)):
@@ -1084,10 +1266,21 @@ def _prepare_fast_demonstrations(*, cfg, camera, config, config_hash,
     teacher_id = str(settings.get("teacher", PRIVILEGED_VELOCITY_TEACHER))
     if teacher_id not in (PRIVILEGED_VELOCITY_TEACHER, VISUAL_SERVO_TEACHER):
         raise ValueError(f"unknown behavior teacher: {teacher_id}")
+    fingerprint = demonstration_fingerprint(config, settings, cfg=cfg, system=system)
     artifact_path = (Path(results_dir) / "models/shared"
-                     / f"teacher_demonstrations_{config_hash[:12]}.pt")
+                     / f"teacher_demonstrations_{fingerprint[:12]}.pt")
     attempts_path = (Path(results_dir) / "training"
-                     / f"teacher_attempts_{config_hash[:12]}.csv")
+                     / f"teacher_attempts_{fingerprint[:12]}.csv")
+    # Sets written before provenance keying are named after the experiment
+    # hash; one made under this exact configuration is still reusable.
+    legacy_artifact = (Path(results_dir) / "models/shared"
+                       / f"teacher_demonstrations_{config_hash[:12]}.pt")
+    legacy_attempts = (Path(results_dir) / "training"
+                       / f"teacher_attempts_{config_hash[:12]}.csv")
+    if not artifact_path.is_file() and legacy_artifact.is_file():
+        artifact_path = legacy_artifact
+    if not attempts_path.is_file() and legacy_attempts.is_file():
+        attempts_path = legacy_attempts
     encoder_path = Path(results_dir) / "models/shared/keypoint_encoder.pt"
     encoder_sha = _sha256_file(encoder_path)
     payload = None
@@ -1100,28 +1293,35 @@ def _prepare_fast_demonstrations(*, cfg, camera, config, config_hash,
     environment_steps = sum(int(float(row.get("steps", 0))) for row in attempts)
     teacher_model = None
     if artifact_path.is_file():
+        # Built before loading, and outside the compatibility guard below, so
+        # a set encoded by an earlier encoder can be re-embedded from its
+        # retained frames instead of re-flown -- and so a model construction
+        # error surfaces as what it is rather than as "incompatible
+        # demonstrations" that reset the attempts ledger.
+        torch.manual_seed(int(model_seed))
+        teacher_model = _build_model(
+            config, device, keypoint_pretraining, pipeline=source_pipeline)
         try:
-            # Built before loading so a set encoded by an earlier encoder can
-            # be re-embedded from its retained frames instead of re-flown.
-            torch.manual_seed(int(model_seed))
-            teacher_model = _build_model(
-                config, device, keypoint_pretraining, pipeline=source_pipeline)
             payload = load_encoded_demonstrations(
                 artifact_path, config_hash=config_hash,
                 encoder_sha256=encoder_sha, model=teacher_model,
-                batch_size=int(settings.get("encoding_batch_size", 64)))
-            if payload.get("re_embedded_from_encoder_sha256"):
+                batch_size=int(settings.get("encoding_batch_size", 64)),
+                demonstration_fingerprint=fingerprint)
+            if (payload.get("re_embedded_from_encoder_sha256")
+                    or payload.get("demonstration_fingerprint") != fingerprint):
                 payload = save_encoded_demonstrations(
                     artifact_path, payload["dataset"], config_hash=config_hash,
                     encoder_sha256=encoder_sha,
                     attempted_seeds=payload.get("attempted_seeds", ()),
                     environment_steps=int(payload.get("environment_steps", 0)),
-                    teacher=str(payload.get("teacher", teacher_id)))
-                print(
-                    "Re-embedded the stored training-teacher demonstrations "
-                    f"({payload['transitions']} transitions) with the current "
-                    "keypoint encoder from their retained frames; no teacher "
-                    "flight is repeated.")
+                    teacher=str(payload.get("teacher", teacher_id)),
+                    demonstration_fingerprint=fingerprint)
+                if payload.get("re_embedded_from_encoder_sha256"):
+                    print(
+                        "Re-embedded the stored training-teacher demonstrations "
+                        f"({payload['transitions']} transitions) with the current "
+                        "keypoint encoder from their retained frames; no teacher "
+                        "flight is repeated.")
             dataset = payload["dataset"]
             attempted_seeds = list(dict.fromkeys(
                 [*payload.get("attempted_seeds", ()), *attempted_seeds]))
@@ -1162,18 +1362,26 @@ def _prepare_fast_demonstrations(*, cfg, camera, config, config_hash,
         cfg.external.entry_sim_budget = min(original_entry_sim_budget, 25.0)
         cfg.external.reset_recoveries = 0
         cfg.external.episode_recoveries = 0
+        # Demonstration flights may run longer than a PPO episode: the clone
+        # learns from transitions, and a landing at 38 s is a landing.
+        teacher_horizon = int(settings.get("horizon_steps", cfg.sim.max_steps))
         with LiveShinEnvironment(
-                cfg, camera, horizon_steps=int(cfg.sim.max_steps)) as environment:
+                cfg, camera, horizon_steps=teacher_horizon) as environment:
             teacher = (
                 _visual_servo_teacher(environment, settings=settings)
                 if teacher_id == VISUAL_SERVO_TEACHER
-                else _privileged_velocity_teacher(environment, settings=settings))
+                else _privileged_velocity_teacher(
+                    environment, settings=settings,
+                    trace_path=(Path(results_dir) / "training"
+                                / f"teacher_trace_{fingerprint[:12]}.jsonl")))
             for attempt in range(maximum_seed_candidates):
                 if flight_attempts >= maximum_flights:
                     break
                 seed = seed0 + attempt
                 if seed in attempted_seeds:
                     continue
+                if hasattr(teacher, "seed"):
+                    teacher.seed = int(seed)
                 try:
                     rows, metric = collect_episode_resilient(
                         environment, teacher_model, source_pipeline, seed,
@@ -1243,13 +1451,16 @@ def _prepare_fast_demonstrations(*, cfg, camera, config, config_hash,
                         encoder_sha256=encoder_sha,
                         attempted_seeds=attempted_seeds,
                         environment_steps=environment_steps,
-                        teacher=teacher_id)
+                        teacher=teacher_id,
+                        demonstration_fingerprint=fingerprint)
                 print(
                     f"training teacher flight {flight_attempts}/{maximum_flights} "
                     f"success={int(metric['paper_success'])} "
                     f"accepted={successes}/{required}")
                 if successes >= required:
                     break
+            if hasattr(teacher, "close"):
+                teacher.close()
         cfg.external.entry_timeout = original_entry_timeout
         cfg.external.entry_sim_budget = original_entry_sim_budget
         cfg.external.reset_recoveries = original_reset_recoveries
@@ -2638,6 +2849,7 @@ def main(*, primary_only: bool = False):
                 config_hash=config_hash,
                 keypoint_pretraining=keypoint_pretraining,
                 results_dir=args.results_dir, device=args.device,
+                system=system,
                 model_seed=model_seed,
                 monitor=(worker_monitors[0]
                          if args.parallel_pairs > 1 else monitor))
@@ -2810,16 +3022,14 @@ def main(*, primary_only: bool = False):
                         pair_index=training_pair_for[name],
                         model=prepared_parallel_models[name])
                     for name in independent_pipelines}
-                occupied_training_pairs = {
-                    training_pair_for[name] for name in independent_pipelines}
-                reward_design_pair_indices = [
-                    index for index in range(args.parallel_pairs)
-                    if index not in occupied_training_pairs]
-                if not reward_design_pair_indices:
-                    raise RuntimeError(
-                        "parallel reward design needs one unoccupied physical pair")
+                reward_design_pair_indices = _reward_design_pair_indices(
+                    independent_pipelines, training_pair_replicas,
+                    training_pair_for, args.parallel_pairs)
                 manifest["parallel_execution"].update({
                     "early_independent_pipelines": independent_pipelines,
+                    "training_pair_replicas": {
+                        name: [int(index) for index in indices]
+                        for name, indices in training_pair_replicas.items()},
                     "reward_design_pair_indices": reward_design_pair_indices,
                 })
                 _write_json(manifest_path, manifest)

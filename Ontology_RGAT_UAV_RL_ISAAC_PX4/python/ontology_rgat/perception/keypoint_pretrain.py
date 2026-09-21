@@ -269,26 +269,37 @@ def _render_landing_target(image: np.ndarray, pyramid, deck_size_m,
 # --------------------------------------------------------------------------
 # canonical labels and heatmap targets
 # --------------------------------------------------------------------------
-def canonical_landmark_shift(pixels, center_pixels) -> int:
+def canonical_landmark_shift(pixels, center_pixels, in_front=None) -> int:
     """Roll amount ``s`` such that ``np.roll(labels, -s, 0)[0]`` is the vertex
     with the smallest counter-clockwise image-plane angle from +x about the
     projected pad centre (rows point down, so they are negated).
 
     Every projected vertex takes part, in frame or not, so the choice depends
-    on the pad's image-plane pose and not on what happens to be visible.  A
-    projection with a non-finite vertex or centre is left in pad order.
+    on the pad's image-plane pose and not on what happens to be visible.
+    ``in_front`` (optional, one flag per vertex) excludes vertices behind the
+    camera plane: :func:`project_pad_points` gives those a placeholder pixel
+    that has no image meaning, and at touchdown altitude the rear vertices of
+    a 1.5 m deck do pass behind a 60-degree pitched camera.  A projection
+    with a non-finite vertex or centre, or no vertex in front, is left in pad
+    order.
     """
     pixels = np.asarray(pixels, dtype=np.float64).reshape(-1, 2)
     center = np.asarray(center_pixels, dtype=np.float64).reshape(2)
     if not np.isfinite(pixels).all() or not np.isfinite(center).all():
         return 0
-    angles = np.arctan2(-(pixels[:, 1] - center[1]), pixels[:, 0] - center[0])
-    return int(np.argmin(np.mod(angles, 2.0 * math.pi)))
+    angles = np.mod(np.arctan2(-(pixels[:, 1] - center[1]),
+                               pixels[:, 0] - center[0]), 2.0 * math.pi)
+    if in_front is not None:
+        mask = np.asarray(in_front, dtype=bool).reshape(-1)
+        if not mask.any():
+            return 0
+        angles = np.where(mask, angles, np.inf)
+    return int(np.argmin(angles))
 
 
-def canonicalize_landmarks(pixels, visible, center_pixels):
+def canonicalize_landmarks(pixels, visible, center_pixels, in_front=None):
     """Return ``(pixels, visible, shift)`` rolled to the canonical order."""
-    shift = canonical_landmark_shift(pixels, center_pixels)
+    shift = canonical_landmark_shift(pixels, center_pixels, in_front)
     return (np.roll(np.asarray(pixels, dtype=np.float64), -shift, axis=0),
             np.roll(np.asarray(visible, dtype=bool), -shift, axis=0), shift)
 
@@ -330,10 +341,15 @@ def _canonical_projection(position_pad, quaternion, model: CameraModel,
     """Project the pad and return canonical ``(pixels, visible, center, shift)``."""
     projection = project_landing_pad(
         position_pad, quaternion, camera=model, landmark_radius_m=landmark_radius_m)
+    center = np.asarray(projection.pad_center_pixels, dtype=float)
+    if float(projection.pad_center_depth_m) <= 1e-9:
+        # Camera at or below deck level: no image-plane order exists.
+        return (np.asarray(projection.keypoint_pixels, dtype=float),
+                np.asarray(projection.keypoint_visible, dtype=bool), center, 0)
     pixels, visible, shift = canonicalize_landmarks(
-        projection.keypoint_pixels, projection.keypoint_visible,
-        projection.pad_center_pixels)
-    return pixels, visible, np.asarray(projection.pad_center_pixels, dtype=float), shift
+        projection.keypoint_pixels, projection.keypoint_visible, center,
+        in_front=np.asarray(projection.keypoint_depth_m) > 0.0)
+    return pixels, visible, center, shift
 
 
 # --------------------------------------------------------------------------
@@ -879,7 +895,9 @@ def _empirical_metrics(encoder, dataset, indices, device) -> dict:
         pred_spread = torch.sqrt(((pred_points - pred_points.mean(0)) ** 2).sum(-1).mean())
         true_spread = torch.sqrt(((true_points - true_points.mean(0)) ** 2).sum(-1).mean())
         ratios.append(float((pred_spread / true_spread.clamp_min(1e-6)).cpu()))
-    spread_ratio = float(np.mean(ratios)) if ratios else 0.0
+    # NaN, not 0, when no frame has two visible landmarks: the collapse gate
+    # below must not fire on a split that cannot measure spread at all.
+    spread_ratio = float(np.mean(ratios)) if ratios else float("nan")
     if selected.numel() == 0:
         return {"coordinate_rmse_px": float("inf"), "pck_20px": 0.0,
                 "visibility_accuracy": 0.0, "visibility_recall": 0.0,
@@ -1545,7 +1563,8 @@ def calibrate_keypoint_encoder(
             "landmark. Collect more viewpoints or raise empirical_steps "
             "rather than starting PPO on it.")
     minimum_spread = float(settings.get("minimum_holdout_spread_ratio", 0.50))
-    if float(best_metrics.get("spread_ratio", 0.0)) < minimum_spread:
+    spread_ratio = float(best_metrics.get("spread_ratio", float("nan")))
+    if math.isfinite(spread_ratio) and spread_ratio < minimum_spread:
         raise RuntimeError(
             "Isaac keypoint calibration produced an encoder whose six "
             "predictions have collapsed onto the pad centre: their spread on "
@@ -1697,6 +1716,23 @@ def _train_encoder(system: Mapping[str, Any], settings: Mapping[str, Any],
     return state, metrics
 
 
+def encoder_settings_fingerprint(experiment: Mapping[str, Any],
+                                 system: Mapping[str, Any]) -> str:
+    """What decides the trained encoder's weights: the estimator block (the
+    pretraining, calibration and augmentation settings live there), the camera
+    and the target painted on the deck -- not the PPO budget or the teacher
+    gains, which share the experiment's config hash but change no weight.
+    The 2026-09-20 restarts each spent 12 minutes re-training an identical
+    encoder because a behavior-cloning key had changed."""
+    return data_fingerprint({
+        "pretrain_format": PRETRAIN_FORMAT,
+        "implementation": ShinKeypointEncoder.implementation,
+        "estimator": dict(experiment.get("estimator") or {}),
+        "camera": dict((dict(system.get("vision") or {})).get("camera") or {}),
+        "landing_pad": landing_pad_settings(system),
+    })
+
+
 def prepare_keypoint_encoder(
         path: str | Path, *, config_hash: str, experiment: Mapping[str, Any],
         system: Mapping[str, Any], mode: str, device: str | torch.device) -> dict | None:
@@ -1707,13 +1743,28 @@ def prepare_keypoint_encoder(
         return None
     settings["image_embedding"] = int(estimator.get("image_embedding", 512))
     path = Path(path)
+    settings_fingerprint = encoder_settings_fingerprint(experiment, system)
     if path.is_file():
         saved = torch.load(path, map_location="cpu", weights_only=False)
-        if (saved.get("format") == PRETRAIN_FORMAT
-                and saved.get("config_hash") == str(config_hash)
-                and saved.get("mode") == str(mode)
-                and saved.get("implementation") == ShinKeypointEncoder.implementation):
+        same_lineage = (saved.get("format") == PRETRAIN_FORMAT
+                        and saved.get("mode") == str(mode)
+                        and saved.get("implementation") == ShinKeypointEncoder.implementation)
+        if same_lineage and saved.get("config_hash") == str(config_hash):
             print(f"Using frozen synthetic six-keypoint encoder from {path}.")
+            return saved
+        if (same_lineage
+                and saved.get("encoder_settings_fingerprint") == settings_fingerprint):
+            # Same encoder settings, camera and target under a different
+            # experiment hash: the weights would come out identical, so keep
+            # them (and their empirical calibration) and only re-stamp the hash.
+            saved = dict(saved)
+            saved["config_hash"] = str(config_hash)
+            saved.setdefault("config_hash_history", []).append(str(config_hash))
+            temporary = path.with_suffix(path.suffix + ".tmp")
+            torch.save(saved, temporary)
+            os.replace(temporary, path)
+            print(f"Using frozen six-keypoint encoder from {path} (identical "
+                  f"encoder settings under a new experiment hash).")
             return saved
     bootstrap_value = settings.get("bootstrap_artifact")
     if bootstrap_value:
@@ -1753,6 +1804,7 @@ def prepare_keypoint_encoder(
     payload = {
         "format": PRETRAIN_FORMAT,
         "config_hash": str(config_hash),
+        "encoder_settings_fingerprint": settings_fingerprint,
         "mode": str(mode),
         "implementation": ShinKeypointEncoder.implementation,
         "frozen_for_ppo": True,

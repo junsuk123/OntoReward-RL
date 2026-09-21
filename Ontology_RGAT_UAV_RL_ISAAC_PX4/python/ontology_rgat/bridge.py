@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import math
 import socket
+import threading
 import time
 from typing import Any, Iterable, Sequence
 
@@ -120,6 +121,16 @@ def _yaw_from_quaternion_wxyz(quaternion) -> float | None:
     return math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
 
 
+# Local UDP ports with a live bridge in this process. The socket is bound
+# with SO_REUSEADDR, so a second bridge on the same pair binds without any
+# error and the kernel then hands every gateway reply to one of the two; the
+# other sees nothing but timeouts, and a learner reads those as a dead
+# simulator and rebuilds the shared stack. Two workers on one pair is a
+# scheduling bug, and it has to fail at the second bind, not as that storm.
+_LIVE_LOCAL_PORTS: dict[tuple[str, int], int] = {}
+_LIVE_LOCAL_PORTS_LOCK = threading.Lock()
+
+
 class PX4Bridge:
     """One episode's link to the gateway.
 
@@ -143,10 +154,27 @@ class PX4Bridge:
         self.last_px4_time_us: int | None = None
         self.last_reset_ack: dict[str, Any] = {}
         self._closed = False
+        self._port_key = (str(self.cfg.local_host), int(self.cfg.local_port))
 
-        self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.socket.bind((self.cfg.local_host, int(self.cfg.local_port)))
+        with _LIVE_LOCAL_PORTS_LOCK:
+            if self._port_key in _LIVE_LOCAL_PORTS:
+                self._closed = True
+                pair = getattr(self.cfg, "pair_index", None)
+                where = "" if pair is None else f" (pair {int(pair)})"
+                raise BridgeError(
+                    f"local UDP port {self._port_key[1]} already carries a live "
+                    f"bridge in this process{where}: two workers are flying the "
+                    "same UAV/UGV pair, and the gateway would answer only one of "
+                    "them. Give each concurrent worker its own pair.")
+            self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            try:
+                self.socket.bind((self.cfg.local_host, int(self.cfg.local_port)))
+            except OSError:
+                self._closed = True
+                self.socket.close()
+                raise
+            _LIVE_LOCAL_PORTS[self._port_key] = id(self)
         self.socket.settimeout(0.002)
         self._drain()
         # First contact after a boot or a restart: Isaac is still loading its
@@ -161,8 +189,7 @@ class PX4Bridge:
         except BaseException:
             # Release the local UDP port so a retry can bind it again, instead
             # of leaving that to whenever the collector reaps this instance.
-            self._closed = True
-            self.socket.close()
+            self._release_socket()
             raise
 
     # ------------------------------------------------------------- lifecycle
@@ -181,10 +208,19 @@ class PX4Bridge:
                 self.disarm()
         except BridgeError:
             pass
+        self._release_socket()
+
+    def _release_socket(self) -> None:
+        """Close the UDP socket and give up this process's claim on its port."""
+        self._closed = True
         try:
             self.socket.close()
         except OSError:
             pass
+        with _LIVE_LOCAL_PORTS_LOCK:
+            key = getattr(self, "_port_key", None)
+            if key is not None and _LIVE_LOCAL_PORTS.get(key) == id(self):
+                del _LIVE_LOCAL_PORTS[key]
 
     def __del__(self) -> None:                # pragma: no cover - interpreter teardown
         try:

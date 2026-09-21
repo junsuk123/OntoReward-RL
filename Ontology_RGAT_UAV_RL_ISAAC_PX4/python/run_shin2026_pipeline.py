@@ -110,6 +110,18 @@ def _live_config(mode, results_dir, system_config):
         benchmark.get("entry_timeout_s", cfg.external.entry_timeout))
     cfg.external.entry_view_retries = int(
         benchmark.get("entry_view_retries", cfg.external.entry_view_retries))
+    # Gateway budgets (2026-09-21). With four pairs on one Isaac stage the
+    # simulator runs at roughly an eighth of real time, so one 0.1 s control
+    # period costs ~0.85 s of wall clock and a reply can take longer than the
+    # 2 s default under load; a stalled reply then restarted the *shared*
+    # stack, every other pair timed out in turn, and the rebuilt gateway did
+    # not answer hello inside the 120 s setup budget (two runs lost).
+    cfg.external.timeout = float(
+        benchmark.get("gateway_timeout_s", cfg.external.timeout))
+    cfg.external.setup_timeout = float(
+        benchmark.get("setup_timeout_s", cfg.external.setup_timeout))
+    cfg.external.reset_recoveries = int(
+        benchmark.get("reset_recoveries", cfg.external.reset_recoveries))
     # The entry gate, the geometric FOV metric and the future-FOV-loss labels
     # all project through the camera Isaac actually renders with, so copy that
     # model rather than relying on the defaults.

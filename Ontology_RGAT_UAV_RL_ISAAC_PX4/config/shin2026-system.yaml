@@ -2,11 +2,17 @@ extends: system.yaml
 
 system:
   control_hz: 10.0
-  sitl_action_timeout_s: 1.0
+  # SITL action deadman (2026-09-21: 1.0 -> 3.0 -> 10.0). Four pairs on one stage run
+  # Isaac at ~1/8 real time, so a 0.1 s control period is ~0.85 s of wall
+  # clock and the learner's next action routinely arrived 1.0-2.0 s after the
+  # previous one; the gateway then held position "between episodes" in the
+  # middle of a flight and its replies slipped past the bridge budget. The
+  # hardware deadman in system.yaml stays strict.
+  sitl_action_timeout_s: 10.0
   # S5's photoreal mesh occasionally delays one rendered sensor callback past
   # the Flat-Plane 0.5 s budget.  This admits one delayed scene sample without
-  # masking a genuinely stopped estimator.
-  state_timeout_s: 1.5
+  # masking a genuinely stopped estimator. Widened with the deadman above.
+  state_timeout_s: 10.0
 
 isaac:
   # This benchmark is a landing task. Keep the disarmed Iris at a physical
@@ -97,6 +103,17 @@ benchmark:
   # fly-through and sits clear of the observed cycle. Identical for both arms.
   entry_speed_tolerance_m_s: 1.00
   entry_settle_s: 1.0
+  # Bridge budgets for the shared four-pair stage (2026-09-21), see
+  # run_shin2026_pipeline._live_config: a flight reply may take up to 6 s of
+  # wall clock before the stack is declared stalled, a rebuilt gateway gets
+  # six minutes to answer hello while Isaac reloads the stage, and a worker
+  # may recover its stack three times per episode before giving up.
+  # Raised again after run 6 (2026-09-21): at ~1/9 real time a peer pair's
+  # reset (teleport, respawn) can freeze the stage for several seconds, and a
+  # 6 s reply budget still turned that into a shared-stack rebuild.
+  gateway_timeout_s: 20.0
+  setup_timeout_s: 480.0
+  reset_recoveries: 3
   # The budget the entry gate is judged against, in *simulated* PX4 seconds.
   # Its wall-clock counterpart (external.entry_timeout) is only a hang guard.
   # The vehicle has to fly up to a few metres to the seeded Table-I offset and
@@ -104,6 +121,12 @@ benchmark:
   # simulated seconds, so 60 leaves room for a re-aim without letting a stuck
   # climb hold a pair open indefinitely.
   entry_sim_budget_s: 60.0
+  # Wall-clock hang guard for that budget (default 480 s). At the ~1/9 real
+  # time of a four-pair stage, 60 simulated seconds are ~540 s of wall clock,
+  # so the guard fired first ("the stage is running far slower than real
+  # time") and every PPO entry failed; 1200 s covers a quarter-speed stage
+  # with margin and still ends a simulator that has truly stopped.
+  entry_timeout_s: 1200.0
   # A disarmed vehicle cannot reach any pose. If PX4 keeps refusing command 400
   # for this long, the gate fails with that as the stated cause instead of
   # reporting the parked vehicle's position offset for the full budget.

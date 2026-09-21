@@ -1119,3 +1119,101 @@ def test_reward_design_manifest_contract_uses_loaded_configuration():
         _reward_design_collection_contract(
             {"minimum_successful_recovery_episodes_full": 0},
             "full", 40, 120)
+
+
+def test_deadline_teacher_descends_over_a_partially_framed_deck():
+    """Directly above the deck the 60-degree camera frames only 2 of 6
+    landmarks between 0.4 and 1.0 m. That is a correct approach, not a
+    visual loss; the teacher must keep descending. Measured 2026-09-20: the
+    former ``visible fraction < 0.5`` trigger made 40 of 40 flights bounce at
+    ~1.1 m once the encoder stopped hallucinating out-of-frame landmarks."""
+    partial = replace(
+        _observation(.6), visible_keypoint_fraction=2.0 / 6.0,
+        visual_loss_risk=0.0)
+    over_deck = _privileged_velocity_teacher_action(
+        [0., 0., -1., 0., 0., 0.], [0., 0., 0.], partial,
+        [2., 2., 1.], noise_std=0.)
+    assert over_deck[2] < 0.0
+    # A single blind step (0.1 s) is not yet a loss either ...
+    flicker = replace(partial, visible_keypoint_fraction=1.0 / 6.0,
+                      visual_loss_risk=0.05)
+    steady = _privileged_velocity_teacher_action(
+        [0., 0., -2., 0., 0., 0.], [0., 0., 0.], flicker,
+        [2., 2., 1.], noise_std=0.)
+    assert steady[2] < 0.0
+    # ... but sustained blindness while still high is.
+    blind = replace(partial, visible_keypoint_fraction=0.0, visual_loss_risk=0.3)
+    climb = _privileged_velocity_teacher_action(
+        [0., 0., -2., 0., 0., 0.], [0., 0., 0.], blind,
+        [2., 2., 1.], noise_std=0.)
+    assert climb[2] > 0.0
+    # The partial-visibility trigger can be restored explicitly.
+    legacy = _privileged_velocity_teacher_action(
+        [0., 0., -2., 0., 0., 0.], [0., 0., 0.], partial,
+        [2., 2., 1.], noise_std=0., visual_loss_climb_fraction=0.5)
+    assert legacy[2] > 0.0
+
+
+def test_deadline_teacher_can_take_its_visual_loss_cue_from_geometry():
+    """With the geometric source the encoder's visibility does not steer the
+    teacher at all: a pad that is inside the frustum is never a loss, a pad
+    outside it is, whatever the semantic observation says."""
+    blind = replace(_observation(.6), visible_keypoint_fraction=0.0,
+                    visual_loss_risk=1.0)
+    in_frame = _privileged_velocity_teacher_action(
+        [0., 0., -2., 0., 0., 0.], [0., 0., 0.], blind, [2., 2., 1.],
+        noise_std=0., visual_loss_climb_source="geometric", geometric_in_fov=True)
+    assert in_frame[2] < 0.0
+    seeing = replace(_observation(.6), visible_keypoint_fraction=1.0,
+                     visual_loss_risk=0.0)
+    out_of_frame = _privileged_velocity_teacher_action(
+        [0., 0., -2., 0., 0., 0.], [0., 0., 0.], seeing, [2., 2., 1.],
+        noise_std=0., visual_loss_climb_source="geometric", geometric_in_fov=False)
+    assert out_of_frame[2] > 0.0
+    with pytest.raises(ValueError, match="geometric_in_fov"):
+        _privileged_velocity_teacher_action(
+            [0., 0., -2., 0., 0., 0.], [0., 0., 0.], seeing, [2., 2., 1.],
+            noise_std=0., visual_loss_climb_source="geometric")
+    info = {}
+    _privileged_velocity_teacher_action(
+        [0.3, 0., -1.5, 0., 0., 0.], [0., 0., 0.], seeing, [2., 2., 1.],
+        noise_std=0., visual_loss_climb_source="geometric", geometric_in_fov=True,
+        info=info)
+    assert info["altitude_m"] == pytest.approx(1.5)
+    assert info["lateral_error_m"] == pytest.approx(0.3)
+    assert info["visual_lost"] is False and info["geometric_in_fov"] is True
+
+
+def test_deadline_teacher_vertical_schedule_is_configurable():
+    seeing = replace(_observation(.6), visible_keypoint_fraction=1.0,
+                     visual_loss_risk=0.0)
+    common = dict(noise_std=0., visual_loss_climb_source="geometric",
+                  geometric_in_fov=True, descent_high_m_s=.5, descent_mid_m_s=.25,
+                  descent_flare_m_s=.1, approach_descent_m_s=.2)
+    high = _privileged_velocity_teacher_action(
+        [0.1, 0., -3., 0., 0., 0.], [0., 0., 0.], seeing, [2., 2., 1.], **common)
+    assert high[2] == pytest.approx(-.5)
+    mid = _privileged_velocity_teacher_action(
+        [0.1, 0., -.8, 0., 0., 0.], [0., 0., 0.], seeing, [2., 2., 1.], **common)
+    assert mid[2] == pytest.approx(-.25)
+    flare = _privileged_velocity_teacher_action(
+        [0.1, 0., -.3, 0., 0., 0.], [0., 0., 0.], seeing, [2., 2., 1.], **common)
+    assert flare[2] == pytest.approx(-.1)
+    # Roughly aligned and high: keep coming down while closing ...
+    closing = _privileged_velocity_teacher_action(
+        [1.0, 0., -4., 0., 0., 0.], [0., 0., 0.], seeing, [2., 2., 1.], **common)
+    assert closing[2] == pytest.approx(-.2)
+    # ... but not when low, far, or fast relative to the deck.
+    low = _privileged_velocity_teacher_action(
+        [1.0, 0., -2., 0., 0., 0.], [0., 0., 0.], seeing, [2., 2., 1.], **common)
+    assert low[2] == 0.0
+    far = _privileged_velocity_teacher_action(
+        [2.0, 0., -4., 0., 0., 0.], [0., 0., 0.], seeing, [2., 2., 1.], **common)
+    assert far[2] == 0.0
+    fast = _privileged_velocity_teacher_action(
+        [1.0, 0., -4., .8, 0., 0.], [0., 0., 0.], seeing, [2., 2., 1.], **common)
+    assert fast[2] == 0.0
+    # Defaults are the v4 ladder.
+    legacy = _privileged_velocity_teacher_action(
+        [1.0, 0., -4., 0., 0., 0.], [0., 0., 0.], seeing, [2., 2., 1.], noise_std=0.)
+    assert legacy[2] == 0.0

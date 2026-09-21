@@ -35,7 +35,7 @@ estimator:
     # does; with the old white-pad-on-gradient frames more synthetic data made
     # Isaac accuracy *worse*. 4096 x 15 epochs is ~9 GPU minutes and, before
     # any real frame is seen, scores PCK@20 64 % on the surveyed Isaac frames
-    # where the previous 512 x 6 recipe scored 4 %.
+    # where the previous 512 x 6 recipe scored 4-7 % (held-out split / all 48).
     samples_quick: 64
     samples_full: 4096
     epochs_quick: 2

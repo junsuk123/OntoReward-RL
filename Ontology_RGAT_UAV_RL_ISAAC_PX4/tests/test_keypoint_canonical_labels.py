@@ -128,6 +128,19 @@ def test_a_non_finite_projection_is_left_in_pad_order():
     assert canonical_landmark_shift(pixels, np.zeros(2)) == 0
 
 
+def test_vertices_behind_the_camera_cannot_become_index_zero():
+    """project_pad_points gives a vertex behind the camera plane a placeholder
+    pixel; it must not decide the canonical order."""
+    centre = np.array([256.0, 160.0])
+    angles = np.radians([10.0, 70.0, 130.0, 190.0, 250.0, 310.0])
+    pixels = np.column_stack((centre[0] + 50 * np.cos(angles),
+                              centre[1] - 50 * np.sin(angles)))
+    assert canonical_landmark_shift(pixels, centre) == 0
+    in_front = np.array([False, True, True, True, True, True])
+    assert canonical_landmark_shift(pixels, centre, in_front) == 1
+    assert canonical_landmark_shift(pixels, centre, np.zeros(6, dtype=bool)) == 0
+
+
 # ---------------------------------------------------------------- renderer
 
 def test_synthetic_renderer_v2_matches_isaac_photometry_and_is_canonical():
@@ -154,9 +167,11 @@ def test_synthetic_renderer_v2_matches_isaac_photometry_and_is_canonical():
                                1.0, atol=1e-5)
 
 
-def test_synthetic_rendering_does_not_depend_on_the_worker_count():
+def test_synthetic_rendering_is_deterministic_for_a_seed():
+    """Per-frame seeds are drawn from the dataset seed, so the render does not
+    depend on chunking; the opt-in worker pool is not exercised here."""
     inline = synthetic_keypoint_dataset(SYSTEM, samples=6, seed=9, workers=1)
-    again = synthetic_keypoint_dataset(SYSTEM, samples=6, seed=9, workers=1)
+    again = synthetic_keypoint_dataset(SYSTEM, samples=6, seed=9, workers=None)
     np.testing.assert_array_equal(inline["images"], again["images"])
     np.testing.assert_allclose(inline["coordinates"], again["coordinates"])
 

@@ -38,6 +38,7 @@ from ontology_rgat.evaluation import (write_adaptive_reward_figures,
                                       write_three_pipeline_outputs,
                                       write_two_pipeline_outputs)
 from ontology_rgat.perception import (RosGrayscaleSource,
+                                      needs_empirical_calibration,
                                       prepare_keypoint_encoder)
 from ontology_rgat.pipelines import (assert_no_aruco_in_primary_system,
                                      available_pipeline_ids, get_pipeline,
@@ -104,6 +105,84 @@ def _write_json(path: Path, value) -> None:
     temporary.write_text(json.dumps(_json_safe(value), indent=2, allow_nan=False),
                          encoding="utf-8")
     os.replace(temporary, path)
+
+
+# The two halves a run is made of, and the reason they are named.
+#
+# Flying an episode and fitting a model are different resources: the first is
+# bounded by one physical Isaac/PX4 stage, the second by a GPU. Until
+# 2026-09-22 the run interleaved them -- the fixed-reward arms' PPO was
+# submitted first and the FOV-risk collector was handed whatever pair was left
+# over -- which made the collection single-pair on a four-pair stage, put the
+# collector and a PPO replica on the same pair when the arithmetic did not
+# work out, and meant the proposed arm's frozen readout was fitted while its
+# comparison arm was already several hundred episodes into training.
+#
+# The stages below are strictly ordered instead. ``collect`` flies everything
+# that produces a reusable dataset, on every pair at once, and stops. ``train``
+# fits the frozen readouts, runs PPO for every arm and scores them, and flies
+# nothing for collection -- a missing dataset is an error naming the collect
+# command rather than a silent multi-hour flight. ``all`` is the two in one
+# process, which is what a bare ``./run.sh`` still does.
+# The deck every collection flies unless a profile names another one.
+#
+# ``straight_escape_burst_track``: the pad cruises at 0.50 m/s along a closed
+# oval -- two 20 m straights joined by constant-speed 6 m semicircles -- the
+# vehicle settles into following it, and then it doubles to 1.00 m/s and pulls
+# out of the camera frame. It is the base scenario because it *produces* the
+# event the whole method is about -- the pad leaving the FOV -- in every
+# episode, rather than incidentally in some. A readout fitted on a deck that
+# rarely leaves the frame has almost no positive target to learn from.
+#
+# The oval rather than the open straight run (``straight_escape_burst``, still
+# available) because an open run is straight only *within* an episode: the deck
+# is left where the episode ended and the next one draws a new heading, so the
+# sequence walks away and has to be corrected by steering it back and by
+# clamping it at the arena edge. The closed track needs neither -- measured
+# over 300 episodes with a dash in every one, the deck stays inside 32 x 15 m
+# and never reaches even the half-arena.
+#
+# The other decks are not deleted; they are simply not the default any more,
+# and two_pipeline_comparison.yaml still declares all six. What overrides this,
+# in order of precedence:
+#
+#   PPO training + every collection   training.scenarios
+#   teacher demonstrations            behavior_cloning.scenarios
+#   FOV-risk rollouts                 fov_risk_design.scenarios
+#   semantic R-GAT rollouts           rgat_design.scenarios
+#   adaptive reward rollouts          adaptive_reward_design.scenarios
+#
+# The per-design keys win over ``training.scenarios``; this constant applies
+# only when a profile names no deck at all.
+COLLECTION_BASE_SCENARIO = "straight_escape_burst_track"
+
+STAGE_COLLECT = "collect"
+STAGE_TRAIN = "train"
+STAGE_ALL = "all"
+STAGES = (STAGE_ALL, STAGE_COLLECT, STAGE_TRAIN)
+
+
+class CollectionUnavailable(RuntimeError):
+    """A training-stage run would have had to fly to fill a dataset."""
+
+
+def _require_flight(allowed: bool, what: str, *, shortfall: str = "") -> None:
+    """Refuse to collect when this stage is not the collecting one.
+
+    Called at the point a collector has decided it must arm a vehicle. In
+    ``--stage train`` that decision is a contract violation, not a task: the
+    operator asked for training over data that was supposed to already exist,
+    and flying it here would both take hours they did not ask for and fit the
+    readout on data no collect run ever recorded.
+    """
+    if allowed:
+        return
+    detail = f" ({shortfall})" if shortfall else ""
+    raise CollectionUnavailable(
+        f"--stage train cannot continue: {what} is incomplete{detail}. "
+        "Run the collection stage first (./run.sh --stage collect, same "
+        "--config/--system-config), or use --stage all to collect and train "
+        "in one process.")
 
 
 class _LockedMonitor:
@@ -1205,10 +1284,22 @@ def _arm_manifest(pipelines, baseline_arms, labels) -> list[dict]:
     Learned arms first, then the control conditions. ``learned`` is what the
     dashboard keys its learning curves off, so a non-learned arm has no
     training series rather than an empty chart.
+
+    ``ontology`` marks the arm whose reward carries a frozen R-GAT term -- the
+    proposed one. The dashboard used to decide that by comparing the method id
+    against a literal ``shin_se_onto_rgat_recovery``, which silently mislabels
+    every other ontology arm the repository declares (the PBRS and
+    adaptive-weight pipelines) and would have to be edited again for the next.
+    The pipeline spec already knows, so it is published rather than guessed.
     """
     return ([{"method": str(name), "label": str(labels.get(name, name)),
-              "learned": True} for name in pipelines]
-            + [dict(arm) for arm in baseline_arms])
+              "learned": True,
+              "ontology": bool(get_pipeline(name).fov_risk_reward_enabled
+                               or get_pipeline(name).use_direct_rgat_potential
+                               or get_pipeline(name).use_adaptive_reward_weights)}
+             for name in pipelines]
+            + [{**dict(arm), "ontology": bool(dict(arm).get("ontology", False))}
+               for arm in baseline_arms])
 
 
 def _plan_with_baseline_arms(plan, baseline_arms) -> list[dict]:
@@ -1294,6 +1385,13 @@ def _reward_design_pair_indices(independent_pipelines, training_pair_replicas,
     of them: the other saw only hello and state timeouts, and every timeout
     rebuilt the shared simulator for all four pairs -- 26 rebuilds in four
     hours on 2026-09-21, the arm dying each run before the comparison began.
+
+    Since the stages were separated (2026-09-22) no arm is training while the
+    reward design collects, so ``independent_pipelines`` is normally empty and
+    this returns every pair -- which is the point: the collection gets the
+    whole stage. It is still called rather than assumed, so that reinstating
+    any early-training arm keeps the collector off its pairs automatically
+    instead of silently re-creating the double booking.
     """
     occupied: set[int] = set()
     for name in independent_pipelines:
@@ -1541,7 +1639,7 @@ def demonstration_fingerprint(config, settings, *, cfg, system=None) -> str:
 def _prepare_fast_demonstrations(*, cfg, camera, config, config_hash,
                                  keypoint_pretraining, results_dir, device,
                                  model_seed, monitor, system=None,
-                                 parallel_contexts=None):
+                                 parallel_contexts=None, flight_allowed=True):
     """Collect successful teacher flights once and store compact actor inputs.
 
     ``parallel_contexts`` gives the stage every idle UAV/UGV pair instead of
@@ -1601,7 +1699,7 @@ def _prepare_fast_demonstrations(*, cfg, camera, config, config_hash,
     demonstration_scenarios = [
         str(name) for name in (settings.get("scenarios")
                                or [settings.get("scenario",
-                                                "training_random_walk")])]
+                                                COLLECTION_BASE_SCENARIO)])]
     if not demonstration_scenarios:
         raise ValueError("the behaviour-cloning teacher needs a deck to fly")
     demonstration_scenario = " · ".join(demonstration_scenarios)
@@ -1697,6 +1795,9 @@ def _prepare_fast_demonstrations(*, cfg, camera, config, config_hash,
 
     publish_progress()
     if successes < required and flight_attempts < maximum_flights:
+        _require_flight(
+            flight_allowed, "the shared teacher demonstration set",
+            shortfall=f"{successes}/{required} successful flights stored")
         if teacher_model is None:
             torch.manual_seed(int(model_seed))
             teacher_model = _build_model(
@@ -1954,8 +2055,20 @@ def _collect_semantic_data(*, cfg, camera, model, config, config_hash,
                            max_episodes_override=None,
                            source_training_episodes=0,
                            source_training_environment_steps=0,
-                           source_pipeline="no_se"):
+                           source_pipeline="no_se", flight_allowed=True,
+                           scenarios=None):
     design = dict(config.get("rgat_design") or {})
+    # One deck per episode, rotated by episode index, exactly as the FOV-risk
+    # and adaptive collections do. This was a hardcoded ``training_random_walk``
+    # until 2026-09-22 -- a deck that never leaves the vehicle's frame -- so the
+    # semantic outcome model was fitted on trajectories the policy it shapes
+    # never flies. The caller passes the run's decks; the profile can still
+    # name its own under ``rgat_design.scenarios``.
+    design_scenarios = tuple(
+        str(name) for name in (design.get("scenarios") or scenarios
+                               or (COLLECTION_BASE_SCENARIO,)))
+    if not design_scenarios:
+        raise ValueError("semantic R-GAT collection needs a deck to fly")
     count = int(episodes_override if episodes_override is not None else
                 design.get(f"episodes_{mode}", 8 if mode == "quick" else 40))
     if count < 2:
@@ -1990,6 +2103,7 @@ def _collect_semantic_data(*, cfg, camera, model, config, config_hash,
         "additional_source_training_episodes": int(source_training_episodes),
         "additional_source_training_environment_steps": int(
             source_training_environment_steps),
+        "scenario_cycle": list(design_scenarios),
         "deterministic_seed_rule": "environment_seed + 9187",
     }
     dataset = None
@@ -2037,6 +2151,9 @@ def _collect_semantic_data(*, cfg, camera, model, config, config_hash,
     pending = [(index, seed) for index, seed in enumerate(requested_seeds, start=1)
                if seed not in completed]
     if pending and not requirements_met(manifest, episode_rows):
+        _require_flight(
+            flight_allowed, "the semantic R-GAT reward-design rollouts",
+            shortfall=f"{len(completed)}/{count} episodes stored")
         monitor.stage("R-GAT data", "estimator-free semantic behavior mixture")
         with LiveShinEnvironment(
                 cfg, camera, horizon_steps=int(cfg.sim.max_steps)) as environment:
@@ -2046,7 +2163,9 @@ def _collect_semantic_data(*, cfg, camera, model, config, config_hash,
                 rows, metric = collect_episode_resilient(
                     environment, model, source_pipeline, seed, curriculum=1.0,
                     deterministic=False, gamma=gamma,
-                    scenario="training_random_walk", monitor=monitor,
+                    scenario=design_scenarios[
+                        (episode - 1) % len(design_scenarios)],
+                    monitor=monitor,
                     phase="semantic reward-design data",
                     action_transform=_behavior_transform((episode - 1) % 3))
                 # Only the explicitly whitelisted semantic matrices cross into
@@ -2177,6 +2296,11 @@ def peer_training_health(futures):
     The returned callable is cheap enough to run once per collected episode.
     An arm that finished *successfully* is not a failure; only a future that
     completed with an exception stops the run.
+
+    Separating the stages (2026-09-22) removed the overlap this guards: no PPO
+    is submitted until every dataset is collected, so during collection the
+    future map is empty and this is a no-op. It is still wired in, because the
+    check costs nothing and the failure it names costs twelve hours.
     """
     def check() -> None:
         for name, future in futures.items():
@@ -2198,8 +2322,9 @@ def _collect_fov_risk_data(*, cfg, camera, model, config, config_hash,
                            source_pipeline="shin_se_fixed", system=None,
                            datastore=None, keypoint_implementation=None,
                            validation_fraction=0.2,
-                           scenarios=("training_random_walk",),
-                           peer_health=None):
+                           scenarios=(COLLECTION_BASE_SCENARIO,),
+                           peer_health=None, parallel_contexts=None,
+                           flight_allowed=True):
     """Collect same-domain trajectories and label future visibility offline.
 
     With a ``datastore`` the episodes every previous run flew under the same
@@ -2207,9 +2332,26 @@ def _collect_fov_risk_data(*, cfg, camera, model, config, config_hash,
     are recomputed here from the stored visibility sequence rather than
     stored, so a change to the horizon re-derives them instead of reusing a
     target that no longer means what it says.
+
+    ``parallel_contexts`` hands the collection every live pair instead of the
+    one it started on, exactly as the adaptive and demonstration stages do.
+    This used to be impossible: the collection ran beside the fixed-reward
+    arms' PPO and the only free pair was whatever the training assignment left
+    over. In the collection stage no PPO is running, so every pair is free,
+    and a four-pair stage collects at four times the rate. Nothing about the
+    resulting dataset depends on how many pairs flew it -- a seed decides its
+    behaviour variant, its deck and its train/validation side, and episodes are
+    appended in seed order however the batch completed.
     """
     design = dict(config.get("fov_risk_design") or {})
     risk = dict(config.get("fov_risk") or {})
+    # ``fov_risk_design.scenarios`` overrides the run-wide deck list the caller
+    # hands in (``training.scenarios``), which in turn overrides the base deck.
+    # The result is part of the datastore fingerprint below, so this is also
+    # what decides whether an accumulation may be extended.
+    scenarios = tuple(str(name) for name in (design.get("scenarios")
+                                             or scenarios
+                                             or (COLLECTION_BASE_SCENARIO,)))
     minimum = int(episodes_override if episodes_override is not None else
                   design.get(f"episodes_{mode}", 8 if mode == "quick" else 40))
     maximum = int(max_episodes_override if max_episodes_override is not None else
@@ -2229,6 +2371,7 @@ def _collect_fov_risk_data(*, cfg, camera, model, config, config_hash,
                 "fingerprint what its episodes mean")
         fingerprint = fov_risk_data_fingerprint(
             system, prediction_steps=prediction_steps, control_hz=control_hz,
+            scenarios=scenarios,
             keypoint_implementation=keypoint_implementation)
         stored = datastore.episodes(KIND_FOV_RISK, fingerprint)
         if stored:
@@ -2271,78 +2414,145 @@ def _collect_fov_risk_data(*, cfg, camera, model, config, config_hash,
     dataset = (build_fov_risk_dataset(episodes, prediction_steps=prediction_steps)
                if episodes else None)
     covered = bool(dataset is not None and _fov_target_coverage(dataset))
+    collection_contexts = list(parallel_contexts or ({
+        "cfg": cfg, "camera": camera, "monitor": monitor,
+    },))
+    if not collection_contexts:
+        raise ValueError("FOV-risk data needs at least one live pair")
+    for context in collection_contexts:
+        if not all(key in context for key in ("cfg", "camera", "monitor")):
+            raise ValueError("each FOV-risk collection context needs cfg/camera/monitor")
     if len(episodes) < minimum or not covered:
+        _require_flight(
+            flight_allowed, "the FOV-risk reward-design rollouts",
+            shortfall=(f"{len(episodes)}/{minimum} episodes stored"
+                       if len(episodes) < minimum else
+                       "both future-visibility target regimes are not covered"))
         used_seeds = {int(episode["seed"]) for episode in episodes}
-        monitor.stage("FOV-risk data", "visual-only graph · future visibility labels")
-        with LiveShinEnvironment(
-                cfg, camera, horizon_steps=int(cfg.sim.max_steps)) as environment:
+        for context in collection_contexts:
+            context["monitor"].stage(
+                "FOV-risk data",
+                f"visual-only graph · future visibility labels · "
+                f"{len(collection_contexts)} pair(s)")
+        with ExitStack() as environment_stack:
+            environments = [environment_stack.enter_context(
+                LiveShinEnvironment(
+                    context["cfg"], context["camera"],
+                    horizon_steps=int(context["cfg"].sim.max_steps)))
+                for context in collection_contexts]
+            # Actor inference is read-only, but separate modules avoid any
+            # accidental recurrent/module state sharing between worker threads.
+            worker_models = [model] + [deepcopy(model)
+                                       for _ in environments[1:]]
+            for worker_model in worker_models:
+                for module in getattr(worker_model, "modules", lambda: ())():
+                    flatten = getattr(module, "flatten_parameters", None)
+                    if callable(flatten):
+                        flatten()
+
+            def collect_one(worker_index, item):
+                episode_id, seed, variant = item
+                rows, metric = collect_episode_resilient(
+                    environments[worker_index], worker_models[worker_index],
+                    source_pipeline, seed, curriculum=1.0,
+                    deterministic=False,
+                    scenario=scenarios[(episode_id - 1) % len(scenarios)],
+                    monitor=collection_contexts[worker_index]["monitor"],
+                    phase="FOV-risk offline data",
+                    action_transform=_behavior_transform(variant))
+                return episode_id, seed, variant, rows, metric
+
             offset = 0
             while len(episodes) < maximum:
                 # Before flying anything else, make sure there is still an arm
-                # left to compare against: this loop runs for hours next to a
-                # PPO worker whose exception nothing reads until long after.
+                # left to compare against: with --stage all this may still run
+                # next to a PPO worker whose exception nothing reads until long
+                # after. In the collection stage there is no peer and this is
+                # a no-op.
                 if peer_health is not None:
                     peer_health()
-                while (seed0 + offset) in used_seeds:
+                # Allocate the whole batch's seeds up front, in order, so the
+                # episode a seed becomes -- and therefore its behaviour
+                # variant, its deck and its train/validation side -- does not
+                # depend on which pair happened to land first.
+                batch = []
+                while (len(batch) < len(environments)
+                       and len(episodes) + len(batch) < maximum):
+                    while (seed0 + offset) in used_seeds:
+                        offset += 1
+                    seed = seed0 + offset
                     offset += 1
-                seed = seed0 + offset
-                offset += 1
-                used_seeds.add(seed)
-                episode_id = len(episodes) + 1
-                # The behaviour cycle continues across runs so an accumulation
-                # keeps the three transforms balanced instead of re-collecting
-                # the same one every time.
-                variant = (episode_id - 1) % 3
-                rows, metric = collect_episode_resilient(
-                    environment, model, source_pipeline, seed, curriculum=1.0,
-                    deterministic=False,
-                    scenario=scenarios[(episode_id - 1) % len(scenarios)],
-                    monitor=monitor, phase="FOV-risk offline data",
-                    action_transform=_behavior_transform(variant))
-                samples = ([{"graph_X": row["fov_graph_X"],
-                             "geometric_in_fov": row["fov_graph_geometric_in_fov"]}
-                            for row in rows]
-                           + ([{"graph_X": rows[-1]["next_fov_graph_X"],
-                                "geometric_in_fov": rows[-1]["geometric_in_fov"]}]
-                              if rows else []))
-                episodes.append({"episode_id": episode_id, "seed": seed,
-                                 "samples": samples})
-                flown_steps += len(rows)
-                total_steps += len(rows)
-                loss_episodes += int(metric["geometric_fov_loss_episode_rate"])
-                if datastore is not None:
-                    datastore.store_episode(
-                        KIND_FOV_RISK, fingerprint, seed=seed,
-                        payload=_fov_episode_payload(samples),
-                        identity={"seed": seed, "source_pipeline": source_pipeline,
-                                  "source_checkpoint_sha256": checkpoint_sha,
-                                  "behaviour_variant": variant},
-                        provenance={
-                            "source_pipeline": source_pipeline,
-                            "source_checkpoint_sha256": checkpoint_sha,
-                            "behaviour_variant": variant,
-                            # Recorded, not fingerprinted: the features come
-                            # from this encoder's weights, so a mixed-lineage
-                            # accumulation stays auditable.
-                            "keypoint_encoder_implementation": keypoint_implementation,
-                            "config_hash": str(config_hash),
-                            "geometric_fov_loss_episode": int(
-                                metric["geometric_fov_loss_episode_rate"]),
-                            "control_hz": float(control_hz),
-                        },
-                        samples=len(samples), environment_steps=len(rows))
-                dataset = build_fov_risk_dataset(
-                    episodes, prediction_steps=prediction_steps)
-                progress = _fov_dataset_progress(dataset)
-                monitor.fov_dataset(
-                    episodes=len(episodes), minimum=minimum, maximum=maximum,
-                    loss_episodes=loss_episodes, environment_steps=total_steps,
-                    **progress)
-                if len(episodes) >= minimum and progress["covered"]:
+                    used_seeds.add(seed)
+                    episode_id = len(episodes) + len(batch) + 1
+                    # The behaviour cycle continues across runs so an
+                    # accumulation keeps the three transforms balanced instead
+                    # of re-collecting the same one every time.
+                    batch.append((episode_id, seed, (episode_id - 1) % 3))
+                if not batch:
                     break
-                print(f"FOV-risk data {len(episodes)}/{minimum} minimum "
-                      f"(cap {maximum}): loss_episode="
-                      f"{int(metric['geometric_fov_loss_episode_rate'])}")
+                if len(batch) == 1:
+                    completed_batch = [collect_one(0, batch[0])]
+                else:
+                    with ThreadPoolExecutor(
+                            max_workers=len(batch),
+                            thread_name_prefix="fov-risk-pair") as executor:
+                        futures = [executor.submit(collect_one, index, item)
+                                   for index, item in enumerate(batch)]
+                        completed_batch = [future.result() for future in futures]
+                # Persist only on this thread and in episode order, so a crash
+                # resumes from a complete, deterministic prefix.
+                stop = False
+                for episode_id, seed, variant, rows, metric in sorted(
+                        completed_batch, key=lambda result: result[0]):
+                    samples = ([{"graph_X": row["fov_graph_X"],
+                                 "geometric_in_fov": row["fov_graph_geometric_in_fov"]}
+                                for row in rows]
+                               + ([{"graph_X": rows[-1]["next_fov_graph_X"],
+                                    "geometric_in_fov": rows[-1]["geometric_in_fov"]}]
+                                  if rows else []))
+                    episodes.append({"episode_id": episode_id, "seed": seed,
+                                     "samples": samples})
+                    flown_steps += len(rows)
+                    total_steps += len(rows)
+                    loss_episodes += int(metric["geometric_fov_loss_episode_rate"])
+                    if datastore is not None:
+                        datastore.store_episode(
+                            KIND_FOV_RISK, fingerprint, seed=seed,
+                            payload=_fov_episode_payload(samples),
+                            identity={"seed": seed, "source_pipeline": source_pipeline,
+                                      "source_checkpoint_sha256": checkpoint_sha,
+                                      "behaviour_variant": variant},
+                            provenance={
+                                "source_pipeline": source_pipeline,
+                                "source_checkpoint_sha256": checkpoint_sha,
+                                "behaviour_variant": variant,
+                                # Recorded, not fingerprinted: the features come
+                                # from this encoder's weights, so a mixed-lineage
+                                # accumulation stays auditable.
+                                "keypoint_encoder_implementation": keypoint_implementation,
+                                "scenario": scenarios[
+                                    (episode_id - 1) % len(scenarios)],
+                                "config_hash": str(config_hash),
+                                "geometric_fov_loss_episode": int(
+                                    metric["geometric_fov_loss_episode_rate"]),
+                                "control_hz": float(control_hz),
+                            },
+                            samples=len(samples), environment_steps=len(rows))
+                    dataset = build_fov_risk_dataset(
+                        episodes, prediction_steps=prediction_steps)
+                    progress = _fov_dataset_progress(dataset)
+                    monitor.fov_dataset(
+                        episodes=len(episodes), minimum=minimum, maximum=maximum,
+                        loss_episodes=loss_episodes, environment_steps=total_steps,
+                        **progress)
+                    if len(episodes) >= minimum and progress["covered"]:
+                        stop = True
+                        continue
+                    print(f"FOV-risk data {len(episodes)}/{minimum} minimum "
+                          f"(cap {maximum}): loss_episode="
+                          f"{int(metric['geometric_fov_loss_episode_rate'])}")
+                if stop:
+                    break
     else:
         monitor.fov_dataset(
             episodes=len(episodes), minimum=minimum, maximum=maximum,
@@ -2425,7 +2635,7 @@ def _collect_adaptive_data(*, cfg, camera, model, source_pipeline, config,
                            episodes_override=None, max_episodes_override=None,
                            minimum_unsafe_failures_override=None,
                            source_checkpoint_path=None,
-                           parallel_contexts=None):
+                           parallel_contexts=None, flight_allowed=True):
     """실제 Isaac/PX4 전이로 5성분 adaptive reward dataset을 만든다."""
     design = dict(config.get("adaptive_reward_design") or {})
     reward_cfg = dict(config.get("adaptive_reward") or {})
@@ -2449,8 +2659,7 @@ def _collect_adaptive_data(*, cfg, camera, model, source_pipeline, config,
             print(f"Ignoring incompatible adaptive rollout cache: {exc}")
             records = []
 
-    scenarios = tuple(design.get("scenarios") or (
-        "training_random_walk", "circle", "zigzag", "vertical_heave_boat"))
+    scenarios = tuple(design.get("scenarios") or (COLLECTION_BASE_SCENARIO,))
     fast_settings = behavior_cloning_settings(config)
     deadline_teacher_enabled = bool(fast_settings.get("enabled", False))
     completed_episodes = set(int(row["episode_id"]) for row in records)
@@ -2547,6 +2756,11 @@ def _collect_adaptive_data(*, cfg, camera, model, source_pipeline, config,
                for episode in range(1, maximum + 1)
                if episode not in completed_episodes]
     if pending and not requirements_met(dataset):
+        _require_flight(
+            flight_allowed, "the adaptive reward-design rollouts",
+            shortfall=(f"{dataset_quality(dataset)['episodes']}/{count} "
+                       "episodes stored, or the stratified quality contract "
+                       "is not met yet"))
         for context in collection_contexts:
             context["monitor"].stage(
                 "adaptive reward data",
@@ -2660,6 +2874,13 @@ def main(*, primary_only: bool = False):
         "--pipelines", nargs="+",
         choices=(primary_pipeline_ids() if primary_only else available_pipeline_ids()))
     parser.add_argument("--mode", choices=("quick", "full"), default="quick")
+    parser.add_argument(
+        "--stage", choices=STAGES, default=STAGE_ALL,
+        help="which half of the run to execute. 'collect' flies every "
+             "reward-design and demonstration dataset on every pair and "
+             "stops; 'train' fits the frozen readouts, runs PPO for every arm "
+             "and scores them, and refuses to fly for collection; 'all' does "
+             "both in one process, collection first")
     # The zero-argument contract: bare ``./run.sh`` runs the current headline
     # experiment. That is the three-arm burst comparison since 2026-09-22 --
     # one deck that always produces the FOV-loss event, and a non-learned
@@ -2795,6 +3016,12 @@ def main(*, primary_only: bool = False):
     if args.fov_risk_model is None:
         args.fov_risk_model = args.results_dir / "rgat/fov_risk_model.pt"
     args.results_dir.mkdir(parents=True, exist_ok=True)
+    # Which half of the run this process is. ``collection_allowed`` gates every
+    # place a vehicle would be armed to fill a dataset, and ``training_allowed``
+    # every place a model is fitted or scored. Both are true for --stage all,
+    # which is the bare ./run.sh contract: collect everything, then train.
+    collection_allowed = args.stage in (STAGE_ALL, STAGE_COLLECT)
+    training_allowed = args.stage in (STAGE_ALL, STAGE_TRAIN)
 
     system = load_system_config(args.system_config)
     if automatic_pairs:
@@ -2862,7 +3089,7 @@ def main(*, primary_only: bool = False):
     # below flies the same set, so the frozen readout is fitted on the deck
     # distribution the policies are actually trained and scored against.
     training_scenarios = tuple(training_cfg.get("scenarios")
-                               or ("training_random_walk",))
+                               or (COLLECTION_BASE_SCENARIO,))
     configured_ppo = dict(config.get("ppo") or {})
     se_pipeline_count = sum(
         get_pipeline(name).state_estimation_enabled for name in args.pipelines)
@@ -3325,6 +3552,17 @@ def main(*, primary_only: bool = False):
             camera = cameras[0]
             monitor.stage("keypoint validation",
                           "live Isaac camera · surveyed viewpoints")
+            # The encoder is an input to collection, not a product of it: the
+            # semantic and FOV graphs are read out of its keypoints, so every
+            # stored episode is labelled in its coordinates. A training stage
+            # therefore expects the survey to have happened already -- flying
+            # it here would mean the readout is fitted on frames from a lineage
+            # no collect run ever recorded.
+            if not collection_allowed and needs_empirical_calibration(
+                    keypoint_pretraining):
+                _require_flight(
+                    False, "the keypoint encoder's live Isaac calibration",
+                    shortfall="the saved encoder is not empirically validated")
             calibration_system = _calibration_system_for_pair(
                 system, pair_index=0, pair_count=args.parallel_pairs)
             keypoint_pretraining = calibrate_keypoint_encoder_in_flight(
@@ -3371,7 +3609,8 @@ def main(*, primary_only: bool = False):
                 model_seed=model_seed,
                 monitor=(worker_monitors[0]
                          if args.parallel_pairs > 1 else monitor),
-                parallel_contexts=demonstration_contexts)
+                parallel_contexts=demonstration_contexts,
+                flight_allowed=collection_allowed)
             cloning_metrics = {}
             if demonstrations is not None:
                 manifest["behavior_cloning_demonstrations"] = {
@@ -3455,6 +3694,10 @@ def main(*, primary_only: bool = False):
 
                 replica_factories = [live_environment(index)
                                      for index in replica_pairs]
+                # Each replica reports to its own pair's panel. Sharing
+                # ``local_monitor`` put two vehicles on one trajectory plot.
+                replica_monitors = [worker_monitors[index]
+                                    for index in replica_pairs]
                 if len(replica_factories) > 1:
                     local_monitor.stage(
                         "parallel training" if args.parallel_pairs > 1 else "training",
@@ -3478,7 +3721,8 @@ def main(*, primary_only: bool = False):
                     optimizer_lock=gpu_update_lock,
                     training_contract_id=training_contract_id,
                     scenarios=training_scenarios,
-                    env_factories=replica_factories)
+                    env_factories=replica_factories,
+                    env_monitors=replica_monitors)
                 if primary:
                     for row in history:
                         row["training_replicate"] = args.training_replicate
@@ -3491,61 +3735,97 @@ def main(*, primary_only: bool = False):
                 return (model, history, best_path if best_path.is_file() else
                         target_dir / f"{name}.pt")
 
-            # 고정 보상 arm은 R-GAT artifact에 의존하지 않는다.
-            # 따라서 병렬 실험에서는 이 두 PPO를 즉시 시작하고,
-            # 남은 physical pair에서 reward-design rollout을 동시에 수집한다.
-            independent_pipelines = [
-                name for name in args.pipelines
-                if not (get_pipeline(name).use_direct_rgat_potential
-                        or get_pipeline(name).use_adaptive_reward_weights
-                        or get_pipeline(name).fov_risk_reward_enabled)]
+            # ================================================================
+            # Stage 1 -- data collection.
+            #
+            # Every actor the run will ever need is built here, before a single
+            # reward-design episode is flown and before any PPO exists.
+            # ``torch.manual_seed`` is process-global, so constructing a model
+            # while a worker is sampling would perturb that worker's
+            # exploration stream according to thread timing; building them all
+            # up front is what keeps a parallel run reproducible.
+            #
+            # None of them is trained here. The reward-design rollouts are
+            # flown by the BC-warmed frozen source policy, or by a compatible
+            # checkpoint an earlier run left on disk -- never by a policy this
+            # process trains, because the collection stage runs no PPO by
+            # construction. Every multi-pair run already worked this way (the
+            # frozen source is what the parallel path flew while the
+            # comparison arm trained); it is now the single rule, so a
+            # one-pair and a four-pair run collect from the same behaviour
+            # distribution and neither charges a source-policy PPO to the
+            # reward-design budget.
+            source_names = []
+            if needs_potential:
+                preferred = str((config.get("rgat_design") or {}).get(
+                    "source_pipeline", "no_se"))
+                source_names.append(
+                    preferred if preferred in available_pipeline_ids()
+                    else "no_se")
+            if needs_adaptive:
+                source_names.append(str(
+                    (config.get("adaptive_reward_design") or {}).get(
+                        "source_pipeline", "no_se_fixed")))
+            if needs_fov_risk:
+                source_names.append(str(
+                    (config.get("fov_risk_design") or {}).get(
+                        "source_pipeline", "shin_se_fixed")))
+            source_names = list(dict.fromkeys(source_names))
+            prepared_names = list(dict.fromkeys([*args.pipelines, *source_names]))
+            prepared_parallel_models = {
+                name: initialize_pipeline_model(name)
+                for name in prepared_names}
+            frozen_behavior_models = {
+                name: deepcopy(prepared_parallel_models[name])
+                for name in source_names}
+            for source_model in frozen_behavior_models.values():
+                for module in source_model.modules():
+                    flatten = getattr(module, "flatten_parameters", None)
+                    if callable(flatten):
+                        flatten()
+
+            def reward_design_source(name):
+                """The frozen policy a reward-design rollout is flown by.
+
+                A compatible checkpoint from an earlier run is preferred --
+                accumulated collection is the point of the datastore, and a
+                trained source makes the rollouts more like the states the
+                arms actually visit. Without one the BC-warmed initialization
+                flies, which is a policy that already tracks the deck because
+                the teacher demonstrations above are cloned into it.
+                """
+                model = frozen_behavior_models[name]
+                checkpoint = _load_reward_design_source_checkpoint(
+                    args.results_dir, name, model, config_hash=config_hash)
+                if checkpoint is None:
+                    print(f"Collecting reward-design data with the BC-warmed "
+                          f"{name} policy; no compatible checkpoint on disk.")
+                else:
+                    print(f"Collecting reward-design data with the compatible "
+                          f"{name} checkpoint {checkpoint}.")
+                return model, checkpoint
+
+            # Nothing else is flying, so the reward design collects on every
+            # pair. This is what the stage split buys: the collection used to
+            # be handed whatever pair the training assignment left over, which
+            # on a four-pair stage was one pair, and when the arithmetic did
+            # not work out was a pair a PPO replica was already flying.
+            collection_pair_indices = _reward_design_pair_indices(
+                list(training_futures), training_pair_replicas,
+                training_pair_for, args.parallel_pairs)
+            reward_design_pair_indices = collection_pair_indices
+            collection_contexts = [{
+                "cfg": pair_cfgs[index], "camera": cameras[index],
+                "monitor": worker_monitors[index],
+            } for index in collection_pair_indices]
+            parallel_collection_contexts = (
+                collection_contexts if args.parallel_pairs > 1 else None)
+            collection_cfg = pair_cfgs[collection_pair_indices[0]]
+            collection_camera = cameras[collection_pair_indices[0]]
+            collection_monitor = worker_monitors[collection_pair_indices[0]]
             if args.parallel_pairs > 1:
-                # Build every trainable actor and frozen behavior source before
-                # worker threads start. ``torch.manual_seed`` is process-global;
-                # model construction during live PPO would otherwise perturb a
-                # worker's exploration stream according to thread timing.
-                source_names = []
-                if needs_potential:
-                    preferred = str((config.get("rgat_design") or {}).get(
-                        "source_pipeline", "no_se"))
-                    source_names.append(
-                        preferred if preferred in available_pipeline_ids()
-                        else "no_se")
-                if needs_adaptive:
-                    source_names.append(str(
-                        (config.get("adaptive_reward_design") or {}).get(
-                            "source_pipeline", "no_se_fixed")))
-                if needs_fov_risk:
-                    source_names.append(str(
-                        (config.get("fov_risk_design") or {}).get(
-                            "source_pipeline", "shin_se_fixed")))
-                prepared_names = list(dict.fromkeys(
-                    [*args.pipelines, *source_names]))
-                prepared_parallel_models = {
-                    name: initialize_pipeline_model(name)
-                    for name in prepared_names}
-                frozen_behavior_models = {
-                    name: deepcopy(prepared_parallel_models[name])
-                    for name in source_names}
-                for source_model in frozen_behavior_models.values():
-                    for module in source_model.modules():
-                        flatten = getattr(module, "flatten_parameters", None)
-                        if callable(flatten):
-                            flatten()
-                training_executor = ThreadPoolExecutor(
-                    max_workers=args.parallel_pairs,
-                    thread_name_prefix="landing-pair")
-                training_futures = {
-                    name: training_executor.submit(
-                        train_pipeline, name,
-                        pair_index=training_pair_for[name],
-                        model=prepared_parallel_models[name])
-                    for name in independent_pipelines}
-                reward_design_pair_indices = _reward_design_pair_indices(
-                    independent_pipelines, training_pair_replicas,
-                    training_pair_for, args.parallel_pairs)
                 manifest["parallel_execution"].update({
-                    "early_independent_pipelines": independent_pipelines,
+                    "stage_order": "collect_then_train",
                     "training_pair_replicas": {
                         name: [int(index) for index in indices]
                         for name, indices in training_pair_replicas.items()},
@@ -3553,59 +3833,208 @@ def main(*, primary_only: bool = False):
                 })
                 _write_json(manifest_path, manifest)
                 refresh_presentation_results()
-            else:
-                reward_design_pair_indices = [0]
-                for name in args.pipelines:
-                    spec = get_pipeline(name)
-                    if not (spec.use_direct_rgat_potential
-                            or spec.use_adaptive_reward_weights
-                            or spec.fov_risk_reward_enabled):
-                        train_pipeline(name)
 
             fov_design_episodes = 0
             fov_design_steps = 0
+            fov_dataset = None
+            fov_manifest = None
+            fov_reuse = {}
+            fov_validation_fraction = float(
+                (config.get("fov_risk_design") or {}).get(
+                    "validation_fraction", 0.2))
             if needs_fov_risk and fov_risk_model is None:
-                source_name = str((config.get("fov_risk_design") or {}).get(
+                fov_source_name = str((config.get("fov_risk_design") or {}).get(
                     "source_pipeline", "shin_se_fixed"))
-                source_checkpoint = None
-                if source_name in models:
-                    source_model = models[source_name]
-                    source_dir = args.results_dir / "models" / source_name
-                    source_checkpoint = (
-                        source_dir / f"{source_name}.best.pt"
-                        if (source_dir / f"{source_name}.best.pt").is_file()
-                        else source_dir / f"{source_name}.pt")
-                elif args.parallel_pairs > 1 and source_name in frozen_behavior_models:
-                    source_model = frozen_behavior_models[source_name]
-                    source_checkpoint = _load_reward_design_source_checkpoint(
-                        args.results_dir, source_name, source_model,
-                        config_hash=config_hash)
-                    print(
-                        f"Using an independently frozen {source_name} policy for "
-                        "offline FOV-risk data while baseline PPO trains.")
-                else:
-                    source_model = initialize_pipeline_model(source_name)
-                fov_validation_fraction = float(
-                    (config.get("fov_risk_design") or {}).get(
-                        "validation_fraction", 0.2))
+                fov_source_model, fov_source_checkpoint = reward_design_source(
+                    fov_source_name)
                 fov_dataset, fov_manifest, _, fov_design_steps, fov_reuse = (
                     _collect_fov_risk_data(
-                        cfg=pair_cfgs[reward_design_pair_indices[0]],
-                        camera=cameras[reward_design_pair_indices[0]],
-                        model=source_model, config=config,
-                        config_hash=config_hash, checkpoint_path=source_checkpoint,
+                        cfg=collection_cfg, camera=collection_camera,
+                        model=fov_source_model, config=config,
+                        config_hash=config_hash,
+                        checkpoint_path=fov_source_checkpoint,
                         results_dir=args.results_dir, mode=args.mode,
-                        monitor=worker_monitors[reward_design_pair_indices[0]],
+                        monitor=collection_monitor,
                         episodes_override=args.rgat_data_episodes,
                         max_episodes_override=args.rgat_max_data_episodes,
-                        source_pipeline=source_name, system=system,
+                        source_pipeline=fov_source_name, system=system,
                         datastore=datastore, scenarios=training_scenarios,
                         keypoint_implementation=(
                             None if keypoint_pretraining is None
                             else keypoint_pretraining["implementation"]),
                         validation_fraction=fov_validation_fraction,
+                        parallel_contexts=parallel_collection_contexts,
+                        flight_allowed=collection_allowed,
                         peer_health=peer_training_health(training_futures)))
                 fov_design_episodes = int(fov_manifest["episodes"])
+            elif needs_fov_risk:
+                fov_manifest = dict(fov_risk_model.metadata)
+                fov_design_episodes = int((fov_manifest.get(
+                    "dataset_manifest") or {}).get("episodes", 0))
+                # A resumed run skips collection and training entirely; without
+                # this the FOV panel would stay blank for the whole run even
+                # though a validated readout is driving the proposed reward.
+                monitor.fov_model(design_id=fov_risk_model.design_id,
+                                  metadata=fov_manifest)
+
+            dataset = None
+            dataset_manifest = None
+            dataset_path = None
+            if needs_potential and potential is None:
+                preferred_source = str((config.get("rgat_design") or {}).get(
+                    "source_pipeline", "no_se"))
+                semantic_source_name = (
+                    preferred_source if preferred_source in available_pipeline_ids()
+                    else "no_se")
+                semantic_source_model, semantic_source_checkpoint = (
+                    reward_design_source(semantic_source_name))
+                # The source policy is never trained by this run any more, so
+                # it adds no episodes to the reward-design budget. Kept as
+                # explicit zeros because the manifest and the cost report both
+                # read them.
+                source_training_episodes = 0
+                source_training_steps = 0
+                dataset, dataset_manifest, dataset_path, design_steps = (
+                    _collect_semantic_data(
+                        cfg=collection_cfg, camera=collection_camera,
+                        model=semantic_source_model, config=config,
+                        config_hash=config_hash,
+                        checkpoint_path=semantic_source_checkpoint,
+                        results_dir=args.results_dir, mode=args.mode,
+                        monitor=collection_monitor,
+                        episodes_override=args.rgat_data_episodes,
+                        max_episodes_override=args.rgat_max_data_episodes,
+                        source_pipeline=semantic_source_name,
+                        source_training_episodes=source_training_episodes,
+                        source_training_environment_steps=source_training_steps,
+                        scenarios=training_scenarios,
+                        flight_allowed=collection_allowed))
+                design_episodes = int(dataset_manifest["episodes"])
+            elif needs_potential:
+                for name in args.pipelines:
+                    if get_pipeline(name).use_direct_rgat_potential:
+                        monitor.set_potential(name, potential)
+                model_manifest = potential.metadata
+                data_manifest = model_manifest.get("dataset_manifest") or {}
+                design_episodes = int(data_manifest.get("episodes", 0))
+                design_steps = int(data_manifest.get("environment_steps") or 0)
+                source_provenance = data_manifest.get("source_behavior_policy") or {}
+                source_training_episodes = int(source_provenance.get(
+                    "additional_source_training_episodes", 0))
+                source_training_steps = int(source_provenance.get(
+                    "additional_source_training_environment_steps", 0))
+
+            adaptive_design_episodes = 0
+            adaptive_design_steps = 0
+            adaptive_dataset = None
+            adaptive_manifest = None
+            adaptive_source_name = None
+            adaptive_source_model = None
+            adaptive_source_checkpoint = None
+            if needs_adaptive and adaptive_weights is None:
+                _archive_rejected_adaptive_artifact(
+                    args.adaptive_reward_design, adaptive_rejected_design_id)
+                adaptive_source_name = str(
+                    (config.get("adaptive_reward_design") or {}).get(
+                        "source_pipeline", "no_se_fixed"))
+                adaptive_source_model, adaptive_source_checkpoint = (
+                    reward_design_source(adaptive_source_name))
+                adaptive_dataset, adaptive_manifest, _, adaptive_design_steps = (
+                    _collect_adaptive_data(
+                        cfg=collection_cfg, camera=collection_camera,
+                        model=adaptive_source_model,
+                        source_pipeline=adaptive_source_name, config=config,
+                        config_hash=config_hash, results_dir=args.results_dir,
+                        mode=args.mode, monitor=collection_monitor,
+                        episodes_override=args.rgat_data_episodes,
+                        max_episodes_override=args.rgat_max_data_episodes,
+                        source_checkpoint_path=adaptive_source_checkpoint,
+                        parallel_contexts=parallel_collection_contexts,
+                        flight_allowed=collection_allowed,
+                        minimum_unsafe_failures_override=(
+                            (adaptive_settings.get("quality_gate") or {}).get(
+                                "minimum_unsafe_failure_episodes"))))
+                adaptive_design_episodes = int(adaptive_manifest["episodes"])
+            elif needs_adaptive:
+                data_manifest = adaptive_weights.metadata.get(
+                    "dataset_manifest") or {}
+                adaptive_design_episodes = int(data_manifest.get("episodes", 0))
+                adaptive_design_steps = int(data_manifest.get("transitions", 0))
+
+            collection_summary = {
+                "stage": args.stage,
+                "collection_pairs": collection_pair_indices,
+                # Counts only; the full demonstration provenance is already
+                # under manifest["behavior_cloning_demonstrations"].
+                "behavior_cloning_demonstrations": (
+                    None if demonstrations is None else {
+                        "successful_episodes": int(
+                            demonstrations["successful_episodes"]),
+                        "attempted_episodes": len(
+                            demonstrations.get("attempted_seeds", ())),
+                        "environment_steps": int(
+                            demonstrations.get("environment_steps", 0))}),
+                "fov_risk": ({"episodes": fov_design_episodes,
+                              "flown_environment_steps": fov_design_steps}
+                             if needs_fov_risk else None),
+                "semantic_rgat": ({"episodes": design_episodes,
+                                   "environment_steps": design_steps}
+                                  if needs_potential else None),
+                "adaptive_reward": ({"episodes": adaptive_design_episodes,
+                                     "transitions": adaptive_design_steps}
+                                    if needs_adaptive else None),
+            }
+            manifest["data_collection"] = collection_summary
+            _write_json(manifest_path, manifest)
+            monitor.collection_stage(
+                stage=args.stage, pairs=collection_pair_indices,
+                complete=True,
+                datasets=[{
+                    "name": name, "episodes": int(value["episodes"]),
+                    **({"reused_episodes": int(fov_reuse["reused_episodes"]),
+                        "flown_episodes": int(fov_reuse["flown_episodes"])}
+                       if name == "FOV-risk" and fov_reuse.get("reused_episodes")
+                       is not None else {}),
+                } for name, value in (
+                    ("FOV-risk", collection_summary["fov_risk"]),
+                    ("semantic R-GAT", collection_summary["semantic_rgat"]),
+                    ("adaptive reward", collection_summary["adaptive_reward"]))
+                    if value is not None])
+            if not training_allowed:
+                manifest["execution_status"] = (
+                    "data collection complete; no model was trained")
+                _write_json(manifest_path, manifest)
+                monitor.stage(
+                    "collection complete",
+                    "datasets persisted · run --stage train to fit and fly")
+                print("Data collection stage complete. Collected: "
+                      + ", ".join(
+                          f"{name} {value['episodes']} episodes"
+                          for name, value in (
+                              ("FOV-risk", collection_summary["fov_risk"]),
+                              ("semantic R-GAT", collection_summary["semantic_rgat"]),
+                              ("adaptive reward", collection_summary["adaptive_reward"]))
+                          if value is not None)
+                      + f". Artifacts under {args.results_dir}"
+                      + ("" if datastore is None else
+                         f" and {args.datastore}") + ".")
+                print("Next: rerun this command with --stage train "
+                      "(same --config and --system-config).")
+                refresh_presentation_results()
+                if args.stay_open:
+                    _hold_after_complete(owned, monitor)
+                return 0
+
+            # ================================================================
+            # Stage 2 -- training.
+            #
+            # From here nothing is collected. The frozen readouts are fitted on
+            # the datasets above, every arm's PPO starts against the same
+            # finished reward design, and the arms are then scored. The one
+            # exception is named where it happens: the adaptive artifact's
+            # quality gate can ask for more real episodes, which under
+            # --stage train is refused rather than flown.
+            if needs_fov_risk and fov_risk_model is None:
                 settings = dict(config.get("fov_risk_design") or {})
                 settings["epochs"] = int(
                     args.rgat_epochs or settings.get(
@@ -3652,67 +4081,8 @@ def main(*, primary_only: bool = False):
                 _write_json(manifest_path, manifest)
                 STORE.set(reward_design_id=fov_risk_model.design_id,
                           reward_design_sha256=fov_risk_model.sha256)
-            elif needs_fov_risk:
-                fov_manifest = dict(fov_risk_model.metadata)
-                fov_design_episodes = int((fov_manifest.get(
-                    "dataset_manifest") or {}).get("episodes", 0))
-                # A resumed run skips collection and training entirely; without
-                # this the FOV panel would stay blank for the whole run even
-                # though a validated readout is driving the proposed reward.
-                monitor.fov_model(design_id=fov_risk_model.design_id,
-                                  metadata=fov_manifest)
 
             if needs_potential and potential is None:
-                preferred_source = str((config.get("rgat_design") or {}).get(
-                    "source_pipeline", "no_se"))
-                source_name = (preferred_source if preferred_source in available_pipeline_ids()
-                               else "no_se")
-                if source_name in models:
-                    source_model = models[source_name]
-                    best_source = (args.results_dir
-                                   / f"models/{source_name}/{source_name}.best.pt")
-                    source_checkpoint = (best_source if best_source.is_file() else
-                        args.results_dir / f"models/{source_name}/{source_name}.pt")
-                    source_training_episodes = 0
-                elif source_name in training_futures:
-                    # Reuse a compatible completed checkpoint when available;
-                    # otherwise freeze this separately initialized/BC-warmed
-                    # source while the comparison PPO continues independently.
-                    # The reward-design rollout already mixes visual teachers,
-                    # noise and adverse contacts, so waiting for all PPO episodes
-                    # would add wall time without making the data more empirical.
-                    source_model = frozen_behavior_models[source_name]
-                    source_checkpoint = _load_reward_design_source_checkpoint(
-                        args.results_dir, source_name, source_model,
-                        config_hash=config_hash)
-                    if source_checkpoint is None:
-                        print(
-                            f"Using a separately frozen BC-warmed {source_name} "
-                            "policy for reward data while its PPO arm trains.")
-                        source_training_episodes = 0
-                    else:
-                        source_training_episodes = 0
-                else:
-                    source_model, source_history, source_checkpoint = train_pipeline(
-                        source_name, primary=False)
-                    source_training_episodes = train_count
-                    source_training_steps = sum(
-                        int(float(row.get("steps", 0))) for row in source_history
-                        if row.get("optimization_phase", "ppo") == "ppo")
-                dataset, dataset_manifest, dataset_path, design_steps = (
-                    _collect_semantic_data(
-                        cfg=pair_cfgs[reward_design_pair_indices[0]],
-                        camera=cameras[reward_design_pair_indices[0]],
-                        model=source_model, config=config,
-                        config_hash=config_hash, checkpoint_path=source_checkpoint,
-                        results_dir=args.results_dir, mode=args.mode,
-                        monitor=worker_monitors[reward_design_pair_indices[0]],
-                        episodes_override=args.rgat_data_episodes,
-                        max_episodes_override=args.rgat_max_data_episodes,
-                        source_pipeline=source_name,
-                        source_training_episodes=source_training_episodes,
-                        source_training_environment_steps=source_training_steps))
-                design_episodes = int(dataset_manifest["episodes"])
                 design_settings = dict(config.get("rgat_design") or {})
                 design_settings["epochs"] = int(
                     args.rgat_epochs or design_settings.get(
@@ -3738,90 +4108,8 @@ def main(*, primary_only: bool = False):
                 _write_json(manifest_path, manifest)
                 STORE.set(reward_design_id=potential.design_id,
                           reward_design_sha256=potential.sha256)
-            elif needs_potential:
-                for name in args.pipelines:
-                    if get_pipeline(name).use_direct_rgat_potential:
-                        monitor.set_potential(name, potential)
-                model_manifest = potential.metadata
-                data_manifest = model_manifest.get("dataset_manifest") or {}
-                design_episodes = int(data_manifest.get("episodes", 0))
-                design_steps = int(data_manifest.get("environment_steps") or 0)
-                source_provenance = data_manifest.get("source_behavior_policy") or {}
-                source_training_episodes = int(source_provenance.get(
-                    "additional_source_training_episodes", 0))
-                source_training_steps = int(source_provenance.get(
-                    "additional_source_training_environment_steps", 0))
 
-            adaptive_design_episodes = 0
-            adaptive_design_steps = 0
             if needs_adaptive and adaptive_weights is None:
-                _archive_rejected_adaptive_artifact(
-                    args.adaptive_reward_design, adaptive_rejected_design_id)
-                source_name = str((config.get("adaptive_reward_design") or {}).get(
-                    "source_pipeline", "no_se_fixed"))
-                adaptive_source_checkpoint = None
-                if source_name in models:
-                    adaptive_source_model = models[source_name]
-                    source_dir = args.results_dir / "models" / source_name
-                    adaptive_source_checkpoint = (
-                        source_dir / f"{source_name}.best.pt"
-                        if (source_dir / f"{source_name}.best.pt").is_file()
-                        else source_dir / f"{source_name}.pt")
-                elif source_name in args.pipelines:
-                    # A legacy policy remains valid as a source of empirical
-                    # reward-design outcomes even when the new PPO training
-                    # contract requires all publication arms to be retrained.
-                    # Do not register it in ``models``: the parallel stage
-                    # below will independently rebuild the comparison arm.
-                    adaptive_source_model = (
-                        frozen_behavior_models[source_name]
-                        if args.parallel_pairs > 1 else
-                        initialize_pipeline_model(source_name))
-                    adaptive_source_checkpoint = (
-                        _load_reward_design_source_checkpoint(
-                            args.results_dir, source_name,
-                            adaptive_source_model, config_hash=config_hash))
-                    if adaptive_source_checkpoint is None:
-                        if source_name in training_futures:
-                            print(
-                                f"Using a separately frozen BC-warmed "
-                                f"{source_name} policy for adaptive reward data "
-                                "while its PPO arm trains.")
-                        else:
-                            adaptive_source_model, _, adaptive_source_checkpoint = (
-                                train_pipeline(
-                                    source_name, primary=True,
-                                    pair_index=training_pair_for[source_name],
-                                    model=adaptive_source_model))
-                    else:
-                        print(
-                            "Using the prior compatible fixed policy only as "
-                            "the empirical adaptive reward-data source: "
-                            f"{adaptive_source_checkpoint}")
-                else:
-                    adaptive_source_model, _, adaptive_source_checkpoint = train_pipeline(
-                        source_name, primary=False)
-                adaptive_dataset, adaptive_manifest, _, adaptive_design_steps = (
-                    _collect_adaptive_data(
-                        cfg=cfg, camera=camera, model=adaptive_source_model,
-                        source_pipeline=source_name, config=config,
-                        config_hash=config_hash, results_dir=args.results_dir,
-                        mode=args.mode, monitor=(
-                            worker_monitors[0]
-                            if args.parallel_pairs > 1 else monitor),
-                        episodes_override=args.rgat_data_episodes,
-                        max_episodes_override=args.rgat_max_data_episodes,
-                        source_checkpoint_path=adaptive_source_checkpoint,
-                        parallel_contexts=([{
-                            "cfg": pair_cfgs[index],
-                            "camera": cameras[index],
-                            "monitor": worker_monitors[index],
-                        } for index in reward_design_pair_indices]
-                            if args.parallel_pairs > 1 else None),
-                        minimum_unsafe_failures_override=(
-                            (adaptive_settings.get("quality_gate") or {}).get(
-                                "minimum_unsafe_failure_episodes"))))
-                adaptive_design_episodes = int(adaptive_manifest["episodes"])
                 expected_architectures = {
                     get_pipeline(name).adaptive_reward_architecture
                     for name in args.pipelines
@@ -3862,26 +4150,26 @@ def main(*, primary_only: bool = False):
                             f"Adaptive R-GAT did not pass its quality gate after "
                             f"{current_episodes} episodes ({exc}). Extending the "
                             f"real dataset to at least {next_minimum} episodes.")
+                        # The only flight the training stage can ask for, and
+                        # only because the gate is a property of the fitted
+                        # model rather than of the raw episodes: whether more
+                        # data is needed is not knowable until the fit is
+                        # attempted. Under --stage train this refuses and names
+                        # the collect command with the larger budget.
                         adaptive_dataset, adaptive_manifest, _, adaptive_design_steps = (
                             _collect_adaptive_data(
-                                cfg=cfg, camera=camera,
+                                cfg=collection_cfg, camera=collection_camera,
                                 model=adaptive_source_model,
-                                source_pipeline=source_name, config=config,
-                                config_hash=config_hash,
+                                source_pipeline=adaptive_source_name,
+                                config=config, config_hash=config_hash,
                                 results_dir=args.results_dir,
-                                mode=args.mode, monitor=(
-                                    worker_monitors[0]
-                                    if args.parallel_pairs > 1 else monitor),
+                                mode=args.mode, monitor=collection_monitor,
                                 episodes_override=next_minimum,
                                 max_episodes_override=adaptive_maximum,
                                 source_checkpoint_path=(
                                     adaptive_source_checkpoint),
-                                parallel_contexts=([{
-                                    "cfg": pair_cfgs[index],
-                                    "camera": cameras[index],
-                                    "monitor": worker_monitors[index],
-                                } for index in reward_design_pair_indices]
-                                    if args.parallel_pairs > 1 else None),
+                                parallel_contexts=parallel_collection_contexts,
+                                flight_allowed=collection_allowed,
                                 minimum_unsafe_failures_override=(
                                     (adaptive_settings.get("quality_gate") or {}).get(
                                         "minimum_unsafe_failure_episodes"))))
@@ -3903,23 +4191,24 @@ def main(*, primary_only: bool = False):
                     "adaptive_reward_model": adaptive_metadata,
                 })
                 _write_json(manifest_path, manifest)
-            elif needs_adaptive:
-                data_manifest = adaptive_weights.metadata.get(
-                    "dataset_manifest") or {}
-                adaptive_design_episodes = int(data_manifest.get("episodes", 0))
-                adaptive_design_steps = int(data_manifest.get("transitions", 0))
 
             # 이제 모든 동결 보상 설계가 준비됐다. PBRS/adaptive PPO에서는
             # 이 모델들이 optimizer에 포함되지 않으며 매 update 뒤 hash를 검사한다.
+            #
+            # 모든 arm이 여기서 동시에 출발한다. 고정 보상 arm을 먼저 띄우고
+            # 남은 pair에서 데이터를 모으던 예전 순서에서는, 제안 arm의 동결
+            # readout이 비교 arm이 이미 수백 에피소드를 학습한 뒤에야 만들어졌다.
+            # 이제 두 arm 모두 완성된 같은 보상 설계를 상대로 1 에피소드부터
+            # 학습한다.
             if args.parallel_pairs > 1:
                 monitor.stage(
                     "parallel training preparation",
-                    "R-GAT frozen · starting dependent PPO on its dedicated pair")
-                dependent_pipelines = [
-                    name for name in args.pipelines
-                    if name not in training_futures]
+                    "R-GAT frozen · starting every arm on its dedicated pairs")
+                training_executor = ThreadPoolExecutor(
+                    max_workers=args.parallel_pairs,
+                    thread_name_prefix="landing-pair")
                 try:
-                    for name in dependent_pipelines:
+                    for name in args.pipelines:
                         training_futures[name] = training_executor.submit(
                             train_pipeline, name,
                             pair_index=training_pair_for[name],
@@ -3936,11 +4225,8 @@ def main(*, primary_only: bool = False):
                     training_executor = None
             else:
                 for name in args.pipelines:
-                    spec = get_pipeline(name)
-                    if (spec.use_direct_rgat_potential
-                            or spec.use_adaptive_reward_weights
-                            or spec.fov_risk_reward_enabled):
-                        train_pipeline(name)
+                    train_pipeline(name, pair_index=training_pair_for[name],
+                                   model=prepared_parallel_models[name])
 
             training_records = [row for name in args.pipelines
                                 for row in histories.get(name, [])]

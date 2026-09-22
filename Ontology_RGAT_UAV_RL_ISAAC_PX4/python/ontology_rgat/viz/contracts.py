@@ -29,18 +29,18 @@ RUN_PIPELINE_STAGES: tuple[dict[str, Any], ...] = (
     {"id": "behavior cloning", "title": "행동 복제 워밍업",
      "detail": "두 arm 공통 teacher (프로필에 따라 생략)",
      "produces": "동일 초기 checkpoint", "kind": "train", "optional": True},
-    {"id": "training", "title": "Baseline PPO",
-     "detail": "보상 artifact에 의존하지 않아 즉시 시작",
-     "produces": "shin_se_fixed 정책", "kind": "train"},
     {"id": "FOV-risk data", "title": "FOV 데이터 수집",
-     "detail": "동결 baseline 정책 · 시각 전용 그래프 + 기하 라벨",
+     "detail": "동결 BC 정책 · 모든 pair · 시각 전용 그래프 + 기하 라벨",
      "produces": "episode 분리 데이터셋", "kind": "data"},
+    {"id": "collection complete", "title": "수집 단계 종료",
+     "detail": "--stage collect 로 끝낸 실행에서만 표시",
+     "produces": "재사용 가능한 데이터셋", "kind": "data", "optional": True},
     {"id": "R-GAT training", "title": "R-GAT 학습·동결",
      "detail": "Huber 회귀 + 규약 손실 R-04 · validation-best",
      "produces": "동결 스칼라 readout", "kind": "train"},
-    {"id": "parallel training", "title": "Proposed PPO",
-     "detail": "동일 예산 · 동결 readout을 보상에만 사용",
-     "produces": "shin_se_onto_rgat_recovery 정책", "kind": "train"},
+    {"id": "parallel training", "title": "PPO 학습 (모든 arm)",
+     "detail": "동결 readout 완성 후 동시 시작 · 동일 예산",
+     "produces": "arm별 정책", "kind": "train"},
     {"id": "deterministic checkpoint validation", "title": "checkpoint 선택",
      "detail": "training-best 대 latest · 분리된 seed",
      "produces": "arm별 평가 대상 1개", "kind": "gate"},
@@ -55,6 +55,12 @@ RUN_PIPELINE_STAGES: tuple[dict[str, Any], ...] = (
 # Live stage names that mean the same step as a canonical id above.
 RUN_PIPELINE_ALIASES: Mapping[str, str] = {
     "training-only teacher demonstrations": "behavior cloning",
+    # One PPO box, not one per arm. ``training`` and ``parallel training`` are
+    # the same step under one and many pairs, and since the stages were
+    # separated (2026-09-22) every arm starts it together against the finished
+    # reward design -- there is no longer an early arm to draw ahead of the
+    # collection.
+    "training": "parallel training",
     "parallel training preparation": "parallel training",
     "parallel crossover evaluation": "paired evaluation",
     "reporting": "complete",
@@ -74,8 +80,10 @@ def run_pipeline_contract() -> dict[str, Any]:
     return {
         "stages": [dict(stage) for stage in RUN_PIPELINE_STAGES],
         "aliases": dict(RUN_PIPELINE_ALIASES),
-        "note": ("Baseline PPO와 FOV 데이터 수집은 서로 다른 물리 pair에서 동시에 "
-                 "진행된다. 두 arm은 같은 초기 checkpoint와 같은 PPO 예산을 쓴다."),
+        "note": ("실행은 수집 단계와 학습 단계로 나뉜다. 수집 단계는 모든 물리 "
+                 "pair에서 데이터셋만 모으고, 학습 단계는 동결된 보상 설계를 "
+                 "상대로 모든 arm의 PPO를 동시에 시작한다. 두 arm은 같은 초기 "
+                 "checkpoint와 같은 PPO 예산을 쓴다."),
     }
 
 

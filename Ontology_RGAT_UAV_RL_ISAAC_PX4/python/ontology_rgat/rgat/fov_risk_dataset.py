@@ -38,7 +38,7 @@ FOV_RISK_DATASET_FORMAT = "ontology_rgat.future_fov_unavailability/2"
 
 
 def fov_risk_data_fingerprint(system: Mapping, *, prediction_steps: int,
-                              control_hz: float,
+                              control_hz: float, scenarios: Sequence[str],
                               keypoint_implementation: str | None = None) -> str:
     """What a stored FOV-risk episode means, for deciding reuse across runs.
 
@@ -55,6 +55,18 @@ def fov_risk_data_fingerprint(system: Mapping, *, prediction_steps: int,
     encoder's weights are recorded per episode instead (see the collection's
     provenance), so a mixed-calibration accumulation stays auditable rather
     than silently disallowed.
+
+    ``scenarios`` is the deck rotation the episodes were flown against, and it
+    is part of the trajectory distribution in the most direct sense there is.
+    It was missing until 2026-09-22, when the collection was standardised on
+    the escape-burst deck: the active accumulation then held 76 episodes of
+    which about 59 had been flown on the six route decks, and the burst-only
+    readout would have been fitted on them without any record that it had. A
+    deck is not a tuning knob -- an episode on a pad that never leaves the
+    frame teaches the future-FOV target something different from one that
+    drives out of it -- so changing the rotation must retire the accumulation
+    rather than silently extend it. Order is significant because the rotation
+    is indexed by episode.
     """
     vision = dict(system.get("vision") or {})
     camera = dict(vision.get("camera") or {})
@@ -69,6 +81,7 @@ def fov_risk_data_fingerprint(system: Mapping, *, prediction_steps: int,
         "graph_input_dim": int(FOV_GRAPH_INPUT_DIM),
         "prediction_steps": int(prediction_steps),
         "control_hz": round(float(control_hz), 6),
+        "scenarios": [str(name) for name in scenarios],
         "keypoint_implementation": keypoint_implementation,
         "vision_mode": vision.get("mode"),
         "camera": {name: camera.get(name) for name in (

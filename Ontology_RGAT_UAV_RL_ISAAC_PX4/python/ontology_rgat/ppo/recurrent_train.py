@@ -939,7 +939,7 @@ def collect_episode_resilient(env, model: PipelineActorCritic, method: str,
 
 def flown_episode_batches(envs, model, method, seed_list, completed, *,
                           scenarios, warmup_episodes, curriculum,
-                          collect_episode_kwargs,
+                          collect_episode_kwargs, env_monitors=None,
                           warmup_is_deterministic=False):
     """Yield episodes flown against the shared pre-batch policy, in order.
 
@@ -966,8 +966,17 @@ def flown_episode_batches(envs, model, method, seed_list, completed, *,
     An exception in any flight propagates out of the batch: infrastructure
     recovery already happens inside ``collect_episode_resilient``, so anything
     reaching here ends training for this method, as it did sequentially.
+
+    ``env_monitors`` gives each environment the monitor for the physical pair
+    it actually flies. Without it every replica reported through the method's
+    primary-pair monitor, so one pair's live panel received two vehicles at
+    once: on 2026-09-22 the shin_se_fixed panel interleaved decks 150 m apart
+    (the configured pair offset) into a single polyline, which drew as a fan
+    of 150 m strokes rather than as either pair's trajectory. Telemetry only
+    -- the flights themselves were always on their own pairs.
     """
     pending = list(enumerate(seed_list[completed:], start=completed + 1))
+    env_monitors = list(env_monitors or ())
     width = max(1, len(envs))
     while pending:
         batch, pending = pending[:width], pending[width:]
@@ -985,12 +994,15 @@ def flown_episode_batches(envs, model, method, seed_list, completed, *,
             slot, (episode, seed) = task
             scenario = scenarios[(episode - 1) % len(scenarios)]
             warming = episode <= warmup_episodes
+            kwargs = dict(collect_episode_kwargs)
+            if slot < len(env_monitors) and env_monitors[slot] is not None:
+                kwargs["monitor"] = env_monitors[slot]
             rows, metric = collect_episode_resilient(
                 envs[slot], model, method, seed, scenario=scenario,
                 curriculum=level,
                 phase="perception warm-up" if warming else "training",
                 deterministic=bool(warming and warmup_is_deterministic),
-                **collect_episode_kwargs)
+                **kwargs)
             return episode, seed, scenario, rows, metric
 
         if width == 1:
@@ -1450,7 +1462,7 @@ def train_live(env_factory: Callable, model, method, seeds, output_dir,
                monitor=None, restart_incompatible=False,
                demonstration_dataset=None, demonstration_anchor=None,
                optimizer_lock=None, training_contract_id=None,
-               scenarios=None, env_factories=None):
+               scenarios=None, env_factories=None, env_monitors=None):
     ppo = ppo or {}
     # Deck motion the episodes are flown against. One analytic scenario per
     # episode, rotated by episode index rather than drawn, so a resumed run
@@ -1461,6 +1473,12 @@ def train_live(env_factory: Callable, model, method, seeds, output_dir,
     env_factories = list(env_factories or [env_factory])
     if not env_factories:
         raise ValueError("train_live needs at least one environment factory")
+    # One monitor per factory, so a replica's telemetry reaches the panel of
+    # the pair it is flying rather than its method's primary pair.
+    env_monitors = list(env_monitors or ())
+    if env_monitors and len(env_monitors) != len(env_factories):
+        raise ValueError(
+            "train_live needs one monitor per environment factory, or none")
     scenarios = tuple(scenarios or ("training_random_walk",))
     # The gateway is the authority on the scenario vocabulary and rejects an
     # unknown one, but it only does so on the first reset -- minutes into a
@@ -1671,6 +1689,7 @@ def train_live(env_factory: Callable, model, method, seeds, output_dir,
                 scenarios=scenarios, warmup_episodes=warmup_episodes,
                 curriculum=curriculum,
                 collect_episode_kwargs=collect_episode_kwargs,
+                env_monitors=env_monitors,
                 warmup_is_deterministic=warmup_is_deterministic):
             perception_warmup = episode <= warmup_episodes
             ppo_episode = max(0, episode - warmup_episodes)

@@ -20,6 +20,11 @@ BENCHMARK_SCENARIOS = {
     # it doubles its speed and leaves the frame. The CICS2026 three-arm
     # comparison deck (2026-09-22).
     "straight_escape_burst",
+    # The same deck closed into an oval: two straights joined by constant-speed
+    # semicircles, driven forever. Bounded by construction, so the deck needs
+    # neither the arena clamp nor the inward heading steering that an open
+    # straight run does (isaac_sim/pad_motion.py, 2026-09-22).
+    "straight_escape_burst_track",
 }
 
 

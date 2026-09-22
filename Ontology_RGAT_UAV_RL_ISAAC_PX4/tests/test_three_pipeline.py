@@ -1586,12 +1586,16 @@ def test_the_three_arm_profile_flies_one_deck_with_one_control_condition():
     assert config["pipelines"] == [
         "shin_se_fixed", "shin_se_onto_rgat_recovery"], (
         "only the learned arms may drive training and the pair division")
-    assert config["training"]["scenarios"] == ["straight_escape_burst"]
-    assert config["behavior_cloning"]["scenarios"] == ["straight_escape_burst"]
+    # One deck, and the same one for training, cloning and evaluation. The
+    # name is the runner's base scenario rather than a literal, so retiring a
+    # deck for a better one is a single edit instead of a scattered rename.
+    from run_three_pipeline import COLLECTION_BASE_SCENARIO
+    assert config["training"]["scenarios"] == [COLLECTION_BASE_SCENARIO]
+    assert config["behavior_cloning"]["scenarios"] == [COLLECTION_BASE_SCENARIO]
     # ``evaluation`` is a mapping the loader deep-merges, so the decks this
     # profile retires have to be zeroed explicitly or they come back.
     assert {deck for deck, count in config["evaluation"].items() if count} == {
-        "straight_escape_burst"}
+        COLLECTION_BASE_SCENARIO}
     manifest = _arm_manifest(config["pipelines"], _baseline_arms(config),
                              dict(config.get("arm_labels") or {}))
     assert len(manifest) == 3
@@ -1698,8 +1702,19 @@ def test_the_manifest_writes_unavailable_statistics_as_null_not_nan(tmp_path):
     assert written["reports"]["paper_success_mean"] == 0.0
 
 
-def test_simulation_pacing_is_off_unless_a_profile_asks_for_it():
-    """The world loop must free-run exactly as before by default."""
+def test_pacing_is_off_because_it_controls_the_wrong_clock():
+    """Implemented, tested, and deliberately disabled.
+
+    Throttling the Isaac world loop holds ``world.current_time`` but not
+    ``px4_time_us``, and the gateway -- and therefore the learner -- integrates
+    against the latter. Measured simultaneously on 2026-09-22 with the loop on
+    target: loop self-report 0.114 sim s per wall s, gateway clock 0.980. An
+    8.6x disagreement, and sleeping Isaac frees CPU for PX4, so the effective
+    control rate got worse rather than better (1.34 Hz -> 1.1 Hz).
+
+    The code stays because it is correct at what it does; the profile stays off
+    because what it does is not what the experiment needs.
+    """
     import sys as _sys
     _sys.path.insert(0, str(ROOT / "isaac_sim"))
     from config_loader import load_config
@@ -1707,11 +1722,55 @@ def test_simulation_pacing_is_off_unless_a_profile_asks_for_it():
                     "config/shin2026-system.yaml"):
         isaac = load_config(str(ROOT / profile)).get("isaac") or {}
         assert not float(isaac.get("max_sim_speed_ratio") or 0.0), (
-            f"{profile} must not enable pacing implicitly")
+            f"{profile} enables pacing, which throttles world.current_time "
+            "while the learner integrates px4_time_us")
+    profile_text = (ROOT / "config/shin2026-minimal-system.yaml").read_text(
+        encoding="utf-8")
+    assert "px4_time_us" in profile_text, (
+        "the profile must record WHY pacing is off, or someone will switch it "
+        "back on and measure the wrong clock again")
+    assert "CHANGES THE PHYSICS" in profile_text, (
+        "switching it on is not merely useless: the deck advances on Isaac's "
+        "clock and the vehicle and battery on PX4's, so throttling one "
+        "decouples the two halves of the task")
+    world = (ROOT / "isaac_sim/landing_world.py").read_text(encoding="utf-8")
+    assert "self.deck.advance(self.world.current_time" in world, (
+        "the profile comment cites this line; keep them together")
+
     source = (ROOT / "isaac_sim/landing_world.py").read_text(encoding="utf-8")
-    assert 'CONFIG["isaac"].get("max_sim_speed_ratio") or 0.0' in source
+    assert 'CONFIG["isaac"].get("max_sim_speed_ratio") or 0.0' in source, (
+        "an absent key must leave the loop free-running exactly as before")
     assert "if speed_ratio > 0.0 and not startup_rendering:" in source, (
-        "pacing must not throttle the startup burst, and must be inert at 0")
+        "pacing must be inert at 0 rather than merely unused")
+    assert "Isaac pacing engaged" in source
+    assert "pace_prev_wall, pace_prev_sim = now_wall, now_sim" in source
+
+
+def test_pacing_holds_the_target_without_a_calibration_constant():
+    """The rate is measured and held, not converted by a hand-fitted factor.
+
+    Three hand-calibrated attempts failed before this. Reading the simulator
+    clock but never sleeping throttled nothing (1.34 Hz with the cap nominally
+    on). Crediting one physics_dt per step under-counted and throttled to 0.50.
+    Re-fitting the constant at the operating point then overshot to 0.041, and
+    a later 4-minute measurement of the same configuration read 0.96 -- the
+    conversion is neither constant nor monotonic, because it moves with render
+    load. So there is nothing to calibrate: measure what the step bought and
+    sleep the difference.
+    """
+    source = (ROOT / "isaac_sim/landing_world.py").read_text(encoding="utf-8")
+    assert "PACING_STEP_FACTOR" not in source, (
+        "a hand-fitted conversion constant cannot track a rate that moves "
+        "with load; the loop must measure instead")
+    assert "step_sim = now_sim - pace_prev_sim" in source, (
+        "the sleep must be driven by the measured advance of this step")
+    assert "owed = step_sim / (speed_ratio * pace_trim)" in source, (
+        "wall owed for this step is its simulated advance over the trimmed "
+        "target rate")
+    assert "Isaac pacing: achieved" in source, (
+        "the loop must report the rate it achieved, not the one configured")
+    assert "Isaac pacing DISABLED" in source, (
+        "a clock that never advances must fail loudly, not silently no-op")
 
 
 def test_the_pacing_sleep_holds_the_configured_sim_to_wall_ratio():
@@ -1818,3 +1877,82 @@ def test_bare_run_sh_runs_the_three_arm_burst_comparison():
     # the replaced design stays reachable rather than being deleted
     assert (ROOT / "config/experiments/two_pipeline_comparison.yaml").is_file()
     assert "two_pipeline_comparison.yaml" in launcher
+
+
+def test_pacing_does_not_let_a_slow_patch_buy_free_running_time():
+    """The cap is an upper bound, not a schedule with catch-up credit.
+
+    A cumulative anchor that is never reset accumulates a deficit whenever the
+    loop is blocked -- a stack rebuild, an episode reset, a slow render patch --
+    and then lets the simulation run unthrottled afterwards until the average
+    recovers. On a multi-day run that is the free-running regime the pacing
+    exists to prevent, arriving by the back door.
+    """
+    REANCHOR = 1.0
+
+    def step(anchor, now_wall, now_sim, ratio=0.115):
+        """Returns (sleep_seconds, new_anchor)."""
+        wall0, sim0 = anchor
+        behind = (now_sim - sim0) / ratio - (now_wall - wall0)
+        if behind > 0.0:
+            return min(behind, 1.0), anchor
+        if behind < -REANCHOR:
+            return 0.0, (now_wall, now_sim)      # re-anchored
+        return 0.0, anchor
+
+    # running ahead of the cap -> sleep
+    sleep, anchor = step((0.0, 0.0), 0.10, 0.104)
+    assert sleep > 0.0 and anchor == (0.0, 0.0)
+
+    # blocked for 8 s of wall with almost no sim progress -> re-anchor,
+    # and crucially the NEXT fast step is still throttled rather than forgiven
+    sleep, anchor = step((0.0, 0.0), 8.0, 0.104)
+    assert sleep == 0.0 and anchor == (8.0, 0.104), "a real stall re-anchors"
+    sleep, _ = step(anchor, 8.10, 0.208)
+    assert sleep > 0.0, "pacing must bind again immediately after a re-anchor"
+
+    # ordinary jitter below the threshold must NOT re-anchor, or the pacing
+    # fights normal variation instead of enforcing a rate
+    sleep, anchor = step((0.0, 0.0), 1.0, 0.104)
+    assert anchor == (0.0, 0.0)
+
+
+def test_the_pacing_trim_converges_on_the_target_without_oscillating():
+    """The loop corrects its own systematic offset from what it measured.
+
+    Per-step correction removes the variance but leaves a steady offset --
+    measured 0.070 against a 0.115 target, four windows at 0.069-0.070. The
+    offset is not a constant to divide by: three hand-fitted constants failed
+    because it moves with load. So the setpoint is trimmed from the measurement,
+    damped so it settles rather than ringing, and bounded so one bad window
+    cannot run away.
+    """
+    import re
+    source = (ROOT / "isaac_sim/landing_world.py").read_text(encoding="utf-8")
+    m = re.search(r"PACING_TRIM_DAMPING = ([\d.]+)", source)
+    assert m, "the damping has to be named"
+    damping = float(m.group(1))
+    assert 0.0 < damping < 1.0, "undamped or inverted trim will oscillate"
+    assert "speed_ratio * pace_trim" in source, "the trim must reach the sleep"
+
+    lo, hi = eval(re.search(r"PACING_TRIM_BOUNDS = (\([\d., ]+\))", source).group(1))
+    assert lo < 1.0 < hi
+
+    def settle(offset, windows=12):
+        trim, seen = 1.0, []
+        for _ in range(windows):
+            achieved = 0.115 * trim / offset
+            seen.append(achieved)
+            trim = min(hi, max(lo, trim * ((0.115 / achieved) ** damping)))
+        return seen
+
+    # the measured offset settles on target and never overshoots past it
+    seen = settle(1.64)
+    assert abs(seen[-1] - 0.115) < 0.005, f"did not converge: {seen[-1]:.3f}"
+    assert max(seen) <= 0.115 + 1e-9, "damped trim must approach, not overshoot"
+    assert all(b >= a for a, b in zip(seen, seen[1:])), "must be monotonic"
+
+    # and it converges from the other side too, rather than only correcting up
+    fast = settle(0.5)
+    assert abs(fast[-1] - 0.115) < 0.005
+    assert min(fast) >= 0.115 - 1e-9

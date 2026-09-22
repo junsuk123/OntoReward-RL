@@ -224,6 +224,13 @@ font-variant-numeric:tabular-nums}.teacher th:first-child,.teacher td:first-chil
 .traj-plot h3{margin:0 0 3px;font-size:11px;line-height:1.3;text-align:center;height:30px;
 overflow:hidden}
 .traj-plot canvas{height:230px}.traj-plot .legend{justify-content:center}
+.collection{display:flex;flex-wrap:wrap;gap:8px;align-items:stretch}
+.collection .cstage{border:1px solid #b8b8b8;background:#fff;padding:8px 11px;min-width:150px}
+.collection .cstage b{display:block;font-size:13px}
+.collection .cstage small{color:#6a6a6a}
+.collection .cstage.active{border-color:#0072BD;border-left-width:4px}
+.collection .cstage.done{border-color:#77AC30;border-left-width:4px}
+.collection .cnote{flex:1 1 240px;color:#4a4a4a;font-size:11px;line-height:1.5}
 .pair-plot{min-width:0;border:1px solid #b8b8b8;background:#fff;padding:7px}
 .pair-plot h3{height:34px;margin:0 0 3px;font-size:11px;line-height:1.3;text-align:center}
 .pair-plot canvas{height:170px}.pair-gates{display:flex;gap:3px;flex-wrap:wrap;margin-top:6px}
@@ -297,7 +304,8 @@ function armsOf(state){
   const declared=(state.scalars||{}).benchmark_arms;
   if(Array.isArray(declared)&&declared.length)
     return declared.map(a=>({method:String(a.method),
-      label:String(a.label||a.method),learned:a.learned!==false}));
+      label:String(a.label||a.method),learned:a.learned!==false,
+      ontology:a.ontology===true}));
   return ((state.scalars||{}).benchmark_methods||DEFAULT_METHODS)
     .map(m=>({method:String(m),label:String(m),learned:true}));
 }
@@ -311,22 +319,42 @@ function syncArms(state){
   refill(BENCHMARK_TRAIN,learned.map(m=>'benchmark_train_'+m));
   refill(BENCHMARK_EVAL,ARMS.map(a=>'benchmark_eval_'+a.method));
   refill(BENCHMARK_STEP,ARMS.map(a=>'benchmark_step_'+a.method));
+  const ontology=ontologyArms().map(a=>a.method);
+  if(ontology.length){
+    refill(PROPOSED_TRAIN,ontology.map(m=>'benchmark_train_'+m));
+    refill(PROPOSED_STEP,ontology.map(m=>'benchmark_step_'+m));
+  }
 }
 function armLabel(method){
   const arm=ARMS.find(a=>a.method===String(method));
   return arm?arm.label:null;
+}
+// Whether this arm's reward carries the frozen R-GAT term. Published by the
+// run from its pipeline spec, so a differently named ontology arm is labelled
+// correctly instead of silently falling through to the baseline rendering.
+function isOntologyArm(method){
+  const arm=ARMS.find(a=>a.method===String(method));
+  return !!(arm&&arm.ontology);
 }
 function seriesLabel(key){
   const m=/^benchmark_(train|eval)_(.+)$/.exec(String(key));
   return (m&&armLabel(m[2]))||LABELS[key]||key;
 }
 function learnedArms(){return ARMS.filter(a=>a.learned);}
+function ontologyArms(){return ARMS.filter(a=>a.ontology&&a.learned);}
+// Series for the arm whose reward carries the frozen R-GAT term. Written as a
+// literal id until 2026-09-22, which meant section 2 went blank for every
+// ontology pipeline this repository declares except one -- and would have to
+// be edited again for the next. Refilled from the run in ``syncArms``.
 const PROPOSED_TRAIN=['benchmark_train_shin_se_onto_rgat_recovery'];
+const PROPOSED_STEP=['benchmark_step_shin_se_onto_rgat_recovery'];
 const CARDS=[
  {id:'tiles',title:null},
  {id:'phase_status',view:'benchmark',kind:'phase'},
  {id:'run_pipeline',view:'benchmark',kind:'runpipe',
   title:'시뮬레이션 · 학습 · 검증 파이프라인 (현재 위치 표시)'},
+ {id:'collection_stage',view:'benchmark',kind:'collection',
+  title:'수집 단계 · 데이터셋과 사용한 물리 pair (--stage)'},
 
  {id:'head_performance',view:'benchmark',kind:'heading',
   title:'1 · 두 모델 성능',
@@ -398,7 +426,7 @@ const CARDS=[
   series:PROPOSED_TRAIN,x:'episode',y:'ontology_fov_reward_sum',smooth:12},
  {id:'benchmark_fov_risk',view:'benchmark',
   title:'현재 episode · 예측 FOV 비가용 비율과 추가 보상',
-  series:['benchmark_step_shin_se_onto_rgat_recovery'],x:'step',
+  series:PROPOSED_STEP,x:'step',
   y:['predicted_fov_unavailability','ontology_fov_reward'],
   labels:['예측 q (향후 1s FOV 밖 시간 비율)','추가 보상 −λ·q'],smooth:3},
  {id:'graph3d',view:'benchmark',kind:'graph',
@@ -459,7 +487,7 @@ for(const c of CARDS){
   const el=document.createElement('section');
   el.className=(c.kind==='heading'?'card section'
     :'card'+((c.id==='tiles'||['graph','contract','evalbars','pairs','pairplots','phase',
-      'runpipe','algopipe','mdp','fovstatus','teacher','trajectories']
+      'runpipe','algopipe','mdp','fovstatus','teacher','trajectories','collection']
       .includes(c.kind))?' wide':''))
     +(c.kind==='graph'?' g3d':'');
   el.id='card-'+c.id;
@@ -471,6 +499,8 @@ for(const c of CARDS){
   else if(c.kind==='phase'){el.innerHTML='<div class="phase-status" id="phase-status"></div>';}
   else if(c.kind==='fovstatus'){el.innerHTML=`<h2>${c.title}</h2>
     <div class="fovwrap" id="fov-status"></div>`;}
+  else if(c.kind==='collection'){el.innerHTML=`<h2>${c.title}</h2>
+    <div class="collection" id="collection-stage"></div>`;}
   else if(c.kind==='runpipe'){el.innerHTML=`<h2>${c.title}</h2>
     <div class="runpipe" id="run-pipeline"></div>
     <div class="runnote" id="run-pipeline-note"></div>`;}
@@ -486,10 +516,8 @@ for(const c of CARDS){
     <div class="teacher" id="teacher-demos"></div>`;}
   else if(c.kind==='trajectories'){el.innerHTML=`<h2>${c.title}</h2>
     <div class="traj-grid" id="traj-grid"></div>`;}
-  else if(c.kind==='pairplots'){el.innerHTML=`<h2>${c.title}</h2><div class="pair-plot-grid">`
-    +[0,1].map(index=>`<div class="pair-plot"><h3 id="pair-title-${c.id}-${index}">`
-      +`Pair ${index+1} · 초기화 대기</h3><canvas id="cv-${c.id}-${index}"></canvas>`
-      +`<div class="legend" id="lg-${c.id}-${index}"></div></div>`).join('')+'</div>';}
+  else if(c.kind==='pairplots'){el.innerHTML=`<h2>${c.title}</h2>`
+    +`<div class="pair-plot-grid" id="pair-plot-grid-${c.id}"></div>`;}
   else if(c.kind==='contract'){el.innerHTML=`<h2>${c.title}</h2>
     <div class="contract-grid" id="benchmark-contract"></div>
     <div class="method-strip" id="benchmark-methods"></div>
@@ -596,8 +624,20 @@ function formatTick(v){const a=Math.abs(v);return a>=1000?v.toExponential(1):
 function methodLabel(method){
   return armLabel(method)||LABELS['benchmark_train_'+method]||method||'초기화 대기';}
 function drawPairPlots(card,state){
-  const pairs=(state.scalars||{}).parallel_pair_status||[];
-  for(let index=0;index<2;index++){
+  const s=state.scalars||{},pairs=s.parallel_pair_status||[];
+  // One plot per physical pair. This was two, hardcoded, while the stage the
+  // machine sizes itself to is four: pairs 3 and 4 flew the whole run without
+  // appearing on either live panel.
+  const count=Math.max(1,Number(s.parallel_pair_count||pairs.length||1));
+  const grid=document.getElementById(`pair-plot-grid-${card.id}`);
+  if(!grid)return;
+  if(grid.childElementCount!==count){
+    grid.innerHTML=Array.from({length:count},(_,index)=>
+      `<div class="pair-plot"><h3 id="pair-title-${card.id}-${index}">`
+      +`Pair ${index+1} · 초기화 대기</h3><canvas id="cv-${card.id}-${index}"></canvas>`
+      +`<div class="legend" id="lg-${card.id}-${index}"></div></div>`).join('');
+  }
+  for(let index=0;index<count;index++){
     const pair=pairs.find(item=>Number(item.index)===index)||pairs[index]||{};
     const assigned=String(pair.assigned_method||pair.method||'');
     const method=String(pair.active_method||assigned);
@@ -646,8 +686,12 @@ function tiles(state){
   // Head to head is between the learned arms; a non-learned reference arm is
   // reported beside them rather than being one side of the delta.
   const learned=learnedArms();
-  const base=(learned[0]||{}).method||'shin_se_fixed';
-  const prop=(learned[1]||{}).method||'shin_se_onto_rgat_recovery';
+  // The proposed side is the arm carrying the R-GAT reward term, not
+  // whichever arm the run happens to list second.
+  const proposedArm=ontologyArms()[0]||learned[1]||{};
+  const prop=proposedArm.method||'shin_se_onto_rgat_recovery';
+  const baseArm=learned.find(a=>a.method!==prop)||learned[0]||{};
+  const base=baseArm.method||'shin_se_fixed';
   const evalRows=m=>state.series['benchmark_eval_'+m]||[];
   const trainRows=m=>state.series['benchmark_train_'+m]||[];
   const trained=BENCHMARK_METHODS.reduce((n,m)=>n+trainRows(m).length,0);
@@ -914,6 +958,44 @@ function phasePanel(state){
       '<span>제안 모델 전용 pair은 동결된 Shin baseline 정책으로 동일 simulator-domain 시각 전이를 수집합니다. baseline PPO는 다른 독립 pair에서 동시에 학습합니다.</span>';
   else box.innerHTML='<b>실험 초기화 중</b><span>pair 연결 및 artifact 준비 상태를 확인하고 있습니다.</span>';
 }
+function collectionPanel(state){
+  const box=document.getElementById('collection-stage');if(!box)return;
+  const s=state.scalars||{};
+  const stage=String(s.collection_stage||'');
+  const datasets=s.collection_datasets||[];
+  const pairs=s.collection_pairs||[];
+  if(!stage&&!datasets.length){
+    box.innerHTML='<div class="cnote">수집 단계가 아직 보고되지 않았습니다. '
+      +'<code>--stage collect</code>는 데이터만 모으고, <code>--stage train</code>은 '
+      +'모은 데이터로 학습합니다. 기본값 <code>all</code>은 수집을 끝낸 뒤 학습합니다.</div>';
+    return;}
+  const collecting=stage==='collect'||stage==='all';
+  const training=stage==='train'||stage==='all';
+  const done=!!s.collection_complete;
+  const cell=(label,detail,cls)=>`<div class="cstage ${cls}"><b>${escapeHTML(label)}</b>`
+    +`<small>${detail}</small></div>`;
+  const cards=[
+    cell('1 · 수집',
+      collecting?(done?'완료 · 비행 없음':'진행 중'):'이 실행에서는 생략',
+      collecting?(done?'done':'active'):''),
+    ...datasets.map(entry=>{
+      const reused=Number(entry.reused_episodes),flown=Number(entry.flown_episodes);
+      const provenance=Number.isFinite(reused)
+        ?`재사용 ${reused} · 새로 비행 ${Number.isFinite(flown)?flown:'--'}`
+        :'이번 실행 누적';
+      return cell(escapeHTML(entry.name),
+        `<b style="font-size:16px">${escapeHTML(entry.episodes)}</b> episode<br>${provenance}`,
+        'done');}),
+    cell('2 · 학습',
+      training?'동결 readout → 전 arm PPO → 평가':'이 실행에서는 생략',
+      training&&done?'active':(training?'':'')),
+  ];
+  box.innerHTML=cards.join('')
+    +`<div class="cnote">수집은 PPO를 한 episode도 돌리지 않으므로 물리 pair `
+    +`<b>${pairs.length?escapeHTML(pairs.join(', ')):'--'}</b>을(를) 모두 쓴다. `
+    +`학습 단계는 수집을 위해 비행하지 않으며, 필요한 데이터셋이 없으면 `
+    +`<code>--stage collect</code>를 지목하는 오류로 멈춘다.</div>`;
+}
 function escapeHTML(value){return String(value??'--').replace(/[&<>"']/g,c=>
   ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 function pairPanel(state){
@@ -947,7 +1029,7 @@ function pairPanel(state){
     const fovRisk=Number(pair.predicted_fov_unavailability??
       live.predicted_fov_unavailability);
     const ontoReward=Number(pair.ontology_fov_reward??live.ontology_fov_reward);
-    const proposed=method==='shin_se_onto_rgat_recovery';
+    const proposed=isOntologyArm(method);
     const gate=pair.landing_gate||null;
     const pos=xyz&&xyz.length===3
       ?`${Number(xyz[0]).toFixed(2)}, ${Number(xyz[1]).toFixed(2)}, ${Number(xyz[2]).toFixed(2)}`:'--';
@@ -1167,7 +1249,7 @@ function drawEvaluationBars(card,state){
     (state.series[seriesFor(method)]||[]).length);
   // Display order only: a deck not listed here still gets its group, appended
   // below, so a new scenario needs no dashboard change to appear.
-  const preferred=['straight_escape_burst','training_random_walk',
+  const preferred=['straight_escape_burst_track','straight_escape_burst','training_random_walk',
     'training_random_walk_escape_burst','straight_8mps',
     'linear_acceleration_wave','circle','zigzag','u_turn',
     'vertical_heave_boat'];
@@ -1551,6 +1633,7 @@ async function tick(){
       tiles(state);
       phasePanel(state);
       runPipelinePanel(state);
+      collectionPanel(state);
       fovStatusPanel(state);
       algoPipelinePanel(state);
       mdpPanel(state);
@@ -1559,7 +1642,7 @@ async function tick(){
         if(c.id==='tiles'||c.kind==='graph'||c.kind==='contract'||c.kind==='pairs'||
            c.kind==='phase'||c.kind==='heading'||c.kind==='runpipe'||
            c.kind==='fovstatus'||c.kind==='teacher'||c.kind==='trajectories'||
-           c.kind==='algopipe'||c.kind==='mdp'||
+           c.kind==='algopipe'||c.kind==='mdp'||c.kind==='collection'||
            c.kind==='pairplots'||
            (c.view&&c.view!=='common'&&c.view!==profile))continue;
         c.kind==='evalbars'?drawEvaluationBars(c,state):draw(c,state);

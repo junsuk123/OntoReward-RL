@@ -523,6 +523,24 @@ class BenchmarkMonitor:
                 out[key] = value
         return out
 
+    def collection_stage(self, *, stage: str, pairs: Sequence[int],
+                         datasets: Sequence[Mapping[str, Any]],
+                         complete: bool = False) -> None:
+        """Publish what the collection stage flew, and on how many pairs.
+
+        A run is data collection followed by training (``--stage``), and until
+        this was published nothing on the page said which half was running or
+        what the collection had produced. The counts matter while it is still
+        flying: a readout is only as good as the episodes behind it, and a
+        reused episode costs no simulator time while a flown one costs
+        minutes.
+        """
+        self.store.set(
+            collection_stage=str(stage),
+            collection_complete=bool(complete),
+            collection_pairs=[int(index) for index in pairs],
+            collection_datasets=[dict(entry) for entry in datasets])
+
     def configure(self, *, methods: Sequence[str], mode: str, config_hash: str,
                   training_total: int, evaluation_total: int,
                   reward_design_id: str | None = None,

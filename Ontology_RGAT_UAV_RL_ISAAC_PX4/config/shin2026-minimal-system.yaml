@@ -58,6 +58,58 @@ pad:
   route_start: continue
   route_waypoints_enu_m: null
 
+isaac:
+  # Simulation pacing: IMPLEMENTED, TESTED, AND DELIBERATELY OFF (2026-09-22).
+  #
+  # The problem it was written for is real. The learner is not in lockstep with
+  # the world loop -- `lockstep: true` is Isaac<->PX4 only -- so simulated time
+  # inside one control step is whatever the loop managed: measured between
+  # 0.104 s and 0.95 s, an effective control rate swinging 9.6 Hz to 1.1 Hz,
+  # with every steps x dt duration in the results understated by that factor.
+  #
+  # But THROTTLING THE ISAAC LOOP DOES NOT FIX IT, and the reason is worth
+  # recording so nobody tries this shape again. There are two clocks:
+  #
+  #     Isaac   world.current_time   what the world loop can throttle
+  #     PX4     px4_time_us          what the gateway reports and the learner
+  #                                  actually integrates against
+  #
+  # Measured simultaneously with the loop holding its own clock on target:
+  #
+  #     loop self-report   sim:wall 0.114   (target 0.115 -- held, stably)
+  #     gateway clock      sim:wall 0.980
+  #
+  # An 8.6x disagreement. The loop controls the clock nobody consumes. Worse,
+  # sleeping Isaac hands CPU to PX4, which free-runs: the gateway clock went
+  # from 0.80 unpaced to 0.98 paced, so the effective control rate got WORSE,
+  # 1.34 Hz -> 1.1 Hz.
+  #
+  # AND IT IS NOT MERELY USELESS -- SWITCHED ON IT CHANGES THE PHYSICS. The two
+  # halves of the task advance on the two different clocks:
+  #
+  #     deck                landing_world.py  self.deck.advance(
+  #                                             self.world.current_time, dt)
+  #     vehicle, battery    ros2_gateway.py   battery_time_us = px4_time_us
+  #
+  # So throttling Isaac slows the DECK while the vehicle flies and the pack
+  # drains at the unthrottled rate. At the numbers above that is an 8.6x split:
+  # per learner step the vehicle flies and discharges for ~0.9 s of simulated
+  # time while the deck moves 0.1 s worth. Tracking would look better and
+  # energy worse, both for reasons that have nothing to do with the arms. It is
+  # a different task wearing the same scenario name.
+  #
+  # The real fix is a step-request handshake -- the learner asks for one
+  # control period and the world advances exactly that, which is the only
+  # thing that keeps the deck, the vehicle and the pack on one clock. It
+  # touches the world loop, the gateway and the bridge. Until then this stays
+  # off and the bandwidth caveat in docs/THREE_ARM_BURST_COMPARISON.md
+  # section 5 stands.
+  #
+  # The implementation is kept, inert at null, because it is correct at what it
+  # does: closed-loop, self-trimming, no calibration constant, and it reports
+  # what it achieves. It is the mechanism that is aimed at the wrong clock.
+  max_sim_speed_ratio: null
+
 parallel:
   # The campus profile separates pairs by arc-length along one surveyed route.
   # There is no route here, so pairs are separated in space instead. Isaac adds

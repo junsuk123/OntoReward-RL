@@ -270,9 +270,11 @@ UAV(실선)와 착륙 패드(점선) world ENU top-down 궤적을 그린다. 좌
 
 ### 5.4 시연 수집을 스폰된 모든 pair에서 (2026-09-21)
 
-시연 단계는 PPO worker가 하나도 제출되기 전에 실행된다(`run_three_pipeline.py`: 교사 시연
-→ behavior cloning → 학습 스레드 제출 → reward-design 수집). 즉 이 시점에는 스폰된 네
-UAV/UGV pair가 전부 놀고 있는데도 수집은 pair 0 한 대에서만 순차로 돌았고, 나머지 세 대는
+시연 단계는 PPO worker가 하나도 제출되기 전에 실행된다(당시 순서:
+교사 시연 → behavior cloning → 학습 스레드 제출 → reward-design 수집. 2026-09-22의
+단계 분리 이후에는 학습 스레드 제출이 수집 **뒤로** 옮겨졌다. 5.11 참조). 즉 이
+시점에는 스폰된 네 UAV/UGV pair가 전부 놀고 있는데도 수집은 pair 0 한 대에서만 순차로
+돌았고, 나머지 세 대는
 `max_attempts`(현재 40회) 전체 구간 동안 비어 있었다. 교사 비행도 Isaac/PX4 비행이므로
 같은 공유 stage 위에서 병렬로 날 수 있다: 측정된 총 시뮬레이션 처리량은 pair 1·2·3·4대에서
 1.00x, 2.60x, 3.28x, 4.96x다(`automatic_parallel_pairs`).
@@ -518,6 +520,167 @@ random walk / escape-burst 분기에서만 읽힌다.
 지그재그 17 %의 step이 0.70을 넘었고(p90 0.84·0.93), 그 step에서는 하강이 0으로
 잠긴다. 엔벨로프를 키우면 이 과도 구간은 더 커지므로, 새 트레이스에서 덱별
 "하강 0 유지 비율"을 함께 봐야 한다.
+
+### 5.11 수집 단계와 학습 단계의 분리 (2026-09-22)
+
+한 실행이 수집과 학습을 동시에 하고 있었다. 고정 보상 arm의 PPO를 먼저 제출하고,
+FOV-risk 수집기에는 학습 배정이 남긴 pair를 넘겼다. 결과는 세 가지다.
+
+* **수집이 사실상 1페어였다.** 4페어 무대에서 두 학습 arm이 각 2 replica를 날면
+  남는 pair가 없다. `_reward_design_pair_indices`는 그때 예외를 던지거나, arm 하나만
+  먼저 띄운 경우 남은 2페어 중 **한 대**만 수집에 썼다. 측정된 총 처리량은 1·2·3·4페어에서
+  1.00x, 2.60x, 3.28x, 4.96x(`automatic_parallel_pairs`)이므로, 수집 구간 내내 무대의
+  대부분이 놀고 있었다.
+* **페어 이중 점유가 가능했다.** 2026-09-21에 수집기와 baseline PPO replica가 pair 1을
+  함께 잡았고, 두 bridge가 같은 로컬 UDP 포트에 bind(`SO_REUSEADDR`)되어 커널이 게이트웨이
+  응답을 한쪽에만 전달했다. 다른 쪽은 hello/state timeout만 보았고 timeout마다 공유
+  시뮬레이터를 전체 재건했다 — 4시간에 26회.
+* **두 arm의 출발 조건이 달랐다.** 제안 arm의 동결 readout은 비교 arm이 이미 수백
+  에피소드를 학습한 뒤에야 만들어졌다. 예산은 같아도 "같은 보상 설계를 상대로 1
+  에피소드부터"는 성립하지 않았다.
+
+이제 실행은 두 단계이고 순서는 고정이다. `--stage`가 어느 쪽인지를 말한다.
+
+```bash
+./run.sh                   # 수집 → 학습 (한 프로세스)
+./run.sh --stage collect   # 데이터셋만 모으고 종료
+./run.sh --stage train     # 모은 데이터로 학습·평가, 수집 비행 없음
+```
+
+**수집 단계**는 비행해서 재사용 가능한 데이터셋을 만드는 일만 한다: keypoint 측량,
+교사 시연, FOV-risk / semantic / adaptive rollout. PPO는 한 에피소드도 돌지 않으므로
+`_reward_design_pair_indices`가 반환하는 free pair는 **전부**이고, 수집은 무대 전체를
+쓴다. `_collect_fov_risk_data`도 `parallel_contexts`를 받아 시연·adaptive 수집과 같은
+배치 규약으로 난다.
+
+* seed·덱·행동 variant는 배치가 **날기 전에** episode id 순서로 배정된다. 어느 pair가
+  먼저 착륙했는지는 저장 내용에 영향을 주지 않는다.
+* 배치가 합류한 뒤 메인 스레드에서 episode id 순서로만 기록한다. 중단된 수집은 완전한
+  prefix에서 재개된다.
+* datastore의 중복 제거 identity(seed · source policy · checkpoint sha · variant)와
+  seed 고정 train/validation split은 그대로다. 4페어로 모은 집합을 1페어 실행이
+  그대로 쓴다.
+* 배치 폭은 남은 episode 예산으로 잘라, 하드 캡을 넘겨 비행하지 않는다.
+
+**학습 단계**는 수집을 위해 비행하지 않는다. 각 수집기는 비행을 시작하기 직전에
+`_require_flight`를 통과해야 하고, `--stage train`에서는 이것이
+`CollectionUnavailable`을 던지며 `--stage collect` 명령을 지목한다. keypoint encoder도
+같다: 저장된 artifact가 아직 실기 측량을 통과하지 못했으면 재측량하지 않고 멈춘다.
+readout은 그 encoder의 좌표로 라벨된 데이터에 맞춰지므로, 학습 단계가 몰래 다른 계보의
+프레임으로 측량을 다시 하면 안 된다.
+
+예외는 한 곳뿐이고 코드에 명시돼 있다. adaptive artifact의 quality gate는 **적합을
+시도해야** 데이터가 더 필요한지 알 수 있으므로, `--stage all`에서는 데이터셋을 늘려
+재적합하고 `--stage train`에서는 거부한다.
+
+### 5.12 수집 기본 덱을 급가속 이탈 하나로 (2026-09-22)
+
+수집의 기본 덱을 `straight_escape_burst` 하나로 고정했다(`COLLECTION_BASE_SCENARIO`).
+패드가 0.500 m/s로 등속 직진하다 드론이 추종에 들어선 순간 1.000 m/s로 급가속해
+카메라 프레임을 벗어나는 덱이다. 제안 방법이 주장하는 것이 "패드가 시야를 벗어났을 때
+착륙을 회복한다"이므로, 그 사건을 **안정적으로 만드는** 덱이 필요하지 부수적으로 가끔
+만드는 덱 여섯 개가 필요한 게 아니다. readout 입장에서도 프레임을 거의 벗어나지 않는
+덱은 학습할 양성 표적이 거의 없는 데이터다.
+
+바꾼 곳은 코드의 **기본값**이다. 프로파일이 덱을 선언하면 그쪽이 이긴다.
+
+| 키 | 적용 대상 |
+|---|---|
+| `training.scenarios` | PPO + 모든 수집의 기본 |
+| `behavior_cloning.scenarios` | 교사 시연 |
+| `fov_risk_design.scenarios` | FOV-risk rollout |
+| `rgat_design.scenarios` | semantic R-GAT rollout |
+| `adaptive_reward_design.scenarios` | adaptive reward rollout |
+
+`three_arm_burst_comparison.yaml`은 이미 `training`·`behavior_cloning`·`evaluation`
+모두 이 덱 하나였으므로 기본 실행의 동작은 바뀌지 않는다.
+`two_pipeline_comparison.yaml`의 여섯 덱도 그대로 남아 있다.
+
+두 가지를 함께 고쳤다.
+
+* **semantic R-GAT 수집의 덱이 하드코딩돼 있었다.** `_collect_semantic_data`가
+  `scenario="training_random_walk"`를 박아 쓰고 있어서, 정책이 실제로 나는 덱과 무관한
+  궤적으로 semantic outcome 모델이 적합됐다. 이제 다른 수집과 같이 episode index로
+  회전하는 덱 목록을 받고, `source_behavior_policy.scenario_cycle`에 기록된다.
+* **덱이 FOV datastore 지문에 없었다.** `fov_risk_data_fingerprint`의 docstring은
+  "the trajectory distribution the episodes are drawn from"을 포함한다고 말하면서
+  실제로는 system 프로파일의 `pad.motion` 계열만 담고 있었다. 덱 이름은 없었다.
+  2026-09-22 확인 시점의 활성 누적은 76 episode였고 그중 약 59개가 09-20~09-21의
+  6-덱 실행에서 온 것이었다 — burst 전용 readout이 그 59개 위에 그대로 적합됐을
+  것이고, 그랬다는 기록조차 남지 않았을 것이다. 이제 `scenarios`가 지문에 들어가고,
+  각 episode의 provenance에도 덱 이름이 남는다.
+
+  **대가:** 지문이 바뀌므로 기존 76 episode(약 17k step)는 새 수집에 보이지 않는다.
+  DB에는 감사용으로 남는다. 09-18~09-19의 283 episode는 그 이전 지문이라 이미
+  보이지 않는 상태였다.
+
+### 5.13 덱이 실제로 어디 있었는지: 보간 앵커 버그 (2026-09-22)
+
+대시보드 궤적 패널에서 `straight_escape_burst` 덱이 직선이 아니라 접힌 띠로 그려졌다.
+덱 자체는 직선으로 달리고 있었고, **보고되는 위치가 틀렸다.**
+
+`PadTrajectory.pose()`의 random_walk 보간:
+
+```python
+offset = (track[index] + random_walk_origin).copy()   # 앵커가 이미 더해짐
+offset += fraction * (track[index + 1] - offset)      # 보간 대상에서 앵커가 빠짐
+```
+
+둘째 줄의 보간 목표가 `track[index+1] - origin`이 되어, `fraction`이 0→1로 가는 동안
+보고 위치가 앵커 벡터 전체만큼 뒤로 밀렸다가 다음 샘플에서 되돌아온다. 톱니파다.
+
+`route_start: continue`가 앵커를 0이 아니게 만드는 **두 번째 에피소드부터** 나타나므로
+첫 에피소드만 보는 검사는 전부 통과했다. minimal 프로파일 실측:
+
+| | 0.025 s 샘플당 이동 |
+|---|---|
+| 기대 (0.5 m/s) | 0.0125 m |
+| 수정 전 | 3.76 – 11.24 m |
+| 수정 후 | 0.0125 m (일정) |
+
+연속 30 에피소드에서 앵커는 최대 38.2 m까지 자란다. 즉 1.5 m 덱이 0.1초마다 최대 38 m를
+순간이동했고, 이건 그림만의 문제가 아니라 `LandingPad.advance()`가 그 값을 USD 프림에
+그대로 쓰기 때문에 **카메라·기하 FOV 라벨·상대상태 보조 회귀·보상이 전부 그 덱을 봤다.**
+이 버그 아래에서 수집된 FOV-risk episode는 무효다.
+
+함께 고친 것: 한 arm의 모든 replica가 그 arm의 primary pair monitor로 보고하고 있어서,
+150 m 떨어진 두 대의 패드가 한 패널에 한 폴리라인으로 그려졌다(`benchmark_step_pair_0`에
+42행 / 21 step). `train_live(env_monitors=...)`로 replica마다 자기 pair에 보고한다.
+비행 자체는 언제나 각자의 pair에서 이뤄졌으므로 텔레메트리 경로만의 문제다.
+
+### 5.14 수집 기본 덱을 닫힌 트랙으로 (2026-09-22)
+
+`straight_escape_burst`는 **에피소드 안에서만** 직선이다. `route_start: continue`가 덱을
+끝난 자리에 두고 다음 에피소드가 새 heading을 뽑으므로, 에피소드 열 전체는 원점에서
+멀어지는 2-D 랜덤워크다. 그래서 `reset`은 반경 절반을 넘으면 heading을 원점 쪽으로
+돌려야 하고, `pose`는 경계에서 clamp해야 한다. 둘 다 "가면 안 되는 곳으로 가고 있는 덱"에
+가하는 교정이다.
+
+`straight_escape_burst_track`은 그 이유 자체를 없앤다. 20 m 직선 두 개를 6 m 반경의
+등속 반원 두 개로 이은 닫힌 오벌이고, 덱은 그 위를 영원히 돈다.
+
+* **직선은 직선이다.** 직선 구간의 급가속은 heading 분산 0.000000°, straightness 1.000000.
+* **등속이다.** 코너에서 감속하지 않는다 — 회전은 `yaw_rate = v / R`의 등속 원운동이다.
+* **유계다.** 300 에피소드(2.5시간), 매 에피소드 급가속 포함해서 32 x 15 m 안에 머문다.
+  최대 반경 26.9 m로, inward steering이 시작되는 60 m에도 닿지 않는다.
+* **에피소드를 위상으로 잇는다.** 위치 오프셋과 새 heading이 아니라 주행 거리(arc length)를
+  넘긴다. 다음 에피소드가 같은 랩을 이어서 돌 뿐, 루프가 회전하지 않는다.
+
+급가속을 **경로 이탈이 아니라 트랙 위의 속도 사건**으로 정의한 것이 핵심이다. 처음에는
+열린 시나리오처럼 "카메라 정후방"으로 직진시켰는데, 그러면 매번 루프가 5 m씩 평행이동해
+30 에피소드 만에 arena 경계에 닿았다(측정). 닫힌 루프는 평균 변위가 0이라 heading 회전으로
+되돌릴 수도 없다. 속도만 두 배로 올리면 FOV 이탈 사건은 그대로 일어나면서 — 직선 구간에서의
+2배속은 원래 시나리오 그 자체다 — 경로는 움직이지 않는다.
+
+기하는 `pad.benchmark_track_straight_m`(20.0)과 `pad.benchmark_track_radius_m`(6.0)로
+조정한다. `benchmark_speed_scale`에 스케일되지 않는다: 덱을 느리게 하는 것과 달리는 땅을
+줄이는 것은 다른 일이다. 반경은 덱 대각선 이상이어야 하며, 아니면 설정 오류로 거부된다.
+
+보상 설계 rollout을 나는 정책도 단일 규칙이 됐다. 디스크에 호환 checkpoint가 있으면
+그것, 없으면 BC로 데워진 동결 초기화다. 이전에는 단일 페어 실행만 source arm의 PPO를
+`train_count` 에피소드만큼 따로 돌렸고 그 비용이 `N_reward_design`에 들어갔다.
+병렬 실행은 이미 동결 source를 쓰고 있었으므로, 이제 1페어와 4페어가 같은 행동 분포에서
+수집하고 어느 쪽도 source 정책 PPO를 보상 설계 예산에 달지 않는다.
 
 ## 6. 평가 프로토콜
 

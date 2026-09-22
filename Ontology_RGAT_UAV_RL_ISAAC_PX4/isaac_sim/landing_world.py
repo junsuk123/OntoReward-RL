@@ -2339,6 +2339,33 @@ class LandingWorld:
         # throughput: the loop was already bounded by the learner, which is why
         # wall time per step is the same in both regimes. Null or zero leaves
         # the loop free-running exactly as before.
+        #
+        # Pacing is closed-loop against the simulator's own clock. Nothing
+        # here is calibrated by hand: the loop measures how much simulated
+        # time each ``world.step()`` actually bought and holds the configured
+        # sim:wall target directly. Three hand-calibrated attempts failed
+        # before this, because the conversion is neither constant nor
+        # monotonic -- measured 0.041, 0.50 and 0.96 achieved against the same
+        # 0.115 target as load changed.
+        #
+        # How often the loop reports what it actually achieved. A silent
+        # no-op is how the first attempts failed, so this is not optional.
+        PACING_REPORT_S = 60.0
+        # The per-step correction removes the variance but leaves a systematic
+        # offset: sleeping costs more wall than it asks for, so the loop lands
+        # below the rate it aims at. Measured 2026-09-22: a steady 0.070
+        # against a 0.115 target, four windows running 0.069-0.070.
+        #
+        # Rather than divide by a fitted constant -- which is what failed three
+        # times, because the offset moves with load -- the loop trims its own
+        # setpoint from what it measured. Damped so it settles instead of
+        # oscillating, and bounded so a pathological window cannot run away.
+        PACING_TRIM_DAMPING = 0.5
+        PACING_TRIM_BOUNDS = (0.2, 5.0)
+        pace_trim = 1.0
+        pace_prev_wall = pace_prev_sim = None
+        pace_win_wall = pace_win_sim = None
+        pace_sim_moved = False
         speed_ratio = float(CONFIG["isaac"].get("max_sim_speed_ratio") or 0.0)
         if speed_ratio < 0.0:
             raise ValueError("isaac.max_sim_speed_ratio must be non-negative")
@@ -2371,19 +2398,57 @@ class LandingWorld:
                 render = frame_boundary and (
                     any(pair.vision_enabled for pair in pairs) or not ARGS.headless)
                 self.world.step(render=render)
+                # Hold the configured simulated-seconds-per-wall-second by
+                # measuring what the step actually bought, rather than by
+                # assuming how much a step advances the world. That assumption
+                # is what broke three earlier attempts: it is not a constant,
+                # and under changing render load it is not even monotonic.
                 if speed_ratio > 0.0 and not startup_rendering:
-                    # Anchored on the first paced step rather than on the loop
-                    # start, so the startup burst above is not repaid by a long
-                    # sleep once run-time rendering begins.
                     now_wall = time.monotonic()
                     now_sim = float(self.world.current_time)
-                    if pace_wall0 is None:
-                        pace_wall0, pace_sim0 = now_wall, now_sim
+                    if pace_prev_wall is None:
+                        pace_prev_wall, pace_prev_sim = now_wall, now_sim
+                        pace_win_wall, pace_win_sim = now_wall, now_sim
+                        carb.log_warn(
+                            f"Isaac pacing engaged: holding "
+                            f"{speed_ratio:.4f} simulated s per wall s, "
+                            f"closed-loop against the simulator clock")
                     else:
-                        target = (now_sim - pace_sim0) / speed_ratio
-                        behind = target - (now_wall - pace_wall0)
-                        if behind > 0.0:
-                            time.sleep(min(behind, 1.0))
+                        step_sim = now_sim - pace_prev_sim
+                        if step_sim > 0.0:
+                            pace_sim_moved = True
+                            # This step bought ``step_sim`` of world. At the
+                            # target rate it should have cost this much wall.
+                            owed = step_sim / (speed_ratio * pace_trim) - (
+                                now_wall - pace_prev_wall)
+                            if owed > 0.0:
+                                time.sleep(min(owed, 1.0))
+                                now_wall = time.monotonic()
+                        pace_prev_wall, pace_prev_sim = now_wall, now_sim
+                        if now_wall - pace_win_wall >= PACING_REPORT_S:
+                            achieved = ((now_sim - pace_win_sim)
+                                        / max(now_wall - pace_win_wall, 1e-9))
+                            if not pace_sim_moved:
+                                speed_ratio = 0.0
+                                carb.log_error(
+                                    "Isaac pacing DISABLED: the simulator "
+                                    "clock never advanced, so the rate cannot "
+                                    "be held. The world is free-running and "
+                                    "every steps x dt duration in the results "
+                                    "is understated.")
+                            else:
+                                if achieved > 0.0:
+                                    lo, hi = PACING_TRIM_BOUNDS
+                                    pace_trim = min(hi, max(lo, pace_trim * (
+                                        (speed_ratio / achieved)
+                                        ** PACING_TRIM_DAMPING)))
+                                carb.log_warn(
+                                    f"Isaac pacing: achieved {achieved:.3f} "
+                                    f"simulated s per wall s "
+                                    f"(target {speed_ratio:.3f}, "
+                                    f"trim {pace_trim:.2f})")
+                            pace_win_wall, pace_win_sim = now_wall, now_sim
+                            pace_sim_moved = False
                 if frame_boundary:
                     for pair in pairs:
                         pair._publish_environment()

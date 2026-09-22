@@ -155,15 +155,49 @@ Isaac Sim / Pegasus  →  카메라 · 접촉 · UGV 주행 · 배터리 · 외�
 ```
 
 RL actor는 모터나 추력을 직접 명령하지 않는다. 한 transition은 0.1초이고 episode
-horizon은 300 step이다. 실행 단계는 다음 순서로 고정되어 있다.
+horizon은 300 step이다. 실행은 **데이터 수집 단계와 학습 단계로 분리**되어 있고,
+그 순서는 고정이다.
 
-1. 공통 keypoint encoder 사전학습 · 실기 카메라 검증 후 동결
-2. baseline PPO 학습과 FOV-risk dataset 수집
-3. R-GAT 회귀 학습 → validation-best 선택 → 동결
-4. proposed PPO 학습 (동일 예산 · 동일 seed)
-5. held-out 결정론 seed로 checkpoint 선택
-6. paired · crossover 평가
-7. 표와 그림 저장
+**1단계 — 데이터 수집** (`--stage collect`). 비행해서 재사용 가능한 데이터셋을
+만드는 일만 한다. PPO는 한 에피소드도 돌지 않으므로 **모든 물리 페어가 수집에
+쓰인다.**
+
+기본 덱은 `straight_escape_burst_track` 하나다. 패드가 **닫힌 오벌 트랙**(20 m 직선 두 개 +
+6 m 반경 등속 반원 두 개)을 0.500 m/s로 돌고, 드론이 추종에 들어선 순간 1.000 m/s로
+급가속해 **카메라 프레임을 벗어난다.** 시험 대상 사건이 모든 에피소드에 들어 있어야 모든
+에피소드가 증거가 되고, readout이 학습할 양성 표적도 생긴다.
+
+트랙을 닫은 이유는 공간이다. 열린 직선 주행은 에피소드 안에서만 직선이고, 에피소드 열은
+원점에서 멀어지는 랜덤워크가 되어 heading 끌어당김과 경계 clamp로 교정해야 했다. 닫힌
+루프는 그 교정이 필요 없다 — 300 에피소드 동안 32×15 m 안에 머문다. 급가속은 경로를
+벗어나는 게 아니라 **트랙 위에서 속도만 두 배**가 되므로, 직선 구간의 이탈 사건은 그대로
+일어나면서 덱은 절대 표류하지 않는다.
+
+프로파일이 덱을 선언하지 않으면 모든 수집(교사 시연·FOV-risk·semantic·adaptive)과 PPO가
+이 덱을 쓴다. 나머지 덱은 삭제되지 않았고 `two_pipeline_comparison.yaml`이 여섯 개를,
+열린 직선 주행(`straight_escape_burst`)도 그대로 남아 있다.
+
+1. 공통 keypoint encoder 사전학습 · 실기 카메라 측량 검증 후 동결
+2. 공통 teacher demonstration 비행 → 행동 복제(BC) 워밍업
+3. FOV-risk rollout 수집 (동결 BC 정책 또는 디스크에 있는 호환 checkpoint,
+   모든 페어 동시) → `results/.../rgat/` + 누적 datastore
+
+**2단계 — 학습** (`--stage train`). 수집을 위해서는 비행하지 않는다. 필요한
+데이터셋이 없으면 몇 시간짜리 비행을 조용히 시작하는 대신 `--stage collect`를
+지목하는 오류로 멈춘다.
+
+4. R-GAT 회귀 학습 → validation-best 선택 → 동결
+5. **모든 arm의 PPO를 동시에 시작** (동일 예산 · 동일 seed · 완성된 같은 보상 설계)
+6. held-out 결정론 seed로 checkpoint 선택
+7. paired · crossover 평가
+8. 표와 그림 저장
+
+예전에는 이 둘이 뒤섞여 있었다. 고정 보상 arm의 PPO를 먼저 띄우고 남는 페어에서
+FOV 데이터를 모았기 때문에, 4-페어 무대에서도 수집은 사실상 1페어였고, 페어 배정
+산술이 맞지 않으면 수집기와 PPO replica가 같은 페어(같은 로컬 UDP 포트)를 잡았다.
+무엇보다 제안 arm의 동결 readout이 비교 arm이 이미 수백 에피소드를 학습한 뒤에야
+만들어졌다. 지금은 두 arm 모두 완성된 같은 보상 설계를 상대로 1 에피소드부터
+출발한다.
 
 ## 6. 실험 설계
 
@@ -204,9 +238,23 @@ horizon은 300 step이다. 실행 단계는 다음 순서로 고정되어 있다
 ## 7. 실행
 
 ```bash
-./run.sh                 # 기본: 3-arm 급가속 이탈 비교, full 예산
+./run.sh                 # 기본: 3-arm 급가속 이탈 비교, full 예산 (수집 → 학습)
 ./run.sh --mode quick    # 전 구간 배관 검증 (수십 분)
 ```
+
+**두 단계를 따로 돌릴 수 있다.** 인자 없는 `./run.sh`는 한 프로세스에서 수집을
+끝낸 뒤 학습으로 넘어간다. 나누고 싶으면 `--stage`를 준다.
+
+```bash
+./run.sh --stage collect   # 모든 페어에서 데이터셋만 모으고 종료
+./run.sh --stage train     # 모은 데이터로 readout 학습 + 전 arm PPO + 평가
+```
+
+두 명령에 **같은 `--config`와 `--system-config`를 준다.** 수집 산출물은
+`results/<실험>/<mode>/`와 누적 datastore(`results/datastore/collected.sqlite3`)에
+남으므로, 학습 단계를 여러 번 돌려도 비행은 반복되지 않는다. `--stage train`이
+필요한 데이터셋을 찾지 못하면 비행하지 않고 오류로 멈춘다 — 학습을 돌린다고
+생각한 실행이 조용히 수집으로 되돌아가는 일은 없다.
 
 인자 없는 `./run.sh`는 `config/experiments/three_arm_burst_comparison.yaml`을 그
 파일이 선언한 예산으로, 기계가 재는 만큼의 페어에서 실행한다. 대체된 6-덱 2-arm
@@ -259,8 +307,11 @@ split, 단독 및 2-pair 실행 계약을 포함한다.
 쪽으로도 입증되지 않았다**(67개 비행에서 착륙 1.56 Hz, 실패 1.59 Hz로 분리 없음).
 제어율 임계값을 근거로 튜닝하지 말 것.
 
-완화책 `isaac.max_sim_speed_ratio`가 있으나 **기본 비활성**이다. 상세와 근거는
-[3-arm 비교](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/THREE_ARM_BURST_COMPARISON.md) §5.
+완화책 `isaac.max_sim_speed_ratio`를 구현했으나 **켜면 안 된다** — Isaac의
+`world.current_time`을 제어하는데 학습기가 적분하는 것은 PX4의 `px4_time_us`이고,
+두 시계는 8.6배 어긋난다. 게다가 Isaac을 재우면 PX4가 CPU를 더 얻어 제어율이 오히려
+떨어진다. 실제 해법은 학습기가 월드를 구동하는 스텝 요청 핸드셰이크다. 상세는
+[3-arm 비교](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/THREE_ARM_BURST_COMPARISON.md) §5.4–5.5.
 
 ### 배관은 검증됨, 결과는 아직
 

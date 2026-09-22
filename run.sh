@@ -185,6 +185,25 @@ seminar_fast=false
 # experiment" quietly ran the one whose results may not be published, and an
 # edit to the experiment config landed on a file that path never opens. The
 # preview is still one flag away: ./run.sh --seminar-fast.
+#
+# TWO STAGES, IN ORDER. A run is data collection followed by training, and
+# --stage says which half this command is:
+#
+#   ./run.sh                   collect everything, then train and score it
+#   ./run.sh --stage collect   fly every dataset on every pair, then stop
+#   ./run.sh --stage train     fit the readouts, run PPO, score the arms
+#
+# The collection stage flies the keypoint survey, the teacher demonstrations
+# and the reward-design rollouts, and persists them under results/ and in the
+# accumulating datastore. It starts no PPO, so it has the whole stage to
+# itself: on four pairs it collects at four times the rate the old interleaved
+# order managed, which handed the collector whichever pair training left over.
+#
+# The training stage flies nothing for collection. A dataset it needs and does
+# not find is an error naming this command with --stage collect, not a silent
+# multi-hour flight -- so an operator who expects to be training is never
+# quietly put back into collecting. Both stages take the same --config and
+# --system-config; give them the same ones.
 for argument in "$@"; do
   if [[ "$expect_config_value" == true ]]; then
     expect_config_value=false

@@ -160,38 +160,65 @@ def test_a_second_store_reopens_the_same_accumulation(tmp_path):
     assert open_datastore(None) is None
 
 
+DECKS = ("straight_escape_burst",)
+
+
 def test_the_fov_fingerprint_tracks_meaning_not_optimizer_settings():
     """Reuse must survive a learning-rate edit and must not survive a new camera."""
     system = load_config(ROOT / "config/shin2026-system.yaml")
     base = fov_risk_data_fingerprint(
-        system, prediction_steps=10, control_hz=10.0,
+        system, prediction_steps=10, control_hz=10.0, scenarios=DECKS,
         keypoint_implementation="encoder-v3")
 
     tuned = {**system, "ppo": {"learning_rate": 1e-9},
              "training": {"episodes_full": 1}}
     assert fov_risk_data_fingerprint(
-        tuned, prediction_steps=10, control_hz=10.0,
+        tuned, prediction_steps=10, control_hz=10.0, scenarios=DECKS,
         keypoint_implementation="encoder-v3") == base
 
     for changed in (
             {"prediction_steps": 20, "control_hz": 10.0},
             {"prediction_steps": 10, "control_hz": 20.0}):
         assert fov_risk_data_fingerprint(
-            system, keypoint_implementation="encoder-v3", **changed) != base
+            system, scenarios=DECKS, keypoint_implementation="encoder-v3",
+            **changed) != base
     assert fov_risk_data_fingerprint(
-        system, prediction_steps=10, control_hz=10.0,
+        system, prediction_steps=10, control_hz=10.0, scenarios=DECKS,
         keypoint_implementation="encoder-v4") != base
 
     camera = {**system, "vision": {**system["vision"], "camera": {
         **system["vision"]["camera"], "pitch_down_deg": 45.0}}}
     assert fov_risk_data_fingerprint(
-        camera, prediction_steps=10, control_hz=10.0,
+        camera, prediction_steps=10, control_hz=10.0, scenarios=DECKS,
         keypoint_implementation="encoder-v3") != base
 
     deck = {**system, "pad": {**system["pad"], "speed_max_m_s": 99.0}}
     assert fov_risk_data_fingerprint(
-        deck, prediction_steps=10, control_hz=10.0,
+        deck, prediction_steps=10, control_hz=10.0, scenarios=DECKS,
         keypoint_implementation="encoder-v3") != base
+
+
+def test_a_different_deck_rotation_retires_the_accumulation():
+    """The deck is the trajectory distribution, not a tuning knob.
+
+    An episode on a pad that stays in frame teaches the future-FOV target
+    something different from one that drives out of it, so a burst-only
+    collection must not silently extend a six-deck accumulation. Order matters
+    because the rotation is indexed by episode.
+    """
+    system = load_config(ROOT / "config/shin2026-system.yaml")
+
+    def fingerprint(scenarios):
+        return fov_risk_data_fingerprint(
+            system, prediction_steps=10, control_hz=10.0,
+            scenarios=scenarios, keypoint_implementation="encoder-v4")
+
+    burst = fingerprint(("straight_escape_burst",))
+    assert fingerprint(["straight_escape_burst"]) == burst   # list or tuple
+    assert fingerprint(("training_random_walk",)) != burst
+    assert fingerprint(("straight_escape_burst", "circle")) != burst
+    assert fingerprint(("circle", "straight_escape_burst")) != fingerprint(
+        ("straight_escape_burst", "circle"))
 
 
 def test_a_fingerprint_needs_properties_and_ignores_key_order():

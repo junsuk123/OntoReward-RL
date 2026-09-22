@@ -37,18 +37,62 @@ instance, ROS namespace, gateway/learner UDP port, controller/reset state를 쓰
 ```
 
 > **full 전에 `--mode quick`을 먼저 돌릴 것.** full은 약 1.5–2일이고 quick은 수십
-> 분에 keypoint → teacher → 행동복제 → PPO → R-GAT → checkpoint 선택 → 3-arm
-> 평가 → 리포트 전 구간을 실행한다. 2026-09-22의 quick 패스는 full이었다면 하루치
+> 분에 keypoint → teacher → 행동복제 → FOV 수집 → R-GAT → PPO → checkpoint 선택 →
+> 3-arm 평가 → 리포트 전 구간을 실행한다. 2026-09-22의 quick 패스는 full이었다면 하루치
 > 연산 뒤에야 드러났을 결함 세 개를 잡았다 — 비학습 arm의 평가 크래시, 은퇴한 덱의
 > 부활, 완주한 run의 manifest를 죽이는 NaN.
 
-## 2. 실행 순서
+## 2. 실행 순서: 수집 단계 → 학습 단계
 
-공통 keypoint encoder 준비와 실기 카메라 검증 → baseline PPO와 FOV-risk dataset
-수집 → 회귀 R-GAT validation-best 학습·동결 → proposed PPO → held-out checkpoint
-선택 → paired/crossover 평가 → 표·그림 저장.
+실행은 두 단계이고 순서는 고정이다. `--stage`가 이번 명령이 어느 쪽인지를 말한다.
+
+```bash
+./run.sh                   # 수집 → 학습 (한 프로세스, 기본값)
+./run.sh --stage collect   # 데이터셋만 모으고 종료
+./run.sh --stage train     # 모은 데이터로 학습·평가 (수집 비행 없음)
+```
+
+**1단계 — 수집.** 비행해서 재사용 가능한 데이터셋을 만드는 일만 한다.
+공통 keypoint encoder 준비와 실기 카메라 측량 검증 → 교사 시연 비행과 행동 복제 →
+FOV-risk rollout 수집. PPO는 한 에피소드도 돌지 않으므로 **모든 물리 페어가 수집에
+쓰인다.** 산출물은 `results/<실험>/<mode>/`와 누적 datastore
+(`results/datastore/collected.sqlite3`)에 남는다.
+
+**기본 덱은 `straight_escape_burst_track` 하나다**(`COLLECTION_BASE_SCENARIO`).
+20 m 직선 두 개를 6 m 반경 등속 반원으로 이은 닫힌 오벌을 등속으로 돌다가, 직선에서
+급가속해 카메라 프레임을 벗어난다. 시험 대상 사건이 모든 에피소드에 포함되고, 덱은
+32×15 m를 절대 벗어나지 않는다(300 에피소드 측정). 기하는 `pad.benchmark_track_straight_m`
+/ `pad.benchmark_track_radius_m`로 조정한다. 프로파일이 덱을 선언하면 그쪽이 이긴다.
+
+| 덱을 정하는 키 | 적용 대상 |
+|---|---|
+| `training.scenarios` | PPO + 모든 수집의 기본 |
+| `behavior_cloning.scenarios` | 교사 시연 |
+| `fov_risk_design.scenarios` | FOV-risk rollout |
+| `rgat_design.scenarios` | semantic R-GAT rollout |
+| `adaptive_reward_design.scenarios` | adaptive reward rollout |
+
+per-design 키가 `training.scenarios`를 덮고, 아무것도 없으면 기본 덱이 쓰인다.
+
+> **덱을 바꾸면 FOV 누적은 은퇴한다.** 덱은 궤적 분포 그 자체이므로
+> `fov_risk_data_fingerprint`에 들어간다(2026-09-22 추가). 다른 덱에서 모은
+> episode는 DB에 남아 감사 가능하되 새 지문에는 보이지 않는다. 바꾸기 전에
+> 현재 누적량을 확인할 것.
+
+**2단계 — 학습.** R-GAT validation-best 학습·동결 → **모든 arm의 PPO를 동시에 시작**
+(완성된 같은 보상 설계를 상대로, 동일 예산·동일 seed) → held-out checkpoint 선택 →
+paired/crossover 평가 → 표·그림 저장.
+
+`--stage train`은 수집을 위해 비행하지 않는다. 필요한 데이터셋이 없으면 몇 시간짜리
+비행을 조용히 시작하는 대신 `--stage collect`를 지목하는 오류로 멈춘다. 두 명령에는
+**같은 `--config`와 `--system-config`를 준다.**
 
 중단 후 같은 명령을 실행하면 호환되는 checkpoint와 완료된 평가 행을 재사용한다.
+수집도 같다: datastore에 이미 있는 seed는 다시 날지 않는다.
+
+> 왜 나눴는지는 [실험 설계 5.11](TWO_PIPELINE_COMPARISON.md#511-수집-단계와-학습-단계의-분리-2026-09-22)에
+> 있다. 요약하면 예전 순서는 수집을 사실상 1페어로 묶었고, 페어 이중 점유를 허용했고,
+> 제안 arm의 동결 readout을 비교 arm이 수백 에피소드 학습한 뒤에야 만들었다.
 
 ## 3. 짧은 개발 실행과 정적 검증
 
@@ -154,14 +198,13 @@ EOF
 Isaac이 실시간에 가깝게 자유 주행 중이라는 뜻이며, **teacher 게인이나 하강 임계를
 만지기 전에 이것부터 해결하라** — 그 상태의 측정값은 대역폭이 통제되지 않은 값이다.
 
-완화책(기본 비활성):
+**`isaac.max_sim_speed_ratio`를 켜지 말 것.** 구현되어 있지만 Isaac의
+`world.current_time`을 제어하는데 학습기가 읽는 것은 PX4의 `px4_time_us`이고, 두
+시계는 8.6배 어긋난다. 켜면 Isaac이 잠든 만큼 PX4가 CPU를 더 얻어 제어율이 오히려
+떨어진다(1.34 → 1.1 Hz).
 
-```yaml
-isaac:
-  max_sim_speed_ratio: 0.116   # = control.dt_seconds / 학습기 스텝당 벽시계 시간
-```
-
-근거와 한계는 [3-arm 비교](THREE_ARM_BURST_COMPARISON.md) §5.
+현재로서는 **고칠 수 있는 설정이 없다.** 근거와 실제 해법은
+[3-arm 비교](THREE_ARM_BURST_COMPARISON.md) §5.4–5.5.
 
 ### 진입 호버가 계속 실패할 때
 

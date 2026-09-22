@@ -63,13 +63,13 @@ arm_labels:
 # episode contain the FOV-loss event.
 training:
   scenarios:
-    - straight_escape_burst
+    - straight_escape_burst_track
 
 # The demonstrations fly the deck the student is trained on, which is the
 # property the 2026-09-21 change established and which one deck makes trivial.
 behavior_cloning:
   scenarios:
-    - straight_escape_burst
+    - straight_escape_burst_track
 
   # Teacher rules re-based onto this deck (2026-09-22).
   #
@@ -98,7 +98,10 @@ behavior_cloning:
 # concentrating it on one deck keeps that power and now spends all of it on
 # flights that contain the event under test.
 evaluation:
-  straight_escape_burst: 1200
+  # Retired in favour of the closed-track form below, which drives the same
+  # cruise-then-dash event on a path that cannot walk out of the arena.
+  straight_escape_burst: 0
+  straight_escape_burst_track: 1200
   straight_8mps: 0
   linear_acceleration_wave: 0
   circle: 0

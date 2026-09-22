@@ -51,11 +51,36 @@ ESCAPE_BURST_SCENARIO = "training_random_walk_escape_burst"
 # arms are compared on. The walk-based variant above stays for the behaviour
 # cloning demonstrations that need a varied approach before the same event.
 STRAIGHT_ESCAPE_BURST_SCENARIO = "straight_escape_burst"
+# The same deck on a closed oval instead of an open straight line: two straight
+# segments joined by two constant-speed semicircles, driven forever.
+#
+# Why a closed track at all. ``straight_escape_burst`` drives a genuine
+# straight line, but only within one episode. ``route_start: continue`` leaves
+# the deck where the episode ended and the next one draws a fresh heading, so
+# the episode *sequence* is a 2-D random walk whose distance from the origin
+# grows without bound -- which is why ``reset`` has to rotate the drawn heading
+# back toward the origin past half the arena, and why ``pose`` has to clamp at
+# its edge. Both are corrections applied to the deck because it was going
+# somewhere it must not go.
+#
+# A closed loop removes the reason for either. The deck never leaves a region
+# of roughly ``straight + 2 * radius`` by ``2 * radius``, every episode
+# continues the previous one along the same path rather than choosing a new
+# direction, and the straight segments are still straight lines -- which is
+# what the scenario is for. The turns are constant-speed circular arcs of a
+# fixed radius, so the deck's speed never changes except for the dash itself.
+STRAIGHT_ESCAPE_BURST_TRACK_SCENARIO = "straight_escape_burst_track"
 BENCHMARK_SCENARIOS = (
     "training_random_walk", "straight_8mps", "linear_acceleration_wave",
     "circle", "zigzag", "u_turn", "vertical_heave_boat",
     ESCAPE_BURST_SCENARIO, STRAIGHT_ESCAPE_BURST_SCENARIO,
+    STRAIGHT_ESCAPE_BURST_TRACK_SCENARIO,
 )
+# Scenarios whose shape is a fixed closed path rather than a fresh heading per
+# episode. They carry their phase across a reset instead of their heading, and
+# the arena's inward steering never applies to them: the path is bounded by
+# construction, so pulling it inward would only bend a straight into a curve.
+CLOSED_TRACK_SCENARIOS = (STRAIGHT_ESCAPE_BURST_TRACK_SCENARIO,)
 # How the dash is started (``pad.escape_burst_trigger``).
 #   following -- Isaac fires it the moment the vehicle is actually following
 #                the deck: within ESCAPE_BURST_FOLLOW_LATERAL_M and inside the
@@ -107,6 +132,54 @@ STRAIGHT_ESCAPE_CRUISE_SPEED_M_S = 4.0
 # deck drives the same circle more slowly, rather than shrinking it onto a
 # radius smaller than the landing pad itself.
 BENCHMARK_CIRCLE_RADIUS_M = 8.0
+# Geometry of the closed oval, in metres and held fixed under
+# ``benchmark_speed_scale`` for the same reason the circle radius is: scaling
+# the deck's speed must slow it down, not shrink the ground it drives on.
+#
+# 20 m of straight is long enough that a 30 s episode at the profile's 0.50 m/s
+# cruise (15 m) is usually straight from end to end, which is the condition the
+# escape dash is supposed to interrupt. 6 m of turn radius is four times the
+# 1.5 m deck, so the arc is a drive rather than a pirouette, and the whole loop
+# fits in 32 m x 12 m -- comfortably inside a 60 m half-arena and the drone's
+# own world limit.
+BENCHMARK_TRACK_STRAIGHT_M = 20.0
+BENCHMARK_TRACK_RADIUS_M = 6.0
+
+
+def stadium_track(arc_length, straight_m: float, radius_m: float):
+    """Heading and turn rate at ``arc_length`` along a closed oval.
+
+    The loop is a stadium: straight, semicircle, straight back, semicircle.
+    Returned as ``(heading_offset, curvature)`` -- what the deck is pointing at
+    relative to the loop's own orientation, and ``1/radius`` while it is in a
+    turn, zero on the straights. The caller multiplies the curvature by the
+    deck's speed to get its yaw rate, which is what makes the turns
+    constant-speed circular motion rather than a slowdown.
+
+    Arc length is taken modulo the perimeter, so a deck may be handed any phase
+    -- including one carried across an episode boundary -- and stays on the loop.
+    """
+    straight = max(float(straight_m), 0.0)
+    radius = max(float(radius_m), 1e-6)
+    turn = math.pi * radius
+    perimeter = 2.0 * (straight + turn)
+    s = np.asarray(arc_length, dtype=float) % perimeter
+    heading = np.zeros_like(s)
+    curvature = np.zeros_like(s)
+    # 1. first straight, heading 0
+    # 2. first half turn, heading sweeping 0 -> pi
+    on_first_turn = (s >= straight) & (s < straight + turn)
+    heading[on_first_turn] = (s[on_first_turn] - straight) / radius
+    curvature[on_first_turn] = 1.0 / radius
+    # 3. return straight, heading pi
+    on_return = (s >= straight + turn) & (s < 2.0 * straight + turn)
+    heading[on_return] = math.pi
+    # 4. second half turn, heading sweeping pi -> 2pi
+    on_second_turn = s >= 2.0 * straight + turn
+    heading[on_second_turn] = math.pi + (
+        s[on_second_turn] - 2.0 * straight - turn) / radius
+    curvature[on_second_turn] = 1.0 / radius
+    return heading, curvature
 
 
 def escape_burst_due(*, lateral_m: float, altitude_m: float,
@@ -198,6 +271,9 @@ class PadMotionConfig:
     motion_update_dt_s: float
     # How the escape-burst scenario starts its dash, see ESCAPE_BURST_TRIGGERS.
     escape_burst_trigger: str = "following"
+    # Closed-oval geometry for STRAIGHT_ESCAPE_BURST_TRACK_SCENARIO.
+    benchmark_track_straight_m: float = BENCHMARK_TRACK_STRAIGHT_M
+    benchmark_track_radius_m: float = BENCHMARK_TRACK_RADIUS_M
 
     @classmethod
     def from_mapping(cls, data: dict[str, Any]) -> "PadMotionConfig":
@@ -233,6 +309,36 @@ class PadMotionConfig:
         benchmark_speed_scale = float(pad.get("benchmark_speed_scale", 1.0))
         if not math.isfinite(benchmark_speed_scale) or benchmark_speed_scale <= 0.0:
             raise ValueError("pad.benchmark_speed_scale must be positive and finite")
+        benchmark_track_straight_m = float(pad.get(
+            "benchmark_track_straight_m", BENCHMARK_TRACK_STRAIGHT_M))
+        benchmark_track_radius_m = float(pad.get(
+            "benchmark_track_radius_m", BENCHMARK_TRACK_RADIUS_M))
+        if (not math.isfinite(benchmark_track_straight_m)
+                or benchmark_track_straight_m < 0.0):
+            raise ValueError(
+                "pad.benchmark_track_straight_m must be non-negative and finite")
+        if (not math.isfinite(benchmark_track_radius_m)
+                or benchmark_track_radius_m <= 0.0):
+            raise ValueError(
+                "pad.benchmark_track_radius_m must be positive and finite")
+        # A turn tighter than the deck it carries is a pirouette, not a drive:
+        # the instantaneous centre of rotation falls *inside* the deck, so its
+        # inner corner travels backwards while its outer one travels forwards.
+        # The threshold is therefore the deck's half-diagonal -- the radius at
+        # which that centre reaches the deck's furthest corner -- not its full
+        # diagonal, which was this check's first form and rejected every
+        # shipped lorry profile (6.2 x 2.45 m deck, 6.67 m diagonal) against
+        # the 6 m default radius.
+        #
+        # Read straight from the mapping: ``deck_size`` itself is parsed
+        # further down, and this check belongs with the radius it constrains.
+        deck_half_diagonal = 0.5 * math.hypot(
+            *(float(v) for v in pad.get("deck_size_m", (6.2, 2.45))[:2]))
+        if benchmark_track_radius_m <= deck_half_diagonal:
+            raise ValueError(
+                "pad.benchmark_track_radius_m must exceed the deck's "
+                f"half-diagonal ({deck_half_diagonal:.2f} m), or the turn "
+                "pivots inside the deck instead of driving around it")
         benchmark_circle_radius_m = float(pad.get(
             "benchmark_circle_radius_m", BENCHMARK_CIRCLE_RADIUS_M))
         if (not math.isfinite(benchmark_circle_radius_m)
@@ -359,6 +465,8 @@ class PadMotionConfig:
             arena_radius_m=float(pad.get("arena_radius_m", 8.0)),
             benchmark_speed_scale=benchmark_speed_scale,
             benchmark_circle_radius_m=benchmark_circle_radius_m,
+            benchmark_track_straight_m=benchmark_track_straight_m,
+            benchmark_track_radius_m=benchmark_track_radius_m,
             route_size_m=route,
             route_start=route_start,
             route_corner_radius_m=float(pad.get("route_corner_radius_m",
@@ -626,6 +734,10 @@ class PadTrajectory:
         # be laid over it at whatever instant that turns out to be.
         self.escape_burst_armed = False
         self._track_speeds = np.zeros(0)
+        # How far along a closed track the deck has driven. Zero for every
+        # other scenario, and the thing ``route_start: continue`` carries for
+        # this one instead of a position offset and a fresh heading.
+        self.track_phase_m = 0.0
         self._track_yaw_rates = np.zeros(0)
         self._track_headings = np.zeros(0)
 
@@ -666,7 +778,20 @@ class PadTrajectory:
         carried_lane = self.lane_now(sim_time)
         self.speed = float(rng.uniform(cfg.speed_min_m_s, cfg.speed_max_m_s))
         self.speed *= max(float(speed_scale), 0.0)
-        self.heading0 = float(rng.uniform(0.0, 2.0 * math.pi))
+        drawn_heading = float(rng.uniform(0.0, 2.0 * math.pi))
+        # A closed track is one fixed path, so it carries its PHASE across a
+        # reset where an open scenario carries its position and redraws its
+        # heading. Redrawing the heading here would rotate the whole loop under
+        # the vehicle parked on it; carrying the phase is what makes the next
+        # episode continue the same lap. The draw still happens either way, so
+        # the seed consumes identically and a paired sweep stays paired.
+        on_closed_track = scenario in CLOSED_TRACK_SCENARIOS
+        carried_track = cfg.route_start == "continue" and self._driven
+        if on_closed_track and carried_track:
+            self.track_phase_m = self.track_phase_at(sim_time)
+        else:
+            self.heading0 = drawn_heading
+            self.track_phase_m = 0.0
         self.phase = rng.uniform(0.0, 2.0 * math.pi, size=2)
         # Drawn either way, so the two modes consume the seed identically and a
         # sweep stays paired across them.
@@ -743,6 +868,15 @@ class PadTrajectory:
                 # jumps, and inside the half-radius nothing is changed at all.
                 radius = float(np.linalg.norm(self.random_walk_origin[:2]))
                 limit = float(cfg.arena_radius_m)
+                # A closed track keeps this too, and it costs it nothing: the
+                # pull rotates ``heading0``, which for a closed path turns the
+                # whole loop rather than bending any of its straights. The loop
+                # alone never reaches the half-arena -- it is 32 m by 12 m --
+                # but the escape dash leaves it by ~5 m each time it fires, and
+                # those excursions accumulate as a random walk of the loop's
+                # position. Measured here with an adversarial dash that always
+                # points the same way, 30 episodes reached the arena edge. The
+                # rotation is what turns that walk back.
                 if limit > 0.0 and radius > 0.5 * limit:
                     inward = math.atan2(-self.random_walk_origin[1],
                                         -self.random_walk_origin[0])
@@ -838,6 +972,28 @@ class PadTrajectory:
             turn_time = np.clip(time_axis - 5.0, 0.0, 5.0)
             headings[:] = self.heading0 + math.pi * turn_time / 5.0
             yaw_rates[(time_axis >= 5.0) & (time_axis <= 10.0)] = math.pi / 5.0
+        elif scenario == STRAIGHT_ESCAPE_BURST_TRACK_SCENARIO:
+            # The straight run, closed into an oval. Speed is constant for the
+            # whole loop -- the turns are constant-speed circular motion, so
+            # the deck never slows to corner -- and the heading comes from the
+            # arc length the deck has driven, continued across episodes.
+            speeds[:] = STRAIGHT_ESCAPE_CRUISE_SPEED_M_S * speed_scale
+            if cfg.escape_burst_trigger == "timed":
+                begin = min(int(round(float(rng.uniform(
+                    *ESCAPE_BURST_START_WINDOW_S)) / dt)), samples - 1)
+                peak, begin, hold_end, end, distance = self._escape_burst_speeds(
+                    speeds, dt, begin=begin)
+                track_burst = {
+                    "start_s": begin * dt, "peak_m_s": peak,
+                    "hold_end_s": hold_end * dt, "end_s": end * dt,
+                    "distance_m": float(distance)}
+            else:
+                track_burst = None
+                self.escape_burst_armed = True
+            headings[:], yaw_rates[:] = self._track_schedule(speeds, dt)
+            if track_burst is not None:
+                track_burst["heading_rad"] = float(headings[begin])
+                self.escape_burst = track_burst
         elif scenario == STRAIGHT_ESCAPE_BURST_SCENARIO:
             # Constant-velocity straight run; the dash is laid over it either
             # here (``timed``) or by the simulator once the vehicle is actually
@@ -867,6 +1023,25 @@ class PadTrajectory:
         self._track_yaw_rates = yaw_rates
         self._track_headings = headings
 
+    def track_phase_at(self, sim_time: float) -> float:
+        """Arc length driven along a closed track, for carrying across a reset.
+
+        Integrates the speeds the track actually ran at, so the escape dash
+        counts for the ground it covered rather than for the cruise it
+        replaced. Zero for every scenario that is not a closed track.
+        """
+        if self.benchmark_scenario not in CLOSED_TRACK_SCENARIOS:
+            return 0.0
+        speeds = np.asarray(self._track_speeds, dtype=float)
+        if speeds.size == 0:
+            return float(self.track_phase_m)
+        dt = self.cfg.motion_update_dt_s
+        u = max(0.0, float(sim_time) - self.t0) / dt
+        index = min(int(math.floor(u)), speeds.size - 1)
+        fraction = min(max(u - index, 0.0), 1.0)
+        driven = float(speeds[:index].sum() + fraction * speeds[index]) * dt
+        return float(self.track_phase_m + driven)
+
     def trigger_escape_burst(self, sim_time: float,
                              heading: float | None = None) -> dict[str, float] | None:
         """Start the escape dash now, from wherever the deck is on its walk.
@@ -893,9 +1068,21 @@ class PadTrajectory:
         begin = min(int(math.floor(u)) + 1, samples - 1)
         if begin >= samples - 2:
             return None
-        self._overlay_escape_burst(self._track_speeds, self._track_yaw_rates,
-                                   self._track_headings, dt, begin=begin,
-                                   heading=heading)
+        if self.benchmark_scenario in CLOSED_TRACK_SCENARIOS:
+            # A closed track keeps its path: the dash is the deck covering the
+            # same oval at twice the speed. ``heading`` -- "straight out behind
+            # the camera" -- is what an open scenario uses to guarantee the pad
+            # leaves the frame, and honouring it here would take the deck off
+            # its loop by the dash distance every time, which accumulates into
+            # exactly the unbounded walk the closed track exists to prevent
+            # (measured: 30 dashes in one direction reached the arena edge).
+            # The frame-exit event survives, because it comes from the speed
+            # doubling on a straight, which is what the open scenario is.
+            self._overlay_track_escape_burst(dt, begin=begin)
+        else:
+            self._overlay_escape_burst(self._track_speeds, self._track_yaw_rates,
+                                       self._track_headings, dt, begin=begin,
+                                       heading=heading)
         speeds, headings = self._track_speeds, self._track_headings
         velocity = self.random_walk_velocity
         velocity[begin:, 0] = speeds[begin:] * np.cos(headings[begin:])
@@ -923,6 +1110,31 @@ class PadTrajectory:
         the demonstration shows the pad leaving the frame, and a dash that
         shrank with the entry curriculum would not leave it at all.
         """
+        peak, begin, hold_end, end, distance = self._escape_burst_speeds(
+            speeds, dt, begin=begin)
+        samples = len(speeds)
+        yaw_rates[begin:end + 1] = 0.0
+        if heading is not None and begin >= 1:
+            # The caller's direction: written as the heading at ``begin`` so
+            # the recomputation below carries it through the dash and the
+            # walk's own yaw increments continue from it afterwards.
+            headings[begin - 1] = float(heading)
+        for index in range(max(begin, 1), samples):
+            headings[index] = headings[index - 1] + yaw_rates[index] * dt
+        self.escape_burst = {
+            "start_s": begin * dt, "peak_m_s": peak,
+            "hold_end_s": hold_end * dt, "end_s": end * dt,
+            "distance_m": float(distance),
+            "heading_rad": float(headings[begin])}
+
+    def _escape_burst_speeds(self, speeds, dt: float, *, begin: int):
+        """Write the dash's speed ramp into ``speeds``; return its timing.
+
+        Speed only. What the deck does with that speed -- hold a straight
+        heading, or stay on a closed track and simply cover it faster -- is the
+        caller's, because the two scenarios want different things from the same
+        acceleration.
+        """
         cfg = self.cfg
         samples = len(speeds)
         peak = float(BENCHMARK_PEAK_SPEED_M_S * cfg.benchmark_speed_scale)
@@ -949,14 +1161,33 @@ class PadTrajectory:
             else:
                 speeds[index] = peak + (resume - peak) * (
                     (index - hold_end) / max(1, end - hold_end))
-        yaw_rates[begin:end + 1] = 0.0
-        if heading is not None and begin >= 1:
-            # The caller's direction: written as the heading at ``begin`` so
-            # the recomputation below carries it through the dash and the
-            # walk's own yaw increments continue from it afterwards.
-            headings[begin - 1] = float(heading)
-        for index in range(max(begin, 1), samples):
-            headings[index] = headings[index - 1] + yaw_rates[index] * dt
+        return peak, begin, hold_end, end, distance
+
+    def _track_schedule(self, speeds, dt: float):
+        """Heading and yaw rate for a closed track driven at ``speeds``.
+
+        The path is fixed; the speed decides how far along it the deck has got.
+        Integrating the speed into an arc length and reading the loop at that
+        arc length is what lets the escape dash be a pure *speed* event: the
+        deck covers the oval faster without leaving it, so the pull-away is
+        still a straight line whenever it fires on a straight, and the deck's
+        position stays bounded by the loop for as many episodes as it drives.
+        """
+        cfg = self.cfg
+        arc = self.track_phase_m + np.cumsum(
+            np.concatenate(([0.0], np.asarray(speeds[:-1], dtype=float)))) * dt
+        offsets, curvature = stadium_track(
+            arc, cfg.benchmark_track_straight_m, cfg.benchmark_track_radius_m)
+        return self.heading0 + offsets, np.asarray(speeds) * curvature
+
+    def _overlay_track_escape_burst(self, dt: float, *, begin: int) -> None:
+        """The dash on a closed track: the deck speeds up, the path does not move."""
+        speeds = self._track_speeds
+        peak, begin, hold_end, end, distance = self._escape_burst_speeds(
+            speeds, dt, begin=begin)
+        headings, yaw_rates = self._track_schedule(speeds, dt)
+        self._track_headings[:] = headings
+        self._track_yaw_rates[:] = yaw_rates
         self.escape_burst = {
             "start_s": begin * dt, "peak_m_s": peak,
             "hold_end_s": hold_end * dt, "end_s": end * dt,
@@ -1075,13 +1306,29 @@ class PadTrajectory:
             elif cfg.mode == "random_walk":
                 u = max(0.0, t) / cfg.motion_update_dt_s
                 index = min(int(math.floor(u)), len(self.random_walk_position) - 1)
-                # anchored at wherever the previous episode left the deck
                 fraction = min(max(u - index, 0.0), 1.0)
-                offset = (self.random_walk_position[index]
-                          + self.random_walk_origin).copy()
-                velocity = self.random_walk_velocity[index].copy()
+                # Interpolate along the TRACK, then anchor. Both terms of the
+                # lerp have to be track coordinates: folding
+                # ``random_walk_origin`` in before it (as this did until
+                # 2026-09-22) makes the target ``track[index+1] - origin``, so
+                # the reported deck slides the whole anchor vector backwards as
+                # ``fraction`` sweeps 0 -> 1 and snaps back at the next sample.
+                #
+                # It is silent on the first episode, because ``route_start:
+                # continue`` only makes the anchor non-zero once a previous
+                # episode has left the deck somewhere. After that it is the
+                # dominant term: measured on the minimal profile, one 0.1 s
+                # motion-update interval swept 15 m of reported deck position
+                # against the 0.0125 m the deck actually covers in a quarter of
+                # it. Every consumer saw that sawtooth -- the FOV graph, the
+                # relative-state supervision, the reward and the dashboard
+                # trajectory panel, which is where it was finally noticed.
+                track = self.random_walk_position[index]
                 if index + 1 < len(self.random_walk_position):
-                    offset += fraction * (self.random_walk_position[index + 1] - offset)
+                    track = track + fraction * (
+                        self.random_walk_position[index + 1] - track)
+                offset = track + self.random_walk_origin
+                velocity = self.random_walk_velocity[index].copy()
         position = self.start + offset
         if not (cfg.mode == "random_walk"
                 and self.benchmark_scenario == "vertical_heave_boat"):

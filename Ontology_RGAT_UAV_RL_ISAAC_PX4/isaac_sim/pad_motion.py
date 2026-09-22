@@ -44,10 +44,17 @@ CARRIERS = ("lorry", "ugv")
 # follows again, so the student sees a recovery it will need rather than only
 # approaches that never lose the deck.
 ESCAPE_BURST_SCENARIO = "training_random_walk_escape_burst"
+# The same pull-away laid over a constant-velocity straight run instead of the
+# random walk. This is the CICS2026 comparison scenario: the deck cruises in a
+# straight line, the vehicle settles into following it, and then it accelerates
+# hard enough to leave a downward camera's frame, which is the event the three
+# arms are compared on. The walk-based variant above stays for the behaviour
+# cloning demonstrations that need a varied approach before the same event.
+STRAIGHT_ESCAPE_BURST_SCENARIO = "straight_escape_burst"
 BENCHMARK_SCENARIOS = (
     "training_random_walk", "straight_8mps", "linear_acceleration_wave",
     "circle", "zigzag", "u_turn", "vertical_heave_boat",
-    ESCAPE_BURST_SCENARIO,
+    ESCAPE_BURST_SCENARIO, STRAIGHT_ESCAPE_BURST_SCENARIO,
 )
 # How the dash is started (``pad.escape_burst_trigger``).
 #   following -- Isaac fires it the moment the vehicle is actually following
@@ -88,6 +95,14 @@ ESCAPE_BURST_DISTANCE_M = 5.0
 # ``pad.benchmark_speed_scale``. straight_8mps and the peak of
 # linear_acceleration_wave both reach it.
 BENCHMARK_PEAK_SPEED_M_S = 8.0
+# Cruise speed of ``straight_escape_burst`` before its dash, pre-scale like
+# every other scenario literal here. Half of BENCHMARK_PEAK_SPEED_M_S, so the
+# dash is a clean doubling (0.50 -> 1.00 m/s on this carrier at the profile's
+# 0.125 scale) rather than a change the vehicle could absorb without ever
+# losing the deck. It also leaves the cruise phase comfortably inside the
+# command envelope, so the vehicle can actually settle into following before
+# the event the scenario exists to produce.
+STRAIGHT_ESCAPE_CRUISE_SPEED_M_S = 4.0
 # Radius the ``circle`` scenario turns at. Held fixed under scaling so a slower
 # deck drives the same circle more slowly, rather than shrinking it onto a
 # radius smaller than the landing pad itself.
@@ -823,6 +838,20 @@ class PadTrajectory:
             turn_time = np.clip(time_axis - 5.0, 0.0, 5.0)
             headings[:] = self.heading0 + math.pi * turn_time / 5.0
             yaw_rates[(time_axis >= 5.0) & (time_axis <= 10.0)] = math.pi / 5.0
+        elif scenario == STRAIGHT_ESCAPE_BURST_SCENARIO:
+            # Constant-velocity straight run; the dash is laid over it either
+            # here (``timed``) or by the simulator once the vehicle is actually
+            # following (``following``), exactly as for the walk-based variant.
+            speeds[:] = STRAIGHT_ESCAPE_CRUISE_SPEED_M_S * speed_scale
+            yaw_rates[:] = 0.0
+            headings[:] = self.heading0
+            if cfg.escape_burst_trigger == "timed":
+                begin = min(int(round(float(rng.uniform(
+                    *ESCAPE_BURST_START_WINDOW_S)) / dt)), samples - 1)
+                self._overlay_escape_burst(speeds, yaw_rates, headings, dt,
+                                           begin=begin)
+            else:
+                self.escape_burst_armed = True
         elif scenario == "vertical_heave_boat":
             speeds[:] = 4.0 * speed_scale
         velocity = np.c_[speeds * np.cos(headings), speeds * np.sin(headings),

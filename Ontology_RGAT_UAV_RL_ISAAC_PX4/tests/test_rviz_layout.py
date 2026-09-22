@@ -54,3 +54,36 @@ def test_the_transform_display_lists_every_pairs_frames():
 def test_a_zero_pair_layout_is_refused():
     with pytest.raises(ValueError):
         build(0)
+
+
+def test_the_pair_titles_take_the_arms_that_hold_training_pairs():
+    """A run may compare more arms than it trains.
+
+    The 2026-09-22 comparison flies three arms but trains two: the non-learned
+    visual servo takes no training pair, so the pair titles name the learned
+    arms in pair order and the layout must not assume the shipped two.
+    """
+    import make_rviz_layout
+
+    titles = ["Baseline · Shin SE fixed", "Proposed · Ontology-R-GAT FOV"]
+    layout = make_rviz_layout.build(4, arm_titles=titles)
+    groups = [display["Name"] for display
+              in layout["Visualization Manager"]["Displays"]
+              if display.get("Class") == "rviz_common/Group"]
+    assert len(groups) == 4
+    assert groups[0].startswith("Pair 1 · Baseline · Shin SE fixed")
+    assert groups[3].startswith("Pair 4 · Proposed · Ontology-R-GAT FOV")
+    assert "replica 1/2" in groups[0] and "replica 2/2" in groups[1]
+
+    # One arm holding every pair is a single block, and the default is the
+    # shipped two-arm comparison.
+    single = make_rviz_layout.build(2, arm_titles=["Only arm"])
+    names = [display["Name"] for display
+             in single["Visualization Manager"]["Displays"]
+             if display.get("Class") == "rviz_common/Group"]
+    assert all("Only arm" in name for name in names)
+    default = make_rviz_layout.build(2)
+    assert make_rviz_layout.ARM_TITLES[0] in [
+        display["Name"] for display
+        in default["Visualization Manager"]["Displays"]
+        if display.get("Class") == "rviz_common/Group"][0]

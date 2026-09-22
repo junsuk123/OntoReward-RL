@@ -42,7 +42,7 @@ $$
 | 최대 속도 | `[2.0, 2.0, 1.0]` m/s |
 | 최대 가속도 | `[1.5, 1.5, 1.0]` m/s² |
 | 최대 yaw rate / 가속도 | 60°/s · 90°/s² |
-| Control period | 0.1 s |
+| Control period | 0.1 s (**공칭**, 강제되지 않음 — 아래 참조) |
 | Episode horizon | 300 step |
 | Camera | 512×320 grayscale, 수평 FOV 90°, 60° 하향, 30 Hz |
 | 물리 / 렌더 | 250 Hz / 30 Hz (headless), 20 Hz (GUI) |
@@ -157,6 +157,13 @@ estimator-free/adaptive-weight/PBRS 구성은 `ALL_PIPELINES`에만 남아 있�
 경로에 나타나지 않는다.
 
 ## 10. Timing과 episode commit
+
+> **⚠ 제어 주기는 보장값이 아니다.** 학습기는 Isaac과 lockstep이 아니므로
+> (`isaac.lockstep`은 Isaac↔PX4 전용), 한 제어 스텝 안에서 실제로 흐르는 시뮬
+> 시간은 0.104 s(정상)에서 0.7–0.95 s(열화) 사이를 오간다 — 실효 제어율 9.6 Hz
+> ↔ 1.2 Hz. 이 표의 0.1 s는 학습기가 *믿는* 값이고, `steps × dt`로 계산되는 모든
+> 시간 지표는 열화 상태에서 7–9배 과소 기록된다. 기전과 완화책은
+> [3-arm 비교](THREE_ARM_BURST_COMPARISON.md) §5.
 
 한 transition은 다음 순서를 따른다.
 

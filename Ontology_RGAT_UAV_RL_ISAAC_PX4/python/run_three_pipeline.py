@@ -74,10 +74,34 @@ from run_shin2026_pipeline import (_build_model, _live_config, _sha256_file,
                                    calibrate_keypoint_encoder_in_flight)
 
 
+def _json_safe(value):
+    """Represent an unavailable statistic as null rather than as NaN.
+
+    ``allow_nan=False`` below is deliberate: NaN is not JSON, and a manifest
+    carrying it is unreadable by anything downstream. But a NaN here is usually
+    not corruption -- it is a mean over zero samples, which is what every
+    adaptive-R-GAT column is for an experiment whose arms do not use adaptive
+    reward weights. That is honestly "not measured", so it is written as null.
+
+    Without this the whole manifest write failed at the very end of a completed
+    run (2026-09-22): every evaluation row, report and checkpoint was already
+    committed, and the run still exited non-zero with execution_status left at
+    "results pending" because a column nobody in the experiment uses summarised
+    to NaN.
+    """
+    if isinstance(value, float):
+        return None if math.isnan(value) or math.isinf(value) else value
+    if isinstance(value, dict):
+        return {key: _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    return value
+
+
 def _write_json(path: Path, value) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(json.dumps(value, indent=2, allow_nan=False),
+    temporary.write_text(json.dumps(_json_safe(value), indent=2, allow_nan=False),
                          encoding="utf-8")
     os.replace(temporary, path)
 
@@ -350,7 +374,10 @@ def _privileged_velocity_teacher_action(
         descent_high_m_s: float = .35, descent_mid_m_s: float = .14,
         descent_flare_m_s: float = .04, approach_descent_m_s: float = 0.0,
         approach_descent_min_altitude_m: float = 2.5,
-        approach_lateral_m: float = 1.5,
+        approach_lateral_m: float = 1.5, climb_ceiling_m: float = 0.0,
+        climb_lateral_m: float = .40, climb_altitude_m: float = .80,
+        contact_relative_speed_m_s: float = .45,
+        recovery_descent_m_s: float = 0.0, recovery_altitude_m: float = 0.0,
         noise_std: float = .01, rng=None, info: dict | None = None):
     """Return a stable training-only velocity label for deadline warm starts.
 
@@ -453,13 +480,57 @@ def _privileged_velocity_teacher_action(
     # is intermittent (seed 90004: aligned at step 54, timed out at 1.9 m).
     # ``approach_descent_m_s`` lets a high, roughly aligned vehicle come down
     # while it is still closing, which the old ladder forbade entirely.
-    if visual_lost and (altitude > 0.80 or lateral_error > 0.40):
-        target_vz = 0.22
-    elif lateral_error > 0.50 or relative_speed > 0.45:
+    ceiling = float(climb_ceiling_m)
+    # When a lost deck is worth climbing for. Both thresholds were fitted to
+    # the random walk, where the vehicle sat almost over a deck that stayed
+    # put, so a pad outside the frame meant it had been lost: climb whenever
+    # lost above 0.80 m, or whenever more than 0.40 m off.
+    #
+    # Chasing a deck that drives holds 0.3-0.9 m of lateral error, and a
+    # 60-degree down camera loses a pad at that offset as ordinary geometry.
+    # The rule then fires continuously: of the first six route-deck flights
+    # the three long ones spent 25%, 38% and 40% of their steps climbing and
+    # ran the pack out between 0.13 m and 0.70 m above the deck, while the one
+    # that landed climbed on none of its steps and spent 0.03% of its pack per
+    # step against their 0.18-0.28%.
+    #
+    # Raising ``climb_altitude_m`` hands the band the flight actually lives in
+    # back to ``climb_lateral_m``, which asks whether the deck is really away
+    # rather than merely out of a downward camera. Above it, a lost deck still
+    # gets the climb it was written for.
+    if visual_lost and (altitude > float(climb_altitude_m)
+                        or lateral_error > float(climb_lateral_m)):
+        # Climb to re-acquire, but not forever. On the route decks the pad
+        # leaves the frustum repeatedly while the vehicle is still chasing, and
+        # an unbounded climb turns that into a runaway: two of the first eight
+        # traced flights ended at 6.5 m and 12.0 m having spent 35% and 69% of
+        # their steps climbing, with the deck 1-5 m away and the pack empty.
+        # Above the ceiling the vehicle holds altitude and keeps chasing, which
+        # is what actually brings the deck back into a 60-degree down camera.
+        target_vz = 0.0 if 0.0 < ceiling <= altitude else 0.22
+    elif (lateral_error > 0.50
+            or relative_speed > float(contact_relative_speed_m_s)):
+        # ``contact_relative_speed_m_s`` is the touchdown criterion itself
+        # (``criteria.rel_speed_xy``), not a tuning constant: descending while
+        # the deck is moving faster than that under the vehicle buys a contact
+        # the landing gate scores as unsafe. The caller passes the live value
+        # so the two cannot drift.
         if (altitude > float(approach_descent_min_altitude_m)
                 and lateral_error < float(approach_lateral_m)
                 and relative_speed < 0.70):
             target_vz = -abs(float(approach_descent_m_s))
+        elif (float(recovery_descent_m_s) > 0.0 and not visual_lost
+                and altitude > float(recovery_altitude_m)):
+            # Give back the altitude a climb bought once the climb has paid
+            # off. Otherwise only two branches can fire out here -- climb when
+            # the deck is out of frame, hold when it is in -- so every loss
+            # adds altitude and nothing removes it until the vehicle is inside
+            # ``approach_lateral_m``, which on a deck that keeps driving may
+            # not happen: measured 2026-09-22, a circle flight ratcheted 3.20
+            # -> 5.09 m in eleven such cycles and parked at the climb ceiling
+            # with the pack draining. The pad is in frame here, so this is
+            # descending on a deck the vehicle can see, not blind.
+            target_vz = -abs(float(recovery_descent_m_s))
         else:
             target_vz = 0.0
     elif altitude > 1.10:
@@ -543,8 +614,15 @@ class _PrivilegedVelocityTeacher:
             controller.max_velocity * controller.action_scale,
             position_gain=float(settings.get("position_gain", .35)),
             velocity_gain=float(settings.get("velocity_gain", .75)),
+            # ``pd_`` first, as with the descent keys: both teachers read the
+            # unprefixed clamp and mean different things by it. The servo is
+            # measurably stable only at 0.60, while this teacher needs closing
+            # authority above whatever the deck is doing -- on the route decks
+            # the demonstrations now fly that is 0.48 m/s, which leaves 0.12 of
+            # the shared value to close with.
             horizontal_speed_limit=float(settings.get(
-                "horizontal_speed_limit_m_s", .60)),
+                "pd_horizontal_speed_limit_m_s",
+                settings.get("horizontal_speed_limit_m_s", .60))),
             energy_urgency=float(settings.get("energy_urgency", 0.0)),
             urgency_alignment_m=float(settings.get(
                 "urgency_alignment_m", .25)),
@@ -562,6 +640,17 @@ class _PrivilegedVelocityTeacher:
             approach_descent_min_altitude_m=float(settings.get(
                 "pd_approach_min_altitude_m", 2.5)),
             approach_lateral_m=float(settings.get("pd_approach_lateral_m", 1.5)),
+            climb_ceiling_m=float(settings.get("pd_climb_ceiling_m", 0.0)),
+            climb_lateral_m=float(settings.get("pd_climb_lateral_m", .40)),
+            climb_altitude_m=float(settings.get("pd_climb_altitude_m", .80)),
+            # The landing gate's own value, so the teacher cannot hold against
+            # a criterion the run no longer scores against.
+            contact_relative_speed_m_s=float(
+                environment.cfg.criteria.rel_speed_xy),
+            recovery_descent_m_s=float(settings.get(
+                "pd_recovery_descent_m_s", 0.0)),
+            recovery_altitude_m=float(settings.get(
+                "pd_recovery_altitude_m", 0.0)),
             noise_std=float(settings.get("noise_std", .01)),
             rng=rng, info=info)
         _publish_teacher_step(self.monitor, method=self.method, step=step,
@@ -1074,6 +1163,74 @@ def _atomic_save_selected_checkpoint(path: Path, payload: dict, *, candidate,
     os.replace(temporary, path)
 
 
+# Keys that name things for a reader and change nothing the experiment does.
+# Excluded from the configuration hash so a label edit cannot invalidate a
+# machine-day of training; see the note at the hash itself.
+_DISPLAY_ONLY_CONFIG_KEYS = frozenset({"arm_labels"})
+
+
+def _baseline_arms(config) -> list[dict]:
+    """Non-learned control conditions flown beside the PPO arms.
+
+    These are controllers, not policies: no checkpoint, no training curve, no
+    reward. They exist because "does the ontology term help a PPO policy" does
+    not answer "is any of this better than a controller you could have
+    written", and the second question has to be answered on the same deck, the
+    same seeds and the same landing criteria or it is not an answer.
+
+    ``controller`` selects the implementation and is validated here rather than
+    at flight time: a typo in an arm id should stop the run before it spends a
+    machine-hour, not produce an arm that silently never flies.
+    """
+    arms = []
+    for entry in (config.get("baseline_arms") or []):
+        method = str(entry["method"])
+        controller = str(entry.get("controller", method))
+        if controller not in (PRIVILEGED_VELOCITY_TEACHER, VISUAL_SERVO_TEACHER):
+            raise ValueError(
+                f"baseline arm {method!r} names an unknown controller "
+                f"{controller!r}; expected one of "
+                f"{(PRIVILEGED_VELOCITY_TEACHER, VISUAL_SERVO_TEACHER)}")
+        arms.append({"method": method, "label": str(entry.get("label", method)),
+                     "controller": controller, "learned": False})
+    ids = [arm["method"] for arm in arms]
+    if len(set(ids)) != len(ids):
+        raise ValueError(f"baseline arms must have distinct ids, got {ids}")
+    return arms
+
+
+def _arm_manifest(pipelines, baseline_arms, labels) -> list[dict]:
+    """Registration order for the dashboard and the RViz HUD.
+
+    Learned arms first, then the control conditions. ``learned`` is what the
+    dashboard keys its learning curves off, so a non-learned arm has no
+    training series rather than an empty chart.
+    """
+    return ([{"method": str(name), "label": str(labels.get(name, name)),
+              "learned": True} for name in pipelines]
+            + [dict(arm) for arm in baseline_arms])
+
+
+def _plan_with_baseline_arms(plan, baseline_arms) -> list[dict]:
+    """Fly every control condition on exactly the seeds the PPO arms fly.
+
+    The comparison is paired, so the baseline rows are generated from the
+    plan's own (scenario, seed) pairs rather than re-derived: any change to how
+    evaluation seeds are drawn moves all arms together or not at all.
+    """
+    if not baseline_arms:
+        return list(plan)
+    keys, seen = [], set()
+    for row in plan:
+        key = (row["scenario"], int(row["seed"]))
+        if key not in seen:
+            seen.add(key)
+            keys.append(key)
+    return list(plan) + [
+        {"method": arm["method"], "scenario": scenario, "seed": seed}
+        for arm in baseline_arms for scenario, seed in keys]
+
+
 def _crossover_evaluation_tasks(plan, pipelines, pair_count: int) -> list[list[dict]]:
     """Balance every method across the available physical route phases."""
     count = int(pair_count)
@@ -1325,10 +1482,13 @@ _DEMONSTRATION_FLIGHT_KEYS = (
     "visual_loss_climb_source", "pd_descent_high_m_s", "pd_descent_mid_m_s",
     "pd_descent_flare_m_s", "pd_approach_descent_m_s",
     "pd_approach_min_altitude_m", "pd_approach_lateral_m", "horizon_steps",
+    "pd_climb_ceiling_m", "pd_climb_lateral_m", "pd_climb_altitude_m",
+    "pd_recovery_descent_m_s", "pd_recovery_altitude_m",
+    "pd_horizontal_speed_limit_m_s",
     "noise_std",
     "integral_gain", "damping_gain", "integral_limit", "reference_scale",
     "alignment_tolerance", "cone_widening", "rate_tolerance", "flare_scale",
-    "approach_scale", "source_pipeline", "scenario",
+    "approach_scale", "source_pipeline", "scenario", "scenarios",
     # The image-rate filter and the anti-windup rule change what the teacher
     # flies, not merely how long it is given to fly it, so demonstrations made
     # without them are a different set.
@@ -1426,11 +1586,25 @@ def _prepare_fast_demonstrations(*, cfg, camera, config, config_hash,
     teacher_id = str(settings.get("teacher", PRIVILEGED_VELOCITY_TEACHER))
     if teacher_id not in (PRIVILEGED_VELOCITY_TEACHER, VISUAL_SERVO_TEACHER):
         raise ValueError(f"unknown behavior teacher: {teacher_id}")
-    # Deck motion the teacher demonstrates against. The default is the
-    # training walk; the experiment flies the escape burst so every stored
-    # flight contains a pad leaving the frame, a recovery climb and the
-    # re-acquired follow (see isaac_sim/pad_motion.py).
-    demonstration_scenario = str(settings.get("scenario", "training_random_walk"))
+    # Deck motion the teacher demonstrates against. ``scenarios`` flies a
+    # rotation -- one deck per seed, so a given seed always flies the same one
+    # however the flights are batched or resumed -- and ``scenario`` the single
+    # deck this started as.
+    #
+    # The rotation exists because the student is cloned from these flights and
+    # then trained on ``training.scenarios``. With the demonstrations on the
+    # random walk and training on the six route decks, the clone had never
+    # chased a deck that drives away: 2026-09-21 the baseline arm sat 9.3 m
+    # behind, the pad was in frame for 47% of steps against 83% on the walk,
+    # the estimator collapsed to a 8.7 m position RMSE and the health gate
+    # stopped the run at episode 48.
+    demonstration_scenarios = [
+        str(name) for name in (settings.get("scenarios")
+                               or [settings.get("scenario",
+                                                "training_random_walk")])]
+    if not demonstration_scenarios:
+        raise ValueError("the behaviour-cloning teacher needs a deck to fly")
+    demonstration_scenario = " · ".join(demonstration_scenarios)
     fingerprint = demonstration_fingerprint(config, settings, cfg=cfg, system=system)
     artifact_path = (Path(results_dir) / "models/shared"
                      / f"teacher_demonstrations_{fingerprint[:12]}.pt")
@@ -1599,6 +1773,11 @@ def _prepare_fast_demonstrations(*, cfg, camera, config, config_hash,
                     if callable(flatten):
                         flatten()
 
+            def scenario_for(seed) -> str:
+                """The deck this seed flies, whatever batched it."""
+                index = (int(seed) - seed0) % len(demonstration_scenarios)
+                return demonstration_scenarios[index]
+
             def fly(worker_index, seed):
                 """One demonstration flight on one pair, in its own thread."""
                 teacher = teachers[worker_index]
@@ -1611,7 +1790,7 @@ def _prepare_fast_demonstrations(*, cfg, camera, config, config_hash,
                         environments[worker_index], worker_models[worker_index],
                         source_pipeline, seed,
                         curriculum=float(settings.get("curriculum", 1.0)),
-                        deterministic=True, scenario=demonstration_scenario,
+                        deterministic=True, scenario=scenario_for(seed),
                         monitor=collection_contexts[worker_index]["monitor"],
                         phase="training-only teacher demonstration",
                         action_transform=teacher)
@@ -1661,7 +1840,7 @@ def _prepare_fast_demonstrations(*, cfg, camera, config, config_hash,
                             "pipeline": "shared_warm_start",
                             "episode": len(attempted_seeds),
                             "seed": seed,
-                            "scenario": demonstration_scenario,
+                            "scenario": scenario_for(seed),
                             "status": "infrastructure_failure",
                             "accepted_for_cloning": 0.0,
                             "paper_success": 0.0,
@@ -1689,7 +1868,7 @@ def _prepare_fast_demonstrations(*, cfg, camera, config, config_hash,
                                    else "privileged_teacher"),
                         "pipeline": "shared_warm_start",
                         "episode": len(attempted_seeds),
-                        "scenario": demonstration_scenario,
+                        "scenario": scenario_for(seed),
                         "accepted_for_cloning": float(metric["paper_success"]),
                         "teacher": teacher_id,
                         "config_hash": config_hash,
@@ -2474,15 +2653,21 @@ def main(*, primary_only: bool = False):
     parser = argparse.ArgumentParser(
         formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument("--experiment", choices=(
-        ("two_pipeline_fov_risk",) if primary_only else
+        ("three_arm_burst", "two_pipeline_fov_risk") if primary_only else
         ("three_pipeline", "adaptive_reward_weight_comparison")),
                         default=None)
     parser.add_argument(
         "--pipelines", nargs="+",
         choices=(primary_pipeline_ids() if primary_only else available_pipeline_ids()))
     parser.add_argument("--mode", choices=("quick", "full"), default="quick")
+    # The zero-argument contract: bare ``./run.sh`` runs the current headline
+    # experiment. That is the three-arm burst comparison since 2026-09-22 --
+    # one deck that always produces the FOV-loss event, and a non-learned
+    # control condition beside the two learned arms. The six-deck two-arm
+    # design it replaced is still declared and still runnable:
+    #   ./run.sh --config config/experiments/two_pipeline_comparison.yaml
     parser.add_argument("--config", type=Path,
-                        default=ROOT / "config/experiments/two_pipeline_comparison.yaml"
+                        default=ROOT / "config/experiments/three_arm_burst_comparison.yaml"
                         if primary_only else
                         ROOT / "config/experiments/three_pipeline_comparison.yaml")
     # The minimal profile is the default because the campus stage buys nothing
@@ -2596,6 +2781,8 @@ def main(*, primary_only: bool = False):
                           config.get("experiment") == "two_pipeline_fov_risk" else
                           "adaptive_reward_weight" if
                           config.get("experiment") == "adaptive_reward_weight_comparison"
+                          else "three_arm_burst" if
+                          config.get("experiment") == "three_arm_burst"
                           else "three_pipeline")
         args.results_dir = ROOT / "results" / experiment_dir / args.mode
         if args.training_replicate:
@@ -2654,8 +2841,16 @@ def main(*, primary_only: bool = False):
     # manifest, and the live camera encoder is still empirically revalidated.
     scientific_system = deepcopy(system)
     scientific_system.pop("parallel", None)
+    # Display-only keys are excluded from the identity of a run. ``arm_labels``
+    # names arms on a chart and has no scientific content, but the hash gates
+    # checkpoint compatibility: leaving it in means fixing a typo in a legend
+    # archives every checkpoint and restarts training from scratch. Measured on
+    # 2026-09-22 -- adding arm_labels alone changed the hash. Anything that
+    # changes what the experiment DOES still belongs in here.
+    hashed_config = {key: value for key, value in config.items()
+                     if key not in _DISPLAY_ONLY_CONFIG_KEYS}
     config_hash = configuration_hash({
-        "experiment": config, "system": scientific_system,
+        "experiment": hashed_config, "system": scientific_system,
         "training_replicate": args.training_replicate,
         "model_seed": model_seed, "training_seed_start": training_seed0,
         "outcome_contract": (
@@ -2698,8 +2893,18 @@ def main(*, primary_only: bool = False):
     if args.eval_episodes is not None:
         evaluation_cfg = {name: args.eval_episodes for name in evaluation_cfg}
     elif args.mode == "quick":
-        evaluation_cfg = {name: (4 if name == "training_random_walk" else 2)
-                          for name in evaluation_cfg}
+        # Shrink the budget, but do not resurrect a deck the profile retired.
+        # This mapping is scenario -> episode count, and a zero is a deliberate
+        # statement that the deck is out of the experiment: three_arm_burst
+        # zeroes five of the six named decks so every flight contains the
+        # escape burst. Rebuilding it from the KEYS alone gave every retired
+        # deck 2 flights back, so the quick pass -- the one run whose job is to
+        # validate the configuration before a machine-day is spent on it --
+        # silently exercised a scenario set the profile does not declare.
+        evaluation_cfg = {
+            name: (0 if not int(count)
+                   else 4 if name == "training_random_walk" else 2)
+            for name, count in evaluation_cfg.items()}
     selected_scenarios = seminar_fast.get("evaluation_scenarios")
     if selected_scenarios:
         unknown_scenarios = set(selected_scenarios) - set(evaluation_cfg)
@@ -2714,6 +2919,15 @@ def main(*, primary_only: bool = False):
     warmup_seed0 += 100000 * args.training_replicate
     plan = paired_seed_plan(args.pipelines, evaluation_cfg,
                             int(seed_cfg.get("evaluation_start", 5000)))
+    # Control conditions are evaluation-only: they take no training pair, so
+    # ``args.pipelines`` -- and with it _training_pair_replicas' divisibility
+    # invariant -- is left alone and only the evaluation plan grows.
+    baseline_arms = _baseline_arms(config)
+    baseline_ids = {arm["method"] for arm in baseline_arms}
+    baseline_by_id = {arm["method"]: arm for arm in baseline_arms}
+    plan = _plan_with_baseline_arms(plan, baseline_arms)
+    arm_manifest = _arm_manifest(args.pipelines, baseline_arms,
+                                 dict(config.get("arm_labels") or {}))
 
     keypoint_pretraining = prepare_keypoint_encoder(
         args.results_dir / "models/shared/keypoint_encoder.pt",
@@ -2805,6 +3019,17 @@ def main(*, primary_only: bool = False):
         "config": str(args.config.resolve()), "config_hash": config_hash,
         "system_config": str(args.system_config.resolve()),
         "pipelines": args.pipelines,
+        # Every arm the run compares, learned or not, in display order. The
+        # ``pipelines`` list above is the LEARNED arms only -- it is what
+        # training iterates and what checkpoints are keyed on -- so a reader
+        # that infers the arm set from it silently drops the control
+        # conditions. That inference caused two separate defects on
+        # 2026-09-22: a non-learned arm missing from every figure, and a
+        # completed run reported as preliminary because the evaluation
+        # completeness check demanded a checkpoint for an arm that has none by
+        # construction. Persisting the manifest makes the distinction readable
+        # instead of guessable.
+        "arms": arm_manifest,
         "pipeline_specs": {name: get_pipeline(name).to_manifest()
                            for name in args.pipelines},
         "controlled_fields": controlled_fields,
@@ -2989,7 +3214,8 @@ def main(*, primary_only: bool = False):
         if not args.no_rviz else None)
     monitor = BenchmarkMonitor(STORE, rviz=rviz)
     monitor.configure(
-        methods=args.pipelines, mode=args.mode, config_hash=config_hash,
+        methods=[arm["method"] for arm in arm_manifest], arms=arm_manifest,
+        mode=args.mode, config_hash=config_hash,
         training_total=(train_count * len(args.pipelines) + selected_warmup),
         evaluation_total=len(plan),
         reward_design_id=getattr(
@@ -3057,9 +3283,13 @@ def main(*, primary_only: bool = False):
     # view of the run. RViz 2 is a separate process reading ROS topics that are
     # published either way, so a headless flight still gets its live view; only
     # ``--no-rviz`` (or a missing DISPLAY) turns it off.
+    # Pair groups are titled by the LEARNED arms: training divides the pairs
+    # between those and the control conditions hold none, so the pair-order
+    # titles follow args.pipelines rather than the full arm list.
     rviz_process, rviz_log = _start_rviz(
         cfg.viz.rviz.enabled and not args.no_rviz,
-        parallel_pairs=args.parallel_pairs)
+        parallel_pairs=args.parallel_pairs,
+        arm_titles=[arm["label"] for arm in arm_manifest if arm["learned"]])
     owned = None
     training_executor = None
     training_futures = {}
@@ -3859,6 +4089,14 @@ def main(*, primary_only: bool = False):
             valid_evaluation_rows, superseded_rows = [], []
             for row in evaluation_rows:
                 name = row.get("pipeline", row.get("method"))
+                if name in baseline_ids:
+                    # A control condition has no checkpoint, so the selection
+                    # test below would find none and archive every one of its
+                    # rows as "deployment_checkpoint_changed". Its flights are
+                    # reproducible from the arm id and the seed alone, which is
+                    # exactly what a checkpoint digest is standing in for.
+                    valid_evaluation_rows.append(row)
+                    continue
                 selected = selected_checkpoints.get(name)
                 recorded_digest = str(row.get("selected_checkpoint_sha256", ""))
                 recorded_episode = int(float(row.get(
@@ -3901,12 +4139,62 @@ def main(*, primary_only: bool = False):
                 with LiveShinEnvironment(
                         pair_cfgs[index], cameras[index],
                         horizon_steps=int(pair_cfgs[index].sim.max_steps)) as environment:
+                    # One controller instance per pair: the servo's integral and
+                    # previous centroid are per-flight state, exactly as in the
+                    # demonstration stage. Built once here rather than per task
+                    # so a pair's arm keeps its binding across its whole plan.
+                    reference_pipeline = args.pipelines[0]
+                    baseline_controllers, baseline_model = {}, None
+                    if any(item["method"] in baseline_ids for item in tasks):
+                        cloning = behavior_cloning_settings(config)
+                        for arm_id in {item["method"] for item in tasks
+                                       if item["method"] in baseline_ids}:
+                            arm = baseline_by_id[arm_id]
+                            if arm["controller"] == VISUAL_SERVO_TEACHER:
+                                baseline_controllers[arm_id] = _visual_servo_teacher(
+                                    environment, settings=cloning, monitor=None)
+                            else:
+                                baseline_controllers[arm_id] = _privileged_velocity_teacher(
+                                    environment, settings=cloning,
+                                    trace_path=None, monitor=None)
+                        # The action comes from the controller; this model only
+                        # carries the perception path, so the control condition
+                        # sees the deck through the same encoder the policies
+                        # do and a difference between arms is a difference in
+                        # control rather than in observation.
+                        torch.manual_seed(model_seed)
+                        baseline_model = _build_model(
+                            config, args.device, keypoint_pretraining,
+                            pipeline=args.pipelines[0])
+                        baseline_model.eval()
                     for item in tasks:
                         name = item["method"]
                         key = (name, item["scenario"], int(item["seed"]))
                         if key in completed:
                             continue
-                        model = models[name]
+                        if name in baseline_ids:
+                            # A control condition has no pipeline spec, so it
+                            # flies under the REFERENCE arm's method for the
+                            # observation and reward machinery and is relabelled
+                            # below. That is also what makes the comparison
+                            # fair: the servo sees the deck through the same
+                            # encoder the policies do, and its row carries the
+                            # same fields. Its return is meaningless -- nothing
+                            # learns from it -- but every landing metric comes
+                            # from the environment and is directly comparable.
+                            model = baseline_model
+                            transform = baseline_controllers[name]
+                            collect_method = reference_pipeline
+                            arm_potential = reward_design_for(reference_pipeline)
+                            if hasattr(transform, "seed"):
+                                transform.seed = int(item["seed"])
+                            if isinstance(getattr(transform, "flight", None), dict):
+                                transform.flight["seed"] = int(item["seed"])
+                        else:
+                            model = models[name]
+                            transform = None
+                            collect_method = name
+                            arm_potential = reward_design_for(name)
                         local_monitor = _LockedMonitor(
                             monitor, monitor_lock, method=name, pair_index=index,
                             pair_count=args.parallel_pairs)
@@ -3915,17 +4203,17 @@ def main(*, primary_only: bool = False):
                             if args.parallel_pairs > 1 else "paired evaluation",
                             f"pair {index} · {name}")
                         _, metric = collect_episode_resilient(
-                            environment, model, name, int(item["seed"]),
+                            environment, model, collect_method, int(item["seed"]),
                             curriculum=float(seminar_fast.get(
                                 "evaluation_curriculum", 1.0)),
-                            potential=reward_design_for(name),
+                            potential=arm_potential,
                             fov_risk_lambda=float(ppo.get(
                                 "fov_risk_lambda", 0.1)),
                             deterministic=True, gamma=float(ppo.get("gamma", .99)),
                             shaping_lambda=float(ppo.get("shaping_lambda", 1.0)),
                             reward_normalizer=runtime_reward_normalizer,
                             scenario=item["scenario"], monitor=local_monitor,
-                            phase="evaluation")
+                            phase="evaluation", action_transform=transform)
                         metric.update({"method": name, "pipeline": name,
                                        "training_replicate": args.training_replicate,
                                        "scenario": item["scenario"],
@@ -3946,7 +4234,8 @@ def main(*, primary_only: bool = False):
                 return new_rows
 
             crossover_tasks = _crossover_evaluation_tasks(
-                plan, args.pipelines, args.parallel_pairs)
+                plan, [arm["method"] for arm in arm_manifest],
+                args.parallel_pairs)
             _write_csv(
                 args.results_dir / "evaluation/crossover_plan.csv",
                 [row for rows in crossover_tasks for row in rows])

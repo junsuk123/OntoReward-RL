@@ -15,6 +15,11 @@ BENCHMARK_SCENARIOS = {
     # for behaviour-cloning demonstrations that lose and recover the pad
     # (isaac_sim/pad_motion.py, 2026-09-21).
     "training_random_walk_escape_burst",
+    # The same dash laid over a constant-velocity straight run instead of the
+    # walk: the deck cruises, the vehicle settles into following it, and then
+    # it doubles its speed and leaves the frame. The CICS2026 three-arm
+    # comparison deck (2026-09-22).
+    "straight_escape_burst",
 }
 
 

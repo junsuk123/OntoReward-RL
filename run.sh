@@ -169,9 +169,16 @@ expect_mode_value=false
 expect_config_value=false
 seminar_fast=false
 # The repository's zero-argument contract is the full reference experiment:
-# ./run.sh alone runs config/experiments/two_pipeline_comparison.yaml at the
+# ./run.sh alone runs config/experiments/three_arm_burst_comparison.yaml at the
 # budgets that file declares, on as many isolated UAV/UGV pairs as the machine
 # measures room for.
+#
+# That is the three-arm burst comparison (2026-09-22): one deck -- the pad
+# cruises straight, the vehicle settles into following it, and then it doubles
+# speed and leaves the camera frame -- flown by a non-learned visual servo
+# control condition and the two learned arms. The six-deck two-arm design it
+# replaced is still declared and still runnable:
+#   ./run.sh --config config/experiments/two_pipeline_comparison.yaml
 #
 # It used to select the seminar preview here instead -- the profile marked
 # publication_claim_allowed: false. So the command that reads as "run the

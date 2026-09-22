@@ -24,11 +24,85 @@ METHODS = (
 METHOD_LABELS = {
     "shin_se_fixed": "Baseline · Shin SE fixed",
     "shin_se_onto_rgat_recovery": "Proposed · Shin + Ontology-R-GAT FOV",
+    "image_based_visual_servo_v1": "Visual servo (non-learned)",
+    "privileged_relative_state_velocity_pd_v4": "Privileged PD (non-learned)",
 }
 METHOD_COLORS = {
     "shin_se_fixed": "#D95319",
     "shin_se_onto_rgat_recovery": "#77AC30",
 }
+# Arms the run declares that this file has no colour for -- a control condition
+# added to the comparison, say. MATLAB's default order, as elsewhere.
+SPARE_COLORS = ("#0072BD", "#EDB120", "#7E2F8E", "#4DBEEE", "#A2142F")
+
+
+def _declared_arms(manifest: Mapping[str, Any]) -> list[dict[str, Any]]:
+    arms = manifest.get("arms") or manifest.get("arm_manifest") or ()
+    return [dict(arm) for arm in arms if isinstance(arm, Mapping)
+            and arm.get("method")]
+
+
+def _resolve_methods(manifest: Mapping[str, Any], rows=()) -> tuple[str, ...]:
+    """The arms to report, in display order.
+
+    Taken from what the run declared and what actually flew, never from a list
+    in this file: the 2026-09-22 comparison adds a non-learned control arm
+    beside the two PPO arms, and a hard-coded pair silently dropped it from
+    every figure while the tables carried it.
+    """
+    order = [str(arm["method"]) for arm in _declared_arms(manifest)]
+    if not order:
+        order = [str(name) for name in (manifest.get("pipelines") or ())]
+    for row in rows:
+        name = str(row.get("pipeline", row.get("method")) or "")
+        if name and name not in order:
+            order.append(name)
+    return tuple(dict.fromkeys(order)) or METHODS
+
+
+def _learned_methods(manifest: Mapping[str, Any],
+                     methods: Sequence[str]) -> tuple[str, ...]:
+    """Arms with a training curve and a checkpoint; the rest are controls.
+
+    ``arms`` says so directly when the run writes it. Without it, ``pipelines``
+    is the learned list by construction -- it is what training iterates and what
+    checkpoint selection is keyed on -- and anything else that flew is a control
+    condition. Falling back to "everything is learned" instead made a completed
+    three-arm run look unfinished, because the control arm has no checkpoint,
+    and every figure then silently reported preliminary training data.
+    """
+    declared = {str(arm["method"]): bool(arm.get("learned", True))
+                for arm in _declared_arms(manifest)}
+    if declared:
+        return tuple(name for name in methods if declared.get(name, True))
+    pipelines = [str(name) for name in (manifest.get("pipelines") or ())]
+    if pipelines:
+        return tuple(name for name in methods if name in pipelines)
+    return tuple(methods)
+
+
+def _method_label(method: str, declared: Mapping[str, str] | None = None) -> str:
+    """Display name: what the run called this arm, else what this file knows.
+
+    A declared label equal to the method id carries no information -- that is
+    what a run writes when its config has no label for the arm -- so the
+    curated name wins over it and the id is the last resort.
+    """
+    name = str(method)
+    label = str((declared or {}).get(name, "") or "")
+    if label and label != name:
+        return label
+    return METHOD_LABELS.get(name, name)
+
+
+def _label_map(manifest: Mapping[str, Any]) -> dict[str, str]:
+    return {str(arm["method"]): str(arm.get("label") or arm["method"])
+            for arm in _declared_arms(manifest)}
+
+
+def _method_color(method: str, index: int) -> str:
+    return METHOD_COLORS.get(
+        str(method), SPARE_COLORS[index % len(SPARE_COLORS)])
 COMPONENT_LABELS = ("수평 접근", "수직 접근", "하강 안전", "미달 방지", "요 안정")
 COMPONENT_COLORS = ("#0072BD", "#D95319", "#EDB120", "#7E2F8E", "#77AC30")
 
@@ -153,10 +227,11 @@ def _configure_matplotlib():
     return plt
 
 
-def _current_training_rows(results_dir: Path, manifest: Mapping[str, Any]):
+def _current_training_rows(results_dir: Path, manifest: Mapping[str, Any],
+                           methods: Sequence[str] = METHODS):
     rows: dict[str, list[dict[str, str]]] = {}
     specs = dict(manifest.get("pipeline_specs") or {})
-    for method in METHODS:
+    for method in methods:
         spec = dict(specs.get(method) or {})
         if spec.get("fov_risk_reward_enabled") and not manifest.get(
                 "fov_risk_design_id"):
@@ -171,16 +246,21 @@ def _current_training_rows(results_dir: Path, manifest: Mapping[str, Any]):
     return rows
 
 
-def _evaluation_is_complete(rows, manifest: Mapping[str, Any]) -> bool:
+def _evaluation_is_complete(rows, manifest: Mapping[str, Any],
+                            methods: Sequence[str] = METHODS) -> bool:
     if not str(manifest.get("execution_status", "")).startswith("complete"):
         return False
     required_per_method = sum(int(value) for value in dict(
         manifest.get("evaluation") or {}).values())
     selected = dict(manifest.get("selected_checkpoints") or {})
-    if required_per_method <= 0 or not all(method in selected for method in METHODS):
+    # Only the learned arms have a checkpoint; a control condition flies the
+    # same seeds without one and must not make the run look incomplete.
+    learned = _learned_methods(manifest, methods)
+    if required_per_method <= 0 or not all(
+            method in selected for method in learned):
         return False
-    for method in METHODS:
-        chosen = selected[method]
+    for method in methods:
+        chosen = selected.get(method) or {}
         digest = str(chosen.get("sha256", ""))
         matching = [row for row in rows if row.get("pipeline", row.get("method")) == method
                     and (not digest or row.get("selected_checkpoint_sha256") == digest)]
@@ -189,10 +269,11 @@ def _evaluation_is_complete(rows, manifest: Mapping[str, Any]) -> bool:
     return True
 
 
-def _metric_rows(grouped: Mapping[str, Sequence[Mapping[str, Any]]], source: str):
+def _metric_rows(grouped: Mapping[str, Sequence[Mapping[str, Any]]], source: str,
+                 methods: Sequence[str] = METHODS, labels=None):
     summaries = []
     distributions: dict[str, list[float]] = {}
-    for method in METHODS:
+    for method in methods:
         rows = list(grouped.get(method, ()))
         successes = sum(_number(row, "strict_success", _number(
             row, "paper_success", 0.0)) >= 0.5 for row in rows)
@@ -206,7 +287,7 @@ def _metric_rows(grouped: Mapping[str, Sequence[Mapping[str, Any]]], source: str
         unsafe = sum(_number(row, "unsafe_pad_contact", 0.0) >= .5 for row in rows)
         summaries.append({
             "method": method,
-            "label": METHOD_LABELS[method],
+            "label": _method_label(method, labels),
             "source": source,
             "episodes": len(rows),
             "safe_landings": int(successes),
@@ -226,28 +307,30 @@ def _metric_rows(grouped: Mapping[str, Sequence[Mapping[str, Any]]], source: str
 
 def _load_performance_source(results_dir: Path, manifest: Mapping[str, Any]):
     evaluation = _read_csv(results_dir / "evaluation" / "per_episode.csv")
-    if _evaluation_is_complete(evaluation, manifest):
+    methods = _resolve_methods(manifest, evaluation)
+    if _evaluation_is_complete(evaluation, manifest, methods):
         grouped = {method: [row for row in evaluation
                             if row.get("pipeline", row.get("method")) == method]
-                   for method in METHODS}
-        return "최종 paired 검증", "final_evaluation", grouped
-    return "진행 중 학습(예비 결과)", "training_preliminary", _current_training_rows(
-        results_dir, manifest)
+                   for method in methods}
+        return "최종 paired 검증", "final_evaluation", grouped, methods
+    return ("진행 중 학습(예비 결과)", "training_preliminary",
+            _current_training_rows(results_dir, manifest, methods), methods)
 
 
 def _save_performance_figures(output_dir: Path, summaries, distributions,
                               grouped, title_prefix: str, status: str,
-                              training_grouped=None):
+                              training_grouped=None, methods=METHODS,
+                              arm_labels=None):
     plt = _configure_matplotlib()
-    labels = [METHOD_LABELS[name] for name in METHODS]
-    colors = [METHOD_COLORS[name] for name in METHODS]
+    labels = [_method_label(name, arm_labels) for name in methods]
+    colors = [_method_color(name, index) for index, name in enumerate(methods)]
     rates = np.asarray([row["safe_landing_rate"] for row in summaries], dtype=float)
     lows = np.asarray([row["safe_landing_ci95_low"] for row in summaries], dtype=float)
     highs = np.asarray([row["safe_landing_ci95_high"] for row in summaries], dtype=float)
     counts = [int(row["episodes"]) for row in summaries]
 
     def success_chart(ax):
-        x = np.arange(len(METHODS))
+        x = np.arange(len(methods))
         valid = np.isfinite(rates)
         ax.bar(x[valid], rates[valid], color=np.asarray(colors)[valid], width=.62,
                edgecolor="white", linewidth=.8)
@@ -256,7 +339,7 @@ def _save_performance_figures(output_dir: Path, summaries, distributions,
                         yerr=np.vstack((rates[valid] - lows[valid],
                                         highs[valid] - rates[valid])),
                         fmt="none", ecolor="#333333", capsize=5, linewidth=1.2)
-        for index in range(len(METHODS)):
+        for index in range(len(methods)):
             if valid[index]:
                 ax.text(index, min(1.07, rates[index] + .055),
                         f"{100*rates[index]:.1f}%\n({int(round(rates[index]*counts[index]))}/{counts[index]})",
@@ -270,7 +353,7 @@ def _save_performance_figures(output_dir: Path, summaries, distributions,
         ax.set_title("안전 착륙률과 Wilson 95% 신뢰구간", fontweight="bold")
 
     def lateral_chart(ax):
-        present = [(index + 1, distributions[name]) for index, name in enumerate(METHODS)
+        present = [(index + 1, distributions[name]) for index, name in enumerate(methods)
                    if distributions[name]]
         if present:
             boxes = ax.boxplot([values for _, values in present],
@@ -281,14 +364,14 @@ def _save_performance_figures(output_dir: Path, summaries, distributions,
             for patch, (position, _) in zip(boxes["boxes"], present):
                 patch.set_facecolor(colors[position - 1])
                 patch.set_alpha(.78)
-        for index, name in enumerate(METHODS, start=1):
+        for index, name in enumerate(methods, start=1):
             if not distributions[name]:
                 ax.text(index, .04, "접촉 표본 없음", ha="center", va="bottom",
                         color="#777777", fontsize=8)
         ax.axhline(.35, color="#A2142F", linestyle="--", linewidth=1.3,
                    label="성공 한계 0.35 m")
-        ax.set_xlim(.5, len(METHODS) + .5)
-        ax.set_xticks(range(1, len(METHODS) + 1), labels, rotation=9, ha="right")
+        ax.set_xlim(.5, len(methods) + .5)
+        ax.set_xticks(range(1, len(methods) + 1), labels, rotation=9, ha="right")
         ax.set_ylabel("접촉 순간 수평 오차 [m]")
         ax.set_title("패드 접촉 시 수평 오차 분포", fontweight="bold")
         ax.legend(loc="upper right", fontsize=8)
@@ -360,7 +443,7 @@ def _save_performance_figures(output_dir: Path, summaries, distributions,
 
     fig, ax = plt.subplots(figsize=(8.8, 4.2))
     progress_grouped = grouped if training_grouped is None else training_grouped
-    for method in METHODS:
+    for index, method in enumerate(methods):
         rows = list(progress_grouped.get(method, ()))
         values = [_number(row, "strict_success", _number(row, "paper_success", 0.0))
                   for row in rows]
@@ -369,7 +452,8 @@ def _save_performance_figures(output_dir: Path, summaries, distributions,
         rolling = [float(np.mean(values[max(0, index - 4):index + 1]))
                    for index in range(len(values))]
         ax.plot(np.arange(1, len(values) + 1), rolling, linewidth=2,
-                color=METHOD_COLORS[method], label=f"{METHOD_LABELS[method]} (N={len(values)})")
+                color=_method_color(method, index),
+                label=f"{_method_label(method, arm_labels)} (N={len(values)})")
     ax.set(xlabel="PPO 에피소드", ylabel="최근 5회 안전 착륙률",
            ylim=(-.03, 1.03), title="학습 진행률 — PPO checkpoint 기록")
     handles, labels = ax.get_legend_handles_labels()
@@ -651,12 +735,15 @@ def _write_presentation_results(results_dir, output_dir=None) -> dict[str, Any]:
     output_dir = Path(output_dir or (results_dir / "presentation")).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     manifest = _read_json(results_dir / "manifest.json")
-    title, status, grouped = _load_performance_source(results_dir, manifest)
-    summaries, distributions = _metric_rows(grouped, status)
+    title, status, grouped, methods = _load_performance_source(
+        results_dir, manifest)
+    arm_labels = _label_map(manifest)
+    summaries, distributions = _metric_rows(grouped, status, methods, arm_labels)
     _write_csv(output_dir / "slide13_safe_landing_metrics.csv", summaries)
     figures = _save_performance_figures(
         output_dir, summaries, distributions, grouped, title, status,
-        training_grouped=_current_training_rows(results_dir, manifest))
+        training_grouped=_current_training_rows(results_dir, manifest, methods),
+        methods=methods, arm_labels=arm_labels)
 
     reward_figures, validation, artifact_status, exact = (
         _save_fov_risk_diagnostics(output_dir, manifest))

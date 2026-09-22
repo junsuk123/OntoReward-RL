@@ -54,8 +54,13 @@ def _when_the_servo_is_the_configured_teacher(test):
         from run_three_pipeline import (
             VISUAL_SERVO_TEACHER, behavior_cloning_settings)
 
-        settings = behavior_cloning_settings(load_config(
-            ROOT / "config/experiments/two_pipeline_comparison.yaml"))
+        from conftest import default_experiment_config
+
+        # The experiment anyone actually runs, not a file named here: the
+        # headline config moved on 2026-09-22 and a gate reading the old one
+        # decides these tests against a configuration nobody flies.
+        settings = behavior_cloning_settings(
+            load_config(str(default_experiment_config())))
         if settings.get("teacher") != VISUAL_SERVO_TEACHER:
             pytest.skip(f"teacher is {settings.get('teacher')}")
         return test(*args, **kwargs)

@@ -10,6 +10,7 @@ import numpy as np
 import pytest
 import torch
 
+from conftest import default_experiment_config
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "isaac_sim"))
@@ -233,7 +234,7 @@ def test_fov_rgat_probability_artifact_and_freeze_contract(tmp_path):
 
 def test_primary_yaml_declares_two_pairs_and_valid_contract():
     config = load_experiment(
-        ROOT / "config/experiments/two_pipeline_comparison.yaml")
+        default_experiment_config())
     validate_pipeline_configuration(config)
     assert tuple(config["pipelines"]) == primary_pipeline_ids()
     assert config["fov_risk"]["lambda_fov"] == pytest.approx(0.1)
@@ -396,7 +397,7 @@ def test_simulator_geometric_fov_truth_cannot_enter_the_online_rgat_graph():
 
 
 def test_both_agents_share_action_space_and_controller_limits():
-    config = load_experiment(ROOT / "config/experiments/two_pipeline_comparison.yaml")
+    config = load_experiment(default_experiment_config())
     control = config["control"]
 
     # There is one control section, so both arms necessarily build the same
@@ -490,7 +491,7 @@ def test_future_fov_targets_come_only_from_geometric_pad_centre_visibility():
 
 
 def test_the_experiment_refuses_a_non_geometric_visibility_criterion():
-    config = load_experiment(ROOT / "config/experiments/two_pipeline_comparison.yaml")
+    config = load_experiment(default_experiment_config())
     assert config["fov_risk"]["visibility_criterion"] == GEOMETRIC_FOV_CRITERION
 
     detector_labels = deepcopy(config)
@@ -526,7 +527,7 @@ def test_the_frozen_fov_rgat_is_absent_from_the_ppo_optimizer(tmp_path):
 
 
 def test_both_agents_receive_the_same_paired_evaluation_conditions():
-    config = load_experiment(ROOT / "config/experiments/two_pipeline_comparison.yaml")
+    config = load_experiment(default_experiment_config())
     assert config["paired_seeds"] is True
     methods = list(primary_pipeline_ids())
     plan = paired_seed_plan(methods, config["evaluation"], seed0=5000)
@@ -738,7 +739,7 @@ def test_the_retired_binary_readout_keeps_its_own_id_and_cannot_be_run():
     assert retired.fov_reward_readout == "binary_classifier_linear_head"
     assert retired.name not in PIPELINES
     assert ALL_PIPELINES[retired.name] is retired
-    config = load_experiment(ROOT / "config/experiments/two_pipeline_comparison.yaml")
+    config = load_experiment(default_experiment_config())
     revived = deepcopy(config)
     revived["pipelines"] = ["shin_se_fixed", "shin_se_onto_rgat_fov"]
     with pytest.raises(ValueError, match="retired FOV reward readout"):

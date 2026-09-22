@@ -279,10 +279,48 @@ grid-template-columns:1fr}.graph-audit{grid-template-columns:1fr}}
 <script>
 // MATLAB default color order (R2025a), shared with the PNG exporters.
 const PALETTE=['#0072BD','#D95319','#EDB120','#7E2F8E','#77AC30','#4DBEEE','#A2142F'];
-const BENCHMARK_METHODS=['shin_se_fixed','shin_se_onto_rgat_recovery'];
+// The arms are whatever the run configured, not a fixed pair: the 2026-09-22
+// comparison puts a non-learned visual servo beside the two PPO arms. These
+// four lists are the ones every card holds a reference to, so syncArms()
+// rewrites them in place when the run says what it is comparing.
+// Frozen fallback for a state that arrives before the run has configured its
+// arms. Reading the mutable list below instead would let a stale arm set
+// resurrect itself -- a non-learned arm would come back as learned.
+const DEFAULT_METHODS=Object.freeze(
+  ['shin_se_fixed','shin_se_onto_rgat_recovery']);
+const BENCHMARK_METHODS=DEFAULT_METHODS.slice();
 const BENCHMARK_TRAIN=BENCHMARK_METHODS.map(x=>'benchmark_train_'+x);
 const BENCHMARK_EVAL=BENCHMARK_METHODS.map(x=>'benchmark_eval_'+x);
 const BENCHMARK_STEP=BENCHMARK_METHODS.map(x=>'benchmark_step_'+x);
+let ARMS=BENCHMARK_METHODS.map(m=>({method:m,label:m,learned:true}));
+function armsOf(state){
+  const declared=(state.scalars||{}).benchmark_arms;
+  if(Array.isArray(declared)&&declared.length)
+    return declared.map(a=>({method:String(a.method),
+      label:String(a.label||a.method),learned:a.learned!==false}));
+  return ((state.scalars||{}).benchmark_methods||DEFAULT_METHODS)
+    .map(m=>({method:String(m),label:String(m),learned:true}));
+}
+function refill(list,next){list.length=0;for(const v of next)list.push(v);}
+function syncArms(state){
+  ARMS=armsOf(state);
+  const learned=ARMS.filter(a=>a.learned).map(a=>a.method);
+  refill(BENCHMARK_METHODS,ARMS.map(a=>a.method));
+  // A non-learned arm has no training curve by construction, so it is absent
+  // here rather than drawn as an empty series.
+  refill(BENCHMARK_TRAIN,learned.map(m=>'benchmark_train_'+m));
+  refill(BENCHMARK_EVAL,ARMS.map(a=>'benchmark_eval_'+a.method));
+  refill(BENCHMARK_STEP,ARMS.map(a=>'benchmark_step_'+a.method));
+}
+function armLabel(method){
+  const arm=ARMS.find(a=>a.method===String(method));
+  return arm?arm.label:null;
+}
+function seriesLabel(key){
+  const m=/^benchmark_(train|eval)_(.+)$/.exec(String(key));
+  return (m&&armLabel(m[2]))||LABELS[key]||key;
+}
+function learnedArms(){return ARMS.filter(a=>a.learned);}
 const PROPOSED_TRAIN=['benchmark_train_shin_se_onto_rgat_recovery'];
 const CARDS=[
  {id:'tiles',title:null},
@@ -512,7 +550,7 @@ function draw(card,state){
         :(card.labels&&yKeys.length>1)
         // Prefix with the method only when more than one method is drawn;
         // otherwise every legend entry repeats the same long name.
-        ?(sources.length>1?`${LABELS[s]||s} ${named}`:named)
+        ?(sources.length>1?`${seriesLabel(s)} ${named}`:named)
         :(yKeys.length>1?named:(LABELS[s]||s));
       const benchmarkMethod=s.replace(/^benchmark_(train|eval)_/,'');
       const benchmarkIndex=BENCHMARK_METHODS.indexOf(benchmarkMethod);
@@ -555,7 +593,8 @@ function draw(card,state){
 }
 function formatTick(v){const a=Math.abs(v);return a>=1000?v.toExponential(1):
   (a>=100?Number(v).toFixed(0):a>=10?Number(v).toFixed(1):Number(v).toFixed(2));}
-function methodLabel(method){return LABELS['benchmark_train_'+method]||method||'초기화 대기';}
+function methodLabel(method){
+  return armLabel(method)||LABELS['benchmark_train_'+method]||method||'초기화 대기';}
 function drawPairPlots(card,state){
   const pairs=(state.scalars||{}).parallel_pair_status||[];
   for(let index=0;index<2;index++){
@@ -604,7 +643,11 @@ function tiles(state){
     `<div class="tile ${cls||''}"><b>${escapeHTML(value)}</b>`+
     `<span>${escapeHTML(label)}</span>`+
     (note?`<small>${escapeHTML(note)}</small>`:'')+`</div>`);
-  const base='shin_se_fixed',prop='shin_se_onto_rgat_recovery';
+  // Head to head is between the learned arms; a non-learned reference arm is
+  // reported beside them rather than being one side of the delta.
+  const learned=learnedArms();
+  const base=(learned[0]||{}).method||'shin_se_fixed';
+  const prop=(learned[1]||{}).method||'shin_se_onto_rgat_recovery';
   const evalRows=m=>state.series['benchmark_eval_'+m]||[];
   const trainRows=m=>state.series['benchmark_train_'+m]||[];
   const trained=BENCHMARK_METHODS.reduce((n,m)=>n+trainRows(m).length,0);
@@ -952,9 +995,13 @@ function teacherTile(pair,index){
   const cls=mode.startsWith('lost')?'lost':mode==='reacquired'?'reacquired':'';
   const fov=live?(live.geometric_in_fov===false?'프레임 이탈'
     :live.geometric_in_fov===true?'프레임 내':'--'):'--';
+  // The deck this pair is on: the warm start rotates one per seed, so the
+  // tiles differ from each other and from flight to flight.
+  const deck=String(pair.scenario||'').replaceAll('_',' ');
   return `<div class="tprog"><h4>물리 Pair ${Number(index)+1}`
     +` <span>· seed ${escapeHTML(live?live.seed??'--':'--')}`
-    +` · step ${escapeHTML(live?live.step??'--':'--')}</span></h4>`
+    +` · step ${escapeHTML(live?live.step??'--':'--')}`
+    +(deck?` · ${escapeHTML(deck)}`:'')+`</span></h4>`
     +`<div class="tmode ${cls}">${escapeHTML(TEACHER_MODE[mode]||mode||'대기')}</div>`
     +`<div class="tlive"><div><b>${num(live&&live.altitude_m,2)} m</b><small>고도 (패드 기준)</small></div>`
     +`<div><b>${num(live&&live.lateral_error_m,2)} m</b><small>측방 오차</small></div>`
@@ -980,19 +1027,24 @@ function teacherPanel(state){
   const num=(v,digits)=>Number.isFinite(Number(v))?Number(v).toFixed(digits):'--';
   const ratio=d.required?Math.min(1,Number(d.accepted||0)/Number(d.required)):0;
   const rows=(d.recent||[]).slice().reverse();
-  const table=rows.length?'<table><tr><th>seed</th><th>pair</th><th>결과</th><th>step</th>'
+  const table=rows.length?'<table><tr><th>seed</th><th>pair</th><th>덱</th><th>결과</th><th>step</th>'
     +'<th>착지 측방오차 m</th><th>FOV 손실 비율</th></tr>'
     +rows.map(r=>{const color=r.accepted?'var(--good)'
         :(r.status==='infrastructure_failure'?'var(--muted)':'var(--bad)');
       const label=r.accepted?'착륙 · 채택':(r.status==='infrastructure_failure'?'인프라 스킵':'실패');
       const pair=Number.isFinite(Number(r.pair_index))?Number(r.pair_index)+1:'--';
+      const deck=String(r.scenario||'').replaceAll('_',' ');
       return `<tr><td>${escapeHTML(num(r.seed,0))}</td><td>${escapeHTML(pair)}</td>`
+        +`<td>${escapeHTML(deck||'--')}</td>`
         +`<td style="color:${color}">${label}</td>`
         +`<td>${escapeHTML(num(r.steps,0))}</td><td>${escapeHTML(num(r.lateral_error_m,2))}</td>`
         +`<td>${Number.isFinite(Number(r.fov_loss_fraction))
           ?(100*Number(r.fov_loss_fraction)).toFixed(0)+'%':'--'}</td></tr>`;}).join('')
     +'</table>':'<div class="tnote">아직 완료된 비행이 없습니다.</div>';
   const collecting=indices.map(i=>Number(i)+1).join('·');
+  // One deck or a rotation: six names on one line ran into the fields after
+  // them, and the deck each pair is actually flying is on its own tile.
+  const decks=String(d.scenario||'').split(' · ').filter(Boolean);
   const tiles=indices.map(index=>teacherTile(
     pairs.find(p=>Number(p.index)===Number(index))||{},index)).join('');
   box.innerHTML=`<div class="tprog"><b>${d.complete?'시연 확보 완료':'시연 비행 중'}`
@@ -1000,7 +1052,8 @@ function teacherPanel(state){
     +`<div class="tbar"><i style="width:${(100*ratio).toFixed(0)}%"></i></div>`
     +`<div class="tnote">비행 ${escapeHTML(d.flights??0)} / ${escapeHTML(d.max_flights??'--')}`
     +` · 인프라 스킵 ${escapeHTML(d.skips??0)} · 교사 ${escapeHTML(d.teacher||'--')}<br>`
-    +`시나리오 ${escapeHTML(String(d.scenario||'--').replaceAll('_',' '))}`
+    +`시나리오 ${escapeHTML(decks.length>1?`${decks.length}종 순환`
+        :String(d.scenario||'--').replaceAll('_',' '))}`
     +` · 지문 ${escapeHTML(d.fingerprint||'--')}`
     +` · 수집 물리 Pair ${escapeHTML(collecting)} (${indices.length}대 동시)</div>${table}`
     +`<div class="tnote">교사 행동은 training-only label입니다. 학생에게는 image embedding과 `
@@ -1112,8 +1165,11 @@ function drawEvaluationBars(card,state){
   const g=cv.getContext('2d');g.setTransform(dpr,0,0,dpr,0,0);g.clearRect(0,0,w,h);
   const methods=(state.scalars.benchmark_methods||[]).filter(method=>
     (state.series[seriesFor(method)]||[]).length);
-  const preferred=['training_random_walk','training_random_walk_escape_burst',
-    'straight_8mps','linear_acceleration_wave','circle','zigzag','u_turn',
+  // Display order only: a deck not listed here still gets its group, appended
+  // below, so a new scenario needs no dashboard change to appear.
+  const preferred=['straight_escape_burst','training_random_walk',
+    'training_random_walk_escape_burst','straight_8mps',
+    'linear_acceleration_wave','circle','zigzag','u_turn',
     'vertical_heave_boat'];
   const present=new Set();
   for(const method of methods)for(const row of state.series[seriesFor(method)]||[])
@@ -1461,7 +1517,7 @@ function applyProfile(state){
   const profile='benchmark';
   document.body.dataset.profile=profile;
   document.getElementById('page-title').textContent=
-    '2쌍 Shin baseline / Ontology-R-GAT FOV 비교';
+    `${ARMS.length}개 arm 비교 · ${ARMS.map(a=>a.label).join(' / ')}`;
   const hasGraph=Boolean(state.graph)||Object.keys(state.graphs||{}).length>0;
   for(const c of CARDS){
     const el=document.getElementById('card-'+c.id);
@@ -1490,6 +1546,7 @@ async function tick(){
     document.getElementById('detail').textContent=state.stage.detail||'';
     if(state.revision!==lastRevision){
       lastRevision=state.revision;lastAt=Date.now();
+      syncArms(state);
       const profile=applyProfile(state);
       tiles(state);
       phasePanel(state);

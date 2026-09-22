@@ -116,3 +116,73 @@ def test_a_failed_refresh_does_not_leak_its_figures(tmp_path, monkeypatch):
     with pytest.raises(ValueError, match="yerr"):
         write_presentation_results(tmp_path)
     assert set(plt.get_fignums()) == before
+
+
+SERVO = "image_based_visual_servo_v1"
+
+
+def test_a_control_arm_appears_in_the_report_without_being_declared():
+    """The figures report what flew, not a list in the reporting module.
+
+    The 2026-09-22 comparison adds a non-learned control arm beside the two
+    PPO arms. Keyed on a hard-coded pair, every figure dropped it silently
+    while the tables carried it.
+    """
+    from ontology_rgat.evaluation.presentation import (METHOD_LABELS,
+                                                       _method_color,
+                                                       _method_label,
+                                                       _resolve_methods)
+
+    manifest = {"pipelines": list(METHODS)}
+    rows = [_row(method, True) for method in (*METHODS, SERVO)]
+    assert _resolve_methods(manifest, rows) == (*METHODS, SERVO)
+
+    # A declared arm list wins, and sets the display order.
+    declared = {"arms": [{"method": SERVO, "label": "Visual servo (non-learned)",
+                          "learned": False},
+                         {"method": METHODS[0], "learned": True}]}
+    assert _resolve_methods(declared, rows)[0] == SERVO
+    assert _method_label(SERVO) == "Visual servo (non-learned)"
+    # An arm this module has no colour for still gets one.
+    assert _method_color("some_new_arm", 0).startswith("#")
+
+    # The run's own label wins, so a name set in config reaches the figures
+    # without this file knowing it. A label equal to the method id is what a
+    # run writes when its config has none, and must not beat the curated name.
+    assert _method_label(METHODS[0], {METHODS[0]: "Reference PPO"}) == "Reference PPO"
+    assert _method_label(METHODS[0], {METHODS[0]: METHODS[0]}) == METHOD_LABELS[METHODS[0]]
+    assert _method_label("undeclared_arm", {}) == "undeclared_arm"
+
+
+def test_a_control_arm_without_a_checkpoint_does_not_make_a_run_look_unfinished():
+    """`pipelines` is the learned list when the run does not declare arms.
+
+    Treating every arm as learned made a completed three-arm run fail the
+    completeness test -- the control condition has no checkpoint -- and every
+    figure then silently reported preliminary training data instead of the
+    final evaluation.
+    """
+    manifest = {
+        "execution_status": "complete real Isaac/Pegasus/PX4 run",
+        "evaluation": {"straight_escape_burst": 2},
+        "pipelines": list(METHODS),
+        "selected_checkpoints": {
+            method: {"sha256": f"digest-{index}"}
+            for index, method in enumerate(METHODS)},
+    }
+    rows = []
+    for index, method in enumerate(METHODS):
+        rows.extend([_row(method, True, digest=f"digest-{index}") for _ in range(2)])
+    rows.extend([_row(SERVO, False) for _ in range(2)])
+
+    from ontology_rgat.evaluation.presentation import (_learned_methods,
+                                                       _resolve_methods)
+    methods = _resolve_methods(manifest, rows)
+    assert SERVO in methods
+    assert _learned_methods(manifest, methods) == METHODS
+    assert _evaluation_is_complete(rows, manifest, methods)
+
+    # A learned arm that really is missing its checkpoint still fails.
+    broken = dict(manifest, selected_checkpoints={
+        METHODS[0]: {"sha256": "digest-0"}})
+    assert not _evaluation_is_complete(rows, broken, methods)

@@ -2323,6 +2323,26 @@ class LandingWorld:
         rendering_dt = self.runtime.rendering_dt
         render_elapsed = 0.0
         previous_rendering_dt = None
+        # Optional pacing. The learner is not in lockstep with this loop: it
+        # samples the gateway asynchronously and takes ~0.9 s of wall clock to
+        # produce each command, while this loop advances the world as fast as
+        # render and physics allow. So the simulated time inside one control
+        # step is whatever this loop happened to manage -- measured on
+        # 2026-09-22 as 0.104 s when four pairs render concurrently and 0.7-0.9 s
+        # when they desynchronise, i.e. an effective control rate swinging
+        # between 9.6 Hz and 1.2 Hz with nothing enforcing either.
+        #
+        # ``isaac.max_sim_speed_ratio`` caps simulated seconds per wall second.
+        # Set it to control.dt_seconds divided by the learner's measured wall
+        # time per step (~0.104/0.9 = 0.116 on this machine) and one control
+        # step spans one control period again. It costs no wall-clock
+        # throughput: the loop was already bounded by the learner, which is why
+        # wall time per step is the same in both regimes. Null or zero leaves
+        # the loop free-running exactly as before.
+        speed_ratio = float(CONFIG["isaac"].get("max_sim_speed_ratio") or 0.0)
+        if speed_ratio < 0.0:
+            raise ValueError("isaac.max_sim_speed_ratio must be non-negative")
+        pace_wall0 = pace_sim0 = None
         try:
             while (simulation_app.is_running()
                    and not any(pair.stop_sim for pair in pairs)):
@@ -2351,6 +2371,19 @@ class LandingWorld:
                 render = frame_boundary and (
                     any(pair.vision_enabled for pair in pairs) or not ARGS.headless)
                 self.world.step(render=render)
+                if speed_ratio > 0.0 and not startup_rendering:
+                    # Anchored on the first paced step rather than on the loop
+                    # start, so the startup burst above is not repaid by a long
+                    # sleep once run-time rendering begins.
+                    now_wall = time.monotonic()
+                    now_sim = float(self.world.current_time)
+                    if pace_wall0 is None:
+                        pace_wall0, pace_sim0 = now_wall, now_sim
+                    else:
+                        target = (now_sim - pace_sim0) / speed_ratio
+                        behind = target - (now_wall - pace_wall0)
+                        if behind > 0.0:
+                            time.sleep(min(behind, 1.0))
                 if frame_boundary:
                     for pair in pairs:
                         pair._publish_environment()

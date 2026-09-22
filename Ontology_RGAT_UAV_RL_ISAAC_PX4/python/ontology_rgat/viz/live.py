@@ -461,6 +461,13 @@ class BenchmarkMonitor:
             return selected
         return self._potential if len(self.methods) <= 1 else None
 
+    def arm_label(self, method: str) -> str:
+        """Display name the run gave this arm, or its id."""
+        for arm in getattr(self, "arms", ()):
+            if str(arm.get("method")) == str(method):
+                return str(arm.get("label") or method)
+        return str(method)
+
     def _resolve_pair_index(self, method: str, pair_index: int | None) -> int:
         if pair_index is not None:
             return int(pair_index)
@@ -523,8 +530,25 @@ class BenchmarkMonitor:
                   fov_risk_design_id: str | None = None,
                   algorithm_pipeline: Mapping[str, Any] | None = None,
                   mdp_contract: Mapping[str, Any] | None = None,
-                  pair_layout: Sequence[dict[str, Any]] | None = None) -> None:
+                  pair_layout: Sequence[dict[str, Any]] | None = None,
+                  arms: Sequence[Mapping[str, Any]] | None = None) -> None:
+        """Configure the run's arms, budgets and physical pair layout.
+
+        ``arms`` describes what the comparison is made of, one entry per arm:
+        ``{"method": id, "label": display name, "learned": bool}``. A
+        non-learned arm -- the visual servo the 2026-09-22 three-arm
+        comparison puts beside the two PPO arms -- has no training curve and
+        no checkpoint, so the dashboard has to know not to expect one rather
+        than render an empty chart. Omitted, every method in ``methods`` is
+        taken to be learned and labelled by its id, which is what every
+        two-arm run did before.
+        """
         self.methods = tuple(str(method) for method in methods)
+        self.arms = [
+            {"method": str(arm["method"]),
+             "label": str(arm.get("label", arm["method"])),
+             "learned": bool(arm.get("learned", True))}
+            for arm in (arms or [{"method": name} for name in self.methods])]
         self.training_total = int(training_total)
         self.evaluation_total = int(evaluation_total)
         self.pair_layout = [dict(item) for item in (pair_layout or ())]
@@ -543,7 +567,8 @@ class BenchmarkMonitor:
         }
         self.store.set(
             dashboard_profile="parallel_two_pair", benchmark_mode=str(mode),
-            benchmark_methods=list(self.methods), config_hash=str(config_hash),
+            benchmark_methods=list(self.methods), benchmark_arms=list(self.arms),
+            config_hash=str(config_hash),
             training_total=self.training_total,
             evaluation_total=self.evaluation_total,
             reward_design_id=reward_design_id,
@@ -892,7 +917,8 @@ class BenchmarkMonitor:
                 phase = str((self.pair_status.get(int(resolved_pair_index))
                              or {}).get("phase", ""))
             self.rviz.publish_benchmark_step(
-                state=state, method=method, scenario=scenario, step=index,
+                state=state, method=method, arm_label=self.arm_label(method),
+                scenario=scenario, step=index,
                 dt=dt, geometric_in_fov=geometric_in_fov, status=status,
                 reward=float(reward), reward_parts=parts,
                 keypoint_confidence=point["keypoint_confidence"],

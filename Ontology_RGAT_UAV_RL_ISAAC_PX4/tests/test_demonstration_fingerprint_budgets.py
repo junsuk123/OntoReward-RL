@@ -27,8 +27,9 @@ CFG = SimpleNamespace(sim=SimpleNamespace(max_steps=300))
 
 
 def _fingerprint(system):
-    config = load_experiment(
-        ROOT / "config/experiments/two_pipeline_comparison.yaml")
+    from conftest import default_experiment_config
+
+    config = load_experiment(default_experiment_config())
     return demonstration_fingerprint(
         config, behavior_cloning_settings(config), cfg=CFG, system=system)
 
@@ -98,11 +99,14 @@ def test_servo_only_knobs_stay_out_of_a_privileged_teacher_configuration():
     """
     from run_three_pipeline import PRIVILEGED_VELOCITY_TEACHER
 
-    config = load_experiment(
-        ROOT / "config/experiments/two_pipeline_comparison.yaml")
-    settings = behavior_cloning_settings(config)
-    if str(settings.get("teacher")) != PRIVILEGED_VELOCITY_TEACHER:
-        return
-    for key in ("rate_filter_s", "integral_leak_s", "anti_windup"):
-        assert key not in settings, (
-            f"{key} is a servo knob; recorded here it would re-fly the PD set")
+    from conftest import default_experiment_config
+
+    for path in {default_experiment_config(),
+                 ROOT / "config/experiments/two_pipeline_comparison.yaml"}:
+        settings = behavior_cloning_settings(load_experiment(path))
+        if str(settings.get("teacher")) != PRIVILEGED_VELOCITY_TEACHER:
+            continue
+        for key in ("rate_filter_s", "integral_leak_s", "anti_windup"):
+            assert key not in settings, (
+                f"{path.name}: {key} is a servo knob; recorded here it would "
+                "re-fly the PD set")

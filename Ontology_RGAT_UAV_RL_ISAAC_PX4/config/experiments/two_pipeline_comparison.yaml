@@ -128,7 +128,11 @@ behavior_cloning:
   # was a coin toss. The image servo now selected has no measured landing rate
   # at all under these gains, so 40 is a budget carried over rather than one
   # fitted to it; on four pairs that is ten batches.
-  max_attempts: 40
+  # Raised from 40 with the deck change: the rate below was measured on the
+  # random walk, and a deck that drives away is harder to land on. 60 attempts
+  # on four pairs is 15 batches, about 1.5 h, and the cap only costs what it
+  # uses.
+  max_attempts: 60
   # 시연 단계는 PPO worker가 제출되기 전에 돌아 스폰된 pair가 모두 비어 있으므로,
   # 기본값은 그 pair 전부에서 동시에 비행하는 것이다(seed 단위 배치, 기록은 배치 합류 후
   # seed 순서대로 -- 저장되는 시연 집합과 지문은 pair 수와 무관하다). 예: 40회 시도가
@@ -171,6 +175,36 @@ behavior_cloning:
   # servo wants 0.55 and ignores velocity_gain.
   position_gain: 0.35
   velocity_gain: 0.75
+  # Closing authority for the PD only (the servo reads the unprefixed clamp
+  # below and is measurably stable only at 0.60). The clamp has to clear the
+  # deck or there is nothing left to close the offset with.
+  #
+  # Raised 0.90 -> 1.80 on 2026-09-22. The previous value was sized against a
+  # deck speed the named scenarios never actually fly. ``curriculum`` above
+  # does NOT scale them: pad_motion._prepare_benchmark_motion takes the
+  # curriculum as its ``scale`` argument but then rebinds the name --
+  # ``speed_scale = cfg.benchmark_speed_scale`` -- before every named-scenario
+  # branch, so only training_random_walk and the escape burst ramp with the
+  # curriculum. Measured peak deck ground speed, sweeping the curriculum from
+  # 0.00 to 1.00, is flat:
+  #
+  #   straight_8mps / linear_acceleration_wave  1.000 m/s at every curriculum
+  #   circle / zigzag / u_turn                  0.750 m/s at every curriculum
+  #   vertical_heave_boat                       0.500 m/s at every curriculum
+  #   training_random_walk                      0.000 -> 0.600 (the only ramp)
+  #
+  # Against that, 0.90 left -0.10 m/s on the two 1.000 m/s decks: the teacher
+  # could not close on them at any curriculum, and because expert.py holds
+  # vz_des at 0 until horizontal_error <= 1.25 m it never started a descent
+  # either. The traces show it exactly -- |target_vxy| pinned at 0.9000 for
+  # 99.9% of straight_8mps steps, lateral error standing at 2.3-3.0 m for 400
+  # steps, every one of those flights ending on an empty pack. Saturation ran
+  # 66-77% on the 0.750 m/s decks and 5.8% on vertical_heave_boat, which is
+  # the order the landings came in.
+  #
+  # 1.80 is 1.8x the fastest deck and 2.4x the 0.750 m/s decks, and stays
+  # inside the vehicle envelope (2.0 m/s) and PX4's MPC_XY_VEL_MAX (2.0).
+  pd_horizontal_speed_limit_m_s: 1.80
 
   # Scale the descent with how little charge is left. Enabled 2026-09-19 after
   # 20 teacher flights split perfectly on the pack the episode was dealt:
@@ -250,28 +284,66 @@ behavior_cloning:
   pd_descent_high_m_s: 0.50
   pd_descent_mid_m_s: 0.25
   pd_descent_flare_m_s: 0.10
-  pd_approach_descent_m_s: 0.20
-  pd_approach_min_altitude_m: 2.5
-  pd_approach_lateral_m: 1.5
-  # Deck motion the demonstrations are flown against (2026-09-21). The
-  # training walk alone gives flights that never lose the deck: from the 5 m
-  # entry the PD teacher is aligned by step 15, at 1.5 m by step 30 and on
-  # the pad by step 80 (trace of seed 90000), so the student is cloned from
-  # approaches only. ``training_random_walk_escape_burst`` is the same walk
-  # (same seed, same deck until the burst) with one straight dash that Isaac
-  # starts the moment the vehicle is following the deck -- within 0.9 m, at
-  # 0.5-2.5 m, after handover (pad.escape_burst_trigger: following; fallback
-  # 25 s) -- heading straight out behind the camera: the deck accelerates to
-  # the carrier's scenario peak (1.0 m/s on this profile, against the
-  # teacher's 0.60 m/s clamp), covers 5 m and eases off. The pad leaves the
-  # frame while it is being followed, the teacher's geometric visual-loss
-  # rule climbs at 0.22 m/s while it keeps tracking, the wider footprint
-  # re-acquires the pad, and the flight follows it down again -- the recovery
-  # the student has to be shown, not just told about. A seed-timed dash at
-  # 4-7 s (first version) caught the teacher at 3.6-4.4 m and never left the
-  # frame. Defined in isaac_sim/pad_motion.py; the scenario and the pad block
-  # are both part of the demonstration fingerprint.
-  scenario: training_random_walk_escape_burst
+  # Descent while still closing (2026-09-21, route decks). The ladder above
+  # only runs when the vehicle is inside 0.50 m of the deck and closing slower
+  # than 0.45 m/s; chasing a deck that drives holds 0.3-0.9 m instead, so the
+  # approach branch is what the flight actually uses, and it used to stop at
+  # 2.5 m. The first sixteen route-deck flights show exactly that: eleven
+  # ended on an empty pack, and four of the eight traced ones were hovering at
+  # 1.5-2.5 m with 0.3-0.9 m of lateral error when the charge ran out. The one
+  # that landed had come down to 0.07 m in 193 steps with 95% of its pack left.
+  #
+  # So the approach descent now runs down to the flare band instead of handing
+  # over to a ladder the chase cannot satisfy, at a rate that spends less time
+  # at altitude (0.20 -> 0.30 m/s; the touchdown gate is 0.55 m/s and the
+  # flare below 0.60 m is unchanged at 0.10). The lateral window tightens with
+  # it, 1.5 -> 1.0 m, because this now descends near the deck rather than only
+  # above 2.5 m.
+  pd_approach_descent_m_s: 0.30
+  pd_approach_min_altitude_m: 0.80
+  pd_approach_lateral_m: 1.0
+  # Ceiling on the re-acquisition climb. The pad leaves a 60-degree down
+  # camera repeatedly while chasing a driving deck, and an unbounded climb at
+  # 0.22 m/s turned that into a runaway: of the first eight traced flights one
+  # ended at 12.0 m having climbed on 69% of its steps and another at 6.5 m on
+  # 35%, both with the pack empty. The entry draw tops out at 8 m, so above
+  # that a climb is not re-acquiring anything.
+  pd_climb_ceiling_m: 5.0
+  # When a lost deck is worth climbing for (2026-09-21, route decks). Both
+  # thresholds were fitted to the random walk. Chasing holds 0.3-0.9 m of
+  # lateral error and a 60-degree down camera loses the pad at that offset as
+  # geometry, so "climb whenever lost above 0.80 m" fired continuously: the
+  # long flights spent 25-40% of their steps climbing and emptied 40-56 s
+  # packs between 0.13 m and 0.70 m above the deck. The flight that landed
+  # climbed on none of its steps.
+  #
+  # Above 3 m a lost deck still gets the climb the rule was written for; below
+  # it the question becomes whether the deck is actually away (1.0 m) rather
+  # than merely outside a downward camera.
+  pd_climb_altitude_m: 3.0
+  pd_climb_lateral_m: 1.0
+  # Decks the demonstrations are flown against (2026-09-21, second revision).
+  #
+  # These are exactly ``training.scenarios``, flown as a rotation: one deck per
+  # seed, so a seed always flies the same deck however the flights are batched
+  # or resumed. The student is cloned from these flights and then trained on
+  # those decks, and the mismatch was fatal: with the demonstrations on
+  # ``training_random_walk_escape_burst`` -- a deck that stays near its origin
+  # -- the clone had never chased a deck that drives away, and the baseline arm
+  # measured 9.3 m of tracking error, the pad in frame for 47% of steps
+  # (against 83% on the walk), keypoint visibility 0.36 (against 0.76) and an
+  # 8.7 m estimator RMSE. The health gate stopped it at episode 48.
+  #
+  # The escape-burst walk is kept in pad_motion.py and is still the right deck
+  # for demonstrating visual loss and recovery; it is not the deck PPO trains
+  # on, which is what decides what the warm start has to teach.
+  scenarios:
+    - straight_8mps
+    - circle
+    - linear_acceleration_wave
+    - zigzag
+    - u_turn
+    - vertical_heave_boat
   # 450 fitted the walk-only flights. The burst adds roughly a 5 s dash, a
   # climb and a chase at 0.3 m/s of closing speed over 3-4 m before the
   # descent can restart, so the recovered flight needs about 25 s more.
@@ -415,6 +487,27 @@ behavior_cloning:
     minimum_learning_rate: 0.00001
     sequence_length: 48
     auxiliary_coefficient: 0.10
+
+# Health gate, re-calibrated for the route decks (2026-09-21). The defaults in
+# shin2026_baseline.yaml were fitted when training also flew
+# ``training_random_walk``, a deck that never leaves its origin: an untrained
+# policy sat 3.8 m from it and the estimator, still fed by a pad in frame 83%
+# of the time, held a 1.9 m position RMSE. The six route decks drive about
+# 10 m per episode, so the same untrained policy is legitimately several
+# metres behind and the estimator sees the pad far less often.
+#
+# Measured on the aborted run: 9.3 m of tracking error and an 8.7 m estimator
+# RMSE over 48 episodes. A limit of 3.0 m therefore stops the arm before it
+# can learn to follow at all, which is what it did, at its first opportunity.
+#
+# 12 m is above what a policy that is merely still learning shows on these
+# decks and well under a genuine divergence (the vehicle is started 2-8 m out
+# and the decks travel ~10 m), and 200 episodes is 20% of the 1008-episode
+# budget rather than 4%. The no-landing gate is untouched: it already waits
+# for 0.75 x the planned episodes.
+ppo:
+  health_max_position_rmse_m: 12.0
+  health_grace_episodes: 200
 
 seeds:
   fov_risk_dataset_start: 70000

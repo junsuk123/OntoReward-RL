@@ -136,9 +136,12 @@ def test_the_bare_launcher_budget_is_the_one_the_experiment_config_declares():
     config is the only place this can be got wrong.
     """
     from config_loader import load_config
+    from conftest import default_experiment_config
 
-    config = load_config(
-        ROOT / "config/experiments/two_pipeline_comparison.yaml")
+    # The budget of the config the bare launcher opens, which is the whole
+    # point of this test; naming a file here guarded whatever that file
+    # happened to be after the default moved.
+    config = load_config(str(default_experiment_config()))
     per_pair_hourly = 20.0
     arms = 2
 
@@ -373,3 +376,63 @@ def test_the_entry_hold_never_exceeds_what_the_gateway_accepts():
 
     with pytest.raises(Exception):
         entry_hold_seconds(float("nan"), 2.0)
+
+
+def test_the_rviz_layout_is_told_which_arm_flies_each_pair(monkeypatch, tmp_path):
+    """Pair titles name the arms that hold training pairs, in pair order.
+
+    A run may compare more arms than it trains -- the three-arm burst
+    comparison flies a non-learned visual servo that takes no training pair --
+    so the launcher passes the learned labels and the generated layout titles
+    each group with the arm actually flying it.
+    """
+    import subprocess
+
+    from run_shin2026_pipeline import _start_rviz
+
+    recorded = {}
+
+    class Process:
+        def poll(self):
+            return None
+
+    monkeypatch.setenv("DISPLAY", ":0")
+    monkeypatch.setattr("run_shin2026_pipeline.shutil.which", lambda _name: "/usr/bin/rviz2")
+    monkeypatch.setattr("run_shin2026_pipeline.time.sleep", lambda _s: None)
+    monkeypatch.setattr(
+        subprocess, "Popen",
+        lambda command, **kwargs: recorded.setdefault("command", command) and None
+        or Process())
+
+    titles = ["Baseline · Shin SE fixed", "Proposed · Ontology-R-GAT FOV"]
+    process, stream = _start_rviz(True, parallel_pairs=4, arm_titles=titles)
+    assert process is not None
+    command = recorded["command"]
+    assert command[1:3] == ["--parallel-pairs", "4"]
+    assert command.count("--arm-title") == 2
+    assert command[command.index("--arm-title") + 1] == titles[0]
+    assert command[-1] == titles[1]
+    if stream is not None and not stream.closed:
+        stream.close()
+
+    # A single-pair run keeps the shipped layout and passes no titles.
+    recorded.clear()
+    process, stream = _start_rviz(True, parallel_pairs=1, arm_titles=titles)
+    assert "--arm-title" not in recorded["command"]
+    if stream is not None and not stream.closed:
+        stream.close()
+
+
+def test_the_rviz_launcher_reads_every_argument_before_it_builds_the_layout():
+    """--arm-title may follow --parallel-pairs on the command line.
+
+    Generating the layout inside the parse loop silently dropped any title
+    that came after the pair count, which is the order the launcher emits.
+    """
+    script = (ROOT / "scripts/run_rviz.sh").read_text(encoding="utf-8")
+    loop_end = script.index("done\n")
+    generation = script.index("make_rviz_layout.py")
+    assert generation > loop_end, (
+        "the layout must be generated after the argument loop, not inside it")
+    assert "--arm-title)" in script[:loop_end], "the launcher must accept the flag"
+    assert 'arm_titles+=(--arm-title "$2")' in script

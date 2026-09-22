@@ -303,9 +303,17 @@ def _sha256_file(path):
     return digest.hexdigest()
 
 
-def _start_rviz(enabled: bool, parallel_pairs: int = 1
+def _start_rviz(enabled: bool, parallel_pairs: int = 1, arm_titles=None
                 ) -> tuple[subprocess.Popen | None, object | None]:
-    """Open the repository RViz layout and retain its diagnostic log."""
+    """Open the repository RViz layout and retain its diagnostic log.
+
+    ``arm_titles`` names the arms that hold training pairs, in pair order, so
+    the generated layout titles each pair group with the arm flying it. A run
+    may compare more arms than it trains -- the three-arm burst comparison
+    flies a non-learned visual servo that takes no training pair -- so this is
+    the learned list, not every arm. Omitted, the layout keeps its shipped
+    two-arm titles.
+    """
     if not enabled:
         return None, None
     script = ROOT / "scripts/run_rviz.sh"
@@ -321,6 +329,8 @@ def _start_rviz(enabled: bool, parallel_pairs: int = 1
     command = [str(script)]
     if int(parallel_pairs) > 1:
         command.extend(["--parallel-pairs", str(int(parallel_pairs))])
+        for title in (arm_titles or ()):
+            command.extend(["--arm-title", str(title)])
     process = subprocess.Popen(
         command, cwd=str(ROOT), stdout=stream, stderr=subprocess.STDOUT)
     # Environment/Qt loader errors surface immediately. Do not let a broken

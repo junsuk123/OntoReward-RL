@@ -31,9 +31,11 @@ PX4 SITL 위에서 수행한다.
 4. **결측과 여유의 분리**. `fov_margin`은 *마지막으로 신뢰 가능했던* centroid의
    여유이므로 측정이 끊긴 직후 가장 위험한 순간에 1.0에 가깝게 읽힌다. 유효성과
    경과시간 node를 함께 공개하고 경계 안전 seed를 유효성으로 gate한다.
-5. **단일 요인 통제 비교**. 두 agent는 환경, 카메라, encoder, LSTM, 추정기,
+5. **단일 요인 통제 비교와 비학습 기준선**. 두 학습 agent는 환경, 카메라, encoder, LSTM, 추정기,
    보조손실, actor/critic, PPO 하이퍼파라미터, curriculum, 5개 고정 shaping 항과
-   가중치, active-perception 보상, seed와 episode 예산까지 모두 공유한다.
+   가중치, active-perception 보상, seed와 episode 예산까지 모두 공유한다. 여기에
+   학습하지 않는 visual servo 대조군이 같은 덱·seed·착륙 기준으로 함께 평가되어,
+   "제안 항이 baseline을 이기는가"와 "학습이 제어기를 이기는가"를 분리한다.
 
 ## 3. 방법
 
@@ -112,16 +114,28 @@ Dataset은 episode ID 기준 80/20으로 나누어 시간 누출을 막고, vali
 최소 checkpoint를 저장한다. PPO 동안에는 모든 parameter가 `requires_grad=False`,
 eval mode이며 state-dict SHA-256이 매 episode 뒤 검증된다.
 
-## 4. 비교하는 두 pipeline
+## 4. 비교하는 세 arm
 
-| Pipeline | 구성 | 차이 |
-|---|---|---|
-| `shin_se_fixed` | 6-keypoint encoder, LSTM, 6-D 상대상태 추정과 보조손실, PPO actor, asymmetric critic, 고정 5성분 보상, active-perception 보상 | 없음 (baseline) |
-| `shin_se_onto_rgat_recovery` | 위 구성을 전부 동일하게 유지 | `-λ_fov q_θ(G_t)` 한 항 추가 |
+| arm | 종류 | 구성 | 차이 |
+|---|---|---|---|
+| `image_based_visual_servo_v1` | **비학습 대조군** | 영상 기반 visual servo | 학습·보상·체크포인트 없음 |
+| `shin_se_fixed` | 학습 | 6-keypoint encoder, LSTM, 6-D 상대상태 추정과 보조손실, PPO actor, asymmetric critic, 고정 5성분 보상, active-perception 보상 | 없음 (baseline) |
+| `shin_se_onto_rgat_recovery` | 학습 | 위 구성을 전부 동일하게 유지 | `-λ_fov q_θ(G_t)` 한 항 추가 |
+
+두 학습 arm의 단일 요인 비교는 "온톨로지 항이 PPO 정책을 개선하는가"에 답한다.
+**대조군은 "이 중 무엇이든 직접 짤 수 있는 제어기보다 나은가"에 답한다** — 학습형
+착륙 제어기에 대해 심사자가 먼저 묻는 질문이고, 같은 덱·같은 seed·같은 착륙 기준
+으로만 답할 수 있다. 대조군은 학습 arm과 동일한 encoder로 덱을 보므로 차이는 관측이
+아니라 제어에서 온다.
 
 `assert_primary_baseline_equivalence()`와 YAML/spec 교차검증이 실행 시점에
-baseline 계약 flag의 차이를 즉시 실패로 만든다. 두 model은 같은 seed에서 동일한
-state-dict key, shape, 초기값을 갖는다.
+baseline 계약 flag의 차이를 즉시 실패로 만든다. 두 학습 model은 같은 seed에서
+동일한 state-dict key, shape, 초기값을 갖는다.
+
+> `pipelines`는 **학습 arm 목록**이다(학습이 순회하고 checkpoint가 키로 삼는다).
+> 전체 arm 목록은 `manifest.json`의 `arms` 키이며 `learned` 플래그를 싣는다.
+> 하위 소비자는 `pipelines`에서 arm 집합을 추론하면 안 된다 —
+> [3-arm 비교](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/THREE_ARM_BURST_COMPARISON.md) §3.1, §6.
 
 ## 5. 시스템 파이프라인
 
@@ -154,14 +168,20 @@ horizon은 300 step이다. 실행 단계는 다음 순서로 고정되어 있다
 ## 6. 실험 설계
 
 * **통제**: 환경, 초기조건 분포, UGV 궤적, seed, episode 예산, PPO 설정, curriculum.
-* **요인**: FOV-risk 가산항의 유무 하나.
-* **병렬 실행**: 한 Isaac stage 안에서 2개의 독립 UAV/UGV·PX4·namespace·port·
-  learner·buffer·optimizer 쌍을 사용한다. 방법과 물리 쌍의 대응은
-  `training_replicate`마다 cyclic Latin square로 바꾸어 경로 위상 편향을 분리한다.
-* **평가 시나리오**: `training_random_walk`, `straight_8mps`,
-  `linear_acceleration_wave`, `circle`, `zigzag`, `u_turn`, `vertical_heave_boat`.
+* **요인**: 두 학습 arm 사이에서는 FOV-risk 가산항의 유무 하나. 대조군은 요인이
+  아니라 기준선이다.
+* **평가 시나리오**: `straight_escape_burst` 하나. 패드가 0.500 m/s로 등속 직진하다
+  드론이 추종에 들어선 순간 1.000 m/s로 급가속해 **카메라 정후방으로 프레임을
+  벗어난다.** 모든 에피소드가 시험 대상 사건을 포함하므로 모든 에피소드가 증거가
+  된다. 나머지 여섯 덱은 `evaluation`에서 명시적으로 0이며 삭제되지 않았다.
+* **병렬 실행**: 한 Isaac stage 안에서 독립 UAV/UGV·PX4·namespace·port·learner·
+  buffer·optimizer 쌍을 사용한다(기계가 재는 만큼, 현재 4). 학습은 **학습 arm에만**
+  페어를 나눈다(4 ÷ 2 = 각 2 replica). 대조군은 학습 중 페어를 갖지 않고 평가에서만
+  참여한다. 방법과 물리 쌍의 대응은 `training_replicate`마다 cyclic Latin square로
+  바꾸어 경로 위상 편향을 분리한다.
 * **통계**: 동일 replicate·시나리오·seed 짝의 차이를 모으고, replicate → episode
-  순의 계층 bootstrap으로 95% 신뢰구간을 낸다.
+  순의 계층 bootstrap으로 95% 신뢰구간을 낸다. 세 arm이 같은 seed를 날므로 seed
+  자체의 난이도가 상쇄된다.
 
 ### 주 지표
 
@@ -184,15 +204,24 @@ horizon은 300 step이다. 실행 단계는 다음 순서로 고정되어 있다
 ## 7. 실행
 
 ```bash
-./run.sh --pipelines shin_se_fixed shin_se_onto_rgat_recovery --parallel-pairs 2
+./run.sh                 # 기본: 3-arm 급가속 이탈 비교, full 예산
+./run.sh --mode quick    # 전 구간 배관 검증 (수십 분)
 ```
 
-인자 없는 `./run.sh`는 `seminar_10h_two_pipeline.yaml` 세미나 프로파일을 선택한다
-(2 pair, pipeline당 144 training episodes, 5 evaluation episodes, 40 FOV-risk data
-episodes). 이 프로파일은 `publication_claim_allowed: false`이므로 논문 결과로
-보고하지 않는다. 명시적 full 경로는 선택한 pipeline 전체에 800 training episodes를
-적용하며 `--total-train-episodes`, `--eval-episodes`, `--rgat-data-episodes`,
-`--rgat-epochs`, `--results-dir`로 덮어쓸 수 있다.
+인자 없는 `./run.sh`는 `config/experiments/three_arm_burst_comparison.yaml`을 그
+파일이 선언한 예산으로, 기계가 재는 만큼의 페어에서 실행한다. 대체된 6-덱 2-arm
+설계도 그대로 남아 있다.
+
+```bash
+./run.sh --config Ontology_RGAT_UAV_RL_ISAAC_PX4/config/experiments/two_pipeline_comparison.yaml
+./run.sh --seminar-fast          # publication_claim_allowed: false — 논문 결과로 보고하지 않는다
+```
+
+**full 전에 `--mode quick`을 먼저 돌리기를 권한다.** full 예산은 학습 2 arm × 1000
+에피소드, 평가 3 arm × 1200으로 약 1.5–2일이다. 2026-09-22의 quick 패스는 full
+이었다면 하루치 연산 뒤에야 드러났을 결함 세 개를 수십 분에 잡았다.
+`--total-train-episodes`, `--eval-episodes`, `--rgat-data-episodes`,
+`--rgat-epochs`, `--results-dir`로 예산을 덮어쓸 수 있다.
 
 ```bash
 cd Ontology_RGAT_UAV_RL_ISAAC_PX4
@@ -203,7 +232,44 @@ cd Ontology_RGAT_UAV_RL_ISAAC_PX4
 정보 누출 차단, graph 결정성과 도달성, 확률·보상 범위, R-GAT 동결, episode 단위
 split, 단독 및 2-pair 실행 계약을 포함한다.
 
-## 8. 주장하지 않는 것
+## 8. 현재 상태와 알려진 제약
+
+### ⚠ 제어 대역폭이 강제되지 않는다 — 모든 수치를 읽기 전에
+
+학습기는 Isaac과 lockstep이 **아니다**. `isaac.lockstep: true`는 Isaac↔PX4
+전용이고, Isaac의 월드 루프는 렌더·물리가 허용하는 한 빠르게 돌며, 학습기는
+게이트웨이를 비동기로 샘플링한다. **어느 쪽도 상대를 기다리지 않는다.** 따라서
+제어 스텝당 시뮬 시간은 보장된 값이 아니라 루프가 그때그때 해낸 값이다.
+
+| 상태 | px4 s/step | 실효 제어율 |
+|---|---|---|
+| 정상 | 0.104 | **9.6 Hz** |
+| 열화 | 0.69–0.95 | **1.05–1.45 Hz** |
+
+즉 공칭 10 Hz 제어율은 Isaac이 우연히 실시간의 1/9로 돌았기 때문에 얻어진 값이며,
+동시 렌더 부하에 따라 **8배까지 흔들린다**. 결과적으로:
+
+* `steps × cfg.sim.dt`로 계산되는 모든 시간 지표가 **7–9배 과소** 기록된다 —
+  `touchdown_time_s`와 네 개의 FOV 손실 지속 시간 열이 모두 여기 해당하며, 이들은
+  비교의 **종속변수**다. 페이싱 수정 후에는 사후 보정 없이 그대로 맞아진다.
+* image servo의 rate 항이 같은 배수로 과대하다. privileged PD는 `dt`를 쓰지 않아
+  영향이 없다.
+
+**기전은 독립적인 두 데이터셋으로 확립**되었으나 **착륙 결과와의 인과는 어느
+쪽으로도 입증되지 않았다**(67개 비행에서 착륙 1.56 Hz, 실패 1.59 Hz로 분리 없음).
+제어율 임계값을 근거로 튜닝하지 말 것.
+
+완화책 `isaac.max_sim_speed_ratio`가 있으나 **기본 비활성**이다. 상세와 근거는
+[3-arm 비교](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/THREE_ARM_BURST_COMPARISON.md) §5.
+
+### 배관은 검증됨, 결과는 아직
+
+파이프라인은 keypoint → teacher → 행동복제 → PPO → FOV-risk R-GAT → checkpoint
+선택 → 3-arm 평가 → 리포트까지 완주한다(2026-09-22 quick 패스). 그 패스는 arm당
+학습 10 에피소드, 실효 제어율 1.2 Hz에서 세 arm 모두 착륙 0건이었다. 확인된 것은
+**구조**이지 성능이 아니다.
+
+## 9. 주장하지 않는 것
 
 * PBRS 최적정책 불변성 — 제안항은 potential-based shaping이 아니다.
 * 운용 안전 보장 — 성공 gate는 연구 평가 기준이지 안전 monitor가 아니다.
@@ -211,14 +277,15 @@ split, 단독 및 2-pair 실행 계약을 포함한다.
 * 온톨로지 *단독* 기여 — 현재 설계는 제안 보상 모듈 전체의 효과만 비교한다.
 * PACMAN 재현 — encoder와 표적은 같은 인터페이스를 갖는 문서화된 근사다.
 
-## 9. 문서
+## 10. 문서
 
 | 문서 | 내용 |
 |---|---|
+| **[3-arm 급가속 이탈 비교](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/THREE_ARM_BURST_COMPARISON.md)** | **현재 주 비교** — 덱, 세 arm, 제어 포락선, 제어 대역폭 제약 |
 | [구현 개요](Ontology_RGAT_UAV_RL_ISAAC_PX4/README.md) | 알고리즘과 코드의 대응, artifact |
 | [아키텍처와 정보경계](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/ARCHITECTURE.md) | 관측·보상·critic 경계, 좌표계, 타이밍 |
 | [제안 알고리즘](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/ONTOLOGY_RGAT_FOV_RISK.md) | graph, 표적, 목적함수, readout, 동결 |
-| [실험 설계](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/TWO_PIPELINE_COMPARISON.md) | 통제변수, 실험 요인, 지표, 통계 |
+| [실험 설계 (6-덱 2-arm)](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/TWO_PIPELINE_COMPARISON.md) | 통제변수, 실험 요인, 지표, 통계, 실험 이력 |
 | [Shin baseline](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/SHIN2026_BASELINE.md) | 원문 구성과 구현 대응 |
 | [논문 대조](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/PAPER_FIDELITY.md) | 확인된 값, 미기재 항목, 선언된 이탈 |
 | [운영 절차](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/OPERATIONS.md) | 실행 프로파일, 산출물, 상태 확인 |

@@ -6,29 +6,41 @@
 ## 1. 실행 프로파일
 
 ```bash
-./run.sh --pipelines shin_se_fixed shin_se_onto_rgat_recovery --parallel-pairs 2
+./run.sh                 # 기본: 3-arm 급가속 이탈 비교, full 예산
+./run.sh --mode quick    # 전 구간 배관 검증 (수십 분)
 ```
 
-명시적 실행은 `config/experiments/two_pipeline_comparison.yaml`을 사용한다.
-Pair 0/1은 별도 PX4 instance, ROS namespace, gateway/learner UDP port,
-controller/reset state를 쓰고, 각 worker가 별도 model, rollout buffer, optimizer를
-소유하며 GPU update만 lock으로 직렬화한다.
-
-인자 없는 상위 `./run.sh`는 세미나 프로파일을 선택한다.
+인자 없는 `./run.sh`는 `config/experiments/three_arm_burst_comparison.yaml`을 그
+파일이 선언한 예산으로, 기계가 재는 만큼의 페어에서 실행한다. 각 pair는 별도 PX4
+instance, ROS namespace, gateway/learner UDP port, controller/reset state를 쓰고,
+각 worker가 별도 model, rollout buffer, optimizer를 소유하며 GPU update만 lock으로
+직렬화한다.
 
 | 항목 | 값 |
 |---|---:|
-| 설정 | `config/experiments/seminar_10h_two_pipeline.yaml` |
-| system 설정 | `config/seminar-fast-system.yaml` |
-| pipeline / pair | 2개 / 2 pair |
-| training / pipeline | 144 episodes |
-| evaluation / scenario | 5 episodes |
-| FOV-risk dataset | 40 episodes, 최대 120 episodes |
-| R-GAT 학습 | 80 epochs |
-| 결과 | `results/seminar_10h/two_pipe_parallel_144/` |
+| 설정 | `config/experiments/three_arm_burst_comparison.yaml` |
+| system 설정 | `config/shin2026-minimal-system.yaml` |
+| arm | 3 (학습 2 + 비학습 대조군 1) |
+| 덱 | `straight_escape_burst` 하나 |
+| training / 학습 arm | 1000 episodes (`--mode full`) |
+| evaluation / arm | 1200 episodes |
+| 결과 | `results/three_arm_burst/<mode>/` |
 
-이 프로파일은 `publication_claim_allowed: false`인 예비 실행이다. 논문용 full 실행은
-명시적으로 예산과 결과 디렉터리를 지정하고 manifest를 보존한다.
+**학습 페어는 학습 arm에만 나뉜다**(4 ÷ 2 = 각 2 replica). 대조군은 학습 중 페어를
+갖지 않고 평가에서만 참여하므로 `pair_count % len(pipelines) == 0` 불변식이 유지된다.
+
+대체된 설계와 예비 프로파일도 그대로 남아 있다.
+
+```bash
+./run.sh --config config/experiments/two_pipeline_comparison.yaml   # 6-덱 2-arm
+./run.sh --seminar-fast   # publication_claim_allowed: false — 논문 결과로 보고 금지
+```
+
+> **full 전에 `--mode quick`을 먼저 돌릴 것.** full은 약 1.5–2일이고 quick은 수십
+> 분에 keypoint → teacher → 행동복제 → PPO → R-GAT → checkpoint 선택 → 3-arm
+> 평가 → 리포트 전 구간을 실행한다. 2026-09-22의 quick 패스는 full이었다면 하루치
+> 연산 뒤에야 드러났을 결함 세 개를 잡았다 — 비학습 arm의 평가 크래시, 은퇴한 덱의
+> 부활, 완주한 run의 manifest를 죽이는 NaN.
 
 ## 2. 실행 순서
 
@@ -52,6 +64,35 @@ python python/run_two_pipeline.py --help   # primary-only 옵션
 
 실제 stack smoke test 전에는 UDP port 충돌을 피하도록 이전 실행을 종료한다.
 `run.sh`는 flight lock으로 두 실행이 같은 stack을 동시에 채택하는 것을 막는다.
+
+### 진행 상황을 보는 법
+
+러너의 stdout은 파일로 redirect하면 **블록 버퍼링**된다. 로그가 수 분간 비어 있어도
+스택은 정상 비행 중일 수 있다. 진행을 보려면:
+
+```bash
+PYTHONUNBUFFERED=1 setsid nohup ./run.sh </dev/null >> run.log 2>&1 &
+```
+
+이미 돌고 있는 run은 산출물을 직접 본다. teacher의 per-step trace는 매 스텝
+flush되므로 실시간 신호다.
+
+```
+results/<experiment>/<mode>/training/teacher_trace_<fingerprint>_pair<N>.jsonl
+results/<experiment>/<mode>/training/teacher_attempts_<fingerprint>.csv
+results/<experiment>/<mode>/models/*/*_training.csv
+results/<experiment>/<mode>/evaluation/per_episode.csv
+/tmp/ontology_rgat_stack/isaac.log
+```
+
+### 게이트웨이를 고쳤다면
+
+`ros2_ws/src/.../protocol.py` 등을 수정했으면 설치 미러를 갱신해야 한다. 하지
+않으면 게이트웨이가 기동 중 종료되며 그 사실을 로그에 명시한다.
+
+```bash
+./scripts/sync_gateway.sh
+```
 
 ## 4. 산출물
 
@@ -85,6 +126,42 @@ readout 학습·동결 모델 검증 진행을 한 화면에 출력한다.
 ## 6. 부록: 장애 대응
 
 실험 설계와 무관한 환경 문제만 다룬다.
+
+### 제어가 느리고 덱이 도망가는 것처럼 보일 때
+
+수평 오차가 스텝당 1.5–2.4 m씩 뛰거나, 기체가 0.1초에 2.75 m 상승한 것처럼 보이거나,
+teacher가 패드에 닿았다가 곧바로 멀어진다면 **제어 대역폭을 먼저 재라.** 물리가
+아니라 사라진 시간이다.
+
+```bash
+python3 - <<'EOF'
+import json, glob
+from collections import defaultdict
+eps=defaultdict(list)
+for f in glob.glob("results/*/*/training/teacher_trace_*.jsonl"):
+    for line in open(f):
+        r=json.loads(line); eps[(f, r['seed'])].append(r)
+for k,v in sorted(eps.items())[-6:]:
+    v.sort(key=lambda r: r['step'])
+    px4=(v[-1]['px4_time_us']-v[0]['px4_time_us'])/1e6
+    wall=v[-1]['wall']-v[0]['wall']; n=len(v)-1
+    print(f"{k[1]} steps={len(v):4d} px4/step={px4/n:.3f} wall/step={wall/n:.3f} "
+          f"sim:wall={px4/wall:.2f} eff={n/px4:.2f} Hz")
+EOF
+```
+
+`px4/step`이 0.104이면 정상(약 9.6 Hz)이고, 0.7–0.95이면 열화(약 1.2 Hz)다. 후자면
+Isaac이 실시간에 가깝게 자유 주행 중이라는 뜻이며, **teacher 게인이나 하강 임계를
+만지기 전에 이것부터 해결하라** — 그 상태의 측정값은 대역폭이 통제되지 않은 값이다.
+
+완화책(기본 비활성):
+
+```yaml
+isaac:
+  max_sim_speed_ratio: 0.116   # = control.dt_seconds / 학습기 스텝당 벽시계 시간
+```
+
+근거와 한계는 [3-arm 비교](THREE_ARM_BURST_COMPARISON.md) §5.
 
 ### 진입 호버가 계속 실패할 때
 

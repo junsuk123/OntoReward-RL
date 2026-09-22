@@ -342,6 +342,65 @@ def test_a_failed_pair_is_recovered_only_once_the_batch_has_landed(
     assert recoveries == [1]
 
 
+def test_each_demonstration_seed_flies_its_own_training_deck(
+        monkeypatch, tmp_path):
+    """The rotation is by seed, so batching and resuming cannot change it.
+
+    The student is cloned from these flights and then trained on the same
+    decks. Flown on one deck while training used six, the clone had never
+    chased a deck that drives away and the baseline arm's health gate stopped
+    the run at episode 48 (2026-09-21).
+    """
+    flown = {}
+
+    def collect(environment, _model, _method, seed, *, scenario, **_kwargs):
+        flown[int(seed)] = str(scenario)
+        return ([{"seed": int(seed)}], {
+            "seed": int(seed), "steps": 9, "strict_success": 0.0,
+            "paper_success": float(int(seed) in {90002, 90007})})
+
+    _stub_demonstration_stage(monkeypatch, collect, results_dir=tmp_path)
+    decks = ["straight_8mps", "circle", "zigzag"]
+    pairs = _demonstration_pairs(2)
+    contexts = [{"cfg": cfg, "camera": object(), "monitor": _StageMonitor()}
+                for cfg in pairs]
+
+    payload = pipeline_runner._prepare_fast_demonstrations(
+        cfg=pairs[0], camera=contexts[0]["camera"],
+        config=_demonstration_config(successful_episodes=2, max_attempts=8,
+                                     scenarios=decks),
+        config_hash="test", keypoint_pretraining=None, results_dir=tmp_path,
+        device="cpu", model_seed=3, monitor=contexts[0]["monitor"],
+        parallel_contexts=contexts)
+
+    assert payload["successful_episodes"] == 2
+    # seed0 is 90000: the deck is (seed - seed0) % len(decks), whatever pair
+    # flew it and whichever batch it landed in.
+    for seed, scenario in flown.items():
+        assert scenario == decks[(seed - 90000) % len(decks)], seed
+    assert len(flown) >= 6, "the rotation should have reached every deck"
+
+
+def test_the_demonstrations_fly_the_decks_the_student_is_trained_on():
+    """A warm start on a different deck teaches the wrong thing.
+
+    Checked against the config a bare ``./run.sh`` runs as well as the six-deck
+    comparison, because the headline experiment changed on 2026-09-22 and a
+    test naming one file stops guarding the default when it moves.
+    """
+    from conftest import default_experiment_config
+
+    for path in {default_experiment_config(),
+                 ROOT / "config/experiments/two_pipeline_comparison.yaml"}:
+        config = load_experiment(path)
+        cloning = pipeline_runner.behavior_cloning_settings(config)
+        training = [str(name) for name in (config.get("training") or {}).get(
+            "scenarios", ())]
+        assert training, f"{path.name} should declare its training decks"
+        demonstrations = [str(name) for name in cloning.get("scenarios", ())]
+        assert demonstrations == training, path.name
+
+
 def test_completed_system_hold_restarts_a_dead_owned_stack():
     events = []
 
@@ -1413,3 +1472,349 @@ def test_deadline_teacher_vertical_schedule_is_configurable():
     legacy = _privileged_velocity_teacher_action(
         [1.0, 0., -4., 0., 0., 0.], [0., 0., 0.], seeing, [2., 2., 1.], noise_std=0.)
     assert legacy[2] == 0.0
+
+
+# --------------------------------------------------------------------------
+# Three-arm burst comparison: two learned arms plus a non-learned control
+# condition. Everything here guards a path that assumes every arm trains --
+# the class of bug that silently drops the control condition rather than
+# failing, which is the worst way for it to go wrong.
+# --------------------------------------------------------------------------
+
+
+def test_baseline_arms_are_parsed_and_their_controller_is_validated():
+    from run_three_pipeline import (_baseline_arms, PRIVILEGED_VELOCITY_TEACHER,
+                                    VISUAL_SERVO_TEACHER)
+    assert _baseline_arms({}) == []
+    arms = _baseline_arms({"baseline_arms": [
+        {"method": VISUAL_SERVO_TEACHER, "label": "Visual servo (non-learned)",
+         "controller": VISUAL_SERVO_TEACHER, "learned": False}]})
+    assert arms == [{"method": VISUAL_SERVO_TEACHER,
+                     "label": "Visual servo (non-learned)",
+                     "controller": VISUAL_SERVO_TEACHER, "learned": False}]
+    # The PD fallback the profile documents is accepted too.
+    assert _baseline_arms({"baseline_arms": [
+        {"method": "pd", "controller": PRIVILEGED_VELOCITY_TEACHER}]})[0][
+            "controller"] == PRIVILEGED_VELOCITY_TEACHER
+    # A typo has to stop the run, not produce an arm that never flies.
+    with pytest.raises(ValueError, match="unknown controller"):
+        _baseline_arms({"baseline_arms": [{"method": "x", "controller": "nope"}]})
+    with pytest.raises(ValueError, match="distinct"):
+        _baseline_arms({"baseline_arms": [
+            {"method": "a", "controller": VISUAL_SERVO_TEACHER},
+            {"method": "a", "controller": VISUAL_SERVO_TEACHER}]})
+
+
+def test_the_control_condition_flies_exactly_the_seeds_the_policies_fly():
+    """The comparison is paired: same deck, same seeds, every arm."""
+    from run_three_pipeline import _plan_with_baseline_arms
+    plan = [{"method": "shin_se_fixed", "scenario": "straight_escape_burst", "seed": s}
+            for s in (5000, 5001)]
+    plan += [{"method": "shin_se_onto_rgat_recovery",
+              "scenario": "straight_escape_burst", "seed": s} for s in (5000, 5001)]
+    widened = _plan_with_baseline_arms(plan, [
+        {"method": "servo", "label": "Visual servo", "controller": "x",
+         "learned": False}])
+    assert len(widened) == len(plan) + 2
+    def keys(method):
+        return sorted((row["scenario"], row["seed"])
+                      for row in widened if row["method"] == method)
+    assert keys("servo") == keys("shin_se_fixed") == keys(
+        "shin_se_onto_rgat_recovery")
+    assert _plan_with_baseline_arms(plan, []) == plan
+
+
+def test_the_arm_manifest_separates_learned_arms_from_control_conditions():
+    from run_three_pipeline import _arm_manifest
+    manifest = _arm_manifest(
+        ["shin_se_fixed", "shin_se_onto_rgat_recovery"],
+        [{"method": "servo", "label": "Visual servo (non-learned)",
+          "controller": "x", "learned": False}],
+        {"shin_se_fixed": "Baseline · Shin SE fixed"})
+    assert [arm["method"] for arm in manifest] == [
+        "shin_se_fixed", "shin_se_onto_rgat_recovery", "servo"]
+    assert [arm["learned"] for arm in manifest] == [True, True, False]
+    # A label the profile does not give falls back to the id rather than to a
+    # hard-coded display name in the dashboard.
+    assert manifest[0]["label"] == "Baseline · Shin SE fixed"
+    assert manifest[1]["label"] == "shin_se_onto_rgat_recovery"
+
+
+def test_a_control_condition_row_survives_checkpoint_validation():
+    """The runner-side trap: rows for an arm with no checkpoint.
+
+    The evaluation reconciliation archives any row whose method is missing from
+    ``selected_checkpoints`` as ``deployment_checkpoint_changed``. A control
+    condition has no checkpoint by construction, so without the exemption every
+    one of its flights would be silently moved to per_episode.superseded.csv
+    and the arm would vanish from the comparison with no error anywhere.
+    """
+    baseline_ids = {"servo"}
+    selected_checkpoints = {"shin_se_fixed": {
+        "sha256": "abc", "episode": 7, "kind": "best",
+        "summary": {"mean_physical_score": 1.0}}}
+    rows = [
+        {"pipeline": "servo", "scenario": "straight_escape_burst", "seed": 5000},
+        {"pipeline": "shin_se_fixed", "scenario": "straight_escape_burst",
+         "seed": 5000, "selected_checkpoint_sha256": "abc",
+         "physical_pair_index": 0},
+        {"pipeline": "shin_se_fixed", "scenario": "straight_escape_burst",
+         "seed": 5001, "selected_checkpoint_sha256": "stale",
+         "physical_pair_index": 0},
+    ]
+    kept, superseded = [], []
+    for row in rows:
+        name = row.get("pipeline", row.get("method"))
+        if name in baseline_ids:
+            kept.append(row)
+            continue
+        selected = selected_checkpoints.get(name)
+        digest = str(row.get("selected_checkpoint_sha256", ""))
+        if selected is None or (digest and digest != selected["sha256"]):
+            superseded.append(row)
+            continue
+        kept.append(row)
+    assert [row["pipeline"] for row in kept] == ["servo", "shin_se_fixed"]
+    assert [row["seed"] for row in superseded] == [5001]
+
+
+def test_the_three_arm_profile_flies_one_deck_with_one_control_condition():
+    from ontology_rgat.benchmarks.experiment import load_experiment
+    from run_three_pipeline import _arm_manifest, _baseline_arms
+    config = load_experiment(
+        ROOT / "config/experiments/three_arm_burst_comparison.yaml")
+    assert config["pipelines"] == [
+        "shin_se_fixed", "shin_se_onto_rgat_recovery"], (
+        "only the learned arms may drive training and the pair division")
+    assert config["training"]["scenarios"] == ["straight_escape_burst"]
+    assert config["behavior_cloning"]["scenarios"] == ["straight_escape_burst"]
+    # ``evaluation`` is a mapping the loader deep-merges, so the decks this
+    # profile retires have to be zeroed explicitly or they come back.
+    assert {deck for deck, count in config["evaluation"].items() if count} == {
+        "straight_escape_burst"}
+    manifest = _arm_manifest(config["pipelines"], _baseline_arms(config),
+                             dict(config.get("arm_labels") or {}))
+    assert len(manifest) == 3
+    assert sum(not arm["learned"] for arm in manifest) == 1
+
+
+def test_a_control_condition_has_no_pipeline_spec_so_it_borrows_one():
+    """Why the servo arm flies under the reference arm's method.
+
+    The reward dispatch in recurrent_train._reward keys on the pipeline spec
+    looked up from the method name. A control condition is not a pipeline, so
+    that lookup finds nothing and the dispatch falls through to its last branch,
+    which demands a frozen controlled R-GAT potential and raises. That is a
+    crash in the middle of evaluation, after the training budget has been spent
+    -- which is exactly what happened on 2026-09-22 before this was fixed.
+
+    So the arm id is a LABEL, and the flight is collected under the reference
+    pipeline's method: same encoder, same reward machinery, same metric fields,
+    with only the action overridden. The row is relabelled afterwards.
+    """
+    from ontology_rgat.pipelines.spec import get_pipeline
+    from run_three_pipeline import VISUAL_SERVO_TEACHER
+    with pytest.raises(Exception):
+        get_pipeline(VISUAL_SERVO_TEACHER)
+    # ...whereas the reference arm the control condition borrows resolves.
+    assert get_pipeline("shin_se_fixed").name == "shin_se_fixed"
+
+
+def test_the_runner_collects_control_conditions_under_the_reference_method():
+    """Pin the call shape, since the failure mode is a mid-evaluation crash."""
+    source = (ROOT / "python/run_three_pipeline.py").read_text(encoding="utf-8")
+    assert "collect_method = reference_pipeline" in source, (
+        "a control condition must not be passed to collect_episode as its own "
+        "method; it has no pipeline spec and the reward dispatch will raise")
+    assert "reference_pipeline = args.pipelines[0]" in source
+    assert "environment, model, collect_method, int(item[\"seed\"])" in source, (
+        "the collect call has to use the borrowed method, not the arm id")
+
+
+def test_quick_mode_shrinks_the_evaluation_budget_without_reviving_retired_decks():
+    """A zeroed deck must stay zero in every mode.
+
+    ``evaluation`` is scenario -> episode count, and the quick-mode override
+    used to rebuild it from the keys, which handed every retired deck 2 flights
+    back. That made the quick pass exercise a scenario set the profile does not
+    declare -- in the one run whose purpose is to validate the configuration.
+    """
+    configured = {"straight_escape_burst": 1200, "straight_8mps": 0,
+                  "circle": 0, "training_random_walk": 0}
+    quick = {name: (0 if not int(count)
+                    else 4 if name == "training_random_walk" else 2)
+             for name, count in configured.items()}
+    assert quick == {"straight_escape_burst": 2, "straight_8mps": 0,
+                     "circle": 0, "training_random_walk": 0}
+    assert {d for d, c in quick.items() if c} == {"straight_escape_burst"}
+    # and the walk keeps its larger share when it is actually enabled
+    assert {n: (0 if not int(c) else 4 if n == "training_random_walk" else 2)
+            for n, c in {"training_random_walk": 10000, "circle": 200}.items()
+            } == {"training_random_walk": 4, "circle": 2}
+
+
+def test_the_quick_override_in_the_runner_preserves_zeros():
+    source = (ROOT / "python/run_three_pipeline.py").read_text(encoding="utf-8")
+    assert "for name, count in evaluation_cfg.items()" in source, (
+        "the quick-mode evaluation override must read the configured counts, "
+        "not just the scenario names")
+
+
+def test_the_manifest_writes_unavailable_statistics_as_null_not_nan(tmp_path):
+    """A mean over zero samples must not fail the whole manifest write.
+
+    Every adaptive-R-GAT column summarises to NaN in an experiment whose arms
+    do not use adaptive reward weights, which is the normal case for the
+    two-arm and three-arm profiles. Before this, that NaN reached json.dumps
+    with allow_nan=False and killed the manifest write at the very end of a
+    completed run -- evaluation rows, reports and checkpoints all committed,
+    execution_status still reading "results pending".
+    """
+    import json as _json
+    from run_three_pipeline import _json_safe, _write_json
+    payload = {
+        "execution_status": "complete real Isaac/Pegasus/PX4 run",
+        "reports": {
+            "adaptive_rgat_parameter_count_mean": float("nan"),
+            "adaptive_rgat_inference_latency_ms_mean_ci95_low": float("-inf"),
+            "paper_success_mean": 0.0,
+            "per_arm": [{"arm": "servo", "score": float("nan")},
+                        {"arm": "shin_se_fixed", "score": 0.25}],
+        },
+    }
+    safe = _json_safe(payload)
+    assert safe["reports"]["adaptive_rgat_parameter_count_mean"] is None
+    assert safe["reports"]["adaptive_rgat_inference_latency_ms_mean_ci95_low"] is None
+    assert safe["reports"]["per_arm"][0]["score"] is None
+    # real values, including a legitimate zero, survive untouched
+    assert safe["reports"]["paper_success_mean"] == 0.0
+    assert safe["reports"]["per_arm"][1]["score"] == 0.25
+    assert safe["execution_status"] == "complete real Isaac/Pegasus/PX4 run"
+
+    path = tmp_path / "manifest.json"
+    _write_json(path, payload)
+    written = _json.loads(path.read_text(encoding="utf-8"))
+    assert written["reports"]["adaptive_rgat_parameter_count_mean"] is None
+    assert written["reports"]["paper_success_mean"] == 0.0
+
+
+def test_simulation_pacing_is_off_unless_a_profile_asks_for_it():
+    """The world loop must free-run exactly as before by default."""
+    import sys as _sys
+    _sys.path.insert(0, str(ROOT / "isaac_sim"))
+    from config_loader import load_config
+    for profile in ("config/shin2026-minimal-system.yaml",
+                    "config/shin2026-system.yaml"):
+        isaac = load_config(str(ROOT / profile)).get("isaac") or {}
+        assert not float(isaac.get("max_sim_speed_ratio") or 0.0), (
+            f"{profile} must not enable pacing implicitly")
+    source = (ROOT / "isaac_sim/landing_world.py").read_text(encoding="utf-8")
+    assert 'CONFIG["isaac"].get("max_sim_speed_ratio") or 0.0' in source
+    assert "if speed_ratio > 0.0 and not startup_rendering:" in source, (
+        "pacing must not throttle the startup burst, and must be inert at 0")
+
+
+def test_the_pacing_sleep_holds_the_configured_sim_to_wall_ratio():
+    """One control step should span one control period at the right ratio.
+
+    The learner takes ~0.9 s of wall clock per control step and the control
+    period is 0.104 s of simulated time, so the ratio that makes those agree is
+    0.104/0.9. Below it the loop sleeps; at or above it the loop does not.
+    """
+    def behind(sim_elapsed, wall_elapsed, ratio):
+        return sim_elapsed / ratio - wall_elapsed
+
+    ratio = 0.104 / 0.9
+    # the world has run a full control period in a tenth of the wall time it
+    # should have taken: sleep for the remainder
+    assert behind(0.104, 0.09, ratio) == pytest.approx(0.81, abs=1e-6)
+    # exactly on pace: no sleep
+    assert behind(0.104, 0.9, ratio) == pytest.approx(0.0, abs=1e-9)
+    # already slower than the cap: no sleep, the cap is an upper bound only
+    assert behind(0.104, 1.2, ratio) < 0.0
+    # and the free-running regime we measured -- 0.7 s of sim in 0.9 s of wall
+    # -- is held back by most of a step
+    assert behind(0.7, 0.9, ratio) == pytest.approx(5.157, abs=1e-3)
+
+
+def test_the_manifest_records_every_arm_not_just_the_learned_ones():
+    """Downstream readers must not infer the arm set from ``pipelines``.
+
+    ``pipelines`` is the learned list: it drives training and keys the
+    checkpoints. A reader that treats it as the arm set drops every control
+    condition, which on 2026-09-22 produced a non-learned arm missing from all
+    figures and -- worse -- a finished run reported as preliminary, because the
+    evaluation completeness check wanted a checkpoint for an arm that has none.
+    """
+    source = (ROOT / "python/run_three_pipeline.py").read_text(encoding="utf-8")
+    assert '"arms": arm_manifest,' in source, (
+        "manifest.json has to carry the full arm list with its learned flags")
+    # and the manifest key must be built before it is written
+    assert source.index("arm_manifest = _arm_manifest(") < source.index(
+        '"arms": arm_manifest,')
+
+
+def test_an_arm_manifest_distinguishes_controls_for_a_downstream_reader():
+    from run_three_pipeline import _arm_manifest
+    manifest = _arm_manifest(
+        ["shin_se_fixed", "shin_se_onto_rgat_recovery"],
+        [{"method": "image_based_visual_servo_v1",
+          "label": "Visual servo (non-learned)", "controller": "x",
+          "learned": False}],
+        {})
+    learned = [a["method"] for a in manifest if a["learned"]]
+    controls = [a["method"] for a in manifest if not a["learned"]]
+    assert learned == ["shin_se_fixed", "shin_se_onto_rgat_recovery"]
+    assert controls == ["image_based_visual_servo_v1"]
+    # a completeness check keyed on checkpoints must use `learned`, not the
+    # whole arm list, or a control condition makes a finished run look unfinished
+    assert all(a["learned"] is False for a in manifest if a["method"] in controls)
+
+
+def test_renaming_an_arm_does_not_invalidate_a_machine_day_of_training():
+    """A legend is not part of the identity of an experiment.
+
+    ``config_hash`` gates checkpoint compatibility: a changed hash archives
+    every checkpoint and restarts training. ``arm_labels`` only names arms on a
+    chart, so including it meant fixing a typo in a label threw away the run.
+    Measured on 2026-09-22 -- adding arm_labels alone changed the hash.
+    """
+    from ontology_rgat.benchmarks.experiment import configuration_hash
+    from run_three_pipeline import _DISPLAY_ONLY_CONFIG_KEYS
+    assert "arm_labels" in _DISPLAY_ONLY_CONFIG_KEYS
+
+    def hashed(config):
+        return configuration_hash({
+            "experiment": {k: v for k, v in config.items()
+                           if k not in _DISPLAY_ONLY_CONFIG_KEYS},
+            "system": {}, "training_replicate": 0, "model_seed": 0,
+            "training_seed_start": 0, "outcome_contract": "x"})
+
+    base = {"pipelines": ["a", "b"], "training": {"episodes_full": 1000}}
+    renamed = dict(base, arm_labels={"a": "Baseline", "b": "Proposed"})
+    retyped = dict(base, arm_labels={"a": "Baseline (fixed typo)", "b": "Proposed"})
+    assert hashed(base) == hashed(renamed) == hashed(retyped)
+
+    # ...but anything that changes what the run DOES still moves the hash
+    assert hashed(base) != hashed(dict(base, training={"episodes_full": 2000}))
+    assert hashed(base) != hashed(dict(base, pipelines=["a", "c"]))
+
+
+def test_bare_run_sh_runs_the_three_arm_burst_comparison():
+    """The zero-argument contract names the current headline experiment.
+
+    ``./run.sh`` with no arguments is what "run the experiment" means to anyone
+    reading the repository, so it has to select the comparison the paper
+    actually makes. It pointed at the six-deck two-arm design until
+    2026-09-22; that design is still declared and still runnable by --config.
+    """
+    source = (ROOT / "python/run_three_pipeline.py").read_text(encoding="utf-8")
+    assert 'ROOT / "config/experiments/three_arm_burst_comparison.yaml"' in source
+    assert '"three_arm_burst"' in source, (
+        "--experiment must accept the experiment its default config declares")
+    launcher = (ROOT.parent / "run.sh").read_text(encoding="utf-8")
+    assert "three_arm_burst_comparison.yaml" in launcher, (
+        "run.sh documents the zero-argument contract and must name the same file")
+    # the replaced design stays reachable rather than being deleted
+    assert (ROOT / "config/experiments/two_pipeline_comparison.yaml").is_file()
+    assert "two_pipeline_comparison.yaml" in launcher

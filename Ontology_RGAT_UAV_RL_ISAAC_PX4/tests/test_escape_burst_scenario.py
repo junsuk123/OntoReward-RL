@@ -27,6 +27,8 @@ from pad_motion import (BENCHMARK_PEAK_SPEED_M_S, BENCHMARK_SCENARIOS,  # noqa: 
                         ESCAPE_BURST_FOLLOW_ALTITUDE_M,
                         ESCAPE_BURST_FOLLOW_LATERAL_M, ESCAPE_BURST_MIN_FOLLOW_S,
                         ESCAPE_BURST_SCENARIO, ESCAPE_BURST_START_WINDOW_S,
+                        STRAIGHT_ESCAPE_BURST_SCENARIO,
+                        STRAIGHT_ESCAPE_CRUISE_SPEED_M_S,
                         PadMotionConfig, PadTrajectory, escape_burst_due)
 
 from ontology_rgat.benchmarks.experiment import load_experiment  # noqa: E402
@@ -134,13 +136,27 @@ def test_the_dash_outruns_the_teacher_far_enough_to_leave_the_frame(seed):
     assert after.max() < PURSUER_M_S
 
 
-def test_the_experiment_demonstrates_against_the_burst_and_fingerprints_it():
-    config = load_experiment(
-        ROOT / "config/experiments/two_pipeline_comparison.yaml")
+def test_the_deck_a_demonstration_flew_is_part_of_its_fingerprint():
+    """A different deck is a different demonstration set.
+
+    The experiment stopped demonstrating against the burst on 2026-09-21: the
+    student is cloned from these flights and then trained on
+    ``training.scenarios``, and a warm start flown on a deck that stays near
+    its origin taught it not to chase (see test_three_pipeline's
+    ``test_the_demonstrations_fly_the_decks_the_student_is_trained_on``). The
+    burst deck and its machinery are kept -- it is still the right deck for
+    demonstrating visual loss and recovery -- so what is pinned here is that
+    either spelling keys the stored set.
+    """
+    from conftest import default_experiment_config
+
+    config = load_experiment(default_experiment_config())
     settings = behavior_cloning_settings(config)
-    assert settings["scenario"] == ESCAPE_BURST_SCENARIO
-    assert "scenario" in _DEMONSTRATION_FLIGHT_KEYS, (
-        "a different deck is a different demonstration; the stored set must not be reused")
+    for key in ("scenario", "scenarios"):
+        assert key in _DEMONSTRATION_FLIGHT_KEYS, (
+            f"{key} must key the stored set or a deck change reuses it")
+    assert ESCAPE_BURST_SCENARIO in BENCHMARK_SCENARIOS, (
+        "the burst deck stays available to both vocabularies")
     # A recovered flight is longer than an approach; the horizon has to hold it.
     assert int(settings["horizon_steps"]) >= 600
 
@@ -213,3 +229,118 @@ def test_the_dash_is_due_when_following_close_and_low_or_at_the_fallback():
     assert escape_burst_due(lateral_m=4.0, altitude_m=4.0,
                             elapsed_s=ESCAPE_BURST_FALLBACK_S)
     assert not escape_burst_due(lateral_m=float("nan"), altitude_m=1.0, elapsed_s=10.0)
+
+
+# --------------------------------------------------------------------------
+# straight_escape_burst: the same dash over a constant-velocity straight run.
+# This is the deck the CICS2026 three-arm comparison flies -- the pad cruises,
+# the vehicle settles into following it, and then it accelerates away and
+# leaves the frame. Everything the walk-based variant above asserts about the
+# dash itself still has to hold; what is new is that the base motion is a
+# straight line and that it does not move with the curriculum.
+# --------------------------------------------------------------------------
+
+
+def test_the_straight_burst_is_a_named_scenario_everywhere_the_name_is_checked():
+    assert STRAIGHT_ESCAPE_BURST_SCENARIO in BENCHMARK_SCENARIOS
+    gateway = (ROOT / "ros2_ws/src/ontology_rgat_px4/ontology_rgat_px4"
+               / "protocol.py").read_text()
+    assert f'"{STRAIGHT_ESCAPE_BURST_SCENARIO}"' in gateway, (
+        "the gateway validates scenario names on reset; it has to know this one")
+
+
+@pytest.mark.parametrize("seed", [90000, 90001, 90004, 90007])
+def test_the_straight_deck_cruises_then_doubles_its_speed_and_eases_back(seed):
+    cfg = _config()
+    trajectory = PadTrajectory(cfg)
+    info = trajectory.reset(seed, 0.0, speed_scale=CURRICULUM,
+                            scenario=STRAIGHT_ESCAPE_BURST_SCENARIO)
+    burst = info["escape_burst"]
+    peak = BENCHMARK_PEAK_SPEED_M_S * cfg.benchmark_speed_scale
+    cruise = STRAIGHT_ESCAPE_CRUISE_SPEED_M_S * cfg.benchmark_speed_scale
+    assert burst["peak_m_s"] == pytest.approx(peak)
+    assert burst["distance_m"] >= ESCAPE_BURST_DISTANCE_M
+    # The dash is a doubling: that is what makes it an event rather than a
+    # drift the vehicle absorbs without ever losing the deck.
+    assert peak == pytest.approx(2.0 * cruise)
+    times, speeds = _speeds(trajectory)
+    before = speeds[times < burst["start_s"] - DT]
+    during = speeds[(times > burst["start_s"] + 1.5) & (times < burst["hold_end_s"] - DT)]
+    after = speeds[times > burst["end_s"] + DT]
+    assert before == pytest.approx(cruise, abs=1e-6), "constant velocity before the dash"
+    assert during.min() == pytest.approx(peak, abs=1e-6)
+    assert after == pytest.approx(cruise, abs=1e-6), "constant velocity after it"
+    positions = np.array([trajectory.pose(t)[0][:2] for t in times])
+    steps = np.linalg.norm(np.diff(positions, axis=0), axis=1)
+    assert steps.max() <= peak * DT * 1.01, "the deck accelerates, it is not teleported"
+
+
+def test_the_whole_straight_deck_is_one_line_dash_included():
+    """The property that distinguishes it from the walk-based burst."""
+    cfg = _config()
+    trajectory = PadTrajectory(cfg)
+    trajectory.reset(90002, 0.0, speed_scale=CURRICULUM,
+                     scenario=STRAIGHT_ESCAPE_BURST_SCENARIO)
+    times = np.arange(0.0, 60.0, DT)
+    points = np.array([trajectory.pose(t)[0][:2] for t in times])
+    offsets = points - points[0]
+    travelled = np.linalg.norm(offsets[-1])
+    assert travelled > 1.0, "the deck has to actually go somewhere"
+    direction = offsets[-1] / travelled
+    normal = np.array([-direction[1], direction[0]])
+    assert np.abs(offsets @ normal).max() < 1e-6, "cruise and dash share one heading"
+
+
+@pytest.mark.parametrize("curriculum", [0.0, 0.20, 0.50, 1.0])
+def test_the_straight_deck_does_not_move_with_the_curriculum(curriculum):
+    """The named decks are fixed by design; this one must be too.
+
+    ``_prepare_benchmark_motion`` rebinds ``speed_scale`` to
+    ``cfg.benchmark_speed_scale`` before the named-scenario branches, so the
+    curriculum argument reaches the random walk and nothing else. A scenario
+    whose speed silently depended on the curriculum would make the entry
+    budget and the command envelope impossible to size against it, which is
+    exactly what went wrong on 2026-09-22.
+    """
+    cfg = _config()
+    trajectory = PadTrajectory(cfg)
+    trajectory.reset(90000, 0.0, speed_scale=curriculum,
+                     scenario=STRAIGHT_ESCAPE_BURST_SCENARIO)
+    times, speeds = _speeds(trajectory, seconds=4.0)
+    cruise = STRAIGHT_ESCAPE_CRUISE_SPEED_M_S * cfg.benchmark_speed_scale
+    assert speeds == pytest.approx(cruise, abs=1e-9)
+
+
+def test_the_straight_deck_waits_armed_until_the_simulator_triggers_it():
+    cfg = _config("following")
+    trajectory = PadTrajectory(cfg)
+    info = trajectory.reset(90000, 0.0, speed_scale=CURRICULUM,
+                            scenario=STRAIGHT_ESCAPE_BURST_SCENARIO)
+    cruise = STRAIGHT_ESCAPE_CRUISE_SPEED_M_S * cfg.benchmark_speed_scale
+    assert trajectory.escape_burst_armed
+    assert info["escape_burst"] is None
+    _, speeds = _speeds(trajectory, seconds=20.0)
+    assert speeds == pytest.approx(cruise, abs=1e-9), "it cruises until told"
+    fired = trajectory.trigger_escape_burst(5.0)
+    assert fired is not None and not trajectory.escape_burst_armed
+    times, after = _speeds(trajectory, seconds=20.0)
+    during = after[(times > fired["start_s"] + 1.5) & (times < fired["hold_end_s"] - DT)]
+    assert during.min() == pytest.approx(
+        BENCHMARK_PEAK_SPEED_M_S * cfg.benchmark_speed_scale, abs=1e-6)
+
+
+@pytest.mark.parametrize("seed", [90000, 90001, 90002, 90003, 90005, 90006])
+def test_the_straight_dash_opens_a_frame_clearing_gap_on_the_servo(seed):
+    """Same geometry as the walk-based test: 1.5 m leaves the frame."""
+    cfg = _config()
+    trajectory = PadTrajectory(cfg)
+    info = trajectory.reset(seed, 0.0, speed_scale=CURRICULUM,
+                            scenario=STRAIGHT_ESCAPE_BURST_SCENARIO)
+    times, speeds = _speeds(trajectory)
+    burst = info["escape_burst"]
+    gap = sum(max(0.0, speed - PURSUER_M_S) * DT
+              for t, speed in zip(times, speeds)
+              if burst["start_s"] <= t <= burst["end_s"])
+    assert gap >= 1.5
+    after = speeds[times > burst["end_s"] + DT]
+    assert after.max() < PURSUER_M_S, "the servo can close again once it eases off"

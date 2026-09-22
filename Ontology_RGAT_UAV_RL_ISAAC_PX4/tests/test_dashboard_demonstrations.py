@@ -19,6 +19,8 @@ from ontology_rgat.viz.live import BenchmarkMonitor, LiveStore
 from run_three_pipeline import _LockedMonitor
 
 METHODS = ["shin_se_fixed", "shin_se_onto_rgat_recovery"]
+DECKS = ["straight_8mps", "circle", "linear_acceleration_wave",
+         "zigzag"]
 
 
 def _monitor(pair_count=2, rviz=None):
@@ -179,6 +181,9 @@ def test_every_collecting_pair_shows_its_own_demonstration_flight():
                              pair_index=index, pair_count=4)
               for index in range(4)]
     for index, worker in enumerate(locked):
+        worker.reset_episode(method="no_se_fixed", seed=90000 + index,
+                             curriculum=0.2, scenario=DECKS[index],
+                             phase="training-only teacher demonstration")
         worker.teacher_step(method="no_se_fixed", step=10 + index,
                             seed=90000 + index, altitude_m=3.0 - index,
                             lateral_error_m=0.4, target_vz_m_s=-0.3,
@@ -198,6 +203,9 @@ def test_every_collecting_pair_shows_its_own_demonstration_flight():
     pairs = store.snapshot()["scalars"]["parallel_pair_status"]
     assert [pairs[index]["teacher"]["seed"] for index in range(4)] == [
         90000, 90001, 90002, 90003]
+    # The warm start rotates one deck per seed, so each pair's panel has to
+    # carry the deck it is actually flying.
+    assert [pairs[index]["scenario"] for index in range(4)] == DECKS
     assert [pairs[index]["teacher"]["step"] for index in range(4)] == [
         10, 11, 12, 13]
     demo = store.snapshot()["scalars"]["teacher_demonstrations"]
@@ -246,3 +254,79 @@ def test_the_page_renders_the_demonstration_and_trajectory_panels():
                    "benchmark_step_pair_", "uav_x", "pad_x", "teacher_demonstrations",
                    "lost_climbing", "kind:'teacher'", "kind:'trajectories'"):
         assert marker in PAGE, marker
+
+
+def test_a_non_learned_arm_is_declared_and_labelled_by_the_run():
+    """Three arms, one of which never trains.
+
+    The 2026-09-22 comparison puts a non-learned visual servo beside the two
+    PPO arms. It has no training curve and no checkpoint, so the dashboard has
+    to be told which arms are learned rather than assuming every method is --
+    otherwise the servo is drawn as an empty learning chart.
+    """
+    store = LiveStore()
+    monitor = BenchmarkMonitor(store)
+    arms = [{"method": "image_based_visual_servo_v1",
+             "label": "Visual servo (non-learned)", "learned": False},
+            {"method": "shin_se_fixed", "label": "Baseline · Shin SE fixed"},
+            {"method": "shin_se_onto_rgat_recovery",
+             "label": "Proposed · Shin + Ontology-R-GAT FOV", "learned": True}]
+    monitor.configure(methods=[arm["method"] for arm in arms], mode="quick",
+                      config_hash="0" * 16, training_total=8,
+                      evaluation_total=4, arms=arms)
+
+    declared = store.snapshot()["scalars"]["benchmark_arms"]
+    assert [arm["method"] for arm in declared] == [arm["method"] for arm in arms]
+    assert [arm["learned"] for arm in declared] == [False, True, True]
+    assert declared[0]["label"] == "Visual servo (non-learned)"
+    assert monitor.arm_label("shin_se_fixed") == "Baseline · Shin SE fixed"
+    assert monitor.arm_label("unconfigured") == "unconfigured"
+
+
+def test_an_unconfigured_run_still_reports_every_method_as_learned():
+    """Omitting `arms` keeps what every two-arm run did before."""
+    store = LiveStore()
+    monitor = BenchmarkMonitor(store)
+    monitor.configure(methods=METHODS, mode="quick", config_hash="0" * 16,
+                      training_total=8, evaluation_total=4)
+    declared = store.snapshot()["scalars"]["benchmark_arms"]
+    assert [arm["method"] for arm in declared] == METHODS
+    assert all(arm["learned"] for arm in declared)
+    assert [arm["label"] for arm in declared] == METHODS
+
+
+def test_the_rviz_view_is_told_which_arm_it_is_drawing():
+    """Three arms cannot share a two-way BASELINE/PROPOSED label."""
+    published = []
+
+    class FakeRviz:
+        def clear_trails(self, **kwargs):
+            pass
+
+        def publish_benchmark_step(self, **kwargs):
+            published.append(kwargs)
+
+    store = LiveStore()
+    monitor = BenchmarkMonitor(store, rviz=FakeRviz())
+    monitor.configure(
+        methods=["image_based_visual_servo_v1", "shin_se_fixed"], mode="quick",
+        config_hash="0" * 16, training_total=8, evaluation_total=4,
+        arms=[{"method": "image_based_visual_servo_v1",
+               "label": "Visual servo (non-learned)", "learned": False},
+              {"method": "shin_se_fixed", "label": "Baseline · Shin SE fixed"}],
+        pair_layout=[{"index": 0, "method": "image_based_visual_servo_v1"}])
+    _step(monitor, 1, (1.0, 2.0, 5.0), (0.5, 2.5, 0.42),
+          method="image_based_visual_servo_v1", pair_index=0)
+    assert published[-1]["arm_label"] == "Visual servo (non-learned)"
+
+
+def test_the_page_builds_its_arm_set_from_the_run():
+    for marker in ("function syncArms", "function armsOf", "function armLabel",
+                   "function seriesLabel", "function learnedArms",
+                   "benchmark_arms", "a.learned"):
+        assert marker in PAGE, marker
+    # The fallback for a state that arrives before the run configures its arms
+    # is a frozen copy, not the list syncArms rewrites: reading the mutable one
+    # would let a stale arm set resurrect itself as learned.
+    assert "const DEFAULT_METHODS=Object.freeze(" in PAGE
+    assert "benchmark_methods||DEFAULT_METHODS" in PAGE

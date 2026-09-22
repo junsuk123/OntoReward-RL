@@ -1,0 +1,107 @@
+extends: two_pipeline_comparison.yaml
+experiment: three_arm_burst
+
+# The CICS2026 headline comparison, reduced to one deck and widened to three
+# arms (2026-09-22).
+#
+# WHY ONE DECK. The six named decks existed to show the method across a motion
+# taxonomy. What the paper actually argues is narrower: that an ontology-driven
+# FOV risk term recovers a landing when the pad leaves the camera. That claim
+# needs a deck which *produces* the event reliably, not six that produce it
+# incidentally. ``straight_escape_burst`` is that deck -- the pad cruises in a
+# straight line at 0.50 m/s, the vehicle settles into following it, and then it
+# doubles to 1.00 m/s and pulls out of frame. Every episode contains the event
+# under test, so every episode is evidence, which is worth more than the same
+# budget spread over five decks where the event is rare.
+#
+# The other five decks are not deleted -- two_pipeline_comparison.yaml still
+# declares them and can still be run. They are zeroed here, and because
+# ``evaluation`` is a mapping the loader deep-merges, zeroing has to be
+# explicit: an override listing only the burst would leave all six inherited.
+#
+# WHY THREE ARMS. The two learned arms answer "does the ontology term help a
+# PPO policy". They cannot answer "is any of this better than a controller you
+# could have written", which is the first question a reviewer asks about a
+# learned landing controller. The visual servo arm is that control condition.
+
+# Only the LEARNED arms belong here. ``pipelines`` drives training, the PPO
+# checkpoint machinery and _training_pair_replicas, whose
+# ``pair_count % len(methods) == 0`` invariant is satisfied by two arms on four
+# pairs (two replicas each) and would be broken by three. The servo trains
+# nothing and holds no pair during training; it enters only at evaluation.
+pipelines: [shin_se_fixed, shin_se_onto_rgat_recovery]
+
+# The non-learned control condition, flown through the same evaluation harness,
+# on the same seeds and decks, scored by the same landing criteria. It has no
+# checkpoint, no training curve and no reward: it is a controller, and the
+# comparison is fair precisely because nothing about the task is relaxed for
+# it.
+#
+# ``controller`` selects the implementation. ``image_based_visual_servo_v1`` is
+# the preferred control condition because it consumes the same image the
+# policies do, so a difference between it and an arm is a difference in policy
+# rather than in observation. ``privileged_relative_state_velocity_pd_v4`` is
+# the fallback if the servo cannot hold the deck well enough to be a credible
+# baseline -- it reads privileged simulator state, so it is a strictly stronger
+# and strictly less fair comparison, and using it has to be reported as such.
+baseline_arms:
+  - method: image_based_visual_servo_v1
+    label: "Visual servo (non-learned)"
+    controller: image_based_visual_servo_v1
+    learned: false
+
+# Display names for the learned arms. The control condition carries its own
+# label in baseline_arms above; these are the other two, so that the dashboard,
+# the RViz HUD and the figures all read one list from the run rather than
+# hard-coding a name apiece. Omitted, an arm falls back to its id.
+arm_labels:
+  shin_se_fixed: "Baseline · Shin SE fixed"
+  shin_se_onto_rgat_recovery: "Proposed · Shin + Ontology-R-GAT FOV"
+
+# Deck motion for PPO. One scenario, rotated by episode index as before -- with
+# a single entry the rotation is a constant, which is what makes every training
+# episode contain the FOV-loss event.
+training:
+  scenarios:
+    - straight_escape_burst
+
+# The demonstrations fly the deck the student is trained on, which is the
+# property the 2026-09-21 change established and which one deck makes trivial.
+behavior_cloning:
+  scenarios:
+    - straight_escape_burst
+
+  # Teacher rules re-based onto this deck (2026-09-22).
+  #
+  # pd_climb_* were fitted against the route decks at 3.0 m / 1.0 m, on flights
+  # where an FOV loss was an accident to be survived. Here the loss is the
+  # scenario, so the climb rule is the normal case rather than the exception
+  # and route-deck tuning should not be carried into it: both go back to their
+  # shipped defaults and the recovery descent below handles what they were
+  # compensating for.
+  pd_climb_altitude_m: 0.80
+  pd_climb_lateral_m: 0.40
+
+  # Undo the altitude a re-acquisition climb bought, once the pad is back in
+  # frame. Without this the teacher ratchets upward: while the lateral error
+  # exceeds pd_approach_lateral_m the only branches that can fire are climb and
+  # hold, so every FOV loss adds altitude and nothing removes it -- measured on
+  # 2026-09-22 as a monotone 3.20 -> 5.09 m climb into the ceiling on a deck
+  # that turned. On a deck defined to leave the frame that ratchet is not an
+  # edge case, so these are load-bearing here rather than a safety net.
+  pd_recovery_descent_m_s: 0.20
+  pd_recovery_altitude_m: 2.0
+
+# One deck, and the five it replaces explicitly zeroed rather than inherited.
+# 1,200 seeds per arm is the count two_pipeline_comparison.yaml sized against
+# measured throughput and justified as +/-2.8%p at a success rate near 0.5;
+# concentrating it on one deck keeps that power and now spends all of it on
+# flights that contain the event under test.
+evaluation:
+  straight_escape_burst: 1200
+  straight_8mps: 0
+  linear_acceleration_wave: 0
+  circle: 0
+  zigzag: 0
+  u_turn: 0
+  vertical_heave_boat: 0

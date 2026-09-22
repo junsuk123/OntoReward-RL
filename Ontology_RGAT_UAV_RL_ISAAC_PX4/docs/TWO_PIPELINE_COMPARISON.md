@@ -424,6 +424,101 @@ config에 함께 적어야 서보 시연이 그것을 날린 게인으로 keying
 `raw_scale` 거동을 먼저 측정하고, range gain에 슬루 제한을 두거나 scale을 가시
 landmark 수로 정규화하는 쪽이다.
 
+### 5.9 시연 덱과 학습 덱의 불일치 (2026-09-21)
+
+PD 교사로 warm start(4/4)를 확보하고 처음으로 PPO까지 간 실행은 episode 48에서 health
+gate에 걸려 멈췄다:
+
+```
+training health gate stopped shin_se_fixed: position RMSE stalled at 11.20 m
+(previous 7.26, limit 3.00); active reward saturation stalled at 87.0%
+```
+
+원장을 정상 런과 비교하면 원인이 보인다:
+
+| | 정상 런 (`training_random_walk`) | 멈춘 런 (6개 경로 덱) |
+|---|---|---|
+| 추정기 위치 RMSE | 1.86 m | 8.73 m |
+| 물리 추종 오차 | 3.80 m | 9.33 m |
+| 기하 FOV 유지 | 0.83 | 0.47 |
+| keypoint 신뢰도 / 가시 비율 | 0.51 / 0.76 | 0.28 / 0.36 |
+
+정상 런에서는 추정기 오차가 추종 오차의 절반이었다 — 추정기가 일을 하고 있었다. 멈춘
+런에서는 둘이 거의 같다(8.73 vs 9.33). 추정기가 사실상 0을 내놓는다는 뜻이고, 패드가
+프레임 안에 있는 step이 47 %뿐이고 그중에도 landmark를 36 %만 보는 상태에서는 당연하다.
+
+경로 자체가 첫 번째 원인이다: random walk는 원점 근처를 맴돌지만 여섯 덱은 에피소드당
+약 10 m를 주행한다. (이 절은 원래 "덱 속도는 범인이 아니다"라고 적었는데, 그 근거로
+든 산술이 틀렸다 — 5.10 참조. 덱 속도도 원인의 일부였다.) 그런데
+warm start 시연은 `training_random_walk_escape_burst`로 비행하고 있었다 — 복제된 정책은
+**주행하는 덱을 쫓아본 적이 없다**. 뒤처지고, 패드가 프레임을 벗어나고, 인지가 굶고,
+추정기가 무너진다.
+
+세 가지를 바꿨다.
+
+* `behavior_cloning.scenarios`가 `training.scenarios`와 **정확히 같은 여섯 덱**을
+  seed 단위로 순환한다(덱 = `(seed - seed0) % len`, 배치나 재개와 무관하게 결정적).
+  테스트가 두 목록의 일치를 고정한다.
+* `pd_horizontal_speed_limit_m_s: 0.60 → 0.90`. 서보는 0.60에서만 안정하다고 측정돼
+  있으므로 공유 키를 올리지 않고 PD 전용 키로 분리했다(`pd_` 접두사 규약은 하강 키와
+  같다). **이 값의 근거로 든 "덱 0.48 m/s" 계산은 틀렸고 0.90 역시 부족했다 —
+  5.10을 보라.**
+* health gate 재보정: `health_max_position_rmse_m` 3.0 → 12.0,
+  `health_grace_episodes` 40 → 200. 기존 값은 학습도 random walk를 쓰던 시절
+  기본값이다. 10 m를 주행하는 덱에서는 아직 배우는 중인 정책이 수 미터 뒤처지는 것이
+  정상이고, 3.0 m 한계는 따라가는 법을 배우기도 전에 arm을 멈춘다 — 실제로 첫 판정
+  기회에서 그렇게 됐다. 무착륙 게이트(계획 episode의 0.75배)는 건드리지 않았다.
+
+시연 지문은 1dbfa17af276 → 718d19ead199로 바뀌므로 교사 집합을 다시 난다
+(`max_attempts` 40 → 60: 경로 덱은 random walk보다 어렵고, 4-pair에서 60회는 15배치다).
+
+### 5.10 정정: curriculum은 명명 덱의 속도를 바꾸지 않는다 (2026-09-22)
+
+5.9가 "덱 속도는 범인이 아니다"라고 쓴 근거는 틀렸다. 그 계산은 명명 시나리오 덱의
+속도에 curriculum 모션 스케일(`curriculum_min_pad_motion_scale` 0.35 → 1.0)을 곱했는데,
+`_prepare_benchmark_motion`은 그 인자를 명명 분기에 적용하지 않는다.
+`isaac_sim/pad_motion.py:804`의 `speed_scale = cfg.benchmark_speed_scale`가 지역 이름을
+재바인딩하고, 아래의 모든 명명 분기는 그 값을 쓴다. curriculum `scale`은 그 위의
+random walk / escape-burst 분기에서만 읽힌다.
+
+`PadTrajectory.reset()`에 넘기는 스케일을 쓸어 측정한 30 s 최대 지면속도:
+
+| 덱 | c=0.00 | c=0.20 | c=0.50 | c=1.00 |
+|---|---|---|---|---|
+| straight_8mps | 1.000 | 1.000 | 1.000 | 1.000 |
+| linear_acceleration_wave | 1.000 | 1.000 | 1.000 | 1.000 |
+| circle / zigzag / u_turn | 0.750 | 0.750 | 0.750 | 0.750 |
+| vertical_heave_boat | 0.500 | 0.500 | 0.500 | 0.500 |
+| training_random_walk | 0.000 | 0.120 | 0.300 | 0.600 |
+
+이것은 프로파일의 의도와도 일치한다 — `shin2026-minimal-system.yaml`은
+`benchmark_speed_scale: 0.125`가 "가장 빠른 시나리오를 캐리어 상한에 정확히 맞춘다
+(8.0 → 1.00 m/s)"고 적고 있다. 덱은 **의도적으로 고정**이고, 잘못 맞춰진 것은 덱이
+아니라 명령 엔벨로프였다.
+
+따라서 5.9의 교사 clamp 0.90 m/s는 `straight_8mps`·`linear_acceleration_wave`(둘 다
+1.000 m/s)에 **산술적으로 도달할 수 없었다**. 같은 날 교사 트레이스가 그것을 그대로
+보여준다: straight_8mps에서 수평 명령이 100 % step 동안 상한에 포화된 채 상대속도가
+0.11–0.18에 머물고 측방오차가 좁혀지지 않는다. 포화 비율(straight 100 % > 원·지그재그
+·U턴 93–100 % > 가속파·수직동요 65 %)이 착륙 결과 순서와 정확히 일치한다 — 5.9의 세
+수정으로 7비행 4착륙까지 갔지만, 남은 두 실패가 모두 `straight_8mps`였던 것은 우연이
+아니었다.
+
+또한 교사 행동은 마지막에 ±0.90으로 클립되므로 실제 전달 가능한 수평속도는
+`0.9 × (max_velocity × action_scale)`이다. clamp만 올리면 무효이고, `action_scale`의
+바닥(`curriculum_min_action_scale`)이 함께 올라가야 한다.
+
+엔벨로프 수정(교사 clamp 1.80, `curriculum_min_action_scale` 0.50 → 0.90, 실효
+1.62–1.66 m/s로 가장 빠른 덱 대비 1.62배)과 그 검증은 병행 세션에서 진행 중이며, 그
+결과는 해당 변경과 함께 기록된다.
+
+남은 관련 사항 하나: 하강 분기의 두 절대속도 리터럴(`relative_speed > 0.45`,
+`< 0.70`)은 0.29–0.48 m/s 덱에 맞춘 값이다. 상대속도는 벡터 차이이므로 덱이 방향을
+바꾸는 지그재그·U턴·원에서는 `명령 + 덱`까지 커진다. 0.90 clamp에서 이미 원 16 %,
+지그재그 17 %의 step이 0.70을 넘었고(p90 0.84·0.93), 그 step에서는 하강이 0으로
+잠긴다. 엔벨로프를 키우면 이 과도 구간은 더 커지므로, 새 트레이스에서 덱별
+"하강 0 유지 비율"을 함께 봐야 한다.
+
 ## 6. 평가 프로토콜
 
 * **시나리오**: `training_random_walk`, `straight_8mps`,
@@ -491,6 +586,56 @@ warm start를 처음으로 끝낸 실행(교사 4/4 확보 직후 FOV-risk 수�
 guard 자체는 건드리지 않는다 — 두 예산은 서로 다른 것을 지키고, 실제 진입은 수십 초
 안에 끝나므로 900 s hold는 충분하다. 학습기 쪽 상수는 테스트가 게이트웨이 프로토콜
 값과 같은지 고정한다(`test_the_entry_hold_never_exceeds_what_the_gateway_accepts`).
+
+### 7.2 세 번째 arm이 드러낸 가정: `pipelines`는 arm 목록이 아니다 (2026-09-22)
+
+> 이 문서는 6-덱 2-arm 설계의 기록이다. 3-arm 비교 자체는
+> [THREE_ARM_BURST_COMPARISON.md](THREE_ARM_BURST_COMPARISON.md)가 다루고, 그 §6이
+> 같은 결함 목록을 요약한다. 아래는 각 결함이 무엇을 어떻게 틀리게 했는지의
+> 상세 기록이다.
+
+비교가 2-arm에서 3-arm이 됐다 — 비학습 통제조건(visual servo, 안 되면 privileged PD),
+논문 기준 PPO(`shin_se_fixed`), 제안 모델(`shin_se_onto_rgat_recovery`). 학습하는 것은
+둘뿐이고 세 번째는 체크포인트도 학습곡선도 없다.
+
+이 한 가지 구조 변경이 하루에 같은 부류의 결함 **다섯 개**를 드러냈다. 전부
+"모든 arm은 학습한다"를 가정한 코드 경로다.
+
+| 위치 | 증상 |
+|---|---|
+| 대시보드 | arm 목록 폴백이 비학습 arm을 학습형으로 되살림 |
+| 러너 | 체크포인트 없는 arm의 평가 행이 superseded로 아카이브됨 |
+| 러너 | pipeline spec이 없어 `_reward`가 마지막 분기로 떨어져 평가 중 예외 |
+| 보고 | `METHODS` 하드코딩으로 통제 arm이 **모든 그림**에서 누락 |
+| 보고 | 완결성 검사가 통제 arm에도 체크포인트를 요구 → 완료된 런이 **최종 평가 대신 학습 예비 데이터**를 그림 |
+
+마지막 것이 가장 위험했다. 그림은 그림처럼 보이고, 실제로는 PPO 10 episode가 결과로
+실려 있었다. 표에는 세 arm이 들어 있는데 그림에는 둘만 있는 상태도 눈에 띄지 않는다.
+
+**근본 원인**은 `pipelines`가 *학습하는 목록*인데 *arm 목록*처럼 읽힌다는 것이다. 2-arm
+시절에는 둘이 같았으므로 구분할 이유가 없었다.
+
+**지속적 수정**은 manifest.json이 arm 목록을 직접 싣는 것이다:
+
+```json
+"arms": [
+  {"method": "shin_se_fixed", "label": "...", "learned": true},
+  {"method": "image_based_visual_servo_v1", "label": "Visual servo (non-learned)",
+   "learned": false}
+]
+```
+
+`BenchmarkMonitor.configure(arms=...)`도 같은 모양을 받아 store에 `benchmark_arms`로
+발행하고, 대시보드는 여기서 arm 집합을 만든다(학습곡선은 `learned` arm만, 비학습 arm은
+빈 차트 대신 아예 없음). 보고 모듈은 선언된 arm을 우선하고, 없으면 `pipelines`를 학습형
+목록으로 보고 실제로 비행한 arm을 평가 행에서 주워 담는다. RViz HUD와 pair 제목도 같은
+목록에서 나온다.
+
+라벨은 config에서 온다. 단, 선언된 라벨이 method id와 같으면(= config에 라벨이 없어 런이
+id를 적은 경우) 모듈의 이름이 이긴다 — id는 마지막 수단이다.
+
+**남는 지침**: 이제 `pipelines`에서 arm 집합을 추론하는 코드는 *선택해서* 그러는 것이다.
+새 소비자를 쓸 때는 `arms`를 읽고, `learned`로 학습 전용 경로를 거르라.
 
 ## 8. 산출물
 

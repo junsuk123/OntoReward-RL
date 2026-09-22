@@ -1,17 +1,26 @@
 # 구현 개요
 
-이 디렉터리는 [상위 README](../README.md)가 정의한 두 pipeline 비교의 실행 코드다.
+이 디렉터리는 [상위 README](../README.md)가 정의한 3-arm 비교의 실행 코드다.
 아래는 알고리즘의 각 구성요소가 어느 모듈에 대응하는지, 그리고 어떤 artifact가
 어느 단계에서 확정되는지를 정리한다.
 
-## 1. 두 agent
+## 1. 세 arm
 
-| ID | 구성 |
-|---|---|
-| `shin_se_fixed` | Shin et al. 전체 baseline |
-| `shin_se_onto_rgat_recovery` | 동일 baseline + 시각 온톨로지 + 동결 R-GAT 미래 FOV 비가용성 + `-λ_fov q_θ(G_t)` |
+| ID | 종류 | 구성 |
+|---|---|---|
+| `image_based_visual_servo_v1` | **비학습 대조군** | 영상 기반 visual servo. 학습·보상·checkpoint 없음 |
+| `shin_se_fixed` | 학습 | Shin et al. 전체 baseline |
+| `shin_se_onto_rgat_recovery` | 학습 | 동일 baseline + 시각 온톨로지 + 동결 R-GAT 미래 FOV 비가용성 + `-λ_fov q_θ(G_t)` |
 
-두 agent는 카메라, Isaac/Pegasus/PX4 환경, 초기조건, UGV 궤적, 6-keypoint encoder와
+대조군은 `PipelineSpec`을 갖지 않는다. 따라서 보상 dispatch에 넘길 수 없고, 러너가
+**참조 arm의 method로 비행**시킨 뒤 기록만 대조군 이름으로 남긴다. 이는 공정성
+측면에서도 옳다 — 대조군이 학습 arm과 같은 encoder로 덱을 본다.
+
+`pipelines`는 학습 arm 목록이고, 전체 arm 목록은 `manifest.json`의 `arms` 키다.
+`learned` 플래그를 싣는다. 자세한 근거와 이 구분이 만든 결함들은
+[3-arm 비교](docs/THREE_ARM_BURST_COMPARISON.md) §3.1, §6.
+
+두 학습 agent는 카메라, Isaac/Pegasus/PX4 환경, 초기조건, UGV 궤적, 6-keypoint encoder와
 checkpoint, LSTM과 6-D 상대상태 추정기, 보조손실, actor/critic, observation/action,
 PPO hyperparameter, curriculum, 고정 5개 shaping 항과 가중치, active-perception과
 terminal 보상, 학습·평가 seed와 episode 예산을 공유한다.
@@ -106,18 +115,21 @@ keypoint/이미지 이력에서만 나온다. Simulator truth, 6-D 추정, criti
 
 ```bash
 # 상위 디렉터리에서
-./run.sh --pipelines shin_se_fixed shin_se_onto_rgat_recovery --parallel-pairs 2
+./run.sh                 # 기본: 3-arm 급가속 이탈 비교
+./run.sh --mode quick    # 전 구간 배관 검증 (수십 분, full 전에 권장)
 ```
 
 각 pair는 PX4 instance, ROS namespace, UDP gateway/learner port, reset/controller
 state, PPO buffer, optimizer와 log를 독립적으로 소유한다. GPU update만 lock으로
-직렬화한다. 최종 평가는 동일 scenario/seed를 쓰고 두 물리 pair에 교차 배정한다.
+직렬화한다. 학습 페어는 **학습 arm에만** 나뉘고(대조군은 학습 중 페어를 갖지
+않는다), 최종 평가는 동일 scenario/seed를 세 arm 전체에 교차 배정한다.
 
 시뮬레이터 없이 수행하는 정적·단위 검증:
 
 ```bash
 ./scripts/check_workspace.sh
-python -m pytest -q tests/test_two_pipeline_fov.py
+python -m pytest -q tests/test_two_pipeline_fov.py tests/test_three_pipeline.py
+python -m pytest -q tests/test_escape_burst_scenario.py   # 급가속 덱 계약
 ```
 
 ## 5. Artifact와 경계
@@ -143,14 +155,14 @@ train/validation episode ID, MAE, RMSE, bias, R², 상수 예측기 RMSE 기준�
 ## 6. 결과 디렉터리
 
 ```
-manifest.json                       resolved config · 두 spec · seed/budget · provenance
+manifest.json                       resolved config · arms(learned 플래그) · spec · seed/budget · provenance
 rgat/fov_risk_rollouts.npz          episode ID를 포함한 미래 FOV 비가용 dataset
 rgat/fov_risk_model.pt              동결 validation-best R-GAT과 checksum
 rgat/fov_risk_training_history.csv  epoch별 train/validation huber·contract
 models/<pipeline>/                  독립 PPO latest/best/selected checkpoint
 evaluation/per_episode.csv          paired · crossover 원자료
 evaluation/paired_summary.csv       시나리오별 계층 bootstrap 요약
-tables/primary_comparison.*         두 pipeline 주 비교
+tables/primary_comparison.*         3-arm 주 비교 (대조군 포함)
 ```
 
 ## 7. Legacy

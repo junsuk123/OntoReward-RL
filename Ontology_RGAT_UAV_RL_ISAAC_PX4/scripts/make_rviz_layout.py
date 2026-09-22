@@ -16,6 +16,7 @@ import argparse
 import copy
 import json
 from pathlib import Path
+from typing import Sequence
 
 import yaml
 
@@ -36,7 +37,8 @@ def _reindex(node, source: int, target: int):
     return json.loads(text)
 
 
-def build(pairs: int, template_path: Path = TEMPLATE) -> dict:
+def build(pairs: int, template_path: Path = TEMPLATE,
+          arm_titles: Sequence[str] | None = None) -> dict:
     if pairs < 1:
         raise ValueError("--pairs must be at least one")
     layout = yaml.safe_load(template_path.read_text(encoding="utf-8"))
@@ -52,12 +54,17 @@ def build(pairs: int, template_path: Path = TEMPLATE) -> dict:
     # run_three_pipeline._training_pair_replicas: with four pairs and two arms
     # the split is {arm0: [0, 1], arm1: [2, 3]}, not an alternation. Labelling
     # them alternately would put the wrong method's name over a camera.
-    per_arm = max(1, pairs // len(ARM_TITLES))
+    # Titles name the arms the *training* pairs belong to. A run may compare
+    # more arms than it trains -- the 2026-09-22 comparison flies a non-learned
+    # visual servo that takes no training pair -- so the caller passes the arms
+    # that actually hold a pair rather than this file assuming two.
+    titles = [str(title) for title in (arm_titles or ARM_TITLES)] or list(ARM_TITLES)
+    per_arm = max(1, pairs // len(titles))
     rebuilt = []
     for index in range(pairs):
         group = _reindex(copy.deepcopy(template_group), 0, index)
-        arm_index = min(index // per_arm, len(ARM_TITLES) - 1)
-        arm = ARM_TITLES[arm_index]
+        arm_index = min(index // per_arm, len(titles) - 1)
+        arm = titles[arm_index]
         if per_arm > 1:
             arm = f"{arm} · replica {index % per_arm + 1}/{per_arm}"
         group["Name"] = f"Pair {index + 1} · {arm}"
@@ -86,8 +93,12 @@ def main() -> None:
     parser.add_argument("--pairs", type=int, required=True)
     parser.add_argument("--output", required=True)
     parser.add_argument("--template", default=str(TEMPLATE))
+    parser.add_argument(
+        "--arm-title", action="append", dest="arm_titles", default=None,
+        help="name of an arm that holds training pairs, in pair order; "
+             "repeat once per arm (default: the two-arm comparison)")
     args = parser.parse_args()
-    layout = build(args.pairs, Path(args.template))
+    layout = build(args.pairs, Path(args.template), args.arm_titles)
     Path(args.output).write_text(
         yaml.safe_dump(layout, sort_keys=False, allow_unicode=True),
         encoding="utf-8")

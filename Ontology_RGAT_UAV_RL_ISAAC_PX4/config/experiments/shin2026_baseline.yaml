@@ -130,9 +130,30 @@ control:
   max_acceleration_m_s2: [1.5, 1.5, 1.0]
   max_yaw_rate_deg_s: 60.0
   max_yaw_acceleration_deg_s2: 90.0
-  # Keep early exploration mobile: c=0 uses 50% of the safe command envelope,
+  # Keep early exploration mobile: c=0 uses 90% of the safe command envelope,
   # while the acceleration slew limiter below still rejects abrupt commands.
-  curriculum_min_action_scale: 0.50
+  #
+  # Raised 0.50 -> 0.90 on 2026-09-22. The command ceiling is
+  # max_velocity_m_s * action_scale, so 0.50 gave the policy 2.0 * 0.50 =
+  # 1.00 m/s horizontally at the bottom of the curriculum -- against named
+  # benchmark decks that drive at a FIXED 0.500-1.000 m/s regardless of
+  # curriculum (pad_motion._prepare_benchmark_motion rebinds its ``scale``
+  # argument to cfg.benchmark_speed_scale, so only training_random_walk ramps
+  # with the curriculum; see the note on pd_horizontal_speed_limit_m_s in
+  # two_pipeline_comparison.yaml). At curriculum level 1 of 80 the policy had
+  # 1.012 m/s against a 1.000 m/s straight_8mps deck: 0.012 m/s of closing
+  # speed, so it could not reduce the seeded entry offset, could not satisfy
+  # the descent gate, and ended every episode on timeout or an empty pack with
+  # pad_contact 0. Over 58 episodes relative_position_rmse_m degraded from
+  # 7.2 to 11.4 m while episode_return improved, which is what optimising a
+  # task you cannot physically perform looks like.
+  #
+  # 0.90 gives 1.80 m/s at c=0 rising to 2.00 m/s at c=1: 1.8-2.0x the fastest
+  # deck. The derived limits stay inside PX4's: vertical 1.0 * 0.90 = 0.90
+  # against MPC_Z_VEL_MAX 1.0, horizontal acceleration 1.5 * 0.90 = 1.35
+  # against MPC_ACC_HOR_MAX 1.5, and 2.0 * 1.00 = 2.00 against MPC_XY_VEL_MAX
+  # 2.0 at the top of the curriculum.
+  curriculum_min_action_scale: 0.90
   # Do not park the target for hundreds of early episodes. At c=0 the UGV
   # already drives at 35% of its sampled road speed (0.0875--0.21 m/s), then
   # increases continuously to the full configured speed at c=1.

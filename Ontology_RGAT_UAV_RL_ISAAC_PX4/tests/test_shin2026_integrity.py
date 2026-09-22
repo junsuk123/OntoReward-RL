@@ -159,7 +159,11 @@ def test_all_five_ablation_arms_inherit_one_stable_control_configuration():
     controller = VelocityYawRateController.from_mapping(config["control"])
     np.testing.assert_allclose(controller.max_velocity, [2.0, 2.0, 1.0])
     np.testing.assert_allclose(controller.max_acceleration, [1.5, 1.5, 1.0])
-    assert controller.curriculum_min_action_scale == pytest.approx(0.50)
+    # 0.90 since 2026-09-22: the named benchmark decks drive at a fixed
+    # 0.500-1.000 m/s and do not scale with the curriculum, so a 0.50 floor
+    # left 2.0 * 0.50 = 1.00 m/s against a 1.000 m/s straight_8mps deck.
+    # This arm evaluates on those decks too (see evaluation: above).
+    assert controller.curriculum_min_action_scale == pytest.approx(0.90)
     assert math.exp(float(config["ppo"]["init_log_std"])) == pytest.approx(
         0.3011942119)
     assert float(config["ppo"]["actor_output_gain"]) == pytest.approx(0.03)
@@ -1496,8 +1500,9 @@ def test_no_shipped_config_declares_a_key_twice():
 
 
 def test_the_fov_risk_arm_reads_its_reward_from_the_graph_itself():
-    contract = load_experiment(
-        ROOT / "config/experiments/two_pipeline_comparison.yaml")
+    from conftest import default_experiment_config
+
+    contract = load_experiment(default_experiment_config())
     proposed = contract["pipeline_contract"]["shin_se_onto_rgat_recovery"]
     assert proposed["fov_reward_readout"] == "direct_graph_scalar"
     assert proposed["fov_risk_reward"] is True
@@ -1542,8 +1547,9 @@ def test_the_shipped_configuration_cannot_ask_the_gateway_for_the_impossible():
     from run_shin2026_pipeline import _live_config
     from run_three_pipeline import MAX_PARALLEL_PAIRS, _pair_live_config
 
-    config = load_experiment(
-        ROOT / "config/experiments/two_pipeline_comparison.yaml")
+    from conftest import default_experiment_config
+
+    config = load_experiment(default_experiment_config())
     system = load_config(ROOT / "config/shin2026-minimal-system.yaml")
     cfg = _live_config("full", Path("/tmp/ontology_rgat_protocol_bounds"),
                        ROOT / "config/shin2026-minimal-system.yaml")

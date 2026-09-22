@@ -546,7 +546,7 @@ class RvizPublisher:
                                keypoint_confidence: float = 0.0,
                                visible_keypoint_fraction: float = 0.0,
                                semantic_graph=None, potential=None,
-                               phase: str = "",
+                               phase: str = "", arm_label: str = "",
                                pair_index: int | None = None) -> None:
         """Publish the recurrent Shin benchmark without its legacy log type.
 
@@ -640,8 +640,14 @@ class RvizPublisher:
                   else (0.98, 0.30, 0.22) if status == "failure"
                   else (0.94, 0.94, 0.94))
         _rgba(text, colour, 0.96)
-        method_label = ("PROPOSED · Shin + Ontology-R-GAT FOV"
-                        if is_proposed else "BASELINE · Shin SE fixed")
+        # The run says what each arm is called. The binary below it is about
+        # the FOV branch, not about naming: with three arms -- the 2026-09-22
+        # comparison adds a non-learned visual servo -- anything that is not
+        # the proposed arm was being drawn as "BASELINE · Shin SE fixed",
+        # which is the wrong name for two of the three.
+        method_label = str(arm_label) or (
+            "PROPOSED · Shin + Ontology-R-GAT FOV"
+            if is_proposed else "BASELINE · Shin SE fixed")
         # What this flight is, and which pair is flying it. Four pairs render
         # four identical-looking views, and outside PPO training they are not
         # even flying the arm the panel is titled after: the warm start flies

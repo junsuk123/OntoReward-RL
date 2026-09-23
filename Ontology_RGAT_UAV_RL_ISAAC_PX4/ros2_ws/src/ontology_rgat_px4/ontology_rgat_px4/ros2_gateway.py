@@ -122,6 +122,18 @@ FAILSAFE_SITL_INFRASTRUCTURE_FIELDS = frozenset({
     "manual_control_signal_lost", "gcs_connection_lost",
 })
 
+# ``fd_critical_failure`` is PX4's attitude failure detector: roll or pitch
+# beyond FD_FAIL_R/FD_FAIL_P for FD_FAIL_R_TTRI seconds. On this airframe
+# nothing else can raise it -- FAILURE_ALT is unused and FAILURE_EXT needs an
+# ATS receiver SITL does not have. It therefore means one thing: the vehicle
+# tipped over. That is the task failing, not the infrastructure, and the
+# learner already classifies it (``LiveShinEnvironment`` crash_tilt). Naming it
+# separately lets the bridge end the episode as a crash instead of ending the
+# run, which is what a hard-failsafe abort did on 2026-09-23: PX4 asserts the
+# bit at 60 deg while the learner's own crash verdict sits at 75 deg, so every
+# genuine tip-over was intercepted before it could ever be scored.
+FAILSAFE_ATTITUDE_FIELDS = frozenset({"fd_critical_failure"})
+
 
 def failsafe_detail(message: Any, *, target: str = "sitl") -> dict[str, Any]:
     """Expose PX4 failsafe inputs and classify safe automatic recovery.
@@ -137,16 +149,24 @@ def failsafe_detail(message: Any, *, target: str = "sitl") -> dict[str, Any]:
     battery_warning = int(getattr(message, "battery_warning", 0))
     if battery_warning:
         active.append(f"battery_warning_{battery_warning}")
-    hard = bool(FAILSAFE_HARD_FIELDS.intersection(active) or battery_warning)
+    hard_active = FAILSAFE_HARD_FIELDS.intersection(active)
+    hard = bool(hard_active or battery_warning)
     recoverable = bool(
         str(target).lower() == "sitl"
         and active
         and set(active).issubset(FAILSAFE_SITL_INFRASTRUCTURE_FIELDS)
         and not hard)
+    # A tip-over and nothing else. Any second hard input (estimator, battery,
+    # geofence, motor) keeps the snapshot a non-recoverable abort, because then
+    # the attitude is a symptom and the learner's crash verdict would hide the
+    # cause.
+    attitude_failure = bool(hard_active == FAILSAFE_ATTITUDE_FIELDS
+                            and not battery_warning)
     return {
         "reasons": active,
         "battery_warning": battery_warning,
         "recoverable_infrastructure": recoverable,
+        "attitude_failure": attitude_failure,
     }
 
 
@@ -530,6 +550,7 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             self.px4_failsafe_detail = {
                 "reasons": [], "battery_warning": 0,
                 "recoverable_infrastructure": False,
+                "attitude_failure": False,
             }
             self.reported_failsafe_signature: tuple[str, ...] | None = None
 
@@ -1272,6 +1293,9 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             recovery = ("recoverable SITL infrastructure fault"
                         if self.px4_failsafe_detail.get(
                             "recoverable_infrastructure", False)
+                        else "tip-over; the learner scores it as a crash"
+                        if self.px4_failsafe_detail.get(
+                            "attitude_failure", False)
                         else "non-recoverable vehicle/task fault")
             drift = ""
             skew = self._clock_skew_us()

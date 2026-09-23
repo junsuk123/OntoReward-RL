@@ -153,8 +153,18 @@ class LiveShinEnvironment:
                       and touchdown_tilt <= float(self.cfg.criteria.tilt)
                       and touchdown_angular_rate <= float(self.cfg.criteria.rate))
         unsafe_contact = bool(contact and not strict)
+        # PX4's own attitude failure detector fired and nothing else did. The
+        # bridge forwards it instead of raising precisely so it can be scored
+        # here. It is redundant with ``crash_tilt`` whenever both see the same
+        # sample -- FD_FAIL_R/FD_FAIL_P sit above ``crash_tilt`` so this check
+        # normally never decides anything -- but the learner samples PX4 at the
+        # control rate, which falls to ~1.2 Hz under render load, and a tumble
+        # can start and pass the threshold between two samples. PX4 integrates
+        # attitude continuously and does not miss it.
+        attitude_failure = bool(extra.get("px4_attitude_failure", False))
         crash = bool(off_pad_ground
                      or touchdown_tilt > float(self.cfg.sim.crash_tilt)
+                     or attitude_failure
                      or unsafe_contact)
         terminal = bool(contact or crash or drift or battery_depleted or timeout)
         landing_metrics = {
@@ -167,6 +177,7 @@ class LiveShinEnvironment:
             "angular_rate": touchdown_angular_rate,
             "kinematic_sample": (
                 "pre_contact" if touchdown_step is not None else "current"),
+            "px4_attitude_failure": float(attitude_failure),
         }
         return LiveStep(
             actor=actor, critic=critic, state=state,

@@ -72,8 +72,12 @@ class PX4Failsafe(BridgeError):
 
     The gateway classifies OFFBOARD heartbeat loss and its benign autonomous
     SITL status-clear race as recoverable transport faults. Battery, estimator,
-    geofence and failure-detector events remain hard failures so a retry cannot
-    hide a vehicle or policy problem.
+    geofence and multi-cause failure-detector events remain hard failures so a
+    retry cannot hide a vehicle or policy problem.
+
+    A lone ``fd_critical_failure`` is neither, and is not raised at all: see
+    ``validate_state``. It is a tip-over, which is the task failing, and the
+    environment scores it as a crash.
     """
 
     def __init__(self, reasons: Sequence[str] = (), *, recoverable: bool = False):
@@ -83,6 +87,22 @@ class PX4Failsafe(BridgeError):
         super().__init__(
             "PX4 reports an active failsafe "
             f"({detail}); refusing to record this as an RL step.")
+
+
+class SimulatorFrameTimeout(BridgeError):
+    """The camera topic stopped delivering frames within the step budget.
+
+    Infrastructure, not task failure. It is what a rebuilt stack looks like
+    from the learner's side: the Isaac process that published the image topic
+    was replaced, and DDS has not finished rediscovering the new publisher when
+    the next step asks for a frame.
+
+    It exists because that arrived as a bare ``TimeoutError`` from the ROS
+    buffer, which ``collect_episode_resilient`` -- catching ``BridgeError`` --
+    let straight through. On 2026-09-23 that ended a 128-episode two-arm run
+    outright, three stack restarts into a recovery the retry budget had not
+    even spent.
+    """
 
 
 class PX4EstimatorInvalid(BridgeError):
@@ -576,6 +596,24 @@ class PX4Bridge:
         blocked = {"offset": 0, "speed": 0, "view": 0}
         worst = {"offset": 0.0, "speed": 0.0}
         longest_streak = 0.0
+        # A vehicle that is neither closing the gap nor moving at all is not
+        # settling slowly; it is not flying. Measured 2026-09-23: a pair sat on
+        # the deck at 0.00 m/s, 5.13 m from a commanded pose 4.50 m above it,
+        # and spent 10515 of 10515 samples -- 271 s of wall clock -- closing
+        # -0.00 m of it before the budget expired and the stack was rebuilt
+        # anyway. The rebuild was the only remedy either way, so the budget
+        # bought nothing but delay.
+        #
+        # Bail as soon as that is unambiguous. ``entry_stall_speed`` is what
+        # makes it safe to do: a vehicle that is chasing, overshooting or
+        # circling has a relative speed far above it and can never trip this,
+        # however long it takes to settle. Only a parked one does.
+        best_offset = float("inf")
+        stalled_since: float | None = None
+        stalled_peak_speed = 0.0
+        stall_seconds = float(getattr(self.cfg, "entry_stall_seconds", 20.0))
+        stall_speed = float(getattr(self.cfg, "entry_stall_speed", 0.05))
+        stall_progress = float(getattr(self.cfg, "entry_stall_progress_m", 0.25))
         # PX4 publishes the result of the last command it processed. A vehicle
         # that never arms cannot reach any pose, and reporting its frozen
         # position offset instead of the refusal sends the operator after the
@@ -739,6 +777,40 @@ class PX4Bridge:
                 blocked["speed"] += 1
             if not pad_ready:
                 blocked["view"] += 1
+            # Progress, or the complete absence of it. Improvement resets the
+            # window, so a vehicle that is slowly closing the gap is never cut
+            # off; only one that has stopped both approaching and moving is.
+            #
+            # The window does not even open while the budget is still paying
+            # for the trip. The travel allowance is this run's own statement
+            # that the vehicle is expected to be under way rather than holding,
+            # so a standstill inside it is not yet evidence of anything -- and
+            # opening the window there would have it expire on arrival, which
+            # is the moment the hold is supposed to begin.
+            travelling = sim_elapsed < float(travel_allowance or 0.0)
+            if offset < best_offset - stall_progress or travelling:
+                best_offset = min(best_offset, offset)
+                stalled_since = None
+                stalled_peak_speed = 0.0
+            elif not offset_ready:
+                if stalled_since is None:
+                    stalled_since = sample_now
+                    stalled_peak_speed = float(speed)
+                else:
+                    stalled_peak_speed = max(stalled_peak_speed, float(speed))
+                if (stall_seconds > 0.0
+                        and sample_now - stalled_since >= stall_seconds
+                        and stalled_peak_speed <= stall_speed):
+                    raise EntryResetError(
+                        f"PX4 stopped flying to the entry pose: {offset:.2f} m "
+                        f"out and no closer for {sample_now - stalled_since:.0f} "
+                        f"simulated s, with a peak speed of "
+                        f"{stalled_peak_speed:.2f} m/s against a "
+                        f"{stall_speed:.2f} m/s standstill threshold. The "
+                        "vehicle is parked, not settling, so the remaining "
+                        "entry budget cannot change the outcome; rebuilding "
+                        "the simulator is the only remedy and is started now "
+                        "instead of after it expires.")
             at_target = offset_ready and speed_ready and pad_ready
             if offset_ready and speed_ready and not pad_ready:
                 # Stable at the commanded offset with the deck out of frame.
@@ -1124,6 +1196,7 @@ class PX4Bridge:
                 raise BridgeError(f"Gateway state contains non-finite {field}.")
         extra = state.get("extra") if isinstance(state.get("extra"), dict) else {}
         ignored_disarmed_link_failsafe = False
+        attitude_failure = False
         if bool(extra.get("px4_failsafe", False)):
             detail = (extra.get("px4_failsafe_detail")
                       if isinstance(extra.get("px4_failsafe_detail"), dict)
@@ -1133,6 +1206,16 @@ class PX4Bridge:
                 reasons = ()
             recoverable = bool(detail.get(
                 "recoverable_infrastructure", False))
+            # PX4's attitude failure detector, alone: the vehicle tipped past
+            # FD_FAIL_R/FD_FAIL_P. Raising here made a flipped drone end the
+            # whole run -- ``collect_episode_resilient`` re-raises a
+            # non-recoverable failsafe without spending a single retry -- even
+            # though flight termination is circuit-broken in this build
+            # (CBRK_FLIGHTTERM), so PX4 only warns and the state is still a
+            # true reading of a real, already-failed flight. Hand it to the
+            # environment instead; ``LiveShinEnvironment`` ends the episode as
+            # a crash, PPO learns from the terminal penalty, and the run lives.
+            attitude_failure = bool(detail.get("attitude_failure", False))
             # After a completed touchdown we intentionally disarm and stop
             # OFFBOARD. PX4 can retain VehicleStatus.failsafe for one callback
             # while its benign SITL link-loss flags clear. Rejecting that
@@ -1142,7 +1225,7 @@ class PX4Bridge:
             # the same flag while armed still aborts the episode immediately.
             ignored_disarmed_link_failsafe = bool(
                 recoverable and state.get("armed") is False)
-            if not ignored_disarmed_link_failsafe:
+            if not (ignored_disarmed_link_failsafe or attitude_failure):
                 raise PX4Failsafe(reasons, recoverable=recoverable)
         if not state["estimator_valid"]:
             raise PX4EstimatorInvalid("PX4 estimator state is not valid yet.")
@@ -1150,9 +1233,12 @@ class PX4Bridge:
             raise BridgeError(
                 "PX4 repeatedly rejected OFFBOARD mode; refusing a corrupted episode.")
         out = dict(state)
-        if ignored_disarmed_link_failsafe:
+        if ignored_disarmed_link_failsafe or attitude_failure:
             out["extra"] = dict(extra)
-            out["extra"]["ignored_disarmed_link_failsafe"] = True
+            if ignored_disarmed_link_failsafe:
+                out["extra"]["ignored_disarmed_link_failsafe"] = True
+            if attitude_failure:
+                out["extra"]["px4_attitude_failure"] = True
         for field in ("position", "velocity", "quaternion_wxyz",
                       "angular_velocity", "acceleration", "wind", "aero_force"):
             out[field] = np.asarray(state[field], dtype=float).reshape(-1)

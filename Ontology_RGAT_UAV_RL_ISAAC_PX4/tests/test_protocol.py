@@ -1171,3 +1171,81 @@ def test_entry_gate_reports_the_heading_it_never_showed(monkeypatch):
     # Unusable attitude must not break the diagnostic itself.
     assert bridge_module._yaw_from_quaternion_wxyz(None) is None
     assert bridge_module._yaw_from_quaternion_wxyz([float("nan")] * 4) is None
+
+
+def test_failsafe_detail_names_a_lone_attitude_failure_separately():
+    """A tip-over is the task failing, not the infrastructure or the vehicle.
+
+    ``fd_critical_failure`` is PX4's attitude failure detector and on this
+    airframe nothing else can raise it: FAILURE_ALT is unused and FAILURE_EXT
+    needs an ATS receiver SITL does not have. Classified only as a hard input
+    it aborted the whole run, because ``collect_episode_resilient`` re-raises a
+    non-recoverable failsafe without spending a retry -- so a flipped drone
+    ended a PPO run on 2026-09-23 instead of scoring one crashed episode.
+    """
+    tipped = failsafe_detail(type("Flags", (), {
+        # The three flags autonomous SITL publishes regardless.
+        "auto_mission_missing": True,
+        "manual_control_signal_lost": True,
+        "gcs_connection_lost": True,
+        "fd_critical_failure": True,
+        "battery_warning": 0,
+    })(), target="sitl")
+    assert tipped["attitude_failure"] is True
+    # It stays a hard input: nothing here makes it recoverable infrastructure.
+    assert tipped["recoverable_infrastructure"] is False
+
+    # Any second hard input means the attitude is a symptom, and scoring it as
+    # a crash would hide the cause.
+    with_estimator = failsafe_detail(type("Flags", (), {
+        "fd_critical_failure": True,
+        "local_position_invalid": True,
+        "battery_warning": 0,
+    })(), target="sitl")
+    assert with_estimator["attitude_failure"] is False
+
+    with_battery = failsafe_detail(type("Flags", (), {
+        "fd_critical_failure": True,
+        "battery_warning": 2,
+    })(), target="sitl")
+    assert with_battery["attitude_failure"] is False
+
+    # A different failure-detector bit is a vehicle fault, not a tip-over.
+    motor = failsafe_detail(type("Flags", (), {
+        "fd_motor_failure": True,
+        "battery_warning": 0,
+    })(), target="sitl")
+    assert motor["attitude_failure"] is False
+
+    link_only = failsafe_detail(type("Flags", (), {
+        "offboard_control_signal_lost": True,
+        "battery_warning": 0,
+    })(), target="sitl")
+    assert link_only["attitude_failure"] is False
+
+
+def test_bridge_hands_a_tip_over_to_the_environment_instead_of_raising():
+    bridge = object.__new__(PX4Bridge)
+    bridge.expected = {}
+
+    def tipped_state(*, attitude_failure):
+        state = _valid_bridge_state(armed=True, recoverable_failsafe=False)
+        state["extra"]["px4_failsafe_detail"] = {
+            "reasons": ["auto_mission_missing", "manual_control_signal_lost",
+                        "gcs_connection_lost", "fd_critical_failure"],
+            "recoverable_infrastructure": False,
+            "attitude_failure": bool(attitude_failure),
+        }
+        return state
+
+    # The episode has to reach the environment to be scored as a crash, so the
+    # step is recorded rather than refused -- while armed, which is exactly the
+    # case the disarmed link-clear race deliberately does not cover.
+    state = bridge.validate_state(tipped_state(attitude_failure=True))
+    assert state["extra"]["px4_attitude_failure"] is True
+    assert "ignored_disarmed_link_failsafe" not in state["extra"]
+
+    # Without the gateway's classification it remains a hard abort, including
+    # against a gateway too old to send the field at all.
+    with pytest.raises(PX4Failsafe, match="fd_critical_failure"):
+        bridge.validate_state(tipped_state(attitude_failure=False))

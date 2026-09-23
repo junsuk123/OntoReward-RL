@@ -93,6 +93,13 @@ def test_shin_profile_uses_campus_plaza_and_fitted_platform():
         "COM_RCL_EXCEPT": 4,
         "COM_OF_LOSS_T": 30.0,
         "COM_OBL_RC_ACT": 5,
+        # Strictly above landing.crash_tilt_deg, so the learner -- not PX4 --
+        # decides when a tilt has become a crash.
+        "FD_FAIL_R": 85,
+        "FD_FAIL_P": 85,
+        # Forwarding a tip-over instead of raising means the run keeps flying
+        # the same PX4, which a latched flight termination would make unarmable.
+        "CBRK_FLIGHTTERM": 121212,
         "MPC_THR_HOVER": 0.58,
         "MPC_USE_HTE": 0,
         "MPC_XY_VEL_MAX": 2.0,

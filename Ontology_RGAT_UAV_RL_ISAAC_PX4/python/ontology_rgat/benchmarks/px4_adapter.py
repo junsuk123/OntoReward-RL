@@ -5,6 +5,7 @@ from typing import Callable
 
 import numpy as np
 
+from ..bridge import SimulatorFrameTimeout
 from ..controllers import VelocityYawRateController
 from ..mathx import quat_to_rotm
 from .shin2026 import ActorObservation, CriticObservation
@@ -45,15 +46,29 @@ class ShinPX4Adapter:
         self.image_source = image_source
         self.controller = controller
 
+    def _image(self) -> np.ndarray:
+        """One frame, with a stalled renderer reported as infrastructure.
+
+        This is the only place the camera enters the RL loop, and the only
+        place that knows a missing frame means the simulator rather than the
+        task. The ROS buffer raises a bare ``TimeoutError``; left as one it
+        escapes the episode retry that exists for exactly this condition.
+        """
+        try:
+            return self.image_source()
+        except TimeoutError as exc:
+            raise SimulatorFrameTimeout(
+                f"the actor camera delivered no frame: {exc}") from exc
+
     def reset(self, seed: int, scenario: str = "training_random_walk",
               *, initial_condition_scale: float | None = None):
         self.controller.reset()
         state = self.bridge.reset(
             seed, scenario=scenario,
             initial_condition_scale=initial_condition_scale)
-        return actor_observation_from_state(state, self.image_source()), state
+        return actor_observation_from_state(state, self._image()), state
 
     def step(self, normalized_action):
         command = self.controller.command(normalized_action)
         state = self.bridge.step_velocity(command.as_array())
-        return actor_observation_from_state(state, self.image_source()), state, command
+        return actor_observation_from_state(state, self._image()), state, command

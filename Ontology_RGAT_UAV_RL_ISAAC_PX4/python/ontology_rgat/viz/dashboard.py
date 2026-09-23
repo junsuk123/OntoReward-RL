@@ -441,7 +441,7 @@ const CARDS=[
  {id:'teacher_demos',view:'benchmark',kind:'teacher',
   title:'교사 시연 비행 · 실시간 (behavior-cloning warm start, training-only)'},
  {id:'trajectories',view:'benchmark',kind:'trajectories',
-  title:'실시간 궤적 · UAV(실선)와 착륙 패드(점선) · world ENU top-down · pair별 현재 episode'},
+  title:'실시간 궤적 · UAV(실선)와 착륙 패드(점선) · 고도 기준 측면 뷰 · 물리 pair 고정'},
  {id:'parallel_live_perception',view:'benchmark',kind:'pairplots',plot:'perception',
   title:'실시간 기하 FOV 대 keypoint 인지 품질 · 두 arm 동일 정의'},
  {id:'parallel_live_reward',view:'benchmark',kind:'pairplots',plot:'reward',
@@ -1160,13 +1160,46 @@ function drawTrajectories(state){
         uav.push([Number(r.uav_x),Number(r.uav_y),Number(r.uav_z)]);
       if(Number.isFinite(Number(r.pad_x))&&Number.isFinite(Number(r.pad_y)))
         pad.push([Number(r.pad_x),Number(r.pad_y),Number(r.pad_z)]);}
+    // The panel is the PHYSICAL pair and never moves: its canvas, its series
+    // and its index are fixed for the whole run. What rotates is the policy
+    // flying it -- during collection every pair flies the reward-design source
+    // policy, and crossover evaluation cycles the arms across pairs seed by
+    // seed -- so titling the panel by the ACTIVE policy made the panels read
+    // as though their assignment kept swapping between them. Name the stable
+    // identity first and mark a borrowed policy as borrowed, which is what
+    // the pair cards already did and this panel did not.
+    const assigned=String(pair.assigned_method||pair.method||'');
+    const active=String(pair.active_method||assigned);
     const title=document.getElementById(`traj-title-${i}`);
-    if(title)title.textContent=`물리 Pair ${i+1} · ${methodLabel(pair.active_method||pair.method||'')}`
+    if(title)title.textContent=`물리 Pair ${i+1} · 배정 ${methodLabel(assigned)}`
+      +(active&&active!==assigned?` · 현재 비행 ${methodLabel(active)}`:'')
       +` · ${String(pair.phase||'waiting')} · ${String(pair.episode_kind||'episode')} ${pair.episode??0}`
       +` · step ${pair.step??0} · ${String(pair.status||'')}`;
     drawTrajectory(document.getElementById(`cv-traj-${i}`),
       document.getElementById(`lg-traj-${i}`),uav,pad);
   }
+}
+// The horizontal direction the side view looks ALONG. The plane asked for is
+// the one the vehicle and the deck span together with the vertical, so the
+// horizontal axis has to be the direction the action happens in -- the deck's
+// travel and the vehicle's chase are both along it.
+//
+// Taken as the principal axis of the combined horizontal track rather than the
+// instantaneous vehicle->pad bearing: that bearing is undefined when the
+// vehicle is directly overhead, which is exactly the flare, and using it would
+// swing the whole drawn history around from one frame to the next. Closed-form
+// eigenvector of the 2x2 covariance; a track with no horizontal extent (a pure
+// hover) falls back to world x so the view still has an axis.
+function sideViewAxis(points){
+  let n=0,mx=0,my=0;
+  for(const p of points){mx+=p[0];my+=p[1];n++;}
+  if(!n)return [1,0];
+  mx/=n;my/=n;
+  let sxx=0,syy=0,sxy=0;
+  for(const p of points){const dx=p[0]-mx,dy=p[1]-my;sxx+=dx*dx;syy+=dy*dy;sxy+=dx*dy;}
+  if(Math.sqrt(Math.max(sxx+syy,0)/n)<1e-3)return [1,0];
+  const theta=0.5*Math.atan2(2*sxy,sxx-syy);
+  return [Math.cos(theta),Math.sin(theta)];
 }
 function drawTrajectory(cv,lg,uav,pad){
   if(!cv)return;
@@ -1177,22 +1210,47 @@ function drawTrajectory(cv,lg,uav,pad){
   const muted=css.getPropertyValue('--muted').trim(),gridColor=css.getPropertyValue('--grid').trim();
   if(!uav.length&&!pad.length){g.fillStyle=muted;g.font='12px sans-serif';
     g.fillText('no trajectory yet',10,h/2);if(lg)lg.innerHTML='';return;}
+  // Side elevation of the 3-D tracks: horizontal = distance along the view
+  // axis, vertical = world ENU altitude. A top-down view cannot show whether
+  // the vehicle is descending onto the deck or holding above it, which for a
+  // landing is the question.
   const pts=uav.concat(pad);
-  let x0=Infinity,x1=-Infinity,y0=Infinity,y1=-Infinity;
-  for(const p of pts){x0=Math.min(x0,p[0]);x1=Math.max(x1,p[0]);y0=Math.min(y0,p[1]);y1=Math.max(y1,p[1]);}
-  // Equal aspect: a square window around both tracks, never narrower than 2 m.
-  const span=Math.max(x1-x0,y1-y0,2.0)*1.15,cx=(x0+x1)/2,cy=(y0+y1)/2;
-  const padL=34,padB=16,padT=6,padR=6;
-  const size=Math.max(10,Math.min(w-padL-padR,h-padT-padB));
-  const ox=padL+(w-padL-padR-size)/2,oy=padT+(h-padT-padB-size)/2;
-  const px=v=>ox+(v-(cx-span/2))/span*size,py=v=>oy+size-(v-(cy-span/2))/span*size;
-  const stepM=span>40?10:span>20?5:span>8?2:1;
-  g.strokeStyle=gridColor;g.lineWidth=.6;g.setLineDash([1.5,2.5]);g.fillStyle=muted;g.font='9px Arial';
-  for(let v=Math.ceil((cx-span/2)/stepM)*stepM;v<=cx+span/2;v+=stepM){const X=px(v);
-    g.beginPath();g.moveTo(X,oy);g.lineTo(X,oy+size);g.stroke();g.fillText(v.toFixed(0),X-6,oy+size+11);}
-  for(let v=Math.ceil((cy-span/2)/stepM)*stepM;v<=cy+span/2;v+=stepM){const Y=py(v);
-    g.beginPath();g.moveTo(ox,Y);g.lineTo(ox+size,Y);g.stroke();g.fillText(v.toFixed(0),2,Y+3);}
-  g.setLineDash([]);g.strokeStyle='#262626';g.lineWidth=.8;g.strokeRect(ox,oy,size,size);
+  const axis=sideViewAxis(pts);
+  let mx=0,my=0;for(const p of pts){mx+=p[0];my+=p[1];}
+  mx/=pts.length;my/=pts.length;
+  const along=p=>(p[0]-mx)*axis[0]+(p[1]-my)*axis[1];
+  const proj=arr=>arr.map(p=>[along(p),p[2]]);
+  const U=proj(uav),P=proj(pad),flat=U.concat(P);
+  let a0=Infinity,a1=-Infinity,z0=Infinity,z1=-Infinity;
+  for(const p of flat){a0=Math.min(a0,p[0]);a1=Math.max(a1,p[0]);
+    z0=Math.min(z0,p[1]);z1=Math.max(z1,p[1]);}
+  // Independent scales, deliberately. A landing lives in a few metres of
+  // altitude across tens of metres of ground, so the equal-aspect window this
+  // replaced would flatten the descent -- the one thing the view exists to
+  // show -- into a horizontal line. Both axes are labelled in metres and the
+  // legend says the scales differ.
+  const aSpan=Math.max(a1-a0,2.0)*1.12,zSpan=Math.max(z1-z0,1.5)*1.25;
+  const aMid=(a0+a1)/2,zMid=(z0+z1)/2;
+  const padL=36,padB=18,padT=8,padR=8;
+  const W=Math.max(10,w-padL-padR),H=Math.max(10,h-padT-padB),ox=padL,oy=padT;
+  const px=v=>ox+(v-(aMid-aSpan/2))/aSpan*W;
+  const py=v=>oy+H-(v-(zMid-zSpan/2))/zSpan*H;
+  const tick=s=>s>40?10:s>20?5:s>8?2:s>3?1:0.5;
+  const aStep=tick(aSpan),zStep=tick(zSpan);
+  g.strokeStyle=gridColor;g.lineWidth=.6;g.setLineDash([1.5,2.5]);
+  g.fillStyle=muted;g.font='9px Arial';
+  for(let v=Math.ceil((aMid-aSpan/2)/aStep)*aStep;v<=aMid+aSpan/2;v+=aStep){
+    const X=px(v);g.beginPath();g.moveTo(X,oy);g.lineTo(X,oy+H);g.stroke();
+    g.fillText(v.toFixed(aStep<1?1:0),X-7,oy+H+12);}
+  for(let v=Math.ceil((zMid-zSpan/2)/zStep)*zStep;v<=zMid+zSpan/2;v+=zStep){
+    const Y=py(v);g.beginPath();g.moveTo(ox,Y);g.lineTo(ox+W,Y);g.stroke();
+    g.fillText(v.toFixed(zStep<1?1:0),2,Y+3);}
+  g.setLineDash([]);g.strokeStyle='#262626';g.lineWidth=.8;g.strokeRect(ox,oy,W,H);
+  // Deck level: the altitude the vehicle is actually trying to reach.
+  if(P.length){const deck=P[P.length-1][1];
+    g.strokeStyle=PALETTE[1];g.globalAlpha=.35;g.lineWidth=1;g.setLineDash([2,3]);
+    g.beginPath();g.moveTo(ox,py(deck));g.lineTo(ox+W,py(deck));g.stroke();
+    g.globalAlpha=1;g.setLineDash([]);}
   const poly=(arr,color,dash)=>{if(!arr.length)return;
     g.strokeStyle=color;g.lineWidth=1.8;g.setLineDash(dash);g.beginPath();
     arr.forEach((p,k)=>{const X=px(p[0]),Y=py(p[1]);k?g.lineTo(X,Y):g.moveTo(X,Y);});g.stroke();
@@ -1200,15 +1258,23 @@ function drawTrajectory(cv,lg,uav,pad){
     g.fillStyle='#fff';g.beginPath();g.arc(px(arr[0][0]),py(arr[0][1]),3.5,0,2*Math.PI);g.fill();g.stroke();
     const last=arr[arr.length-1];g.fillStyle=color;g.beginPath();
     g.arc(px(last[0]),py(last[1]),4.5,0,2*Math.PI);g.fill();};
-  poly(pad,PALETTE[1],[4,3]);
-  poly(uav,PALETTE[0],[]);
+  poly(P,PALETTE[1],[4,3]);
+  poly(U,PALETTE[0],[]);
+  // The altitude gap, drawn where it is: between the two current markers.
+  if(U.length&&P.length){
+    const u=U[U.length-1],p=P[P.length-1];
+    g.strokeStyle='#262626';g.globalAlpha=.55;g.lineWidth=1;g.setLineDash([3,2]);
+    g.beginPath();g.moveTo(px(u[0]),py(u[1]));g.lineTo(px(u[0]),py(p[1]));g.stroke();
+    g.setLineDash([]);g.globalAlpha=1;g.fillStyle='#262626';g.font='9px Arial';
+    g.fillText(`${(u[1]-p[1]).toFixed(2)} m`,px(u[0])+4,(py(u[1])+py(p[1]))/2);}
   if(uav.length){const last=uav[uav.length-1],pz=pad.length?pad[pad.length-1][2]:null;
     g.fillStyle='#262626';g.font='10px Arial';
     g.fillText(`UAV z ${last[2].toFixed(2)} m${pz!==null?` · 패드 위 ${(last[2]-pz).toFixed(2)} m`:''}`
       +` · ${uav.length} step`,ox+4,oy+12);}
   if(lg)lg.innerHTML=`<span><i style="background:${PALETTE[0]}"></i>UAV</span>`
     +`<span><i style="background:${PALETTE[1]}"></i>착륙 패드</span>`
-    +`<span>○ 시작 &nbsp;● 현재 &nbsp;· 격자 ${stepM} m · 축 world ENU x/y (m)</span>`;
+    +`<span>○ 시작 &nbsp;● 현재 &nbsp;· 고도 기준 측면 뷰 · 가로 진행축 ${aStep} m / `
+    +`세로 고도(world ENU z) ${zStep} m · 두 축의 축척은 다름</span>`;
 }
 function benchmarkPanel(state){
   const s=state.scalars||{},contract=s.actor_contract||{};

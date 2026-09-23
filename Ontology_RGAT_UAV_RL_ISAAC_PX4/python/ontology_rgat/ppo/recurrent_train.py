@@ -15,7 +15,7 @@ import numpy as np
 import torch
 
 from ..bridge import (ArmingRefused, BridgeError, EntryResetError,
-                      GatewayTimeout, PX4Failsafe)
+                      GatewayTimeout, PX4Failsafe, SimulatorFrameTimeout)
 from ..curriculum import PlatformMotionCurriculum
 from ..perception import (POINT_CONFIDENCE_THRESHOLD, SEMANTIC_FEATURE_NAMES,
                           grayscale_image_tensor, semantic_graph,
@@ -634,6 +634,12 @@ def collect_episode(env, model: PipelineActorCritic, method: str, seed: int,
         "pad_contact": float(step.physical_contact),
         "unsafe_pad_contact": float(step.unsafe_pad_contact),
         "crash_failure": float(step.crash),
+        # Of the crashes, the ones PX4's own attitude failure detector caught.
+        # Kept separate from ``crash_failure`` because a nonzero rate here is
+        # also a diagnostic: it says tip-overs are crossing FD_FAIL_R/FD_FAIL_P
+        # between two learner samples, which the control rate governs.
+        "px4_attitude_failure": float(
+            landing.get("px4_attitude_failure", 0.0)),
         "collision_rate": float(step.crash),
         "excessive_drift_rate": float(step.excessive_drift),
         "failure": float(not step.strict_success),
@@ -894,7 +900,8 @@ def collect_episode_resilient(env, model: PipelineActorCritic, method: str,
                     "it, so restarting cannot replace the degraded PX4. Stop "
                     "the running Isaac/PX4 processes and start again so this "
                     "run owns a fresh simulator.") from exc
-            recoverable = (isinstance(exc, (EntryResetError, GatewayTimeout))
+            recoverable = (isinstance(exc, (EntryResetError, GatewayTimeout,
+                                            SimulatorFrameTimeout))
                            or (isinstance(exc, PX4Failsafe) and exc.recoverable)
                            or "simulator has stalled" in message
                            # A peer can finish rebuilding the shared Isaac/PX4

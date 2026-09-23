@@ -80,11 +80,41 @@ px4:
   # until the gate gave up and rebuilt the simulator. 30 s covers those stalls
   # with margin and is still a real bound -- a genuinely dead gateway is caught
   # far sooner by the learner's own 2 s state timeout.
+  #
+  # FD_FAIL_R/FD_FAIL_P are PX4's attitude failure detector, and they must stay
+  # *above* landing.crash_tilt_deg below. At the PX4 defaults they do not: PX4
+  # asserts fd_critical_failure at 60 deg while the learner's own tip-over
+  # verdict sits at 75 deg, so every genuine tip-over reached the bridge as a
+  # hard failsafe before the environment could ever score it as a crash. On
+  # 2026-09-23 that ended a PPO run outright. 85 deg keeps the detector as the
+  # backstop it is meant to be -- a vehicle on its side -- and leaves the
+  # episode outcome where it belongs, with the learner. Not 90: roll/pitch here
+  # are a ZYX decomposition, whose pitch cannot exceed 90 deg at all.
+  #
+  # CBRK_FLIGHTTERM is pinned to the disabled value PX4 already ships, because
+  # the bridge now depends on it rather than merely benefiting from it: a lone
+  # fd_critical_failure is forwarded as a state instead of raised, so the run
+  # keeps flying the same PX4 afterwards. With flight termination enabled that
+  # would be wrong. Commander sets actuator_armed.force_failsafe on the
+  # terminate action and nothing in normal operation ever clears it -- only
+  # MAV_CMD_DO_FLIGHTTERMINATION with param1=0, or a reboot -- and while it is
+  # set SystemChecks fails every preflight with "Flight termination active".
+  # One tip-over would therefore leave an instance that can never arm again,
+  # reaching the operator as bounded ArmingRefused retries a long way from the
+  # cause. Disabled, the detector reports the tip-over and flies on, which is
+  # what an unattended training rig that must fly hundreds of episodes per boot
+  # needs. Losing the vehicle is not a safety question in SITL.
+  #
+  # This does not weaken the takeoff guard: within COM_LKDOWN_TKO of arming the
+  # same input still disarms, on a separate branch the breaker does not gate.
   sitl_parameters:
     COM_RC_IN_MODE: 4
     COM_RCL_EXCEPT: 4
     COM_OF_LOSS_T: 30.0
     COM_OBL_RC_ACT: 5
+    FD_FAIL_R: 85
+    FD_FAIL_P: 85
+    CBRK_FLIGHTTERM: 121212
 
 isaac:
   vehicle_id: 0

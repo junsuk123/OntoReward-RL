@@ -1581,3 +1581,98 @@ def test_the_shipped_configuration_cannot_ask_the_gateway_for_the_impossible():
     validate_velocity_action({"command": [*velocity, yaw_rate]})
     validate_velocity_action({"command": [-velocity[0], -velocity[1],
                                           -velocity[2], -yaw_rate]})
+
+
+def _classify_airborne(*, roll_deg, px4_attitude_failure):
+    env = LiveShinEnvironment.__new__(LiveShinEnvironment)
+    env.steps = 10
+    env.cfg = SimpleNamespace(
+        sim=SimpleNamespace(
+            world_xy_limit=30.0, ground_z=0.08,
+            crash_tilt=math.radians(75.0)),
+        criteria=SimpleNamespace(
+            xy=0.35, vz=0.55, tilt=math.radians(10.0),
+            rate=math.radians(45.0), rel_speed_xy=0.45))
+    half = math.radians(roll_deg) / 2.0
+    quaternion = np.array([math.cos(half), math.sin(half), 0.0, 0.0])
+    actor = ActorObservation(
+        image=np.zeros((32, 32), dtype=np.uint8),
+        body_velocity=np.array([0.0, 0.0, -0.10]),
+        attitude_quaternion=quaternion)
+    extra = {"pad_contact": False}
+    if px4_attitude_failure:
+        extra["px4_attitude_failure"] = True
+    state = {
+        "truth": {"valid": True, "position": [-0.10, 0.0, 2.0],
+                  "velocity": [-0.10, 0.0, 0.0]},
+        "quaternion_wxyz": quaternion,
+        "angular_velocity": np.zeros(3),
+        "extra": extra,
+        "battery": {"enabled": False},
+        "landed": False,
+    }
+    return env._classify(actor, state, np.zeros(4))
+
+
+def test_a_px4_attitude_failure_ends_the_episode_as_a_crash():
+    """PX4 catches a tumble the learner's own sampling can miss.
+
+    ``crash_tilt`` is read once per control step, and the measured control rate
+    on this machine falls to ~1.2 Hz under render load -- a tumble can begin
+    and pass 75 deg between two samples. PX4's failure detector integrates
+    attitude continuously, so the bridge forwards its verdict. Before that the
+    verdict arrived as a non-recoverable ``PX4Failsafe``, which
+    ``collect_episode_resilient`` re-raises without spending a retry: one
+    flipped drone ended a whole PPO run.
+    """
+    flying = _classify_airborne(roll_deg=5.0, px4_attitude_failure=False)
+    assert not flying.crash
+    assert not flying.terminal
+    assert flying.landing_metrics["px4_attitude_failure"] == 0.0
+
+    tipped = _classify_airborne(roll_deg=5.0, px4_attitude_failure=True)
+    assert tipped.crash
+    assert tipped.terminal
+    assert not tipped.physical_contact
+    assert tipped.landing_metrics["px4_attitude_failure"] == 1.0
+    assert _terminal_flags(tipped).crash
+
+    # The learner's own threshold still stands on its own when it does see the
+    # sample, so neither verdict depends on the other.
+    assert _classify_airborne(roll_deg=80.0, px4_attitude_failure=False).crash
+
+
+def test_px4_attitude_detector_stays_above_the_learner_crash_verdict():
+    """The two tip-over thresholds must not be inverted.
+
+    At PX4's defaults they were: FD_FAIL_R/FD_FAIL_P fire at 60 deg while
+    ``crash_tilt_deg`` is 75, so PX4 always reached the verdict first and the
+    environment's crash classification was unreachable by a single-axis tip.
+    """
+    config = load_config(ROOT / "config" / "system.yaml")
+    parameters = config["px4"]["sitl_parameters"]
+    crash_tilt_deg = float(config["landing"]["crash_tilt_deg"])
+
+    assert float(parameters["FD_FAIL_R"]) > crash_tilt_deg
+    assert float(parameters["FD_FAIL_P"]) > crash_tilt_deg
+    # A ZYX pitch cannot exceed 90 deg, so a threshold there is unreachable.
+    assert float(parameters["FD_FAIL_P"]) < 90.0
+
+
+def test_a_tip_over_leaves_px4_able_to_arm_again():
+    """The bridge stopped raising on a tip-over, so the instance must survive it.
+
+    ``fd_critical_failure`` is now forwarded as a state and the run flies the
+    same PX4 for the rest of the experiment. PX4's terminate action would make
+    that a silent trap: Commander latches actuator_armed.force_failsafe and
+    nothing short of MAV_CMD_DO_FLIGHTTERMINATION param1=0 or a reboot clears
+    it, while SystemChecks fails every preflight against it. One tip-over would
+    spend the run's remaining entry budget on an instance that can never arm.
+    PX4 already ships the breaker disabled; this pins it, because the forwarding
+    path depends on it rather than merely benefiting from it.
+    """
+    config = load_config(ROOT / "config" / "system.yaml")
+
+    # CBRK_FLIGHTTERM_KEY in PX4's circuit_breaker.h -- the one value that
+    # disables the action; any other number silently re-enables it.
+    assert int(config["px4"]["sitl_parameters"]["CBRK_FLIGHTTERM"]) == 121212

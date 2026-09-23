@@ -1,0 +1,63 @@
+extends: shin2026-minimal-system.yaml
+
+# Simulator profile for the reduced planar comparison (2026-09-23).
+#
+# Everything the benchmark measures -- the keypoint perception path, the energy
+# model, the landing criteria, the contact test -- is inherited unchanged. What
+# this profile changes is the two things the planar envelope depends on:
+#
+#   1. the deck drives a STRAIGHT LINE at a CONSTANT HEADING, so "hold yaw and
+#      command zero lateral velocity" keeps the vehicle on the deck's track
+#      rather than slowly walking off it;
+#   2. the entry pose is seeded ON that track and ALIGNED with it, so the
+#      episode starts inside the envelope instead of outside it.
+#
+# Neither is an oracle: nothing at run time reads the deck's heading. The reset
+# already aims the vehicle at an entry yaw, and the gateway holds that one
+# heading for the episode. See docs/PLANAR_ENVELOPE.md.
+
+benchmark:
+  # Seed the entry on the deck's track. The Table-I altitude draw is unchanged;
+  # the lateral draw and the yaw-misalignment draw are still MADE (so a paired
+  # seed sweep stays paired across profiles) and then discarded, and an
+  # along-track stand-off is drawn in their place.
+  planar_entry: true
+  initial_conditions:
+    # Along-track offset from the camera-centred hover point, in metres.
+    # Positive is further behind the deck. +/-1.5 m against a 1.6 m/s
+    # longitudinal ceiling is about a second of closing at full authority --
+    # enough that the approach is a task, small enough that it is not the
+    # whole episode.
+    relative_longitudinal_m: [-1.5, 1.5]
+    # Unchanged, and still drawn.
+    relative_altitude_m: [2.0, 8.0]
+    relative_lateral_x_m: [-3.0, 3.0]
+    relative_lateral_y_m: [-3.0, 3.0]
+    platform_yaw_misalignment_deg: [-60.0, 60.0]
+
+pad:
+  motion: random_walk
+  # The three comparison decks are straight lines at a constant heading, so
+  # neither the oval track's geometry nor the escape dash applies to them.
+  # Both are left configured for the retired decks, which are still runnable.
+  #
+  # 1/7 maps the reduced study's fastest segment (7.0 m/s) exactly onto this
+  # carrier's 1.00 m/s ceiling, keeping every ratio between segments and
+  # between scenarios identical to the study's:
+  #
+  #   slow    0.143 / 0.571 / 0.214  m/s
+  #   medium  0.214 / 0.786 / 0.286  m/s
+  #   fast    0.286 / 1.000 / 0.357  m/s
+  #
+  # Switching times are 3 s and 15 s in every scenario. The first is early
+  # enough that no controller can land before it and skip the disturbance.
+  segmented_cruise_speed_scale: 0.142857142857
+  start_position_enu_m: [0.0, 0.0, 0.0]
+  # The fastest deck covers about 18 m in a 30 s episode and each episode
+  # continues from where the last ended, so the sequence walks. The inward
+  # steering in pad_motion turns the DRAWN heading of the next episode, never
+  # the heading inside one, so the straight line the planar envelope depends on
+  # is untouched. Measured over 300 episodes the deck stays inside 99 m.
+  arena_radius_m: 120.0
+  route_start: continue
+  route_waypoints_enu_m: null

@@ -147,6 +147,11 @@ def _live_config(mode, results_dir, system_config):
 def _build_model(config, device, keypoint_pretraining=None, pipeline="shin_se"):
     estimator = config.get("estimator") or {}
     ppo = config.get("ppo") or {}
+    # Widths of the ontology situation-graph encoder. Read for every arm so a
+    # single YAML block configures both, and ignored by an arm whose
+    # declaration does not carry the graph -- ``PipelineActorCritic`` builds no
+    # encoder in that case.
+    graph_state = config.get("graph_state") or {}
     torch_device = torch.device(device)
     pretraining_enabled = bool(
         (estimator.get("keypoint_pretraining") or {}).get("enabled", False))
@@ -164,6 +169,11 @@ def _build_model(config, device, keypoint_pretraining=None, pipeline="shin_se"):
         relative_state_scale=estimator.get(
             "relative_state_scale", (3.0, 3.0, 8.0, 3.0, 3.0, 2.0)),
         pipeline=pipeline,
+        graph_hidden_dim=int(graph_state.get("hidden_dim", 32)),
+        graph_dim=int(graph_state.get("graph_dim", 32)),
+        graph_relation_dim=int(graph_state.get("relation_dim", 6)),
+        graph_heads=int(graph_state.get("heads", 1)),
+        graph_seed=int(graph_state.get("seed", ppo.get("seed", 42))),
     )
     if keypoint_pretraining is not None:
         model.encoder.load_state_dict(keypoint_pretraining["encoder"])

@@ -5,6 +5,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from ..controllers import PLANAR_ACTION_DIM
+
 from ..semantic import OntologyGraph
 from ..perception.semantic_observation import (
     SEMANTIC_GRAPH_INPUT_DIM, SEMANTIC_NODE_NAMES, SEMANTIC_RELATION_NAMES)
@@ -49,7 +51,8 @@ class ShinSERewardContext:
             self.current_training_relative_state, 6, "current training relative state"))
         object.__setattr__(self, "next_training_relative_state", _vector(
             self.next_training_relative_state, 6, "next training relative state"))
-        object.__setattr__(self, "action", _vector(self.action, 4, "action"))
+        object.__setattr__(self, "action",
+                          _vector(self.action, PLANAR_ACTION_DIM, "action"))
         if not np.isfinite(float(self.next_estimation_loss)):
             raise ValueError("next estimation loss must be finite")
         if not np.isfinite(float(self.uav_vertical_velocity)):
@@ -71,7 +74,8 @@ class NoSERewardContext:
             self.current_training_relative_state, 6, "current training relative state"))
         object.__setattr__(self, "next_training_relative_state", _vector(
             self.next_training_relative_state, 6, "next training relative state"))
-        object.__setattr__(self, "action", _vector(self.action, 4, "action"))
+        object.__setattr__(self, "action",
+                          _vector(self.action, PLANAR_ACTION_DIM, "action"))
         if not np.isfinite(float(self.uav_vertical_velocity)):
             raise ValueError("UAV vertical velocity must be finite")
         if not isinstance(self.terminal, TerminalFlags):

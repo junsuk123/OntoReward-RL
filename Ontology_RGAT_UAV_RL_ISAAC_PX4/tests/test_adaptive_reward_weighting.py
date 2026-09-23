@@ -75,8 +75,12 @@ def _dataset():
 def test_shin_components_match_hand_calculation():
     previous = [3, 4, -3, 0, 0, 0]
     following = [0, 4, -2.5, 0, 0, 0]
+    # The fifth component prices the attitude channel of the planar action
+    # ([a_fwd, a_z, tilt]) where Table III priced the yaw-rate channel of the
+    # retired four-vector; the envelope has no yaw channel left. Same form,
+    # same weight -- see reward_modes/shin2026.py.
     got = shin_reward_components(
-        previous, following, [0, 0, 0, -.2], next_uav_vertical_velocity=-.3)
+        previous, following, [0, 0, -.2], next_uav_vertical_velocity=-.3)
     assert got == pytest.approx([1.0, .125, -.2, 0.0, -.2])
     assert np.dot([1, 1, .5, 1, 2], got) == pytest.approx(.625)
 
@@ -144,7 +148,7 @@ def test_terminal_reward_replaces_all_adaptive_shaping():
     reward = AdaptiveWeightReward(Provider(), config=AdaptiveRewardConfig())
     value, parts = reward(
         adaptive_reward_graph(_observation(.5)), np.zeros(6), np.zeros(6),
-        np.zeros(4), next_uav_vertical_velocity=-.5,
+        np.zeros(3), next_uav_vertical_velocity=-.5,
         physical_contact=True, terminal=True)
     assert value == 10.0
     assert parts["adaptive_shaping"] == 0.0
@@ -166,7 +170,7 @@ def test_no_se_adaptive_reward_has_no_active_perception_term():
             return (value, 0.0) if return_latency else value
 
     value, parts = AdaptiveWeightReward(Provider())(
-        graph, np.ones(6), np.zeros(6), np.zeros(4),
+        graph, np.ones(6), np.zeros(6), np.zeros(3),
         next_uav_vertical_velocity=-.5)
     assert np.isfinite(value)
     assert parts["active_perception"] == 0.0
@@ -192,7 +196,8 @@ def test_proposed_dispatch_uses_no_estimator_and_adds_rgat_semantic_pbrs():
     following = SimpleNamespace(
         critic=SimpleNamespace(true_relative_state=np.zeros(6)),
         actor=SimpleNamespace(body_velocity=np.asarray([0, 0, -.4])),
-        command=np.zeros(4), physical_contact=False, crash=False,
+        command=np.zeros(5), normalized_command=np.zeros(3),
+        physical_contact=False, crash=False,
         excessive_drift=False, battery_depleted=False, terminal=False)
     value, parts, estimation_loss = _reward(
         "onto_rgat_adaptive_weight_no_se", previous, following,

@@ -151,7 +151,9 @@ class ShinBenchmarkConfig:
     lstm_hidden: int = 512
     latent_dimension: int = 256
     relative_state_dimension: int = 6
-    action_dimension: int = 4
+    # The reduced planar envelope: [a_fwd, a_z, tilt]. See
+    # controllers/planar_controller.py for why three and not four.
+    action_dimension: int = 3
     ppo_gamma: float = 0.99
     reward_mode: str = "shin2026"
     seed: int = 42
@@ -164,8 +166,9 @@ class ShinBenchmarkConfig:
             raise ValueError("the Shin benchmark camera profile is 512x320")
         if self.relative_state_dimension != 6:
             raise ValueError("relative-state estimator output must be six-dimensional")
-        if self.action_dimension != 4:
-            raise ValueError("velocity/yaw-rate action must be four-dimensional")
+        if self.action_dimension != 3:
+            raise ValueError(
+                "the planar action must be three-dimensional [a_fwd, a_z, tilt]")
         if self.reward_mode not in {
                 "shin2026", "sparse", "manual_no_active", "ontoreward",
                 "ontoreward_plus_active"}:

@@ -190,6 +190,9 @@ def test_benchmark_scene_and_telemetry_show_proposed_fov_branch():
         reward_parts={"active_perception": -0.01, "fov_margin": 0.3,
                       "predicted_fov_unavailability": 0.6,
                       "ontology_fov_reward": -0.06},
+        # How the ontology takes part is declared by the run, not matched
+        # against the arm's id; this is the retired reward-side role.
+        ontology_role="additive_reward_term",
         semantic_graph=graph)
 
     scene = rviz.scene_pub.messages[-1].markers
@@ -251,6 +254,40 @@ def _hud(rviz, **overrides):
                 if marker.type == _Message.TEXT_VIEW_FACING).text
 
 
+def test_the_hud_describes_the_graph_state_arm_and_the_planar_envelope():
+    """The current method's HUD line, and the envelope every arm flies.
+
+    A graph-state arm has no reward term to report, so the branch line shows
+    what the graph says and whether its encoder is producing anything. The
+    envelope line prints the two constrained degrees of freedom explicitly, so
+    an operator can see the constraint holding rather than assume it.
+    """
+    import math
+
+    rviz = _benchmark_publisher()
+    hud = _hud(rviz, method="shin_se_onto_rgat_state",
+               ontology_role="state_representation",
+               graph_embedding_norm=0.42,
+               planar_command=[0.55, 0.0, -0.18, 0.0, math.radians(7.5)],
+               reward_parts={"active_perception": -0.01,
+                             "onto_FOVMargin": 0.31,
+                             "onto_AlignmentError": 0.22,
+                             "onto_TouchdownSafety": 0.64})
+    assert "PROPOSED · PPO + ontology situation graph" in hud
+    assert "ONTOLOGY STATE:" in hud
+    assert "fov=0.31" in hud and "align=0.22" in hud
+    assert "touchdown=0.64" in hud and "|g_t|=0.42" in hud
+    # No reward-side language on an arm that has no reward-side term.
+    assert "r_onto" not in hud and "P(loss<=1s)" not in hud
+    assert "fwd=+0.55 m/s" in hud and "vert=-0.18 m/s" in hud
+    assert "tilt=+7.5 deg" in hud
+    assert "lat=+0.00" in hud and "yawrate=+0.0" in hud
+
+    # A baseline flight says so, rather than being described by either branch.
+    plain = _hud(rviz, method="shin_se_fixed")
+    assert "ONTOLOGY branch: OFF (observation vector only)" in plain
+
+
 def test_the_scene_hud_names_the_stage_and_the_physical_pair():
     """Four pair views render the same layout; the HUD says what each one is.
 
@@ -262,12 +299,13 @@ def test_the_scene_hud_names_the_stage_and_the_physical_pair():
     demonstration = _hud(
         rviz, phase="training-only teacher demonstration", pair_index=2)
     assert demonstration.startswith(
-        "TEACHER DEMONSTRATION · PAIR 3 · BASELINE · Shin SE fixed")
+        "TEACHER DEMONSTRATION · PAIR 3 · BASELINE · PPO on the observation vector")
     assert "training_random_walk_escape_burst" in demonstration
 
     # A PPO training episode is the unannotated case: the arm and its pair.
     training = _hud(rviz, phase="training", pair_index=0,
-                    method="shin_se_onto_rgat_recovery")
+                    method="shin_se_onto_rgat_recovery",
+                    ontology_role="additive_reward_term")
     assert training.startswith("PAIR 1 · PROPOSED · Shin + Ontology-R-GAT FOV")
 
     # Stages the banner table does not name still say which stage they are.
@@ -278,4 +316,4 @@ def test_the_scene_hud_names_the_stage_and_the_physical_pair():
 
     # A single-pair run publishes no pair index and reads as it always did.
     solo = _hud(_benchmark_publisher("landing_pad"), phase="evaluation")
-    assert solo.startswith("EVALUATION · BASELINE · Shin SE fixed")
+    assert solo.startswith("EVALUATION · BASELINE · PPO on the observation vector")

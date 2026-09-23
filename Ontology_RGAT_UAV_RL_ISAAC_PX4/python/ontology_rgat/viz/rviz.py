@@ -546,6 +546,9 @@ class RvizPublisher:
                                keypoint_confidence: float = 0.0,
                                visible_keypoint_fraction: float = 0.0,
                                semantic_graph=None, potential=None,
+                               ontology_role: str | None = None,
+                               graph_embedding_norm: float | None = None,
+                               planar_command=None,
                                phase: str = "", arm_label: str = "",
                                pair_index: int | None = None) -> None:
         """Publish the recurrent Shin benchmark without its legacy log type.
@@ -593,7 +596,13 @@ class RvizPublisher:
             self.pad_path_pub, self.opt.pad_frame, pad_relative_trail)
 
         parts = reward_parts or {}
-        is_proposed = str(method) == "shin_se_onto_rgat_recovery"
+        # HOW the ontology takes part in THIS arm, as the run reports it,
+        # rather than a literal arm id. The id was hard-coded until
+        # 2026-09-23, so the HUD described the retired reward-side method on
+        # every run and would have to be edited again for the next one.
+        role = str(ontology_role or "")
+        graph_state_arm = role == "state_representation"
+        is_proposed = role == "additive_reward_term"
         active_reward = float(parts.get("active_perception", 0.0))
         onto_reward = float(parts.get("ontology_fov_reward", 0.0))
         fov_risk = float(np.clip(
@@ -620,7 +629,13 @@ class RvizPublisher:
         uav.pose.position.x, uav.pose.position.y, uav.pose.position.z = (
             float(value) for value in relative)
         uav.scale.x, uav.scale.y, uav.scale.z = 0.34, 0.34, 0.14
+        # Colour by the risk the arm's own mechanism reports: the retired arm
+        # by its predicted FOV unavailability, the graph-state arm by the
+        # situation graph's own FOV-margin node. A baseline flight stays the
+        # neutral blue, because it has neither.
+        onto_fov_risk = float(np.clip(parts.get("onto_FOVMargin", 0.0), 0.0, 1.0))
         _rgba(uav, _risk_color(fov_risk) if is_proposed
+              else _risk_color(onto_fov_risk) if graph_state_arm
               else (0.16, 0.48, 0.95), 0.96)
         array.markers.append(uav)
 
@@ -646,8 +661,9 @@ class RvizPublisher:
         # the proposed arm was being drawn as "BASELINE · Shin SE fixed",
         # which is the wrong name for two of the three.
         method_label = str(arm_label) or (
-            "PROPOSED · Shin + Ontology-R-GAT FOV"
-            if is_proposed else "BASELINE · Shin SE fixed")
+            "PROPOSED · Shin + Ontology-R-GAT FOV" if is_proposed
+            else "PROPOSED · PPO + ontology situation graph" if graph_state_arm
+            else "BASELINE · PPO on the observation vector")
         # What this flight is, and which pair is flying it. Four pairs render
         # four identical-looking views, and outside PPO training they are not
         # even flying the arm the panel is titled after: the warm start flies
@@ -666,16 +682,44 @@ class RvizPublisher:
         # perception degradation, not an FOV loss.
         perception = (f"KEYPOINTS: conf={float(keypoint_confidence):.2f}  "
                       f"visible={float(visible_keypoint_fraction):.2f}")
-        branch = (f"ADDED FOV: margin={fov_margin:.2f}  "
-                  f"P(loss<=1s)={fov_risk:.2f}  r_onto={onto_reward:+.3f}"
-                  if is_proposed else "ADDED FOV branch: OFF")
+        if is_proposed:
+            branch = (f"ADDED FOV REWARD: margin={fov_margin:.2f}  "
+                      f"P(loss<=1s)={fov_risk:.2f}  r_onto={onto_reward:+.3f}")
+        elif graph_state_arm:
+            # The graph is in the STATE here, so what is worth showing is what
+            # the graph says and whether its encoder is producing anything --
+            # not a reward term, because there is not one.
+            embedding = ("--" if graph_embedding_norm is None
+                         else f"{float(graph_embedding_norm):.2f}")
+            branch = (f"ONTOLOGY STATE: fov={onto_fov_risk:.2f}  "
+                      f"align={float(parts.get('onto_AlignmentError', 0.0)):.2f}  "
+                      f"touchdown="
+                      f"{float(parts.get('onto_TouchdownSafety', 0.0)):.2f}  "
+                      f"|g_t|={embedding}")
+        else:
+            branch = "ONTOLOGY branch: OFF (observation vector only)"
+        # What the reduced envelope actually sent. Two of the five components
+        # are constants of the experiment and are printed as such, so an
+        # operator can see at a glance that the constraint is holding rather
+        # than having to trust that it is.
+        command = np.asarray(planar_command if planar_command is not None
+                             else (), dtype=float).reshape(-1)
+        if command.size == 5:
+            envelope = (
+                f"PLANAR CMD: fwd={command[0]:+.2f} m/s  "
+                f"vert={command[2]:+.2f} m/s  "
+                f"tilt={math.degrees(float(command[4])):+.1f} deg  "
+                f"[lat={command[1]:+.2f}  yawrate="
+                f"{math.degrees(float(command[3])):+.1f}]")
+        else:
+            envelope = "PLANAR CMD: --"
         text.text = (f"{method_label} | {scenario}\n"
                      f"t={step * dt:5.1f}s  {status.upper()}\n"
                      f"relative xyz=({relative[0]:+.2f}, {relative[1]:+.2f}, "
                      f"{relative[2]:+.2f}) m\n"
                      f"GEOMETRIC pad centre in FOV: "
                      f"{'YES' if geometric_in_fov else 'NO'}\n"
-                     f"{perception}\n{common}\n{branch}")
+                     f"{perception}\n{common}\n{envelope}\n{branch}")
         array.markers.append(text)
 
         route_points = tuple(getattr(self.opt, "route_waypoints_enu_m", ()))
@@ -709,10 +753,37 @@ class RvizPublisher:
             "visible_keypoint_fraction": float(visible_keypoint_fraction),
             "reward": float(reward),
             "active_perception_reward": active_reward,
+            # How this arm uses the ontology, and the quantities that follow
+            # from it. ``ontology_fov_branch_enabled`` keeps its meaning --
+            # the retired additive reward term -- rather than being widened to
+            # mean "has an ontology", which would make an old recording and a
+            # new one disagree about what the flag said.
+            "ontology_role": role or None,
             "ontology_fov_branch_enabled": is_proposed,
             "fov_margin": fov_margin if is_proposed else None,
             "predicted_fov_unavailability": fov_risk if is_proposed else None,
             "ontology_fov_reward": onto_reward if is_proposed else None,
+            "ontology_graph_state_enabled": graph_state_arm,
+            "ontology_fov_margin_node": (
+                onto_fov_risk if graph_state_arm else None),
+            "ontology_touchdown_safety_node": (
+                float(parts.get("onto_TouchdownSafety", 0.0))
+                if graph_state_arm else None),
+            "graph_embedding_norm": (
+                None if graph_embedding_norm is None
+                else float(graph_embedding_norm)),
+            # The reduced envelope, as sent. Two of these are constants of the
+            # experiment; a recording in which they are not zero is a defect.
+            "commanded_forward_m_s": (
+                float(command[0]) if command.size == 5 else None),
+            "commanded_lateral_m_s": (
+                float(command[1]) if command.size == 5 else None),
+            "commanded_vertical_m_s": (
+                float(command[2]) if command.size == 5 else None),
+            "commanded_yaw_rate_rad_s": (
+                float(command[3]) if command.size == 5 else None),
+            "commanded_longitudinal_tilt_rad": (
+                float(command[4]) if command.size == 5 else None),
         }, allow_nan=False)
         self.telemetry_pub.publish(message)
 

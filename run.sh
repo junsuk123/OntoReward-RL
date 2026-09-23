@@ -169,15 +169,23 @@ expect_mode_value=false
 expect_config_value=false
 seminar_fast=false
 # The repository's zero-argument contract is the full reference experiment:
-# ./run.sh alone runs config/experiments/three_arm_burst_comparison.yaml at the
-# budgets that file declares, on as many isolated UAV/UGV pairs as the machine
-# measures room for.
+# ./run.sh alone runs config/experiments/planar_three_arm_comparison.yaml at
+# the budgets that file declares, on as many isolated UAV/UGV pairs as the
+# machine measures room for.
 #
-# That is the three-arm burst comparison (2026-09-22): one deck -- the pad
-# cruises straight, the vehicle settles into following it, and then it doubles
-# speed and leaves the camera frame -- flown by a non-learned visual servo
-# control condition and the two learned arms. The six-deck two-arm design it
-# replaced is still declared and still runnable:
+# That is the planar three-arm comparison (2026-09-23). Three things define it:
+#
+#   * a REDUCED CONTROL ENVELOPE, shared by every arm -- fore/aft acceleration,
+#     climb/descent acceleration and longitudinal tilt. Lateral position and
+#     heading are constraints of the experiment, not degrees of freedom;
+#   * THREE DECKS, each a straight line at a constant heading whose speed is
+#     piecewise constant over three segments (slow / medium / fast);
+#   * the ONTOLOGY AS STATE. Both learned arms use the same reward; the single
+#     experimental factor is whether the actor and critic see the ontology
+#     situation graph. PN guidance is the non-learned control condition.
+#
+# The designs it replaced are still declared and still runnable:
+#   ./run.sh --config config/experiments/three_arm_burst_comparison.yaml
 #   ./run.sh --config config/experiments/two_pipeline_comparison.yaml
 #
 # It used to select the seminar preview here instead -- the profile marked
@@ -273,8 +281,10 @@ if [[ "$mode_supplied" == false ]]; then
   arguments=(--mode full "${arguments[@]}")
 fi
 # --mode full runs the budget the experiment config declares, which is the
-# reference budget: 1,000 PPO episodes per arm, a 400-episode floor on the
-# FOV-risk design set, and 200 paired evaluation flights per scenario per arm.
+# reference budget: the PPO episodes per arm that training.episodes_full names
+# and 400 paired evaluation flights per scenario per arm. The planar design has
+# no offline reward-design set to collect -- the graph encoder is trained by
+# PPO -- so --rgat-data-episodes does nothing under it.
 # Those are sized against this machine's measured ~20 episodes per hour per
 # pair -- about five days end to end -- rather than the round 40,000 that
 # preceded them, which was months of flying and could not have completed.

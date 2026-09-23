@@ -15,7 +15,7 @@ def _dataset():
     return {
         "embedding": torch.randn(count, 8),
         "proprioception": torch.randn(count, 7) * .1,
-        "action": torch.tensor([[.45, -.20, -.35, .05]]).repeat(count, 1),
+        "action": torch.tensor([[.45, -.35, .05]]).repeat(count, 1),
         "truth": torch.zeros(count, 6),
         "episode_id": torch.tensor([1] * 12 + [2] * 12),
     }
@@ -93,7 +93,7 @@ def test_demonstrations_with_retained_frames_survive_an_encoder_change(tmp_path)
             parameter.add_(0.05 * torch.randn_like(parameter))
     rng = np.random.default_rng(3)
     rows = [{"image": rng.integers(0, 120, (320, 512), dtype=np.uint8),
-             "proprioception": np.zeros(7), "action": np.zeros(4), "truth": np.zeros(6)}
+             "proprioception": np.zeros(7), "action": np.zeros(3), "truth": np.zeros(6)}
             for _ in range(5)]
     first = encoded_demonstration_episode(old_model, rows[:3], episode_id=1)
     second = encoded_demonstration_episode(old_model, rows[3:], episode_id=2)

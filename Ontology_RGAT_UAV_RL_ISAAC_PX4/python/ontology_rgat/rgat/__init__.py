@@ -51,6 +51,12 @@ from .fov_risk_dataset import (
 from .fov_risk_train import (CONTRACT_RULE_ID, contract_loss,
                              prepare_fov_risk_artifact, regression_metrics,
                              train_fov_risk_model)
+from .state_graph import (
+    STATE_GOAL_NODE, STATE_GRAPH_EDGES, STATE_GRAPH_INPUT_DIM,
+    STATE_GRAPH_VERSION, STATE_NODE_NAMES, STATE_RELATION_NAMES,
+    STATE_RISK_NODES, StateGraphGeometry, StateGraphScales, build_state_graph,
+    empty_state_graph, state_node_signs, state_node_values,
+    unreachable_state_input_nodes)
 
 __all__ = ["RGAT", "RelationalGraphAttention", "RGATEncoder", "PotentialHead",
            "RGATPotential", "Topology",
@@ -88,4 +94,9 @@ __all__ = ["RGAT", "RelationalGraphAttention", "RGATEncoder", "PotentialHead",
            "split_by_episode", "split_by_episode_ids",
            "fov_risk_data_fingerprint", "validate_fov_risk_dataset",
            "CONTRACT_RULE_ID", "contract_loss", "regression_metrics",
-           "prepare_fov_risk_artifact", "train_fov_risk_model"]
+           "prepare_fov_risk_artifact", "train_fov_risk_model",
+           "STATE_GOAL_NODE", "STATE_GRAPH_EDGES", "STATE_GRAPH_INPUT_DIM",
+           "STATE_GRAPH_VERSION", "STATE_NODE_NAMES", "STATE_RELATION_NAMES",
+           "STATE_RISK_NODES", "StateGraphGeometry", "StateGraphScales",
+           "build_state_graph", "empty_state_graph", "state_node_signs",
+           "state_node_values", "unreachable_state_input_nodes"]

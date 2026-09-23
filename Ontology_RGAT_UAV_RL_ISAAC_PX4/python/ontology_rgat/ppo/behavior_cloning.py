@@ -9,13 +9,25 @@ import numpy as np
 import torch
 from torch.nn import functional as F
 
+from ..controllers import PLANAR_ACTION_DIM
+from ..rgat.state_graph import STATE_GRAPH_INPUT_DIM, STATE_NODE_NAMES
+
 
 # v3 retains the camera frames (PNG-encoded) next to the embeddings, so a
 # demonstration set survives an encoder change by re-embedding instead of by
 # re-flying the teacher. v2 files (embeddings only) are still readable.
-DEMONSTRATION_FORMAT = "ontology-rgat-encoded-behavior-demonstrations-v3"
-_LEGACY_DEMONSTRATION_FORMATS = ("ontology-rgat-encoded-behavior-demonstrations-v2",)
+# v4 adds the ontology situation graph of every transition. The proposed arm's
+# actor takes it as an input, so a warm start that lacks it cannot be cloned
+# into that arm at all -- and recomputing it after the fact would need the
+# semantic recurrence the flight had and a recording does not.
+DEMONSTRATION_FORMAT = "ontology-rgat-encoded-behavior-demonstrations-v4"
+_LEGACY_DEMONSTRATION_FORMATS = (
+    "ontology-rgat-encoded-behavior-demonstrations-v3",
+    "ontology-rgat-encoded-behavior-demonstrations-v2")
 DATA_FIELDS = ("embedding", "proprioception", "action", "truth", "episode_id")
+# Optional, like the frames: present from v4, and required only by an arm whose
+# observation carries the graph.
+STATE_GRAPH_FIELD = "state_graph"
 # One PNG per transition, aligned with the DATA_FIELDS rows. Optional: a set
 # assembled before v3, or one whose frames were deliberately dropped, has none.
 FRAME_FIELD = "frames_png"
@@ -80,6 +92,13 @@ def encoded_demonstration_episode(model, rows, *, episode_id: int,
             row["truth"] for row in rows]), dtype=torch.float32),
         "episode_id": torch.full((count,), int(episode_id), dtype=torch.int64),
     }
+    graphs = [row.get("state_graph_X") for row in rows]
+    if all(graph is not None for graph in graphs):
+        # Stored transposed, ``[transitions, nodes, features]``, which is the
+        # layout the encoder consumes.
+        episode[STATE_GRAPH_FIELD] = torch.as_tensor(
+            np.stack([np.asarray(graph, dtype=np.float32).T for graph in graphs]),
+            dtype=torch.float32)
     if keep_frames:
         episode[FRAME_FIELD] = _encode_frames(images)
     return episode
@@ -88,6 +107,8 @@ def encoded_demonstration_episode(model, rows, *, episode_id: int,
 def merge_encoded_demonstrations(current, episode):
     if current is None:
         merged = {name: episode[name].detach().cpu() for name in DATA_FIELDS}
+        if episode.get(STATE_GRAPH_FIELD) is not None:
+            merged[STATE_GRAPH_FIELD] = episode[STATE_GRAPH_FIELD].detach().cpu()
         if episode.get(FRAME_FIELD) is not None:
             merged[FRAME_FIELD] = list(episode[FRAME_FIELD])
         return merged
@@ -96,6 +117,13 @@ def merge_encoded_demonstrations(current, episode):
             raise ValueError(f"encoded demonstration is missing {name}")
     merged = {name: torch.cat((current[name], episode[name].detach().cpu()))
               for name in DATA_FIELDS}
+    # Kept only while every episode carries one, for the same reason frames
+    # are: a partially graphed set cannot warm-start the proposed arm.
+    if (current.get(STATE_GRAPH_FIELD) is not None
+            and episode.get(STATE_GRAPH_FIELD) is not None):
+        merged[STATE_GRAPH_FIELD] = torch.cat(
+            (current[STATE_GRAPH_FIELD],
+             episode[STATE_GRAPH_FIELD].detach().cpu()))
     # Frames are kept only while every episode carries them: a partially
     # framed set could not be re-embedded as a whole.
     if current.get(FRAME_FIELD) is not None and episode.get(FRAME_FIELD) is not None:
@@ -112,7 +140,8 @@ def validate_encoded_demonstrations(dataset) -> int:
     count = int(dataset["episode_id"].shape[0])
     expected = {
         "embedding": (count, None), "proprioception": (count, 7),
-        "action": (count, 4), "truth": (count, 6), "episode_id": (count,),
+        "action": (count, PLANAR_ACTION_DIM), "truth": (count, 6),
+        "episode_id": (count,),
     }
     for name, shape in expected.items():
         actual = tuple(dataset[name].shape)
@@ -129,6 +158,18 @@ def validate_encoded_demonstrations(dataset) -> int:
     if frames is not None and len(frames) != count:
         raise ValueError(
             f"encoded demonstrations carry {len(frames)} frames for {count} transitions")
+    graphs = dataset.get(STATE_GRAPH_FIELD)
+    if graphs is not None:
+        shape = tuple(graphs.shape)
+        if (len(shape) != 3 or shape[0] != count
+                or shape[1] != len(STATE_NODE_NAMES)
+                or shape[2] != STATE_GRAPH_INPUT_DIM):
+            raise ValueError(
+                f"encoded demonstration situation graphs have shape {shape}, "
+                f"expected ({count}, {len(STATE_NODE_NAMES)}, "
+                f"{STATE_GRAPH_INPUT_DIM})")
+        if not torch.isfinite(graphs).all():
+            raise ValueError("encoded demonstration situation graphs are not finite")
     return count
 
 
@@ -155,8 +196,12 @@ def save_encoded_demonstrations(path, dataset, *, config_hash: str,
         "environment_steps": int(environment_steps),
         "transitions": count,
         "frames_retained": dataset.get(FRAME_FIELD) is not None,
+        "situation_graphs_retained": dataset.get(STATE_GRAPH_FIELD) is not None,
         "dataset": {name: dataset[name].detach().cpu() for name in DATA_FIELDS},
     }
+    if dataset.get(STATE_GRAPH_FIELD) is not None:
+        payload["dataset"][STATE_GRAPH_FIELD] = (
+            dataset[STATE_GRAPH_FIELD].detach().cpu())
     if dataset.get(FRAME_FIELD) is not None:
         payload["dataset"][FRAME_FIELD] = list(dataset[FRAME_FIELD])
     target = Path(path)
@@ -225,10 +270,18 @@ def _cloning_pass(model, dataset, *, optimizer, sequence_length: int,
             temporal = model.temporal_backbone(
                 embedding, proprioception, hidden,
                 torch.zeros((1, len(selected)), dtype=torch.bool, device=device))
-            features = torch.cat((
-                temporal.latent[..., model.pipeline_spec.actor_latent_slice],
-                proprioception), dim=-1)
-            prediction = model.actor(features)
+            parts = [temporal.latent[..., model.pipeline_spec.actor_latent_slice],
+                     proprioception]
+            if model.graph_state_enabled:
+                graphs = dataset.get(STATE_GRAPH_FIELD)
+                if graphs is None:
+                    raise ValueError(
+                        "warm-starting the graph state arm needs demonstrations "
+                        "recorded with their situation graphs (format v4); "
+                        "re-fly the teacher or clone only the baseline")
+                parts.append(model.policy_graph_encoder(
+                    graphs[selected].to(device)[None]))
+            prediction = model.actor(torch.cat(parts, dim=-1))
             target_action = torch.clamp(
                 dataset["action"][selected].to(device)[None], -.999, .999)
             target = torch.atanh(target_action)
@@ -269,6 +322,10 @@ def behavior_clone(model, dataset, *, epochs: int = 12,
     parameters = [*model.temporal_backbone.parameters(), *model.actor.parameters()]
     if model.relative_state_head is not None:
         parameters.extend(model.relative_state_head.parameters())
+    if model.graph_state_enabled:
+        # The actor's encoder is part of the actor. Cloning the mapping without
+        # it would ask a randomly initialised g_t to be useful from episode one.
+        parameters.extend(model.policy_graph_encoder.parameters())
     optimizer = torch.optim.Adam(parameters, lr=learning_rate)
     with torch.no_grad():
         before, before_aux = _cloning_pass(

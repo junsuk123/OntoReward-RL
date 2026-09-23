@@ -298,16 +298,30 @@ def test_dashboard_is_organised_as_comparison_then_ontology_then_run_state():
     assert "Proposed − Baseline · 표본이 작으면 해석 금지" in PAGE
     assert "Proposed − Baseline · 음수가 개선" in PAGE
 
-    # 2. what the ontology branch actually did, and whether it was right
+    # 2. what the ontology branch actually did, and whether it was right.
+    #
+    # The current method puts the graph in the STATE, so this section shows
+    # the graph's own channels and whether its encoder is producing anything.
+    # The retired reward-side panels are still built -- that arm is still
+    # runnable -- but they declare the role they need and are hidden on a run
+    # that does not have it.
     assert "2 · 온톨로지-R-GAT의 영향력" in PAGE
     assert "FOV 소실 시간 비율 (낮을수록 좋음)" in PAGE
+    assert "온톨로지 상황 그래프의 위험 node 값" in PAGE
+    assert "onto_AlignmentError" in PAGE and "onto_TouchdownSafety" in PAGE
+    assert "graph_embedding_norm" in PAGE
+    assert "평면 엔벨로프가 실제로 보낸 명령" in PAGE
+    assert "cmd_tilt_deg" in PAGE and "cmd_yaw_rate_deg_s" in PAGE
+    assert "series:PROPOSED_TRAIN" in PAGE
+    assert "온톨로지 상황 그래프 G_t" in PAGE
+    # The retired reward-side panels, each gated on the role that produces it.
     assert "readout 보정 · 예측 대 실측 FOV 비가용 비율" in PAGE
     assert "fov_predicted_mean" in PAGE and "fov_actual_mean" in PAGE
     assert "fov_prediction_mae" in PAGE and "fov_prediction_bias" in PAGE
     assert "ontology_fov_reward_share" in PAGE
     assert "ontology_fov_reward_sum" in PAGE
-    assert "series:PROPOSED_TRAIN" in PAGE
-    assert "FOV 온톨로지 → R-GAT 비가용 비율 readout" in PAGE
+    assert "requiresRole:'additive_reward_term'" in PAGE
+    assert "requiresRole:'state_representation'" in PAGE
 
     # 3. run state, explicitly framed as not being the comparison
     assert "3 · 실행 상태" in PAGE
@@ -354,10 +368,25 @@ def test_the_dashboard_drops_cards_that_answer_none_of_the_three_questions():
 
 
 def test_the_dashboard_calls_the_readout_a_time_fraction_not_a_probability():
+    """The retired readout's wording, kept for the arm that still uses it."""
     assert "q(1s 비가용 비율)" in PAGE
     assert "예측 q (향후 1s FOV 밖 시간 비율)" in PAGE
-    assert "이진 확률이 아니다" in PAGE
     assert "추가 보상 −λ·q" in PAGE
+
+
+def test_the_dashboard_says_the_graph_is_the_state_and_not_the_reward():
+    """The current method's central claim has to be on the page.
+
+    A reader who only looks at the dashboard must not come away thinking the
+    ontology is still shaping the reward: that was true until 2026-09-23 and
+    the two arms' rewards are now identical.
+    """
+    assert "온톨로지 그래프 G_t는 정책의 상태 표현이다" in PAGE
+    assert "보상에는 전혀 들어가지 않으므로 두 arm의 보상은 완전히 같다" in PAGE
+    assert "센서 → 온톨로지 상황 그래프 → R-GAT → 정책 상태 g_t" in PAGE
+    # And that the envelope is the reduced one, for every arm.
+    assert "평면 3채널" in PAGE
+    assert "횡방향 속도와 요레이트는 항상 0" in PAGE
 
 
 def test_baseline_reports_keypoint_quality_from_the_shared_visual_features():

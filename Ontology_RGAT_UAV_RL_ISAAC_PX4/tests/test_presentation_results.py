@@ -9,7 +9,7 @@ from ontology_rgat.evaluation.presentation import (
 
 METHODS = (
     "shin_se_fixed",
-    "shin_se_onto_rgat_recovery",
+    "shin_se_onto_rgat_state",
 )
 
 
@@ -32,11 +32,18 @@ def _row(method, success, *, digest=""):
 
 
 def test_incomplete_run_uses_current_training_and_never_stale_evaluation(tmp_path):
+    """An unfinished run reports its own training and never a stale evaluation.
+
+    The withheld-arm rule only applies to a REWARD-side ontology arm whose
+    frozen readout does not exist yet: its episodes were flown against a reward
+    the run cannot reproduce, so they are not reported. The current method has
+    no such artifact -- its encoder is trained by PPO -- so both of its arms
+    report the episodes they actually flew.
+    """
     manifest = {
         "execution_status": "configured; results pending",
-        "pipeline_specs": {method: {
-            "fov_risk_reward_enabled": method.endswith("onto_rgat_recovery")}
-            for method in METHODS},
+        "pipeline_specs": {method: {"fov_risk_reward_enabled": False}
+                           for method in METHODS},
         "fov_risk_design_id": None,
         "evaluation": {"circle": 1},
     }
@@ -50,7 +57,8 @@ def test_incomplete_run_uses_current_training_and_never_stale_evaluation(tmp_pat
     assert summary["performance_status"] == "training_preliminary"
     by_method = {row["method"]: row for row in summary["safe_landing_metrics"]}
     assert by_method["shin_se_fixed"]["safe_landings"] == 1
-    assert by_method["shin_se_onto_rgat_recovery"]["episodes"] == 0
+    assert by_method[METHODS[1]]["episodes"] == 1
+    assert by_method[METHODS[1]]["safe_landings"] == 0
     assert (tmp_path / "presentation/slide13_safe_landing_performance.png").is_file()
     assert (tmp_path / "presentation/slide14_rgat_reward_validation.png").is_file()
     for name in (
@@ -61,6 +69,34 @@ def test_incomplete_run_uses_current_training_and_never_stale_evaluation(tmp_pat
         assert (tmp_path / "presentation" / name).is_file()
     text = (tmp_path / "presentation/presentation_results_summary.json").read_text()
     assert "NaN" not in text
+
+
+def test_a_reward_side_arm_is_withheld_until_its_frozen_readout_exists(tmp_path):
+    """The retired method's rule, kept executable under its own arm id.
+
+    A reward-side ontology arm's episodes were flown against a reward the run
+    cannot reproduce until the frozen readout exists, so they are withheld.
+    The current method has no such artifact and is never withheld.
+    """
+    from ontology_rgat.evaluation.presentation import _current_training_rows
+
+    methods = ("shin_se_fixed", "shin_se_onto_rgat_recovery")
+    manifest = {
+        "pipeline_specs": {method: {
+            "fov_risk_reward_enabled": method.endswith("onto_rgat_recovery")}
+            for method in methods},
+        "fov_risk_design_id": None,
+    }
+    for method in methods:
+        _write_csv(tmp_path / "models" / method / f"{method}_training.csv",
+                   [_row(method, True)])
+    rows = _current_training_rows(tmp_path, manifest, methods)
+    assert len(rows["shin_se_fixed"]) == 1
+    assert rows["shin_se_onto_rgat_recovery"] == []
+    # With the readout in place the same arm reports normally again.
+    ready = {**manifest, "fov_risk_design_id": "fov-risk-abc123"}
+    assert len(_current_training_rows(tmp_path, ready, methods)[
+        "shin_se_onto_rgat_recovery"]) == 1
 
 
 def test_final_evaluation_requires_every_selected_checkpoint_digest():

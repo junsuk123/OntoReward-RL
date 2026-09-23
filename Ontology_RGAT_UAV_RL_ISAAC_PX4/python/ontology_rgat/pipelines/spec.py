@@ -29,6 +29,22 @@ FORBIDDEN_PRIMARY_VISION_KEYS = ("dictionary", "board")
 FOV_REWARD_READOUTS = ("direct_graph_scalar", "binary_classifier_linear_head")
 RETIRED_FOV_REWARD_READOUTS = ("binary_classifier_linear_head",)
 
+# The ontology input mode of the current method. The graph is the policy's
+# STATE, not a reward input: it is built from the same visual semantics the
+# actor already sees, encoded by an R-GAT that PPO trains, and concatenated
+# onto the actor's and the critic's feature vector. Nothing about the reward
+# changes, which is what makes the comparison single-factor.
+STATE_GRAPH_INPUT_MODE = "state_situation_graph"
+
+# How the situation graph is encoded. ``ontology_rgat`` is the proposed model;
+# the other two are the ablations that remove, in turn, the relation types and
+# the message passing.
+GRAPH_STATE_REPRESENTATIONS = ("ontology_rgat", "gat", "node_pool")
+
+# The reduced control envelope every arm flies. Kept here because the spec is
+# what the runner, the model builder and the manifest all read.
+PLANAR_ACTION_DIMENSION = 3
+
 
 @dataclass(frozen=True)
 class PipelineSpec:
@@ -45,6 +61,11 @@ class PipelineSpec:
     use_adaptive_reward_weights: bool = False
     adaptive_reward_architecture: str | None = None
     fov_reward_readout: str | None = None
+    # The current method. ``graph_state_enabled`` puts the ontology situation
+    # graph into the actor's and critic's observation; it never touches the
+    # reward, and it is mutually exclusive with every reward-side ontology use.
+    graph_state_enabled: bool = False
+    graph_state_representation: str | None = None
 
     def __post_init__(self) -> None:
         if not self.name:
@@ -71,6 +92,28 @@ class PipelineSpec:
                 "shin_table_active reward and active perception must agree")
         if not self.fov_risk_reward_enabled and self.fov_reward_readout is not None:
             raise ValueError("only the FOV-risk reward declares a readout")
+        if self.graph_state_enabled:
+            if not self.ontology_enabled:
+                raise ValueError("the graph state representation is an ontology pipeline")
+            if self.ontology_input_mode != STATE_GRAPH_INPUT_MODE:
+                raise ValueError(
+                    "the graph state representation requires ontology_input_mode "
+                    f"{STATE_GRAPH_INPUT_MODE!r}")
+            if self.graph_state_representation not in GRAPH_STATE_REPRESENTATIONS:
+                raise ValueError(
+                    "a graph state pipeline must declare its representation: "
+                    f"one of {GRAPH_STATE_REPRESENTATIONS}")
+            if (self.fov_risk_reward_enabled or self.use_direct_rgat_potential
+                    or self.use_adaptive_reward_weights):
+                raise ValueError(
+                    "the ontology graph is the state here; it cannot also "
+                    "shape, weight or replace the reward")
+            if self.reward_mode not in {"shin_table_active", "shin_table_no_active"}:
+                raise ValueError(
+                    "a graph state pipeline must keep the baseline reward mode")
+        elif self.graph_state_representation is not None:
+            raise ValueError(
+                "only a graph state pipeline declares a graph representation")
         if self.fov_risk_reward_enabled:
             if not (self.ontology_enabled and self.state_estimation_enabled
                     and self.auxiliary_estimation_loss_enabled
@@ -86,6 +129,8 @@ class PipelineSpec:
                 raise ValueError(
                     "FOV-risk reward must declare its readout: "
                     f"one of {FOV_REWARD_READOUTS}")
+        elif self.graph_state_enabled:
+            pass        # validated above; the reward side is untouched
         elif self.ontology_enabled:
             if self.ontology_input_mode != "semantic_observation":
                 raise ValueError("legacy ontology pipelines require semantic_observation input")
@@ -118,6 +163,8 @@ class PipelineSpec:
 
 
 PIPELINES = {
+    # Baseline: plain PPO on the shared reward, the shared planar action and
+    # the shared perception. "그냥 강화학습".
     "shin_se_fixed": PipelineSpec(
         name="shin_se_fixed",
         state_estimation_enabled=True,
@@ -128,6 +175,64 @@ PIPELINES = {
         ontology_input_mode=None,
         use_direct_rgat_potential=False,
     ),
+    # Proposed: the same everything, plus the ontology situation graph in the
+    # observation. The reward, the action space, the environment, the PPO
+    # configuration, the seeds and the episode budget are identical to the
+    # baseline's, so the single experimental factor is the state representation.
+    "shin_se_onto_rgat_state": PipelineSpec(
+        name="shin_se_onto_rgat_state",
+        state_estimation_enabled=True,
+        auxiliary_estimation_loss_enabled=True,
+        active_perception_enabled=True,
+        reward_mode="shin_table_active",
+        ontology_enabled=True,
+        ontology_input_mode=STATE_GRAPH_INPUT_MODE,
+        use_direct_rgat_potential=False,
+        graph_state_enabled=True,
+        graph_state_representation="ontology_rgat",
+    ),
+}
+
+# Ablations of the proposed arm. Same reward, same action, same environment,
+# same PPO; only what the encoder is allowed to use changes. They are not part
+# of the primary run and are selected explicitly.
+ABLATION_PIPELINES = {
+    "shin_se_onto_gat_state": PipelineSpec(
+        name="shin_se_onto_gat_state",
+        state_estimation_enabled=True,
+        auxiliary_estimation_loss_enabled=True,
+        active_perception_enabled=True,
+        reward_mode="shin_table_active",
+        ontology_enabled=True,
+        ontology_input_mode=STATE_GRAPH_INPUT_MODE,
+        use_direct_rgat_potential=False,
+        graph_state_enabled=True,
+        graph_state_representation="gat",
+    ),
+    "shin_se_node_pool_state": PipelineSpec(
+        name="shin_se_node_pool_state",
+        state_estimation_enabled=True,
+        auxiliary_estimation_loss_enabled=True,
+        active_perception_enabled=True,
+        reward_mode="shin_table_active",
+        ontology_enabled=True,
+        ontology_input_mode=STATE_GRAPH_INPUT_MODE,
+        use_direct_rgat_potential=False,
+        graph_state_enabled=True,
+        graph_state_representation="node_pool",
+    ),
+}
+
+# Historical and ablation-only definitions are intentionally absent from the
+# primary runner. They retain their exact IDs so no old method silently aliases
+# to either final scientific pipeline.
+LEGACY_PIPELINES = {
+    # The previous proposed method: the ontology R-GAT produced a frozen
+    # scalar that entered the reward as ``-lambda_fov q(G_t)``. Superseded by
+    # ``shin_se_onto_rgat_state``, in which the graph is the policy's state and
+    # the reward is untouched. Kept runnable under its own id so the recorded
+    # runs stay attributable and the reward-side method can still be flown for
+    # comparison; ``--legacy-multi-pipeline`` selects it.
     "shin_se_onto_rgat_recovery": PipelineSpec(
         name="shin_se_onto_rgat_recovery",
         state_estimation_enabled=True,
@@ -140,12 +245,6 @@ PIPELINES = {
         fov_risk_reward_enabled=True,
         fov_reward_readout="direct_graph_scalar",
     ),
-}
-
-# Historical and ablation-only definitions are intentionally absent from the
-# primary runner. They retain their exact IDs so no old method silently aliases
-# to either final scientific pipeline.
-LEGACY_PIPELINES = {
     # Retired readout: an nn.Linear head on the goal embedding predicting a
     # binary "FOV lost within H" indicator. Kept under its original ID so its
     # checkpoints and results stay attributable to the method that produced
@@ -236,7 +335,8 @@ ADAPTIVE_PIPELINES = {
         ontology_input_mode="semantic_observation", use_direct_rgat_potential=False,
         use_adaptive_reward_weights=True, adaptive_reward_architecture="rgat"),
 }
-ALL_PIPELINES = {**PIPELINES, **LEGACY_PIPELINES, **ADAPTIVE_PIPELINES}
+ALL_PIPELINES = {**PIPELINES, **ABLATION_PIPELINES, **LEGACY_PIPELINES,
+                 **ADAPTIVE_PIPELINES}
 
 # Old commands remain accepted, but the three new names are the only primary
 # comparison IDs.  In particular, legacy ``ontoreward`` remains legacy rather
@@ -259,34 +359,62 @@ def primary_pipeline_ids() -> tuple[str, ...]:
     return tuple(PIPELINES)
 
 
+def ablation_pipeline_ids() -> tuple[str, ...]:
+    return tuple(ABLATION_PIPELINES)
+
+
+def graph_state_pipeline_ids() -> tuple[str, ...]:
+    """Every registered arm whose observation carries the situation graph."""
+    return tuple(name for name, spec in ALL_PIPELINES.items()
+                 if spec.graph_state_enabled)
+
+
 def available_pipeline_ids() -> tuple[str, ...]:
     return tuple(ALL_PIPELINES)
 
 
+# Everything the two learned arms must agree on. The reward mode is in the
+# list because the current method does not touch the reward at all: if these
+# ever differ, the comparison has more than one factor and the run is wrong.
 _BASELINE_SPEC_FIELDS = (
     "state_estimation_enabled", "auxiliary_estimation_loss_enabled",
     "active_perception_enabled", "reward_mode", "reserved_latent_dimensions",
+    "use_direct_rgat_potential", "use_adaptive_reward_weights",
+    "fov_risk_reward_enabled", "fov_reward_readout",
 )
 
 
 def assert_primary_baseline_equivalence() -> None:
-    """Fail fast if the proposed pipeline changes any baseline contract flag."""
+    """Fail fast if the proposed pipeline changes anything but the state.
+
+    The single experimental factor is ``graph_state_enabled``. Every other
+    contract flag -- reward, estimator, auxiliary loss, active perception, the
+    reserved latent slice -- has to be identical, and in particular the
+    proposed arm must not carry a reward-side ontology term of any kind.
+    """
     baseline = PIPELINES["shin_se_fixed"]
-    proposed = PIPELINES["shin_se_onto_rgat_recovery"]
+    proposed = PIPELINES["shin_se_onto_rgat_state"]
     mismatches = [name for name in _BASELINE_SPEC_FIELDS
                   if getattr(baseline, name) != getattr(proposed, name)]
     if mismatches:
         raise RuntimeError(
             f"proposed pipeline changed Shin baseline fields: {mismatches}")
-    if baseline.ontology_enabled or baseline.fov_risk_reward_enabled:
+    if baseline.ontology_enabled or baseline.graph_state_enabled:
         raise RuntimeError("Shin baseline must not enable the ontology branch")
-    if not (proposed.ontology_enabled and proposed.fov_risk_reward_enabled):
-        raise RuntimeError("proposed pipeline must add the FOV-risk ontology branch")
-    if proposed.use_direct_rgat_potential or proposed.use_adaptive_reward_weights:
-        raise RuntimeError("primary proposed pipeline cannot use PBRS/adaptive weights")
-    if proposed.fov_reward_readout != "direct_graph_scalar":
+    if not (proposed.ontology_enabled and proposed.graph_state_enabled):
         raise RuntimeError(
-            "the proposed reward must read its scalar from the graph itself")
+            "the proposed pipeline must add the ontology graph state branch")
+    if proposed.ontology_input_mode != STATE_GRAPH_INPUT_MODE:
+        raise RuntimeError(
+            "the proposed pipeline must read the situation graph, not a "
+            "reward-side ontology input")
+    if proposed.graph_state_representation != "ontology_rgat":
+        raise RuntimeError(
+            "the primary proposed arm is the relational encoder; 'gat' and "
+            "'node_pool' are ablations and are selected explicitly")
+    if proposed.fov_risk_reward_enabled or baseline.fov_risk_reward_enabled:
+        raise RuntimeError(
+            "the primary comparison carries no additive FOV-risk reward term")
 
 
 def validate_pipeline_configuration(config: dict) -> None:
@@ -326,6 +454,8 @@ def validate_pipeline_configuration(config: dict) -> None:
             "use_adaptive_reward_weights": spec.use_adaptive_reward_weights,
             "adaptive_reward_architecture": spec.adaptive_reward_architecture,
             "fov_reward_readout": spec.fov_reward_readout,
+            "graph_state": spec.graph_state_enabled,
+            "graph_state_representation": spec.graph_state_representation,
         }
         for key, value in optional_expected.items():
             if key in declared and declared[key] != value:
@@ -351,6 +481,32 @@ def validate_pipeline_configuration(config: dict) -> None:
                 f"frustum visibility, not {criterion!r}")
         if float(risk.get("prediction_horizon_seconds", 1.0)) <= 0.0:
             raise ValueError("fov_risk.prediction_horizon_seconds must be positive")
+    if any(ALL_PIPELINES[name].graph_state_enabled for name in configured):
+        graph_state = config.get("graph_state") or {}
+        for name in ("hidden_dim", "graph_dim"):
+            if int(graph_state.get(name, 32)) <= 0:
+                raise ValueError(f"graph_state.{name} must be positive")
+        # The encoder is part of the policy. A configuration that froze it, or
+        # that pointed it at a pre-trained artifact, would be the retired
+        # reward-side method wearing the new name.
+        if bool(graph_state.get("freeze_during_ppo", False)):
+            raise ValueError(
+                "the graph state encoder is trained by PPO and must not be frozen")
+        if graph_state.get("pretrained_artifact"):
+            raise ValueError(
+                "the graph state encoder has no offline stage and no artifact")
+        representation = graph_state.get("representation")
+        if (representation is not None
+                and representation not in GRAPH_STATE_REPRESENTATIONS):
+            raise ValueError(
+                "graph_state.representation must be one of "
+                f"{GRAPH_STATE_REPRESENTATIONS}")
+        # A run that puts the graph in the state must not also put it in the
+        # reward: that is two factors, not one.
+        if any(ALL_PIPELINES[name].fov_risk_reward_enabled for name in configured):
+            raise ValueError(
+                "a run cannot mix the graph-state method with the retired "
+                "FOV-risk reward method: the comparison would have two factors")
     adaptive_specs = [ALL_PIPELINES[name] for name in configured
                       if ALL_PIPELINES[name].use_adaptive_reward_weights]
     if adaptive_specs:

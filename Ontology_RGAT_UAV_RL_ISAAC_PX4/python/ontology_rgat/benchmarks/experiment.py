@@ -8,7 +8,12 @@ from pathlib import Path
 import yaml
 
 
-PRIMARY_PIPELINES = ("shin_se_fixed", "shin_se_onto_rgat_recovery")
+# The current headline arms, the ablations of the proposed one, and the
+# retired reward-side arm -- which keeps its id so its recorded runs stay
+# attributable and can still be flown for comparison.
+PRIMARY_PIPELINES = ("shin_se_fixed", "shin_se_onto_rgat_state")
+GRAPH_STATE_ABLATIONS = ("shin_se_onto_gat_state", "shin_se_node_pool_state")
+RETIRED_REWARD_PIPELINES = ("shin_se_onto_rgat_recovery",)
 ADAPTIVE_PIPELINES = (
     "shin_se_rgat_weight", "no_se_fixed",
     "onto_rgat_adaptive_weight_no_se", "onto_rgat_potential_pbrs_no_se",
@@ -17,7 +22,8 @@ ADAPTIVE_PIPELINES = (
 )
 LEGACY_METHODS = ("shin2026", "sparse", "manual_no_active", "ontoreward",
                   "ontoreward_plus_active")
-METHODS = PRIMARY_PIPELINES + ADAPTIVE_PIPELINES + LEGACY_METHODS
+METHODS = (PRIMARY_PIPELINES + GRAPH_STATE_ABLATIONS + RETIRED_REWARD_PIPELINES
+           + ADAPTIVE_PIPELINES + LEGACY_METHODS)
 
 
 def _merge(base: dict, overlay: dict) -> dict:

@@ -147,7 +147,11 @@ def test_the_bare_launcher_budget_is_the_one_the_experiment_config_declares():
 
     training = int(config["training"]["episodes_full"])
     evaluation = sum(int(count) for count in config["evaluation"].values())
-    design = int(config["fov_risk_design"]["episodes_full"])
+    # The graph-state design has no offline reward-design stage at all -- its
+    # encoder is trained by PPO -- so there is nothing to collect for it. A
+    # design that does declare one still has to fit inside the same budget.
+    design_config = config.get("fov_risk_design") or {}
+    design = int(design_config.get("episodes_full", 0))
 
     # Arms train on their own pairs, so training is one arm's wall clock;
     # evaluation flies every seed twice across the same two pairs.
@@ -155,7 +159,8 @@ def test_the_bare_launcher_budget_is_the_one_the_experiment_config_declares():
             + evaluation * arms / (arms * per_pair_hourly)
             + design / per_pair_hourly) / 24.0
     assert days < 14.0, f"the declared budget is {days:.0f} days of flying"
-    assert int(config["fov_risk_design"]["max_episodes_full"]) >= design
+    if design:
+        assert int(design_config["max_episodes_full"]) >= design
 
 
 def test_rviz_gives_every_physical_pair_its_own_view_not_every_method():

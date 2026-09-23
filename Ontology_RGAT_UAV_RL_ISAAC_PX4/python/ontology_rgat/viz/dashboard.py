@@ -294,7 +294,7 @@ const PALETTE=['#0072BD','#D95319','#EDB120','#7E2F8E','#77AC30','#4DBEEE','#A21
 // arms. Reading the mutable list below instead would let a stale arm set
 // resurrect itself -- a non-learned arm would come back as learned.
 const DEFAULT_METHODS=Object.freeze(
-  ['shin_se_fixed','shin_se_onto_rgat_recovery']);
+  ['shin_se_fixed','shin_se_onto_rgat_state']);
 const BENCHMARK_METHODS=DEFAULT_METHODS.slice();
 const BENCHMARK_TRAIN=BENCHMARK_METHODS.map(x=>'benchmark_train_'+x);
 const BENCHMARK_EVAL=BENCHMARK_METHODS.map(x=>'benchmark_eval_'+x);
@@ -305,9 +305,15 @@ function armsOf(state){
   if(Array.isArray(declared)&&declared.length)
     return declared.map(a=>({method:String(a.method),
       label:String(a.label||a.method),learned:a.learned!==false,
-      ontology:a.ontology===true}));
+      ontology:a.ontology===true,
+      // How the ontology takes part: 'state_representation' (current) or
+      // 'additive_reward_term' (retired). Published by the run from its
+      // pipeline spec so the panels never have to guess from an arm's name.
+      ontology_role:a.ontology_role||null,
+      graph_state_representation:a.graph_state_representation||null}));
   return ((state.scalars||{}).benchmark_methods||DEFAULT_METHODS)
-    .map(m=>({method:String(m),label:String(m),learned:true}));
+    .map(m=>({method:String(m),label:String(m),learned:true,
+      ontology_role:m.endsWith('_state')?'state_representation':null}));
 }
 function refill(list,next){list.length=0;for(const v of next)list.push(v);}
 function syncArms(state){
@@ -342,12 +348,21 @@ function seriesLabel(key){
 }
 function learnedArms(){return ARMS.filter(a=>a.learned);}
 function ontologyArms(){return ARMS.filter(a=>a.ontology&&a.learned);}
+// HOW the ontology takes part, as the run's own pipeline spec reports it.
+// 'state_representation' is the current method; 'additive_reward_term' is the
+// retired one. Cards that only make sense for one of them declare the role
+// they need and are hidden for the other, so a panel never describes a
+// mechanism this run does not have.
+function armRoles(){
+  return new Set(ARMS.map(a=>a.ontology_role).filter(Boolean));
+}
+function hasRole(role){return !role||armRoles().has(role);}
 // Series for the arm whose reward carries the frozen R-GAT term. Written as a
 // literal id until 2026-09-22, which meant section 2 went blank for every
 // ontology pipeline this repository declares except one -- and would have to
 // be edited again for the next. Refilled from the run in ``syncArms``.
-const PROPOSED_TRAIN=['benchmark_train_shin_se_onto_rgat_recovery'];
-const PROPOSED_STEP=['benchmark_step_shin_se_onto_rgat_recovery'];
+const PROPOSED_TRAIN=['benchmark_train_shin_se_onto_rgat_state'];
+const PROPOSED_STEP=['benchmark_step_shin_se_onto_rgat_state'];
 const CARDS=[
  {id:'tiles',title:null},
  {id:'phase_status',view:'benchmark',kind:'phase'},
@@ -358,9 +373,10 @@ const CARDS=[
 
  {id:'head_performance',view:'benchmark',kind:'heading',
   title:'1 · 두 모델 성능',
-  note:'인식·상태추정·actor·critic·action·제어기·환경·원문 보상항·종료가 동일하고, '
-      +'동일 초기 checkpoint와 동일 PPO 예산을 쓴다. 두 곡선의 차이는 학습 전용 '
-      +'온톨로지-R-GAT 보상 하나뿐이다.'},
+  note:'인식·상태추정·actor·critic·action·제어기·환경·보상·종료가 동일하고, 같은 '
+      +'시연 집합과 같은 PPO 예산·seed를 쓴다. 두 곡선의 차이는 관측에 온톨로지 '
+      +'상황 그래프가 들어가는지 하나뿐이다. 제어는 세 arm 모두 평면 3채널 '
+      +'[a_fwd, a_z, tilt]이며 횡방향 속도와 요레이트는 항상 0이다.'},
  {id:'benchmark_eval_success',view:'benchmark',title:'[평가] 안전 착륙 성공률',
   series:BENCHMARK_EVAL,x:'evaluation_index',y:'paper_success',smooth:5,ymin:0,ymax:1},
  {id:'benchmark_eval_position',view:'benchmark',title:'[평가] 상대 위치 RMSE (m)',
@@ -385,12 +401,16 @@ const CARDS=[
 
  {id:'head_ontology',view:'benchmark',kind:'heading',
   title:'2 · 온톨로지-R-GAT의 영향력',
-  note:'추가 보상은 비종료 step에서 r_paper(t) − λ·q(G_{t+1}) 하나다. q는 향후 1초 중 '
-      +'패드 중심이 FOV 밖인 시간 비율의 기댓값이며 이진 확률이 아니다. 아래는 그 항이 '
-      +'실제로 무엇을 바꿨는지와, 동결된 readout이 맞았는지를 나눠 본다.'},
+  note:'온톨로지 그래프 G_t는 정책의 상태 표현이다. 9개 node · 4개 관계로 상황을 '
+      +'요약해 R-GAT으로 부호화하고, 그래프 수준 읽기 g_t를 actor와 critic 입력에 '
+      +'이어붙인다. 보상에는 전혀 들어가지 않으므로 두 arm의 보상은 완전히 같다. '
+      +'아래는 그래프가 무엇을 보고 있는지와, 부호기가 실제로 동작하는지를 나눠 본다. '
+      +'그래프 채널 자체는 두 arm 모두에 대해 계산·표시되며, 소비하는 쪽은 제안 arm뿐이다.'},
  {id:'fov_status',view:'benchmark',kind:'fovstatus',
+  requiresRole:'additive_reward_term',
   title:'제안 arm 준비 상태 · FOV 데이터 수집 → readout 학습 → 동결'},
  {id:'fov_offline_training',view:'benchmark',
+  requiresRole:'additive_reward_term',
   title:'FOV readout 오프라인 학습 (epoch)',
   series:['fov_risk_training'],x:'epoch',
   y:['train_huber','validation_huber','validation_contract'],
@@ -410,27 +430,56 @@ const CARDS=[
  {id:'benchmark_eval_visual_loss',view:'benchmark',
   title:'[평가] FOV 소실 구간의 상태추정 오차',
   series:BENCHMARK_EVAL,x:'evaluation_index',y:'geometric_fov_loss_estimation_error',smooth:5},
- {id:'benchmark_fov_calibration',view:'benchmark',
+ {id:'benchmark_fov_calibration',view:'benchmark',requiresRole:'additive_reward_term',
   title:'readout 보정 · 예측 대 실측 FOV 비가용 비율',
   series:PROPOSED_TRAIN,x:'episode',y:['fov_predicted_mean','fov_actual_mean'],
   labels:['예측 q','실측 y'],smooth:12,ymin:0,ymax:1},
- {id:'benchmark_fov_prediction_error',view:'benchmark',
+ {id:'benchmark_fov_prediction_error',view:'benchmark',requiresRole:'additive_reward_term',
   title:'readout 오차 · MAE와 편향 (관측된 미래창만)',
   series:PROPOSED_TRAIN,x:'episode',y:['fov_prediction_mae','fov_prediction_bias'],
   labels:['MAE','편향(예측−실측)'],smooth:12},
- {id:'benchmark_onto_share',view:'benchmark',
+ {id:'benchmark_onto_share',view:'benchmark',requiresRole:'additive_reward_term',
   title:'추가 보상이 차지한 step 보상 크기 비중',
   series:PROPOSED_TRAIN,x:'episode',y:'ontology_fov_reward_share',smooth:12,ymin:0},
- {id:'benchmark_onto_sum',view:'benchmark',
+ {id:'benchmark_onto_sum',view:'benchmark',requiresRole:'additive_reward_term',
   title:'episode당 추가 보상 합 −λ·Σq (항상 ≤ 0)',
   series:PROPOSED_TRAIN,x:'episode',y:'ontology_fov_reward_sum',smooth:12},
- {id:'benchmark_fov_risk',view:'benchmark',
+ {id:'benchmark_fov_risk',view:'benchmark',requiresRole:'additive_reward_term',
   title:'현재 episode · 예측 FOV 비가용 비율과 추가 보상',
   series:PROPOSED_STEP,x:'step',
   y:['predicted_fov_unavailability','ontology_fov_reward'],
   labels:['예측 q (향후 1s FOV 밖 시간 비율)','추가 보상 −λ·q'],smooth:3},
+ {id:'onto_state_nodes',view:'benchmark',requiresRole:'state_representation',
+  title:'현재 episode · 온톨로지 상황 그래프의 위험 node 값',
+  series:BENCHMARK_STEP,x:'step',
+  y:['onto_AlignmentError','onto_FOVMargin','onto_RelativeRange',
+     'onto_MeasurementAge'],
+  labels:['정렬 오차','FOV 여유 소진','상대 거리','관측 경과'],
+  smooth:3,ymin:0,ymax:1},
+ {id:'onto_state_support',view:'benchmark',requiresRole:'state_representation',
+  title:'현재 episode · 지원 node와 중간 node',
+  series:BENCHMARK_STEP,x:'step',
+  y:['onto_PadVisibility','onto_TouchdownSafety','onto_DescentRate',
+     'onto_TargetMotion'],
+  labels:['패드 가시성','접지 안전도(중간)','하강 속도','표적 이동'],
+  smooth:3,ymin:0,ymax:1},
+ {id:'onto_graph_embedding',view:'benchmark',requiresRole:'state_representation',
+  title:'현재 episode · 그래프 읽기 g_t의 크기 (부호기가 동작하는지)',
+  series:PROPOSED_STEP,x:'step',
+  y:['graph_embedding_norm','graph_embedding_max'],
+  labels:['RMS |g_t|','최대 |g_t|'],smooth:3,ymin:0,ymax:1},
+ {id:'planar_command',view:'benchmark',
+  title:'현재 episode · 평면 엔벨로프가 실제로 보낸 명령',
+  series:BENCHMARK_STEP,x:'step',
+  y:['cmd_forward_m_s','cmd_vertical_m_s','cmd_lateral_m_s'],
+  labels:['전후진 v [m/s]','상승·하강 v [m/s]','횡방향 v [m/s] (항상 0)'],smooth:3},
+ {id:'planar_tilt',view:'benchmark',
+  title:'현재 episode · 종방향 틸트 명령과 요레이트',
+  series:BENCHMARK_STEP,x:'step',
+  y:['cmd_tilt_deg','cmd_yaw_rate_deg_s'],
+  labels:['틸트 [deg]','요레이트 [deg/s] (항상 0)'],smooth:3},
  {id:'graph3d',view:'benchmark',kind:'graph',
-  title:'FOV 온톨로지 → R-GAT 비가용 비율 readout'},
+  title:'온톨로지 상황 그래프 G_t · node 값과 관계 (제안 arm은 이 그래프를 상태로 읽는다)'},
 
  {id:'head_run',view:'benchmark',kind:'heading',
   title:'3 · 실행 상태',
@@ -472,16 +521,16 @@ const CARDS=[
   note:'측정값이 아니라 설계다. 수치는 실행 중인 설정과 코드 상수에서 만들어지므로 '
       +'그래프 node를 바꾸거나 λ를 바꾸면 이 그림도 함께 바뀐다.'},
  {id:'algorithm_pipeline',view:'benchmark',kind:'algopipe',
-  title:'제안 알고리즘 · 센서 → 온톨로지/R-GAT 그래프 → 보상 함수'},
+  title:'제안 알고리즘 · 센서 → 온톨로지 상황 그래프 → R-GAT → 정책 상태 g_t'},
  {id:'mdp_structure',view:'benchmark',kind:'mdp',
   title:'두 강화학습 에이전트의 State · Action · Environment · Reward'},
 ];
 
 const LABELS={benchmark_step:'current episode',
- benchmark_train_shin_se_fixed:'Baseline · Shin SE fixed',
- benchmark_train_shin_se_onto_rgat_recovery:'Proposed · Shin + Ontology-R-GAT FOV',
- benchmark_eval_shin_se_fixed:'Baseline · Shin SE fixed',
- benchmark_eval_shin_se_onto_rgat_recovery:'Proposed · Shin + Ontology-R-GAT FOV'};
+ benchmark_train_shin_se_fixed:'Baseline · PPO (관측 벡터)',
+ benchmark_train_shin_se_onto_rgat_state:'Proposed · PPO + 온톨로지 상황 그래프',
+ benchmark_eval_shin_se_fixed:'Baseline · PPO (관측 벡터)',
+ benchmark_eval_shin_se_onto_rgat_state:'Proposed · PPO + 온톨로지 상황 그래프'};
 const root=document.getElementById('root');
 for(const c of CARDS){
   const el=document.createElement('section');
@@ -492,6 +541,7 @@ for(const c of CARDS){
     +(c.kind==='graph'?' g3d':'');
   el.id='card-'+c.id;
   el.dataset.view=c.view||'common';
+  if(c.requiresRole)el.dataset.role=c.requiresRole;
   el.hidden=c.view==='benchmark';
   if(c.id==='tiles'){el.innerHTML='<div class="tiles" id="tiles"></div>';}
   else if(c.kind==='heading'){el.innerHTML=`<h2>${c.title}</h2>`
@@ -689,7 +739,7 @@ function tiles(state){
   // The proposed side is the arm carrying the R-GAT reward term, not
   // whichever arm the run happens to list second.
   const proposedArm=ontologyArms()[0]||learned[1]||{};
-  const prop=proposedArm.method||'shin_se_onto_rgat_recovery';
+  const prop=proposedArm.method||'shin_se_onto_rgat_state';
   const baseArm=learned.find(a=>a.method!==prop)||learned[0]||{};
   const base=baseArm.method||'shin_se_fixed';
   const evalRows=m=>state.series['benchmark_eval_'+m]||[];
@@ -1669,8 +1719,12 @@ function applyProfile(state){
   const hasGraph=Boolean(state.graph)||Object.keys(state.graphs||{}).length>0;
   for(const c of CARDS){
     const el=document.getElementById('card-'+c.id);
+    // A card that describes a mechanism this run does not use is hidden
+    // rather than drawn empty: an FOV-reward panel on a graph-state run would
+    // read as a broken measurement instead of an absent one.
     el.hidden=Boolean(c.view&&c.view!=='common'&&c.view!==profile)
-      ||(c.kind==='graph'&&!hasGraph);
+      ||(c.kind==='graph'&&!hasGraph)
+      ||!hasRole(c.requiresRole);
   }
   if(profile==='benchmark'){
     const pipeline=state.scalars.current_pipeline||state.scalars.current_method||'';
@@ -1705,6 +1759,7 @@ async function tick(){
       mdpPanel(state);
       if(profile==='benchmark'){pairPanel(state);teacherPanel(state);drawTrajectories(state);}
       for(const c of CARDS){
+        if(!hasRole(c.requiresRole))continue;
         if(c.id==='tiles'||c.kind==='graph'||c.kind==='contract'||c.kind==='pairs'||
            c.kind==='phase'||c.kind==='heading'||c.kind==='runpipe'||
            c.kind==='fovstatus'||c.kind==='teacher'||c.kind==='trajectories'||

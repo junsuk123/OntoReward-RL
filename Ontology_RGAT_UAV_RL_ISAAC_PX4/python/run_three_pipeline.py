@@ -32,6 +32,9 @@ from ontology_rgat.benchmarks.experiment import (
 from ontology_rgat.benchmarks.live_env import LiveShinEnvironment
 from ontology_rgat.bridge import BridgeError
 from ontology_rgat.cli import ensure_fastdds
+from ontology_rgat.controllers import (PLANAR_ACTION_DIM, PN_GUIDANCE_METHOD,
+                                       PNGuidanceConfig, PNGuidanceController,
+                                       PNGuidanceState)
 from ontology_rgat.initialization import nadir_image_setpoint
 from ontology_rgat.evaluation import (write_adaptive_reward_figures,
                                       write_presentation_results,
@@ -40,7 +43,8 @@ from ontology_rgat.evaluation import (write_adaptive_reward_figures,
 from ontology_rgat.perception import (RosGrayscaleSource,
                                       needs_empirical_calibration,
                                       prepare_keypoint_encoder)
-from ontology_rgat.pipelines import (assert_no_aruco_in_primary_system,
+from ontology_rgat.pipelines import (ablation_pipeline_ids,
+                                     assert_no_aruco_in_primary_system,
                                      available_pipeline_ids, get_pipeline,
                                      primary_pipeline_ids,
                                      validate_pipeline_configuration)
@@ -66,6 +70,7 @@ from ontology_rgat.rgat import (
 from ontology_rgat.datastore import KIND_FOV_RISK, open_datastore
 from ontology_rgat.stack import ExternalStack
 from ontology_rgat.viz.contracts import (algorithm_pipeline_contract,
+                                          graph_state_pipeline_contract,
                                           mdp_contract)
 from ontology_rgat.viz.dashboard import Dashboard
 from ontology_rgat.viz.live import BenchmarkMonitor, STORE
@@ -399,44 +404,81 @@ def _hold_after_complete(owned, monitor, *, sleep=time.sleep) -> None:
         sleep(2.0)
 
 
+def _planar_from_velocity_action(controller, velocity_action):
+    """Convert a normalized velocity action into the shared planar action.
+
+    Both analytic teachers are velocity laws written against the retired
+    three-axis envelope, and their tests fix them in that form. The reduced
+    envelope commands acceleration, has no lateral channel and has a tilt
+    channel, so exactly one conversion stands between them -- here, so that the
+    teacher, the control condition and the policy all reach PX4 through the
+    same integrator and the same limits.
+
+    The lateral component is dropped rather than folded in: there is no channel
+    to give it to, and on the planar decks the entry is seeded on the deck's
+    track so it is close to zero to begin with.
+    """
+    value = np.asarray(velocity_action, dtype=float).reshape(-1)
+    if value.size < 3 or not np.isfinite(value).all():
+        raise ValueError("a velocity action needs at least three finite values")
+    limit = np.asarray(controller.velocity_limit_flu, dtype=float)
+    return controller.action_for_velocity(
+        float(value[0] * limit[0]), float(value[2] * limit[2]))
+
+
 def _behavior_transform(variant: int, *, policy_blend: float = .35,
                         servo_gain: float = 1.0, noise_std: float | None = None,
-                        yaw_blend: float = .25):
-    """Estimator-free mixture: no_se action, image servo and bounded noise."""
+                        tilt_blend: float = .25):
+    """Estimator-free mixture over the planar channels.
+
+    Three variants, so a collection pass covers approaches that converge, ones
+    that wander and ones that clearly fail -- the dataset needs all three.
+    Channels are ``[a_fwd, a_z, tilt]``: the longitudinal image error drives
+    the first, the approach phase the second, and the third follows the first
+    so the collected states include the airframe attitudes the graph's tilt
+    channel is supposed to describe.
+    """
     def transform(step, policy_action, semantic, rng):
         action = np.asarray(policy_action, dtype=np.float64).copy()
+        if action.shape != (PLANAR_ACTION_DIM,):
+            raise ValueError("the behaviour mixture takes the planar action")
         if variant == 0:
-            # Direct image-plane servo. For the configured forward/down camera,
-            # optical +x projects primarily onto body-forward and optical +y
-            # onto body-right. No metric depth/pose is reconstructed.
-            cx, cy = semantic.centroid_xy
+            # Direct image-plane servo on the column axis alone. The row axis
+            # is the lateral one, and there is no lateral channel to give it
+            # to; the envelope holds that degree of freedom at zero.
+            column = float(semantic.centroid_xy[0])
             recovering = (semantic.visible_keypoint_fraction < 0.5
                           or semantic.visual_loss_risk > 0.0)
             correction = float(servo_gain) * (0.45 if recovering else 0.75)
             action[0] = np.clip(
-                float(policy_blend) * action[0] + correction * cx, -0.8, 0.8)
-            action[1] = np.clip(
-                float(policy_blend) * action[1] - correction * cy, -0.8, 0.8)
+                float(policy_blend) * action[0] + correction * column, -0.8, 0.8)
             if recovering:
-                # Preserve the last trustworthy image direction, climb to
-                # widen the footprint, and suppress yaw until keypoints return.
-                action[2] = 0.45
-                action[3] *= min(float(yaw_blend), 0.15)
-            elif (semantic.image_alignment > 0.65
-                  and semantic.keypoint_confidence > 0.01):
-                scale = semantic.apparent_target_scale
-                descent = -0.55 if scale < 0.45 else -0.28 if scale < 0.75 else -0.10
-                action[2] = min(0.25 * action[2], descent)
+                # Climb to widen the footprint and stop asking for attitude
+                # while there is nothing to aim at.
+                action[1] = 0.45
+                action[2] *= min(float(tilt_blend), 0.15)
             else:
-                action[2] = max(0.25 * action[2], 0.0)
-            action[3] *= float(yaw_blend)
+                if (semantic.image_alignment > 0.65
+                        and semantic.keypoint_confidence > 0.01):
+                    scale = semantic.apparent_target_scale
+                    descent = (-0.55 if scale < 0.45
+                               else -0.28 if scale < 0.75 else -0.10)
+                    action[1] = min(0.25 * action[1], descent)
+                else:
+                    action[1] = max(0.25 * action[1], 0.0)
+                # The policy's own tilt is damped wherever it is not being
+                # overridden outright, so the collected attitudes stay inside
+                # the range the graph's tilt channel is meant to describe.
+                action[2] *= float(tilt_blend)
             action += rng.normal(
-                0.0, 0.04 if noise_std is None else float(noise_std), 4)
+                0.0, 0.04 if noise_std is None else float(noise_std),
+                PLANAR_ACTION_DIM)
         elif variant == 1:
-            action += rng.normal(0.0, 0.18, 4)
+            action += rng.normal(0.0, 0.18, PLANAR_ACTION_DIM)
         else:
             # Bounded exploration supplies clear failure-side graph states.
-            action = 0.55 * action + 0.45 * rng.uniform(-1.0, 1.0, 4)
+            action = (0.55 * action
+                      + 0.45 * rng.uniform(-1.0, 1.0, PLANAR_ACTION_DIM))
         return np.clip(action, -0.9, 0.9)
     return transform
 
@@ -646,6 +688,11 @@ def _privileged_velocity_teacher_action(
             "geometric_in_fov": (None if geometric_in_fov is None
                                  else bool(geometric_in_fov)),
             "battery_risk": float(semantic.battery_risk), "urgency": urgency})
+    # This function stays a VELOCITY law and returns a normalized velocity
+    # target, which is what its tests fix and what makes them readable. The
+    # conversion to the shared planar envelope happens once, in the binding
+    # below, so every analytic arm reaches PX4 through the same integrator
+    # under the same limits as the policy.
     action = np.r_[target_velocity / limit, 0.0]
     if float(noise_std) > 0.0:
         generator = rng if rng is not None else np.random.default_rng()
@@ -690,7 +737,7 @@ class _PrivilegedVelocityTeacher:
             current.critic.true_relative_state,
             current.actor.body_velocity,
             semantic,
-            controller.max_velocity * controller.action_scale,
+            controller.velocity_limit_flu,
             position_gain=float(settings.get("position_gain", .35)),
             velocity_gain=float(settings.get("velocity_gain", .75)),
             # ``pd_`` first, as with the descent keys: both teachers read the
@@ -732,6 +779,11 @@ class _PrivilegedVelocityTeacher:
                 "pd_recovery_altitude_m", 0.0)),
             noise_std=float(settings.get("noise_std", .01)),
             rng=rng, info=info)
+        planar = _planar_from_velocity_action(controller, action)
+        info["planar_action"] = [float(v) for v in planar]
+        info["commanded_tilt_deg"] = float(np.degrees(
+            float(planar[2]) * controller.max_longitudinal_tilt
+            * controller.action_scale))
         _publish_teacher_step(self.monitor, method=self.method, step=step,
                               seed=self.seed, info=info)
         if self._trace is not None:
@@ -740,11 +792,17 @@ class _PrivilegedVelocityTeacher:
                 "seed": self.seed, "step": int(step), "wall": time.time(),
                 "px4_time_us": state.get("px4_time_us"),
                 "battery_reserve": _battery_reserve(state) if state else None,
-                "action": [float(v) for v in np.asarray(action).reshape(-1)],
+                # Both forms: the velocity the law asked for, and the planar
+                # action it became. A trace with only one of them cannot tell a
+                # teacher that asked for the wrong thing from one whose request
+                # the envelope could not deliver.
+                "velocity_action": [
+                    float(v) for v in np.asarray(action).reshape(-1)],
+                "action": [float(v) for v in planar],
                 **info}
             self._trace.write(json.dumps(record, default=float) + "\n")
             self._trace.flush()
-        return action
+        return planar
 
 
 def _publish_teacher_step(monitor, *, method: str, step, seed, info: dict) -> None:
@@ -771,6 +829,12 @@ def _privileged_velocity_teacher(environment, *, settings, trace_path=None,
 
 VISUAL_SERVO_TEACHER = "image_based_visual_servo_v1"
 PRIVILEGED_VELOCITY_TEACHER = "privileged_relative_state_velocity_pd_v4"
+# The non-learned control condition of the CICS2026 comparison. Named here
+# rather than imported inline so the id the config declares, the id the arm
+# manifest carries and the id the dispatch below tests are one constant.
+PN_GUIDANCE_CONTROLLER = PN_GUIDANCE_METHOD
+ANALYTIC_CONTROLLERS = (PRIVILEGED_VELOCITY_TEACHER, VISUAL_SERVO_TEACHER,
+                        PN_GUIDANCE_CONTROLLER)
 
 
 def _visual_servo_teacher_action(
@@ -1050,6 +1114,8 @@ def _visual_servo_teacher_action(
     else:
         target_vz = -scheduled * margin
 
+    # A velocity law, like the privileged teacher: the binding converts it to
+    # the shared planar envelope. See ``_planar_from_velocity_action``.
     action = np.r_[np.r_[target_xy, target_vz] / limit, 0.0]
     if float(noise_std) > 0.0:
         generator = rng if rng is not None else np.random.default_rng()
@@ -1090,7 +1156,7 @@ def _visual_servo_teacher(environment, *, settings, monitor=None):
         controller = environment.adapter.controller
         action, integral, committed, image_rate = _visual_servo_teacher_action(
             semantic, state["previous"],
-            controller.max_velocity * controller.action_scale,
+            controller.velocity_limit_flu,
             setpoint=setpoint, dt=float(environment.cfg.sim.dt),
             integral=state["integral"], tan_half=tan_half,
             committed_already=state["committed"],
@@ -1120,18 +1186,112 @@ def _visual_servo_teacher(environment, *, settings, monitor=None):
         state["previous"] = semantic
         state["committed"] = committed
         state["image_rate"] = image_rate
+        planar = _planar_from_velocity_action(controller, action)
         current = environment.last_step
         if monitor is not None and current is not None:
             relative = np.asarray(current.critic.true_relative_state,
                                   dtype=float).reshape(-1)
-            limit = np.asarray(controller.max_velocity * controller.action_scale,
-                               dtype=float).reshape(-1)
+            # ``action`` is the planar triple now, so the commanded vertical
+            # rate is the controller's integrated setpoint rather than a
+            # channel of the action.
             _publish_teacher_step(monitor, method=method, step=step,
                                   seed=flight.get("seed"), info={
                 "altitude_m": max(0.0, -float(relative[2])),
                 "lateral_error_m": float(np.linalg.norm(relative[:2])),
                 "relative_speed_m_s": float(np.linalg.norm(relative[3:5])),
-                "target_vz_m_s": float(action[2]) * float(limit[2]),
+                "target_vz_m_s": float(
+                    action[2] * controller.velocity_limit_flu[2]),
+                "commanded_tilt_deg": float(np.degrees(
+                    float(planar[2]) * controller.max_longitudinal_tilt
+                    * controller.action_scale)),
+                "visual_lost": bool(
+                    float(semantic.visible_keypoint_fraction) < 0.5
+                    or float(semantic.visual_loss_risk) > 0.0),
+                "geometric_in_fov": bool(current.geometric_pad_center_in_fov),
+                "battery_risk": float(semantic.battery_risk)})
+        return planar
+    transform.flight = flight
+    return transform
+
+
+def _pn_guidance_controller(environment, *, settings, monitor=None):
+    """Bind the sagittal-plane PN guidance law to this environment's camera.
+
+    This is the non-learned control condition. Like the retired image servo it
+    reads only the frozen encoder's output; unlike it, it is the reference law
+    of the reduced 2-D study the new methodology comes from, so the three arms
+    here are the same three arms as there.
+
+    The bearing rate, the range rate and the flare latch are per-episode state,
+    so the binding resets them whenever the environment hands back a step index
+    of zero rather than carrying one flight's geometry into the next.
+    """
+    method = str(settings.get("source_pipeline", "no_se_fixed"))
+    flight = {"seed": None}
+    camera = dict(getattr(environment.cfg.external, "landing_camera", None) or {})
+    horizontal_fov = float(camera.get("horizontal_fov_deg", 90.0))
+    setpoint = nadir_image_setpoint(
+        horizontal_fov, float(camera.get("pitch_down_deg", 60.0)))
+    controller = environment.adapter.controller
+    guidance = PNGuidanceController(
+        PNGuidanceConfig(
+            navigation_gain=float(settings.get("pn_navigation_gain", 3.0)),
+            approach_speed_m_s=float(settings.get("pn_approach_speed_m_s", .45)),
+            approach_gain=float(settings.get("pn_approach_gain", .60)),
+            closing_gain=float(settings.get("pn_closing_gain", 1.20)),
+            vertical_gain=float(settings.get("pn_vertical_gain", 2.00)),
+            climb_reference_m_s=float(settings.get("pn_climb_reference_m_s", .35)),
+            reference_scale=float(settings.get("reference_scale", .06)),
+            flare_scale=float(settings.get("flare_scale", .20)),
+            flare_descent_m_s=float(settings.get("flare_descent_m_s", .25)),
+            descent_floor_m_s=float(settings.get("descent_floor", .10)),
+            noise_std=float(settings.get("pn_noise_std", 0.0)),
+        ),
+        nadir_column=float(setpoint[0]),
+        tan_half_horizontal=math.tan(math.radians(horizontal_fov) / 2.0),
+        max_longitudinal_acceleration_m_s2=float(
+            controller.max_acceleration[0] * controller.action_scale),
+        max_vertical_acceleration_m_s2=float(
+            controller.max_acceleration[1] * controller.action_scale),
+        max_longitudinal_tilt_rad=float(
+            controller.max_longitudinal_tilt * controller.action_scale),
+        dt=float(environment.cfg.sim.dt))
+    state = PNGuidanceState()
+
+    def transform(step, policy_action, semantic, rng):
+        if int(step) == 0:
+            state.reset()
+            # The envelope scale is a curriculum property and can change
+            # between flights; rebuild the law's limits from it rather than
+            # from whatever they were when the binding was made.
+            live = environment.adapter.controller
+            guidance.max_longitudinal_acceleration = float(
+                live.max_acceleration[0] * live.action_scale)
+            guidance.max_vertical_acceleration = float(
+                live.max_acceleration[1] * live.action_scale)
+            guidance.max_longitudinal_tilt = float(
+                live.max_longitudinal_tilt * live.action_scale)
+        current = environment.last_step
+        body_velocity = (np.zeros(3) if current is None
+                         else np.asarray(current.actor.body_velocity, dtype=float))
+        action = guidance.action(semantic, body_velocity, state, rng=rng)
+        if monitor is not None and current is not None:
+            relative = np.asarray(current.critic.true_relative_state,
+                                  dtype=float).reshape(-1)
+            diagnostics = state.diagnostics
+            _publish_teacher_step(monitor, method=method, step=step,
+                                  seed=flight.get("seed"), info={
+                "altitude_m": max(0.0, -float(relative[2])),
+                "lateral_error_m": float(np.linalg.norm(relative[:2])),
+                "relative_speed_m_s": float(np.linalg.norm(relative[3:5])),
+                "pn_mode": str(diagnostics.get("mode", "track")),
+                "pn_bearing_deg": float(np.degrees(
+                    diagnostics.get("bearing_rad", 0.0))),
+                "pn_bearing_rate_deg_s": float(np.degrees(
+                    diagnostics.get("bearing_rate_rad_s", 0.0))),
+                "pn_range_m": float(diagnostics.get("range_m", 0.0)),
+                "pn_closing_speed_m_s": float(
+                    diagnostics.get("closing_speed_m_s", 0.0)),
                 "visual_lost": bool(
                     float(semantic.visible_keypoint_fraction) < 0.5
                     or float(semantic.visual_loss_risk) > 0.0),
@@ -1155,9 +1315,12 @@ def _adverse_landing_teacher(environment, *, settings):
         if (semantic.apparent_target_scale > .30
                 and semantic.visible_keypoint_fraction >= .5):
             direction = 1.0 if (step // 20) % 2 == 0 else -1.0
+            # Planar channels: push the approach off along track, drop harder
+            # than the criteria allow, and tilt with the push. The lateral
+            # excursion the retired version used has no channel left.
             action[0] = np.clip(action[0] + .34 * direction, -.90, .90)
-            action[2] = min(float(action[2]), -.62)
-            action[3] = .12 * direction
+            action[1] = min(float(action[1]), -.62)
+            action[2] = np.clip(float(action[2]) + .20 * direction, -.90, .90)
         return np.clip(action, -.90, .90)
 
     return transform
@@ -1265,11 +1428,10 @@ def _baseline_arms(config) -> list[dict]:
     for entry in (config.get("baseline_arms") or []):
         method = str(entry["method"])
         controller = str(entry.get("controller", method))
-        if controller not in (PRIVILEGED_VELOCITY_TEACHER, VISUAL_SERVO_TEACHER):
+        if controller not in ANALYTIC_CONTROLLERS:
             raise ValueError(
                 f"baseline arm {method!r} names an unknown controller "
-                f"{controller!r}; expected one of "
-                f"{(PRIVILEGED_VELOCITY_TEACHER, VISUAL_SERVO_TEACHER)}")
+                f"{controller!r}; expected one of {ANALYTIC_CONTROLLERS}")
         arms.append({"method": method, "label": str(entry.get("label", method)),
                      "controller": controller, "learned": False})
     ids = [arm["method"] for arm in arms]
@@ -1285,20 +1447,36 @@ def _arm_manifest(pipelines, baseline_arms, labels) -> list[dict]:
     dashboard keys its learning curves off, so a non-learned arm has no
     training series rather than an empty chart.
 
-    ``ontology`` marks the arm whose reward carries a frozen R-GAT term -- the
-    proposed one. The dashboard used to decide that by comparing the method id
-    against a literal ``shin_se_onto_rgat_recovery``, which silently mislabels
-    every other ontology arm the repository declares (the PBRS and
-    adaptive-weight pipelines) and would have to be edited again for the next.
-    The pipeline spec already knows, so it is published rather than guessed.
+    ``ontology`` marks the arm the ontology takes part in -- the proposed one.
+    The dashboard used to decide that by comparing the method id against a
+    literal ``shin_se_onto_rgat_recovery``, which silently mislabels every
+    other ontology arm the repository declares and would have to be edited
+    again for the next. The pipeline spec already knows, so it is published
+    rather than guessed. ``ontology_role`` says *how* it takes part, because
+    the current method puts the graph in the observation and the retired one
+    put a scalar in the reward, and a reader of the manifest should not have to
+    infer which from the arm's name.
     """
+    def role(spec):
+        if spec.graph_state_enabled:
+            return "state_representation"
+        if spec.fov_risk_reward_enabled:
+            return "additive_reward_term"
+        if spec.use_direct_rgat_potential:
+            return "potential_based_shaping"
+        if spec.use_adaptive_reward_weights:
+            return "adaptive_reward_weights"
+        return None
+
     return ([{"method": str(name), "label": str(labels.get(name, name)),
               "learned": True,
-              "ontology": bool(get_pipeline(name).fov_risk_reward_enabled
-                               or get_pipeline(name).use_direct_rgat_potential
-                               or get_pipeline(name).use_adaptive_reward_weights)}
+              "ontology": role(get_pipeline(name)) is not None,
+              "ontology_role": role(get_pipeline(name)),
+              "graph_state_representation":
+                  get_pipeline(name).graph_state_representation}
              for name in pipelines]
-            + [{**dict(arm), "ontology": bool(dict(arm).get("ontology", False))}
+            + [{**dict(arm), "ontology": bool(dict(arm).get("ontology", False)),
+                "ontology_role": None, "graph_state_representation": None}
                for arm in baseline_arms])
 
 
@@ -1850,6 +2028,9 @@ def _prepare_fast_demonstrations(*, cfg, camera, config, config_hash,
                 """One teacher per pair: the servo's integral, the previous
                 centroid and the PD's trace file are all per-flight state."""
                 local_monitor = collection_contexts[index]["monitor"]
+                if teacher_id == PN_GUIDANCE_CONTROLLER:
+                    return _pn_guidance_controller(
+                        environment, settings=settings, monitor=local_monitor)
                 if teacher_id == VISUAL_SERVO_TEACHER:
                     return _visual_servo_teacher(
                         environment, settings=settings, monitor=local_monitor)
@@ -2867,12 +3048,19 @@ def main(*, primary_only: bool = False):
     parser = argparse.ArgumentParser(
         formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument("--experiment", choices=(
-        ("three_arm_burst", "two_pipeline_fov_risk") if primary_only else
+        ("planar_ontology_graph_state", "three_arm_burst",
+         "two_pipeline_fov_risk") if primary_only else
         ("three_pipeline", "adaptive_reward_weight_comparison")),
                         default=None)
+    # The primary runner also accepts the ablations of the proposed arm and the
+    # retired reward-side arm by name: they are legitimate runs of this
+    # experiment, just not the default one.
     parser.add_argument(
         "--pipelines", nargs="+",
-        choices=(primary_pipeline_ids() if primary_only else available_pipeline_ids()))
+        choices=(tuple(dict.fromkeys(
+            primary_pipeline_ids() + ablation_pipeline_ids()
+            + ("shin_se_onto_rgat_recovery",)))
+            if primary_only else available_pipeline_ids()))
     parser.add_argument("--mode", choices=("quick", "full"), default="quick")
     parser.add_argument(
         "--stage", choices=STAGES, default=STAGE_ALL,
@@ -2882,22 +3070,23 @@ def main(*, primary_only: bool = False):
              "and scores them, and refuses to fly for collection; 'all' does "
              "both in one process, collection first")
     # The zero-argument contract: bare ``./run.sh`` runs the current headline
-    # experiment. That is the three-arm burst comparison since 2026-09-22 --
-    # one deck that always produces the FOV-loss event, and a non-learned
-    # control condition beside the two learned arms. The six-deck two-arm
-    # design it replaced is still declared and still runnable:
+    # experiment. Since 2026-09-23 that is the planar three-arm comparison --
+    # a reduced sagittal-plane control envelope, three constant-heading decks
+    # at three speed profiles, PN guidance as the non-learned control
+    # condition, and the ontology graph as the policy's STATE rather than as a
+    # reward term. The designs it replaced are still declared and runnable:
+    #   ./run.sh --config config/experiments/three_arm_burst_comparison.yaml
     #   ./run.sh --config config/experiments/two_pipeline_comparison.yaml
     parser.add_argument("--config", type=Path,
-                        default=ROOT / "config/experiments/three_arm_burst_comparison.yaml"
+                        default=ROOT / "config/experiments/planar_three_arm_comparison.yaml"
                         if primary_only else
                         ROOT / "config/experiments/three_pipeline_comparison.yaml")
-    # The minimal profile is the default because the campus stage buys nothing
-    # the benchmark measures: the six deck scenarios are closed-form ground
-    # tracks and the landing target is a fiducial painted on the deck, which is
-    # identical on every map. The campus USD is still selectable and still the
-    # profile for a photoreal run.
+    # The planar profile is the minimal profile plus the two things the reduced
+    # envelope depends on: constant-heading decks and an entry seeded on the
+    # deck's track. The campus USD is still selectable and still the profile
+    # for a photoreal run.
     parser.add_argument("--system-config", type=Path,
-                        default=ROOT / "config/shin2026-minimal-system.yaml")
+                        default=ROOT / "config/shin2026-planar-system.yaml")
     parser.add_argument("--results-dir", type=Path)
     # Collected flight data outlives one results directory. The accumulation
     # is reused only by a run whose data fingerprint matches; see
@@ -3166,6 +3355,12 @@ def main(*, primary_only: bool = False):
         get_pipeline(name).use_adaptive_reward_weights for name in args.pipelines)
     needs_fov_risk = any(
         get_pipeline(name).fov_risk_reward_enabled for name in args.pipelines)
+    # The current method. It has no offline artifact, so nothing here gates a
+    # collection stage; it only decides which algorithm diagram the manifest
+    # and the dashboard carry.
+    uses_graph_state = any(
+        get_pipeline(name).graph_state_enabled for name in args.pipelines)
+    graph_state_cfg = dict(config.get("graph_state") or {})
     potential = None
     artifact_error = None
     if needs_potential and args.reward_design.is_file():
@@ -3450,7 +3645,15 @@ def main(*, primary_only: bool = False):
         reward_design_sha256=getattr(
             fov_risk_model if needs_fov_risk else potential, "sha256", None),
         fov_risk_design_id=getattr(fov_risk_model, "design_id", None),
-        algorithm_pipeline=algorithm_pipeline_contract(
+        algorithm_pipeline=(graph_state_pipeline_contract(
+            control_hz=1.0 / float((config.get("control") or {}).get(
+                "dt_seconds", 0.1)),
+            hidden_dim=int(graph_state_cfg.get("hidden_dim", 32)),
+            graph_dim=int(graph_state_cfg.get("graph_dim", 32)),
+            representation=str(graph_state_cfg.get(
+                "representation", "ontology_rgat")),
+            camera=(system.get("vision") or {}).get("camera"),
+        ) if uses_graph_state else algorithm_pipeline_contract(
             lambda_fov=float((config.get("fov_risk") or {}).get("lambda_fov", 0.1)),
             horizon_seconds=float((config.get("fov_risk") or {}).get(
                 "prediction_horizon_seconds", 1.0)),
@@ -3459,7 +3662,7 @@ def main(*, primary_only: bool = False):
             hidden_dim=int((config.get("fov_risk_design") or {}).get(
                 "hidden_dim", 24)),
             camera=(system.get("vision") or {}).get("camera"),
-        ) if needs_fov_risk else None,
+        ) if needs_fov_risk else None),
         mdp_contract=mdp_contract(
             control=config.get("control") or {},
             reward=config.get("reward") or {},
@@ -4436,7 +4639,10 @@ def main(*, primary_only: bool = False):
                         for arm_id in {item["method"] for item in tasks
                                        if item["method"] in baseline_ids}:
                             arm = baseline_by_id[arm_id]
-                            if arm["controller"] == VISUAL_SERVO_TEACHER:
+                            if arm["controller"] == PN_GUIDANCE_CONTROLLER:
+                                baseline_controllers[arm_id] = _pn_guidance_controller(
+                                    environment, settings=cloning, monitor=None)
+                            elif arm["controller"] == VISUAL_SERVO_TEACHER:
                                 baseline_controllers[arm_id] = _visual_servo_teacher(
                                     environment, settings=cloning, monitor=None)
                             else:

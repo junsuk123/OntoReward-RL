@@ -12,6 +12,8 @@ import torch
 import run_three_pipeline as pipeline_runner
 
 from ontology_rgat.bridge import BridgeError, EntryResetError, GatewayTimeout, PX4Failsafe
+from ontology_rgat.controllers import PLANAR_ACTION_DIM
+from ontology_rgat.rgat.state_graph import empty_state_graph
 from ontology_rgat.benchmarks.experiment import (configuration_hash,
                                                  controlled_training_seeds,
                                                  episodes_per_method,
@@ -446,8 +448,14 @@ def _batch(model):
     proprio = torch.tensor([[[0., 0., 0., 1., 0., 0., 0.],
                              [0., 0., 0., 1., 0., 0., 0.]]])
     truth = torch.zeros(1, 2, 6)
+    graph = None
+    if model.graph_state_enabled:
+        graph = torch.as_tensor(
+            np.stack([empty_state_graph().X.T.astype(np.float32)] * 2)
+        )[None]
     with torch.no_grad():
-        out = model(images, proprio, true_relative_state=truth)
+        out = model(images, proprio, true_relative_state=truth,
+                    graph_features=graph)
         pre = out.action_mean.clone()
         action = torch.tanh(pre)
         old = model.log_prob(pre, action, out.action_mean, out.action_std)
@@ -458,6 +466,7 @@ def _batch(model):
         "advantage": torch.ones(1, 2), "return": torch.zeros(1, 2),
         "episode_start": torch.tensor([[True, False]]),
         "truth_valid": torch.ones(1, 2, dtype=torch.bool),
+        "graph_features": graph,
     }
 
 
@@ -494,10 +503,13 @@ def test_visual_teacher_is_directional_without_random_policy_leakage():
         apparent_target_scale=.2)
     teacher = _behavior_transform(
         0, policy_blend=0.0, servo_gain=1.2,
-        noise_std=0.0, yaw_blend=0.0)
+        noise_std=0.0, tilt_blend=0.0)
     action = teacher(
-        0, np.ones(4), semantic, np.random.default_rng(1))
-    np.testing.assert_allclose(action, [.36, .18, -.55, 0.0], atol=1e-8)
+        0, np.ones(3), semantic, np.random.default_rng(1))
+    # Planar channels. The column error drives the longitudinal command, the
+    # approach phase the vertical one, and the tilt is suppressed while the
+    # blend is zero. The row (lateral) error has no channel and is dropped.
+    np.testing.assert_allclose(action, [.36, -.55, 0.0], atol=1e-8)
 
 
 def test_deadline_teacher_tracks_deck_and_descends_only_after_alignment():
@@ -702,7 +714,7 @@ def test_excessive_post_update_kl_rolls_back_the_ppo_epoch():
 
 def test_primary_specs_encode_the_intended_information_boundaries():
     baseline = PIPELINES["shin_se_fixed"]
-    proposed = PIPELINES["shin_se_onto_rgat_recovery"]
+    proposed = PIPELINES["shin_se_onto_rgat_state"]
     for spec in (baseline, proposed):
         assert spec.state_estimation_enabled
         assert spec.auxiliary_estimation_loss_enabled
@@ -710,7 +722,9 @@ def test_primary_specs_encode_the_intended_information_boundaries():
         assert spec.reward_mode == "shin_table_active"
     assert not baseline.ontology_enabled
     assert proposed.ontology_enabled
-    assert proposed.fov_risk_reward_enabled
+    assert proposed.graph_state_enabled
+    assert proposed.graph_state_representation == "ontology_rgat"
+    assert not proposed.fov_risk_reward_enabled
 
 
 def test_estimator_outputs_physical_units_beyond_tanh_and_normalizes_loss():
@@ -1108,23 +1122,41 @@ def test_shin_pipeline_has_six_state_auxiliary_supervision():
 
 
 def test_all_actors_have_equal_deployed_boundary_capacity_and_actions():
-    models = [_model(name) for name in PIPELINES]
-    assert {model.actor[0].in_features for model in models} == {17}
-    assert {model.action_dim for model in models} == {4}
-    assert len({sum(parameter.numel() for parameter in model.parameters())
-                for model in models}) == 1
-    assert {model.pipeline_spec.actor_latent_slice.start for model in models} == {6}
+    """Same action space, same latent slice, and the graph as the one extra.
+
+    The arms deliberately do NOT have the same parameter count any more: the
+    proposed one carries the R-GAT encoders, which is the experimental factor.
+    What still has to match exactly is the action space, the reserved latent
+    slice, and the part of the actor input that is not the graph -- otherwise
+    the comparison would be confounded by capacity somewhere else.
+    """
+    models = {name: _model(name) for name in PIPELINES}
+    assert {model.action_dim for model in models.values()} == {
+        PLANAR_ACTION_DIM}
+    assert {model.pipeline_spec.actor_latent_slice.start
+            for model in models.values()} == {6}
+    baseline = models["shin_se_fixed"]
+    assert baseline.graph_dim == 0
+    assert baseline.actor[0].in_features == 17
+    for name, model in models.items():
+        assert (model.actor[0].in_features
+                == baseline.actor[0].in_features + model.graph_dim), name
+        assert (model.critic[0].in_features
+                == baseline.critic[0].in_features + model.graph_dim), name
 
 
 @pytest.mark.parametrize("name", list(PIPELINES))
 def test_privileged_critic_truth_cannot_change_deployed_actor_output(name):
     model = _model(name).eval()
     batch = _batch(model)
+    graph = batch.get("graph_features")
     with torch.no_grad():
         zero = model(batch["images"], batch["proprioception"],
+                     graph_features=graph,
                      true_relative_state=torch.zeros_like(
                          batch["true_relative_state"]))
         one = model(batch["images"], batch["proprioception"],
+                    graph_features=graph,
                     true_relative_state=torch.ones_like(
                         batch["true_relative_state"]))
     assert torch.equal(zero.latent, one.latent)
@@ -1349,7 +1381,10 @@ def test_pipeline_hash_changes_with_information_boundary_configuration():
             **config["pipeline_contract"]["shin_se_onto_rgat_recovery"],
             "reward": "illegal_changed_reward"}}}
     assert configuration_hash(config) != configuration_hash(altered)
-    assert tuple(config["pipelines"]) == tuple(PIPELINES)
+    # The six-deck design is the retired reward-side one, so its arm list is
+    # the retired pair rather than the current PIPELINES.
+    assert tuple(config["pipelines"]) == (
+        "shin_se_fixed", "shin_se_onto_rgat_recovery")
 
 
 def test_pipeline_yaml_contract_and_legacy_shin_constructor_smoke():
@@ -1859,24 +1894,28 @@ def test_renaming_an_arm_does_not_invalidate_a_machine_day_of_training():
     assert hashed(base) != hashed(dict(base, pipelines=["a", "c"]))
 
 
-def test_bare_run_sh_runs_the_three_arm_burst_comparison():
+def test_bare_run_sh_runs_the_planar_three_arm_comparison():
     """The zero-argument contract names the current headline experiment.
 
     ``./run.sh`` with no arguments is what "run the experiment" means to anyone
     reading the repository, so it has to select the comparison the paper
     actually makes. It pointed at the six-deck two-arm design until
-    2026-09-22; that design is still declared and still runnable by --config.
+    2026-09-22, at the three-arm burst comparison until 2026-09-23, and now at
+    the planar ontology-graph-state comparison. Both replaced designs are
+    still declared and still runnable by --config.
     """
     source = (ROOT / "python/run_three_pipeline.py").read_text(encoding="utf-8")
-    assert 'ROOT / "config/experiments/three_arm_burst_comparison.yaml"' in source
-    assert '"three_arm_burst"' in source, (
+    assert 'ROOT / "config/experiments/planar_three_arm_comparison.yaml"' in source
+    assert '"planar_ontology_graph_state"' in source, (
         "--experiment must accept the experiment its default config declares")
     launcher = (ROOT.parent / "run.sh").read_text(encoding="utf-8")
-    assert "three_arm_burst_comparison.yaml" in launcher, (
+    assert "planar_three_arm_comparison.yaml" in launcher, (
         "run.sh documents the zero-argument contract and must name the same file")
-    # the replaced design stays reachable rather than being deleted
-    assert (ROOT / "config/experiments/two_pipeline_comparison.yaml").is_file()
-    assert "two_pipeline_comparison.yaml" in launcher
+    # Both replaced designs stay reachable rather than being deleted.
+    for retired in ("three_arm_burst_comparison.yaml",
+                    "two_pipeline_comparison.yaml"):
+        assert (ROOT / "config/experiments" / retired).is_file()
+        assert retired in launcher
 
 
 def test_pacing_does_not_let_a_slow_patch_buy_free_running_time():

@@ -6,7 +6,7 @@ from typing import Callable
 import numpy as np
 
 from ..bridge import SimulatorFrameTimeout
-from ..controllers import VelocityYawRateController
+from ..controllers import PlanarCommand, PlanarLongitudinalController
 from ..mathx import quat_to_rotm
 from .shin2026 import ActorObservation, CriticObservation
 
@@ -38,13 +38,23 @@ def critic_observation_from_state(actor: ActorObservation, state: dict) -> Criti
 
 
 class ShinPX4Adapter:
-    """Common action/observation adapter used unchanged by every reward mode."""
+    """Common action/observation adapter used unchanged by every reward mode.
+
+    It owns the two constraints that make the envelope planar, and it owns them
+    for every arm at once: the lateral velocity the controller emits is already
+    zero, and the heading the gateway is told to hold is the one the entry was
+    flown to -- the deck's own constant heading. Neither is something a policy
+    or a reward mode can reach.
+    """
 
     def __init__(self, bridge, image_source: Callable[[], np.ndarray],
-                 controller: VelocityYawRateController):
+                 controller: PlanarLongitudinalController):
         self.bridge = bridge
         self.image_source = image_source
         self.controller = controller
+        # Set at every reset from the reset acknowledgement; ``None`` leaves
+        # the gateway's free-yaw behaviour in place.
+        self.yaw_hold_rad: float | None = None
 
     def _image(self) -> np.ndarray:
         """One frame, with a stalled renderer reported as infrastructure.
@@ -66,9 +76,27 @@ class ShinPX4Adapter:
         state = self.bridge.reset(
             seed, scenario=scenario,
             initial_condition_scale=initial_condition_scale)
+        self.yaw_hold_rad = self._entry_heading()
         return actor_observation_from_state(state, self._image()), state
+
+    def _entry_heading(self) -> float | None:
+        """The absolute heading the entry was flown to, in ENU.
+
+        On a planar profile this is the deck's heading: the entry draw sets the
+        yaw misalignment to zero and the deck's heading is constant for the
+        episode, so holding it is the "always aligned with the deck" constraint
+        expressed as a setpoint rather than as an assumption. A gateway or a
+        recording that carries no entry yaw leaves the hold off.
+        """
+        detail = (getattr(self.bridge, "last_reset_ack", {}) or {}).get("detail")
+        if not isinstance(detail, dict) or "entry_yaw_enu_rad" not in detail:
+            return None
+        heading = float(detail["entry_yaw_enu_rad"])
+        return heading if np.isfinite(heading) else None
 
     def step(self, normalized_action):
         command = self.controller.command(normalized_action)
-        state = self.bridge.step_velocity(command.as_array())
+        tilt = float(getattr(command, "longitudinal_tilt_rad", 0.0))
+        state = self.bridge.step_velocity(
+            command.as_array(), tilt_rad=tilt, yaw_rad=self.yaw_hold_rad)
         return actor_observation_from_state(state, self._image()), state, command

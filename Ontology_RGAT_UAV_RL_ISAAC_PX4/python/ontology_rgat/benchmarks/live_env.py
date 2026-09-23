@@ -7,7 +7,7 @@ import math
 import numpy as np
 
 from ..bridge import BridgeError, PX4Bridge
-from ..controllers import VelocityYawRateController
+from ..controllers import PLANAR_ACTION_DIM, PlanarLongitudinalController
 from ..initialization import curriculum_motion_scale
 from ..mathx import quat_to_euler_zyx
 from ..perception.pad_geometry import CameraModel, project_landing_pad
@@ -20,7 +20,12 @@ class LiveStep:
     actor: ActorObservation
     critic: CriticObservation
     state: dict
+    # ``[vx, vy, vz, yaw_rate, longitudinal_tilt]`` -- what the controller
+    # actually sent, not the normalized action the policy chose.
     command: np.ndarray
+    # ``[a_fwd, a_z, tilt]`` in [-1, 1] -- the clipped action the controller
+    # accepted. The reward's attitude term reads this; nothing else does.
+    normalized_command: np.ndarray
     physical_contact: bool
     unsafe_pad_contact: bool
     crash: bool
@@ -67,7 +72,7 @@ class LiveShinEnvironment:
         self.control = getattr(self.cfg, "benchmark_control", {})
         self.adapter = ShinPX4Adapter(
             self.bridge, self.image_source,
-            VelocityYawRateController.from_mapping(
+            PlanarLongitudinalController.from_mapping(
                 self.control, dt=float(self.cfg.sim.dt)))
 
     def geometric_pad_center_in_fov(self, state) -> bool:
@@ -102,7 +107,8 @@ class LiveShinEnvironment:
             truth["position"], quaternion, camera=camera)
         return bool(projection.geometric_pad_center_in_fov)
 
-    def _classify(self, actor, state, command, *, timeout=False) -> LiveStep:
+    def _classify(self, actor, state, command, normalized_command=None, *,
+                  timeout=False) -> LiveStep:
         critic = critic_observation_from_state(actor, state)
         extra = state.get("extra") or {}
         contact = bool(extra.get("pad_contact", False))
@@ -181,7 +187,11 @@ class LiveShinEnvironment:
         }
         return LiveStep(
             actor=actor, critic=critic, state=state,
-            command=np.asarray(command, dtype=float), physical_contact=contact,
+            command=np.asarray(command, dtype=float),
+            normalized_command=np.zeros(PLANAR_ACTION_DIM)
+            if normalized_command is None
+            else np.asarray(normalized_command, dtype=float),
+            physical_contact=contact,
             unsafe_pad_contact=unsafe_contact,
             crash=crash, excessive_drift=drift,
             battery_depleted=battery_depleted, terminal=terminal,
@@ -241,14 +251,17 @@ class LiveShinEnvironment:
                 else:
                     owned.restart()
                 self._connect()
-        self.last_step = self._classify(actor, state, np.zeros(4))
+        # The command a reset has issued is "nothing": five zeros in the
+        # planar wire format [vx, vy, vz, yaw_rate, tilt].
+        self.last_step = self._classify(actor, state, np.zeros(5))
         return self.last_step
 
     def step(self, normalized_action) -> LiveStep:
         actor, state, command = self.adapter.step(normalized_action)
         self.steps += 1
         self.last_step = self._classify(
-            actor, state, command.as_array(),
+            actor, state, command.as_planar_array(),
+            command.normalized_action,
             timeout=self.steps >= self.horizon_steps)
         return self.last_step
 

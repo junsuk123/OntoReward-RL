@@ -468,6 +468,20 @@ class BenchmarkMonitor:
                 return str(arm.get("label") or method)
         return str(method)
 
+    def arm_role(self, method: str) -> str | None:
+        """How the ontology takes part in this arm, as the run declared it.
+
+        ``state_representation`` for the current method, ``additive_reward_term``
+        for the retired one, ``None`` for an arm that has no ontology branch.
+        Read from the arm manifest rather than matched against an id, so a
+        differently named arm is described correctly.
+        """
+        for arm in getattr(self, "arms", ()):
+            if str(arm.get("method")) == str(method):
+                role = arm.get("ontology_role")
+                return None if role is None else str(role)
+        return None
+
     def _resolve_pair_index(self, method: str, pair_index: int | None) -> int:
         if pair_index is not None:
             return int(pair_index)
@@ -795,6 +809,8 @@ class BenchmarkMonitor:
              state: dict[str, Any] | None = None, pipeline_spec=None,
              semantic_features=None, fov_semantic_features=None,
              semantic_graph=None,
+             state_graph_values=None, graph_embedding=None,
+             planar_command=None, normalized_action=None,
              scenario: str = "", status: str = "running",
              pair_index: int | None = None) -> None:
         parts = reward_parts or {}
@@ -817,6 +833,49 @@ class BenchmarkMonitor:
                 "estimated_distance": float(np.linalg.norm(estimate[:3])),
                 "estimated_speed": float(np.linalg.norm(estimate[3:])),
             })
+        # The ontology situation graph, published for EVERY arm so the two
+        # sides of the comparison are read on identical channels; only the
+        # proposed arm's policy consumes it. ``graph_embedding`` is present
+        # only on the arm that has an encoder, and its norm is a "is the branch
+        # doing anything" witness, not a measurement of the method.
+        if state_graph_values is not None:
+            from ..rgat.state_graph import STATE_NODE_NAMES
+            values = np.asarray(state_graph_values, dtype=float).reshape(-1)
+            if values.shape == (len(STATE_NODE_NAMES),):
+                named = {f"onto_{name}": float(value)
+                         for name, value in zip(STATE_NODE_NAMES, values)}
+                point.update(named)
+                # The RViz HUD reads its ontology line out of ``parts``, so
+                # one dictionary carries what both operator views need.
+                parts = {**parts, **named}
+        if graph_embedding is not None:
+            embedding = np.asarray(graph_embedding, dtype=float).reshape(-1)
+            if embedding.size:
+                point["graph_embedding_norm"] = float(
+                    np.linalg.norm(embedding) / np.sqrt(embedding.size))
+                point["graph_embedding_max"] = float(np.max(np.abs(embedding)))
+        # What the reduced envelope actually sent, and what the policy asked
+        # for. Both, because the envelope saturates and a plot of only one of
+        # them cannot tell a policy that asked for too much from one that got
+        # what it asked for.
+        if planar_command is not None:
+            command = np.asarray(planar_command, dtype=float).reshape(-1)
+            if command.size == 5:
+                point.update({
+                    "cmd_forward_m_s": float(command[0]),
+                    "cmd_lateral_m_s": float(command[1]),
+                    "cmd_vertical_m_s": float(command[2]),
+                    "cmd_yaw_rate_deg_s": float(np.degrees(command[3])),
+                    "cmd_tilt_deg": float(np.degrees(command[4])),
+                })
+        if normalized_action is not None:
+            action = np.asarray(normalized_action, dtype=float).reshape(-1)
+            if action.size == 3:
+                point.update({
+                    "action_longitudinal": float(action[0]),
+                    "action_vertical": float(action[1]),
+                    "action_tilt": float(action[2]),
+                })
         if semantic_features is not None:
             from ..perception import SEMANTIC_FEATURE_NAMES
             values = np.asarray(semantic_features, dtype=float).reshape(-1)
@@ -840,7 +899,7 @@ class BenchmarkMonitor:
                 }), key=graph_key)
         for key in ("task", "lateral_progress", "vertical_progress",
                     "vertical_speed_penalty", "undershoot_penalty",
-                    "yaw_rate_penalty", "active_perception", "shape",
+                    "attitude_penalty", "active_perception", "shape",
                     "phi", "phi_next", "ontology_fov_reward",
                     "predicted_fov_unavailability", "fov_margin",
                     "keypoint_confidence", "visible_keypoint_fraction",
@@ -943,6 +1002,12 @@ class BenchmarkMonitor:
                 visible_keypoint_fraction=point["visible_keypoint_fraction"],
                 semantic_graph=semantic_graph,
                 potential=self.potential_for(method),
+                # HOW this arm uses the ontology, from the run's own arm
+                # manifest, plus the two quantities the HUD needs that are not
+                # reward parts.
+                ontology_role=self.arm_role(method),
+                graph_embedding_norm=point.get("graph_embedding_norm"),
+                planar_command=planar_command,
                 phase=phase, pair_index=resolved_pair_index)
 
     @staticmethod

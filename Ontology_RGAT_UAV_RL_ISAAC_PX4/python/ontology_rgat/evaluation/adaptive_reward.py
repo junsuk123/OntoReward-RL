@@ -120,7 +120,7 @@ def write_adaptive_reward_figures(output_dir) -> list[str]:
     methods = list(dict.fromkeys(str(row["method"]) for row in rows))
     fixed_names = ("lateral_progress", "vertical_progress",
                    "vertical_speed_penalty", "undershoot_penalty",
-                   "yaw_rate_penalty")
+                   "attitude_penalty")
     values = [np.mean([float(row.get("adaptive_shaping",
                                      sum(float(row.get(name, 0.0))
                                          for name in fixed_names)))

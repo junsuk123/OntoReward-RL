@@ -25,6 +25,12 @@ BENCHMARK_SCENARIOS = {
     # neither the arena clamp nor the inward heading steering that an open
     # straight run does (isaac_sim/pad_motion.py, 2026-09-22).
     "straight_escape_burst_track",
+    # The three CICS2026 comparison decks: a straight line at a constant
+    # heading whose speed is piecewise constant over three segments. Written in
+    # the reduced 2-D study's units and scaled onto the carrier's ceiling, so
+    # the fastest segment of the fastest deck is 1.00 m/s
+    # (isaac_sim/pad_motion.py, 2026-09-23).
+    "segmented_cruise_slow", "segmented_cruise_medium", "segmented_cruise_fast",
 }
 
 
@@ -88,6 +94,42 @@ def validate_velocity_action(msg: dict[str, Any]) -> tuple[float, float, float, 
     if any(abs(value) > limit for value, limit in zip(command, limits)):
         raise ProtocolError("velocity command exceeds protocol safety bounds")
     return command
+
+
+# The reduced planar envelope adds two optional fields to the same message.
+# They are optional so an older learner, and every recorded run, still speaks
+# the protocol: absent, the gateway behaves exactly as it did.
+#
+#   tilt_rad  the longitudinal tilt the policy asks the airframe to hold. It
+#             reaches PX4 as a bounded longitudinal acceleration feed-forward
+#             on the trajectory setpoint, which is how a tilt is requested
+#             through a velocity interface.
+#   yaw_rad   an absolute heading to hold, in ENU. The planar envelope aligns
+#             the vehicle with the deck's constant heading and keeps it there,
+#             which is a constraint of the experiment rather than something the
+#             policy commands, so it is carried here and not in the action.
+PLANAR_TILT_LIMIT_RAD = math.radians(25.0)
+
+
+def validate_velocity_extras(msg: dict[str, Any]) -> tuple[float, float | None]:
+    """Validate the optional planar fields of a ``velocity_action``."""
+    raw_tilt = msg.get("tilt_rad", 0.0)
+    try:
+        tilt = float(raw_tilt if raw_tilt is not None else 0.0)
+    except (TypeError, ValueError) as exc:
+        raise ProtocolError("tilt_rad must be numeric") from exc
+    if not math.isfinite(tilt) or abs(tilt) > PLANAR_TILT_LIMIT_RAD:
+        raise ProtocolError("tilt_rad is not finite or exceeds the safety bound")
+    raw_yaw = msg.get("yaw_rad")
+    if raw_yaw is None:
+        return tilt, None
+    try:
+        yaw = float(raw_yaw)
+    except (TypeError, ValueError) as exc:
+        raise ProtocolError("yaw_rad must be numeric") from exc
+    if not math.isfinite(yaw) or abs(yaw) > 4.0 * math.pi:
+        raise ProtocolError("yaw_rad is not a finite heading")
+    return tilt, yaw
 
 
 # Guard rails for the pre-episode climb. The gateway must never be talked into

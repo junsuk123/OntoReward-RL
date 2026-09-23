@@ -70,12 +70,50 @@ STRAIGHT_ESCAPE_BURST_SCENARIO = "straight_escape_burst"
 # what the scenario is for. The turns are constant-speed circular arcs of a
 # fixed radius, so the deck's speed never changes except for the dash itself.
 STRAIGHT_ESCAPE_BURST_TRACK_SCENARIO = "straight_escape_burst_track"
+# The three CICS2026 comparison decks. Each one is a straight line at a
+# constant heading whose speed is piecewise constant: three segments, switching
+# at SEGMENTED_CRUISE_SWITCH_TIMES_S, with a bounded acceleration between them
+# so the change is a real vehicle changing speed and not a step in velocity.
+#
+# This is the scenario family of the reduced 2-D study, on this carrier. Its
+# speeds are quoted in the study's units (1.0-7.0 m/s) and scaled by
+# ``pad.segmented_cruise_speed_scale`` onto the RANGER MINI's 1.0 m/s ceiling,
+# so the ratios between segments and between scenarios are exactly the study's
+# while the fastest segment maps onto the fastest speed this carrier can drive.
+#
+# Why a straight line at a constant heading matters here and not merely as a
+# simplification: the reduced control envelope pins the vehicle's lateral
+# velocity to zero and holds its yaw, which keeps it centred on the deck's
+# track *because the track does not turn*. A curved deck would make those two
+# constraints wrong rather than merely restrictive. See docs/PLANAR_ENVELOPE.md.
+SEGMENTED_CRUISE_SCENARIOS = (
+    "segmented_cruise_slow", "segmented_cruise_medium", "segmented_cruise_fast",
+)
+# Segment boundaries, in seconds from the start of the episode. The first is
+# early enough that no controller can land before it and skip the disturbance
+# the scenario exists to apply.
+SEGMENTED_CRUISE_SWITCH_TIMES_S = (3.0, 15.0)
+# Per-scenario segment speeds, in the reduced study's units, before
+# ``pad.segmented_cruise_speed_scale``.
+SEGMENTED_CRUISE_SPEEDS_M_S = {
+    "segmented_cruise_slow": (1.0, 4.0, 1.5),
+    "segmented_cruise_medium": (1.5, 5.5, 2.0),
+    "segmented_cruise_fast": (2.0, 7.0, 2.5),
+}
+# Maps the fastest segment of the fastest scenario (7.0) onto the carrier's
+# 1.0 m/s ceiling. Named separately from ``benchmark_speed_scale`` so the
+# retired decks, which are written against an 8.0 m/s peak, keep their own.
+SEGMENTED_CRUISE_SPEED_SCALE = 1.0 / 7.0
+# Bound on the speed change at a segment boundary, in the study's units
+# (its ``ugvAccelMax``), scaled with the speeds.
+SEGMENTED_CRUISE_ACCELERATION_M_S2 = 4.0
+
 BENCHMARK_SCENARIOS = (
     "training_random_walk", "straight_8mps", "linear_acceleration_wave",
     "circle", "zigzag", "u_turn", "vertical_heave_boat",
     ESCAPE_BURST_SCENARIO, STRAIGHT_ESCAPE_BURST_SCENARIO,
     STRAIGHT_ESCAPE_BURST_TRACK_SCENARIO,
-)
+) + SEGMENTED_CRUISE_SCENARIOS
 # Scenarios whose shape is a fixed closed path rather than a fresh heading per
 # episode. They carry their phase across a reset instead of their heading, and
 # the arena's inward steering never applies to them: the path is bounded by
@@ -144,6 +182,46 @@ BENCHMARK_CIRCLE_RADIUS_M = 8.0
 # own world limit.
 BENCHMARK_TRACK_STRAIGHT_M = 20.0
 BENCHMARK_TRACK_RADIUS_M = 6.0
+
+
+def segmented_cruise_speeds(time_axis, scenario: str, *,
+                            speed_scale: float = SEGMENTED_CRUISE_SPEED_SCALE,
+                            switch_times_s=SEGMENTED_CRUISE_SWITCH_TIMES_S,
+                            acceleration_m_s2=SEGMENTED_CRUISE_ACCELERATION_M_S2):
+    """Ground speed of one segmented-cruise deck over ``time_axis``.
+
+    The profile is three constant speeds joined by bounded ramps. A step in
+    velocity is not something a vehicle does, and the drone would see the
+    resulting infinite acceleration as a target that teleports; the ramp is
+    the reduced study's ``ugvAccelMax``, scaled with the speeds so a slower
+    carrier takes proportionally as long to change speed.
+    """
+    if scenario not in SEGMENTED_CRUISE_SPEEDS_M_S:
+        raise ValueError(f"{scenario!r} is not a segmented-cruise scenario")
+    scale = float(speed_scale)
+    if not math.isfinite(scale) or scale <= 0.0:
+        raise ValueError("the segmented-cruise speed scale must be positive")
+    times = np.asarray(time_axis, dtype=float).reshape(-1)
+    targets = [value * scale for value in SEGMENTED_CRUISE_SPEEDS_M_S[scenario]]
+    switches = [float(value) for value in switch_times_s]
+    if len(switches) + 1 != len(targets):
+        raise ValueError("a three-segment deck needs exactly two switching times")
+    rate = abs(float(acceleration_m_s2)) * scale
+    if rate <= 0.0:
+        raise ValueError("the segment acceleration limit must be positive")
+
+    # Piecewise-constant demand, then a rate limit applied forward in time.
+    demand = np.full(times.shape, targets[0], dtype=float)
+    for index, boundary in enumerate(switches):
+        demand[times >= boundary] = targets[index + 1]
+    speeds = np.empty_like(demand)
+    speeds[0] = demand[0]
+    steps = np.diff(times, prepend=times[0])
+    for index in range(1, speeds.size):
+        allowed = rate * max(float(steps[index]), 0.0)
+        speeds[index] = speeds[index - 1] + float(np.clip(
+            demand[index] - speeds[index - 1], -allowed, allowed))
+    return speeds
 
 
 def stadium_track(arc_length, straight_m: float, radius_m: float):
@@ -229,6 +307,10 @@ class PadMotionConfig:
     # cannot drive and which would leave the arena inside one episode; this
     # scales them onto the configured carrier without touching their timing.
     benchmark_speed_scale: float
+    # The same idea for the three segmented-cruise decks, which are written in
+    # the reduced study's 1.0-7.0 m/s rather than against an 8.0 m/s peak, so
+    # they need their own factor to land on the carrier's ceiling.
+    segmented_cruise_speed_scale: float
     # Radius the ``circle`` scenario turns at. Exposed because scaling the deck
     # down without shrinking this turns the episode into a shallow arc: at
     # scale 0.125 the stock 8 m circle completes under half a lap in 30 s.
@@ -309,6 +391,12 @@ class PadMotionConfig:
         benchmark_speed_scale = float(pad.get("benchmark_speed_scale", 1.0))
         if not math.isfinite(benchmark_speed_scale) or benchmark_speed_scale <= 0.0:
             raise ValueError("pad.benchmark_speed_scale must be positive and finite")
+        segmented_cruise_speed_scale = float(pad.get(
+            "segmented_cruise_speed_scale", SEGMENTED_CRUISE_SPEED_SCALE))
+        if (not math.isfinite(segmented_cruise_speed_scale)
+                or segmented_cruise_speed_scale <= 0.0):
+            raise ValueError(
+                "pad.segmented_cruise_speed_scale must be positive and finite")
         benchmark_track_straight_m = float(pad.get(
             "benchmark_track_straight_m", BENCHMARK_TRACK_STRAIGHT_M))
         benchmark_track_radius_m = float(pad.get(
@@ -464,6 +552,7 @@ class PadMotionConfig:
             yaw_rate_limit_rad_s=math.radians(float(pad.get("yaw_rate_limit_deg_s", 60.0))),
             arena_radius_m=float(pad.get("arena_radius_m", 8.0)),
             benchmark_speed_scale=benchmark_speed_scale,
+            segmented_cruise_speed_scale=segmented_cruise_speed_scale,
             benchmark_circle_radius_m=benchmark_circle_radius_m,
             benchmark_track_straight_m=benchmark_track_straight_m,
             benchmark_track_radius_m=benchmark_track_radius_m,
@@ -1010,6 +1099,16 @@ class PadTrajectory:
                 self.escape_burst_armed = True
         elif scenario == "vertical_heave_boat":
             speeds[:] = 4.0 * speed_scale
+        elif scenario in SEGMENTED_CRUISE_SCENARIOS:
+            # Straight line, constant heading, piecewise-constant speed. The
+            # heading is whatever the episode drew and then never changes, so
+            # the deck's track is a fixed line and the reduced envelope's
+            # lateral and yaw constraints stay correct for the whole episode.
+            speeds[:] = segmented_cruise_speeds(
+                time_axis, scenario,
+                speed_scale=cfg.segmented_cruise_speed_scale)
+            yaw_rates[:] = 0.0
+            headings[:] = self.heading0
         velocity = np.c_[speeds * np.cos(headings), speeds * np.sin(headings),
                          np.zeros(samples)]
         if scenario == "vertical_heave_boat":

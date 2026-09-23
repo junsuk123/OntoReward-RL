@@ -25,7 +25,9 @@ TEMPLATE = ROOT / "rviz/ontology_rgat_parallel.rviz"
 # Group titles name the two arms of the primary comparison. Beyond them a pair
 # is a replica of one of those arms, and the learner is what decides which, so
 # the title says only the index rather than guessing at a method name.
-ARM_TITLES = ("Baseline Shin SE fixed", "Proposed + Ontology-R-GAT FOV")
+# The two learned arms of the current comparison, in ``pipelines`` order.
+ARM_TITLES = ("Baseline PPO (observation vector)",
+              "Proposed PPO + ontology situation graph")
 
 
 def _reindex(node, source: int, target: int):

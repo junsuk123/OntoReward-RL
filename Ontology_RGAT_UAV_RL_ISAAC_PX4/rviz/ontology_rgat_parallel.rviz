@@ -59,7 +59,7 @@ Visualization Manager:
           Value: true
         - Class: rviz_default_plugins/MarkerArray
           Enabled: true
-          Name: FOV ontology graph (active only for proposed policy)
+          Name: Ontology situation graph (state input of the proposed policy)
           Namespaces:
             ontology_edge: true
             ontology_label: true
@@ -139,7 +139,7 @@ Visualization Manager:
           Value: true
         - Class: rviz_default_plugins/MarkerArray
           Enabled: true
-          Name: FOV ontology graph (active only for proposed policy)
+          Name: Ontology situation graph (state input of the proposed policy)
           Namespaces:
             ontology_edge: true
             ontology_label: true

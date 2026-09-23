@@ -82,7 +82,7 @@ Visualization Manager:
       Value: true
     - Class: rviz_default_plugins/MarkerArray
       Enabled: true
-      Name: FOV ontology / R-GAT message coefficients
+      Name: Ontology situation graph / R-GAT message coefficients
       Namespaces:
         ontology_edge: true
         ontology_label: true

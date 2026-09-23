@@ -19,17 +19,21 @@ import numpy as np
 
 METHODS = (
     "shin_se_fixed",
-    "shin_se_onto_rgat_recovery",
+    "shin_se_onto_rgat_state",
 )
 METHOD_LABELS = {
-    "shin_se_fixed": "Baseline · Shin SE fixed",
-    "shin_se_onto_rgat_recovery": "Proposed · Shin + Ontology-R-GAT FOV",
+    "shin_se_fixed": "Baseline · PPO (관측 벡터)",
+    "shin_se_onto_rgat_state": "Proposed · PPO + 온톨로지 상황 그래프",
+    "shin_se_onto_gat_state": "Ablation · 관계 유형 통합 (GAT)",
+    "shin_se_node_pool_state": "Ablation · 메시지 전달 없음",
+    "shin_se_onto_rgat_recovery": "Retired · Shin + Ontology-R-GAT FOV 보상",
+    "pn_guidance_v1": "PN guidance (비학습)",
     "image_based_visual_servo_v1": "Visual servo (non-learned)",
     "privileged_relative_state_velocity_pd_v4": "Privileged PD (non-learned)",
 }
 METHOD_COLORS = {
     "shin_se_fixed": "#D95319",
-    "shin_se_onto_rgat_recovery": "#77AC30",
+    "shin_se_onto_rgat_state": "#77AC30",
 }
 # Arms the run declares that this file has no colour for -- a control condition
 # added to the comparison, say. MATLAB's default order, as elsewhere.

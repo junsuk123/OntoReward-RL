@@ -42,8 +42,9 @@ def shin_reward_components(current_relative_state, next_relative_state, action,
     command = np.asarray(action, dtype=np.float64).reshape(-1)
     if previous.shape != (6,) or following.shape != (6,):
         raise ValueError("reward components require two six-dimensional relative states")
-    if command.shape != (4,):
-        raise ValueError("reward components require a four-dimensional command")
+    if command.shape != (3,):
+        raise ValueError(
+            "reward components require the three-dimensional planar command")
     if not (np.isfinite(previous).all() and np.isfinite(following).all()
             and np.isfinite(command).all()
             and np.isfinite(float(next_uav_vertical_velocity))):
@@ -57,7 +58,9 @@ def shin_reward_components(current_relative_state, next_relative_state, action,
         / max(dxy_next, 1.0),
         -max(float(next_uav_vertical_velocity) + 0.5, 0.0),
         -dz_next if dz_next > 0.0 else 0.0,
-        -abs(float(command[3])),
+        # Table III's yaw-rate term, re-based onto the tilt channel; see
+        # reward_modes/shin2026.py for why.
+        -abs(float(command[2])),
     ), dtype=np.float64)
 
 

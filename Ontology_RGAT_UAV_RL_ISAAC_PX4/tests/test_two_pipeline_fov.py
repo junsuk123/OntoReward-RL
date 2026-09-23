@@ -12,6 +12,19 @@ import torch
 
 from conftest import default_experiment_config
 
+ROOT_FOR_LEGACY = Path(__file__).resolve().parents[1]
+
+
+def retired_reward_experiment_config() -> Path:
+    """The retired reward-side design, which is still declared and runnable.
+
+    Its invariants stay executable: the arm keeps its id so recorded runs stay
+    attributable, and a run that selects it must still be legal. They are just
+    no longer invariants of the *default* experiment, which since 2026-09-23
+    puts the ontology in the state instead.
+    """
+    return ROOT_FOR_LEGACY / "config/experiments/three_arm_burst_comparison.yaml"
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "isaac_sim"))
 
@@ -22,7 +35,8 @@ from ontology_rgat.benchmarks.experiment import (load_experiment,  # noqa: E402
                                                  paired_seed_plan)
 from ontology_rgat.benchmarks.live_env import LiveShinEnvironment  # noqa: E402
 from ontology_rgat.benchmarks.shin2026 import ActorObservation  # noqa: E402
-from ontology_rgat.controllers import VelocityYawRateController  # noqa: E402
+from ontology_rgat.controllers import (  # noqa: E402
+    PlanarLongitudinalController, VelocityYawRateController)
 from ontology_rgat.perception import (assert_semantic_payload_safe,  # noqa: E402
                                       prepare_keypoint_encoder)
 from ontology_rgat.pipelines import (  # noqa: E402
@@ -60,7 +74,8 @@ def _transition():
         critic=SimpleNamespace(true_relative_state=np.asarray(
             [0.45, -0.18, -0.9, 0.08, 0.0, -0.08])),
         actor=SimpleNamespace(body_velocity=np.asarray([0.0, 0.0, -0.08])),
-        state={}, command=np.asarray([0.1, -0.1, -0.1, 0.02]),
+        state={}, command=np.asarray([0.1, 0.0, -0.1, 0.0, 0.02]),
+        normalized_command=np.asarray([0.1, -0.1, 0.02]),
         physical_contact=False, strict_success=False, crash=False,
         excessive_drift=False, battery_depleted=False, terminal=False)
     return previous, following
@@ -78,7 +93,7 @@ class _Risk:
 
 def test_exactly_two_primary_specs_and_unchanged_baseline_contract():
     assert primary_pipeline_ids() == (
-        "shin_se_fixed", "shin_se_onto_rgat_recovery")
+        "shin_se_fixed", "shin_se_onto_rgat_state")
     assert tuple(PIPELINES) == primary_pipeline_ids()
     assert_primary_baseline_equivalence()
     baseline, proposed = (PIPELINES[name] for name in primary_pipeline_ids())
@@ -87,7 +102,10 @@ def test_exactly_two_primary_specs_and_unchanged_baseline_contract():
     assert baseline.active_perception_enabled == proposed.active_perception_enabled
     assert baseline.reward_mode == proposed.reward_mode == "shin_table_active"
     assert not baseline.ontology_enabled
-    assert proposed.ontology_enabled and proposed.fov_risk_reward_enabled
+    # The current factor: the ontology is in the observation, and nowhere near
+    # the reward.
+    assert proposed.ontology_enabled and proposed.graph_state_enabled
+    assert not proposed.fov_risk_reward_enabled
     assert not proposed.use_adaptive_reward_weights
     assert not proposed.use_direct_rgat_potential
     assert [
@@ -95,7 +113,7 @@ def test_exactly_two_primary_specs_and_unchanged_baseline_contract():
         ShinRewardConfig().vertical_progress_weight,
         ShinRewardConfig().vertical_speed_weight,
         ShinRewardConfig().undershoot_weight,
-        ShinRewardConfig().yaw_rate_weight,
+        ShinRewardConfig().attitude_weight,
     ] == [1.0, 1.0, 0.5, 1.0, 2.0]
 
 
@@ -107,15 +125,57 @@ def test_actor_critic_and_estimator_are_identical_between_primary_agents():
     torch.manual_seed(9)
     proposed = PipelineActorCritic(
         image_embedding=16, lstm_hidden=12, latent_dim=16,
-        actor_hidden=8, critic_hidden=8, pipeline="shin_se_onto_rgat_recovery")
+        actor_hidden=8, critic_hidden=8, pipeline="shin_se_onto_rgat_state")
     assert baseline.relative_state_head is not None
     assert proposed.relative_state_head is not None
-    assert baseline.state_dict().keys() == proposed.state_dict().keys()
-    for name, value in baseline.state_dict().items():
-        torch.testing.assert_close(value, proposed.state_dict()[name], rtol=0, atol=0)
+    # Everything they share has to be bit-identical at the same seed. The
+    # proposed arm additionally has the graph encoders and the wider first
+    # actor/critic layer they feed, which is the experimental factor and the
+    # only difference permitted.
+    shared = baseline.state_dict()
+    extra = set(proposed.state_dict()) - set(shared)
+    assert all(name.split(".")[0] in {"policy_graph_encoder",
+                                      "value_graph_encoder"}
+               for name in extra), sorted(extra)
+    # The input layer of each head is wider by exactly the graph embedding,
+    # and its bias draw depends on that fan-in, so those four tensors are the
+    # permitted difference. Everything else has to be bit-identical.
+    widened = {"actor.0.weight", "actor.0.bias",
+               "critic.0.weight", "critic.0.bias"}
+    graph_dim = proposed.graph_dim
+    assert graph_dim > 0 and baseline.graph_dim == 0
+    assert (proposed.state_dict()["actor.0.weight"].shape[1]
+            == shared["actor.0.weight"].shape[1] + graph_dim)
+    assert (proposed.state_dict()["critic.0.weight"].shape[1]
+            == shared["critic.0.weight"].shape[1] + graph_dim)
+    for name, value in shared.items():
+        if name in widened:
+            continue
+        torch.testing.assert_close(value, proposed.state_dict()[name],
+                                   rtol=0, atol=0)
+
+
+def test_the_two_learned_arms_receive_exactly_the_same_reward():
+    """The current design's central claim, checked on the dispatch itself."""
+    previous, following = _transition()
+    estimate = np.zeros(6)
+    next_estimate = np.ones(6) * 0.05
+    baseline, base_parts, _ = _reward(
+        "shin_se_fixed", previous, following, estimate, next_estimate, None)
+    proposed, proposed_parts, _ = _reward(
+        "shin_se_onto_rgat_state", previous, following, estimate,
+        next_estimate, None)
+    assert proposed == pytest.approx(baseline)
+    assert proposed_parts == base_parts
+    # And no reward-side ontology key can appear on either.
+    for parts in (base_parts, proposed_parts):
+        assert "ontology_fov_reward" not in parts
+        assert "predicted_fov_unavailability" not in parts
+        assert "adaptive_shaping" not in parts
 
 
 def test_proposed_reward_is_baseline_plus_only_nonpositive_fov_term():
+    """The retired reward-side arm, still runnable under its own id."""
     previous, following = _transition()
     estimate = np.zeros(6)
     next_estimate = np.ones(6) * 0.05
@@ -233,10 +293,20 @@ def test_fov_rgat_probability_artifact_and_freeze_contract(tmp_path):
 
 
 def test_primary_yaml_declares_two_pairs_and_valid_contract():
-    config = load_experiment(
-        default_experiment_config())
+    config = load_experiment(default_experiment_config())
     validate_pipeline_configuration(config)
     assert tuple(config["pipelines"]) == primary_pipeline_ids()
+    # No reward-side ontology block on the current design, and a graph-state
+    # block that PPO is allowed to train.
+    assert not config.get("fov_risk")
+    assert config["graph_state"]["freeze_during_ppo"] is False
+    assert config["graph_state"]["representation"] == "ontology_rgat"
+
+
+def test_the_retired_reward_side_yaml_is_still_valid():
+    config = load_experiment(retired_reward_experiment_config())
+    validate_pipeline_configuration(config)
+    assert "shin_se_onto_rgat_recovery" in config["pipelines"]
     assert config["fov_risk"]["lambda_fov"] == pytest.approx(0.1)
     assert config["fov_risk"]["prediction_horizon_seconds"] == pytest.approx(1.0)
 
@@ -244,7 +314,7 @@ def test_primary_yaml_declares_two_pairs_and_valid_contract():
 def test_two_agents_have_independent_and_two_pair_assignments():
     methods = list(primary_pipeline_ids())
     assignment, pair_methods = _balanced_training_pair_assignment(methods, 2, 0)
-    assert assignment == {"shin_se_fixed": 0, "shin_se_onto_rgat_recovery": 1}
+    assert assignment == {"shin_se_fixed": 0, "shin_se_onto_rgat_state": 1}
     assert pair_methods == methods
     for method in methods:
         standalone, selected = _balanced_training_pair_assignment([method], 1, 0)
@@ -402,16 +472,20 @@ def test_both_agents_share_action_space_and_controller_limits():
 
     # There is one control section, so both arms necessarily build the same
     # controller. Build it twice anyway and compare the resulting envelope.
-    controllers = [VelocityYawRateController.from_mapping(control, dt=0.1)
+    controllers = [PlanarLongitudinalController.from_mapping(control, dt=0.1)
                    for _ in primary_pipeline_ids()]
     first, second = controllers
     np.testing.assert_array_equal(first.max_velocity, second.max_velocity)
     np.testing.assert_array_equal(first.max_acceleration, second.max_acceleration)
-    assert first.max_yaw_rate == second.max_yaw_rate
-    assert first.max_yaw_acceleration == second.max_yaw_acceleration
+    assert first.max_longitudinal_tilt == second.max_longitudinal_tilt
+    assert first.max_tilt_rate == second.max_tilt_rate
     assert first.curriculum_min_action_scale == second.curriculum_min_action_scale
-    assert control["action"] == "velocity_yaw_rate"
-    assert first.command(np.zeros(4)).as_array().shape == (4,)
+    assert control["action"] == "planar_longitudinal"
+    assert first.command(np.zeros(3)).as_planar_array().shape == (5,)
+    # The two constrained degrees of freedom are constants of the experiment,
+    # not values an arm can move.
+    assert first.command(np.ones(3)).velocity_body_heading_m_s[1] == 0.0
+    assert first.command(np.ones(3)).yaw_rate_rad_s == 0.0
     # The environment builds that controller from the shared benchmark control
     # block; the pipeline name is not one of its inputs.
     source = inspect.getsource(LiveShinEnvironment._connect)
@@ -491,7 +565,7 @@ def test_future_fov_targets_come_only_from_geometric_pad_centre_visibility():
 
 
 def test_the_experiment_refuses_a_non_geometric_visibility_criterion():
-    config = load_experiment(default_experiment_config())
+    config = load_experiment(retired_reward_experiment_config())
     assert config["fov_risk"]["visibility_criterion"] == GEOMETRIC_FOV_CRITERION
 
     detector_labels = deepcopy(config)
@@ -732,14 +806,14 @@ def test_unobserved_future_windows_are_masked_not_zero_filled():
 def test_the_retired_binary_readout_keeps_its_own_id_and_cannot_be_run():
     from ontology_rgat.pipelines.spec import (ALL_PIPELINES, LEGACY_PIPELINES,
                                               PIPELINES)
-    assert set(PIPELINES) == {"shin_se_fixed", "shin_se_onto_rgat_recovery"}
-    assert PIPELINES["shin_se_onto_rgat_recovery"].fov_reward_readout == (
+    assert set(PIPELINES) == {"shin_se_fixed", "shin_se_onto_rgat_state"}
+    assert LEGACY_PIPELINES["shin_se_onto_rgat_recovery"].fov_reward_readout == (
         "direct_graph_scalar")
     retired = LEGACY_PIPELINES["shin_se_onto_rgat_fov"]
     assert retired.fov_reward_readout == "binary_classifier_linear_head"
     assert retired.name not in PIPELINES
     assert ALL_PIPELINES[retired.name] is retired
-    config = load_experiment(default_experiment_config())
+    config = load_experiment(retired_reward_experiment_config())
     revived = deepcopy(config)
     revived["pipelines"] = ["shin_se_fixed", "shin_se_onto_rgat_fov"]
     with pytest.raises(ValueError, match="retired FOV reward readout"):

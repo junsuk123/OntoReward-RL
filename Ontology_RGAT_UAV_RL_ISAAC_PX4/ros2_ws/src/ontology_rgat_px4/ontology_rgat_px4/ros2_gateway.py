@@ -26,6 +26,7 @@ from .frames import (
 )
 from .protocol import (
     BENCHMARK_SCENARIOS,
+    PLANAR_TILT_LIMIT_RAD,
     ProtocolError,
     VehicleSample,
     now_ns,
@@ -33,10 +34,15 @@ from .protocol import (
     static_pad_state,
     validate_action,
     validate_velocity_action,
+    validate_velocity_extras,
     validate_goto,
 )
 from .safety import SafetyGate
 from .udp_server import DatagramServer
+
+# Standard gravity, used to turn a commanded longitudinal tilt into the
+# acceleration feed-forward PX4 realises it with.
+GRAVITY_M_S2 = 9.80665
 
 try:
     import rclpy
@@ -447,6 +453,11 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             self.sample = VehicleSample()
             self.action = (0.0, 0.0, 0.0, 0.0)
             self.velocity_action = (0.0, 0.0, 0.0, 0.0)
+            # Planar envelope: the commanded longitudinal tilt and the absolute
+            # heading to hold. ``None`` restores the free-yaw behaviour every
+            # earlier run had.
+            self.velocity_tilt_rad = 0.0
+            self.velocity_yaw_hold_rad: float | None = None
             self.velocity_position_target_enu: np.ndarray | None = None
             self.velocity_position_time_us = 0
             self.command_interface = "attitude"
@@ -693,6 +704,8 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             elif kind == "velocity_action":
                 first_policy_action = not bool(self.last_action_ns)
                 self.velocity_action = validate_velocity_action(msg)
+                (self.velocity_tilt_rad,
+                 self.velocity_yaw_hold_rad) = validate_velocity_extras(msg)
                 new_velocity_handover = (
                     self.command_interface != "velocity_yaw_rate"
                     or self.velocity_position_target_enu is None)
@@ -1079,9 +1092,36 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             sp.timestamp = self._timestamp_us()
             sp.position = [float(value) for value in target_ned]
             sp.velocity = [float(value) for value in enu_to_ned(velocity_enu)]
-            sp.acceleration = [float("nan")] * 3
-            sp.yaw = float("nan")
-            sp.yawspeed = float(-yaw_rate)
+            # A tilt cannot be asked for directly through a velocity setpoint.
+            # What PX4 does accept is an acceleration feed-forward, and its
+            # position controller turns a horizontal acceleration into exactly
+            # the attitude that produces it -- so ``a = g tan(theta)`` along the
+            # vehicle's heading IS the tilt request. Bounded twice: by the
+            # learner's own envelope and by the protocol limit, so a malformed
+            # command cannot ask the airframe to invert itself.
+            tilt = float(np.clip(self.velocity_tilt_rad,
+                                 -PLANAR_TILT_LIMIT_RAD, PLANAR_TILT_LIMIT_RAD))
+            if abs(tilt) > 1e-9:
+                forward = GRAVITY_M_S2 * math.tan(tilt)
+                acceleration_enu = np.array([c * forward, s * forward, 0.0])
+                sp.acceleration = [float(value)
+                                   for value in enu_to_ned(acceleration_enu)]
+                self.sample.extra["commanded_longitudinal_tilt_rad"] = tilt
+            else:
+                sp.acceleration = [float("nan")] * 3
+                self.sample.extra["commanded_longitudinal_tilt_rad"] = 0.0
+            # Heading. The planar envelope holds one absolute heading for the
+            # whole episode; without it PX4 free-runs the yaw under a zero rate,
+            # which drifts and breaks the "always aligned with the deck"
+            # constraint the whole comparison rests on.
+            if self.velocity_yaw_hold_rad is None:
+                sp.yaw = float("nan")
+                sp.yawspeed = float(-yaw_rate)
+            else:
+                sp.yaw = float(yaw_enu_to_ned(self.velocity_yaw_hold_rad))
+                sp.yawspeed = 0.0
+                self.sample.extra["commanded_yaw_hold_enu_rad"] = float(
+                    self.velocity_yaw_hold_rad)
             self.trajectory_pub.publish(sp)
 
         def _vehicle_command(self, command: int, param1: float = 0.0, param2: float = 0.0) -> None:
@@ -1353,6 +1393,7 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                         self.velocity_position_time_us = 0
                     else:
                         self.velocity_action = (0.0, 0.0, 0.0, 0.0)
+                        self.velocity_tilt_rad = 0.0
                     self._vehicle_command(
                         VehicleCommand.VEHICLE_CMD_COMPONENT_ARM_DISARM,
                         0.0, 21196.0)

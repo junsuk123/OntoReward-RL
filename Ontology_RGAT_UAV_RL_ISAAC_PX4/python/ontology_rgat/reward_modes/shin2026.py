@@ -3,6 +3,16 @@
 Table-III equations, weights and terminal values are transcribed from the
 paper.  The frame/sign contract follows the paper: relative position is the
 platform in the drone body frame and ``Delta z > 0`` is undershoot.
+
+One declared deviation (see ``docs/PAPER_FIDELITY.md``).  Table III's fifth
+shaping term is ``-2|omega_z|``: it prices the yaw-rate channel of the paper's
+four-dimensional action.  The reduced planar envelope has no yaw channel --
+heading is a constraint of the experiment, not a control -- so that term would
+be identically zero and the reward would silently drop to four components.  It
+is replaced by the same penalty on the channel that took the yaw channel's
+place, the longitudinal tilt command, at the same weight: ``-2|tilt|``.  Its
+role is unchanged (price gratuitous use of the attitude channel) and it applies
+identically to every arm.
 """
 from __future__ import annotations
 
@@ -10,6 +20,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from ..controllers import PLANAR_ACTION_DIM
 from .sparse import sparse_terminal_reward
 
 
@@ -19,7 +30,8 @@ class ShinRewardConfig:
     vertical_progress_weight: float = 1.0
     vertical_speed_weight: float = 0.5
     undershoot_weight: float = 1.0
-    yaw_rate_weight: float = 2.0
+    # Table III's -2|omega_z|, re-based onto the planar envelope's tilt channel.
+    attitude_weight: float = 2.0
     active_alpha: float = 0.1
     active_beta: float = 1.0
     active_tau: float = 0.01
@@ -60,8 +72,10 @@ class ShinReward:
         action = np.asarray(action, dtype=float).reshape(-1)
         if state.shape != (6,) or nxt.shape != (6,):
             raise ValueError("manual reward requires two six-dimensional relative states")
-        if action.shape != (4,):
-            raise ValueError("manual reward requires a four-dimensional velocity action")
+        if action.shape != (PLANAR_ACTION_DIM,):
+            raise ValueError(
+                "manual reward requires the three-dimensional planar action "
+                "[a_fwd, a_z, tilt]")
         lateral = float(np.linalg.norm(state[:2]))
         next_lateral = float(np.linalg.norm(nxt[:2]))
         if drone_vertical_velocity is None:
@@ -83,7 +97,7 @@ class ShinReward:
                                        * max(float(drone_vertical_velocity) + 0.5, 0.0)),
             "undershoot_penalty": (-cfg.undershoot_weight * float(nxt[2])
                                     if float(nxt[2]) > 0.0 else 0.0),
-            "yaw_rate_penalty": -cfg.yaw_rate_weight * abs(float(action[3])),
+            "attitude_penalty": -cfg.attitude_weight * abs(float(action[2])),
             "active_perception": 0.0,
         }
         # The paper's final reward is piecewise: terminal outcomes replace,

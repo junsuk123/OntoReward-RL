@@ -33,7 +33,7 @@ class _Bridge:
     def reset(self, seed, scenario="training_random_walk", **_kw):
         return _state()
 
-    def step_velocity(self, _command):
+    def step_velocity(self, _command, *, tilt_rad=0.0, yaw_rad=None):
         return _state()
 
 
@@ -42,7 +42,10 @@ class _Controller:
         pass
 
     def command(self, _action):
-        return SimpleNamespace(as_array=lambda: np.zeros(4))
+        return SimpleNamespace(as_array=lambda: np.zeros(4),
+                               as_planar_array=lambda: np.zeros(5),
+                               normalized_action=np.zeros(3),
+                               longitudinal_tilt_rad=0.0)
 
 
 def _adapter(image_source):
@@ -62,7 +65,7 @@ def test_a_stalled_camera_surfaces_as_infrastructure(call):
 
     adapter = _adapter(stalled)
     with pytest.raises(SimulatorFrameTimeout, match="delivered no frame"):
-        adapter.step(np.zeros(4)) if call == "step" else adapter.reset(1)
+        adapter.step(np.zeros(3)) if call == "step" else adapter.reset(1)
 
 
 def test_the_original_timeout_is_kept_as_the_cause():
@@ -72,13 +75,13 @@ def test_the_original_timeout_is_kept_as_the_cause():
         raise original
 
     with pytest.raises(SimulatorFrameTimeout) as caught:
-        _adapter(stalled).step(np.zeros(4))
+        _adapter(stalled).step(np.zeros(3))
     assert caught.value.__cause__ is original
 
 
 def test_a_healthy_camera_is_untouched():
     frame = np.zeros((4, 4), dtype=np.uint8)
-    actor, state, _command = _adapter(lambda: frame).step(np.zeros(4))
+    actor, state, _command = _adapter(lambda: frame).step(np.zeros(3))
     assert actor.image is frame and state == _state()
 
 
@@ -88,7 +91,7 @@ def test_only_a_frame_timeout_is_translated():
         raise ValueError("actor camera expected (320, 512), got (1, 1)")
 
     with pytest.raises(ValueError):
-        _adapter(broken).step(np.zeros(4))
+        _adapter(broken).step(np.zeros(3))
 
 
 # --------------------------------------------- the retry actually owns it

@@ -35,7 +35,9 @@ def _algorithm(**overrides):
 def _mdp(**overrides):
     settings = dict(
         control={"dt_seconds": 0.1, "horizon_steps": 300,
-                 "max_velocity_m_s": [2.0, 2.0, 1.0], "max_yaw_rate_deg_s": 60.0},
+                 "max_velocity_m_s": [1.6, 0.9],
+                 "max_acceleration_m_s2": [1.2, 0.8],
+                 "max_longitudinal_tilt_deg": 12.0},
         reward={"terminal": {"success": 10.0, "failure": -10.0},
                 "active_perception": {"alpha": 0.1, "beta": 1.0, "tau": 0.01}},
         lambda_fov=0.1, horizon_seconds=1.0, pad_speed_range=(0.08, 0.15))
@@ -143,13 +145,23 @@ def test_the_algorithm_panel_states_what_it_does_not_claim():
 
 # --------------------------------------------------------- 3. MDP structure
 
-def test_only_the_reward_row_differs_between_the_two_agents():
+def test_only_the_state_representation_differs_between_the_two_agents():
+    """The panel has to show the current factor, not the retired one.
+
+    Until 2026-09-23 the reward row was the only differing one, because the
+    ontology entered through an additive reward term. It now enters through
+    the observation, so the rows that may differ are the ones that carry the
+    state -- and the reward row must read identical, because both arms use the
+    same reward. Deployment differs as a consequence of the state, not as a
+    separate factor.
+    """
     spec = _mdp()
-    differing = [row for row in spec["rows"] if not row["identical"]]
-    assert [row["key"] for row in differing] == ["reward"]
-    assert spec["total_count"] - spec["identical_count"] == 1
+    differing = [row["key"] for row in spec["rows"] if not row["identical"]]
+    assert differing == ["observation", "latent", "deployment"]
+    reward = next(r for r in spec["rows"] if r["key"] == "reward")
+    assert reward["identical"] and "delta" not in reward
     assert [arm["id"] for arm in spec["arms"]] == [
-        "shin_se_fixed", "shin_se_onto_rgat_recovery"]
+        "shin_se_fixed", "shin_se_onto_rgat_state"]
     # Every identical row must still say something concrete.
     for row in spec["rows"]:
         assert row["label"] and row["value"]
@@ -159,21 +171,33 @@ def test_only_the_reward_row_differs_between_the_two_agents():
         assert required in keys
 
 
-def test_the_reward_row_carries_the_live_lambda_and_the_zero_lambda_contract():
+def test_the_reward_row_says_the_two_arms_share_it():
     row = next(r for r in _mdp(lambda_fov=0.3)["rows"] if r["key"] == "reward")
-    assert "λ=0.3" in row["delta"]
-    assert "λ=0이면 baseline과 동일" in row["delta"]
+    assert row["identical"] is True
+    assert "두 arm이 같은 보상을 쓴다" in row["note"]
+    assert "온톨로지는 보상에" in row["note"]
     assert "Table III" in row["value"]
     assert "α=0.1" in row["value"] and "τ=0.01" in row["value"]
 
 
+def test_the_observation_row_names_the_graph_as_the_single_factor():
+    spec = _mdp()
+    observation = next(r for r in spec["rows"] if r["key"] == "observation")
+    assert "온톨로지 상황 그래프" in observation["delta"]
+    assert "유일한 실험 요인" in observation["delta"]
+
+
 def test_the_mdp_rows_follow_the_resolved_action_and_environment_limits():
     spec = _mdp(control={"dt_seconds": 0.05, "horizon_steps": 600,
-                         "max_velocity_m_s": [8.0, 8.0, 3.0],
-                         "max_yaw_rate_deg_s": 120.0},
+                         "max_velocity_m_s": [8.0, 3.0],
+                         "max_acceleration_m_s2": [2.0, 1.5],
+                         "max_longitudinal_tilt_deg": 20.0},
                 pad_speed_range=(0.0, 8.0))
     action = next(r for r in spec["rows"] if r["key"] == "action")
-    assert "8/8/3 m/s" in action["note"] and "120°/s" in action["note"]
+    assert "8/3 m/s" in action["note"] and "2/1.5 m/s²" in action["note"]
+    assert "20°" in action["note"]
+    # The two constrained degrees of freedom are stated, not implied.
+    assert "횡방향 속도와 요레이트는 항상 0" in action["note"]
     environment = next(r for r in spec["rows"] if r["key"] == "environment")
     assert "0–8 m/s" in environment["value"]
     assert "600 step" in environment["note"]

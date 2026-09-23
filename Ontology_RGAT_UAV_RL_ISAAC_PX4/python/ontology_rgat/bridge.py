@@ -922,15 +922,32 @@ class PX4Bridge:
         self.last_state = state
         return state
 
-    def step_velocity(self, command: Iterable[float]) -> dict[str, Any]:
-        """Send physical body-heading [vx, vy, vz, yaw-rate] to PX4."""
+    def step_velocity(self, command: Iterable[float], *,
+                      tilt_rad: float = 0.0,
+                      yaw_rad: float | None = None) -> dict[str, Any]:
+        """Send physical body-heading [vx, vy, vz, yaw-rate] to PX4.
+
+        ``tilt_rad`` and ``yaw_rad`` are the reduced planar envelope's two
+        extra fields: the longitudinal tilt the policy asks for, and the
+        absolute ENU heading to hold. Both are optional, and omitting them
+        reproduces the four-degree-of-freedom behaviour exactly, so a recorded
+        run and an older gateway both still work.
+        """
         value = np.asarray(list(command), dtype=float).reshape(-1)
         limits = np.array([10.0, 10.0, 5.0, np.deg2rad(180.0)])
         if (value.shape != (4,) or not np.isfinite(value).all()
                 or np.any(np.abs(value) > limits)):
             raise BridgeError("Velocity command is malformed or outside safety bounds.")
-        reply = self.transact(
-            "velocity_action", {"command": value.tolist()}, ("state",))
+        tilt = float(tilt_rad)
+        if not math.isfinite(tilt) or abs(tilt) > math.radians(25.0):
+            raise BridgeError("Commanded tilt is malformed or outside safety bounds.")
+        payload: dict[str, Any] = {"command": value.tolist(), "tilt_rad": tilt}
+        if yaw_rad is not None:
+            heading = float(yaw_rad)
+            if not math.isfinite(heading):
+                raise BridgeError("Commanded heading hold must be finite.")
+            payload["yaw_rad"] = heading
+        reply = self.transact("velocity_action", payload, ("state",))
         state = self.pace_to_control_period(
             self.validate_state_with_estimator_grace(reply))
         self.last_state = state

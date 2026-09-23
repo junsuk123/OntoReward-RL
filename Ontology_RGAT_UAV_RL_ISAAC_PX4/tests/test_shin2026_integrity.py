@@ -126,6 +126,7 @@ def test_lstm_state_resets_at_episode_boundary():
 
 
 def test_velocity_action_dimension_is_four_and_rate_limited():
+    """The retired four-axis controller, kept runnable for the legacy arms."""
     controller = VelocityYawRateController(dt=0.1)
     command = controller.command([1, 1, 1, 1]).as_array()
     assert command.shape == (4,)
@@ -133,6 +134,37 @@ def test_velocity_action_dimension_is_four_and_rate_limited():
     assert command[3] == pytest.approx(math.radians(9.0))
     with pytest.raises(ValueError):
         controller.command([1, 2, 3])
+
+
+def test_the_planar_envelope_has_three_channels_and_zero_lateral_authority():
+    """The shared envelope of the current comparison.
+
+    Three things are fixed here because every arm depends on them being true
+    for all of them: the action is three-dimensional, the lateral velocity and
+    the yaw rate the controller emits are exactly zero whatever it is asked
+    for, and the two acceleration channels are rate-limited rather than being
+    velocity commands in disguise.
+    """
+    from ontology_rgat.controllers import PlanarLongitudinalController
+
+    controller = PlanarLongitudinalController(dt=0.1)
+    command = controller.command([1.0, 1.0, 1.0])
+    assert command.as_planar_array().shape == (5,)
+    # One step of acceleration, not a step to the velocity limit.
+    np.testing.assert_allclose(command.velocity_body_heading_m_s,
+                               [0.12, 0.0, 0.08])
+    assert command.yaw_rate_rad_s == 0.0
+    assert command.velocity_body_heading_m_s[1] == 0.0
+    # Asking hard for a lateral motion there is no channel for changes nothing.
+    for _ in range(60):
+        command = controller.command([-1.0, -1.0, -1.0])
+    assert command.velocity_body_heading_m_s[1] == 0.0
+    assert command.yaw_rate_rad_s == 0.0
+    np.testing.assert_allclose(command.velocity_body_heading_m_s[[0, 2]],
+                               [-1.6, -0.9])
+    assert command.longitudinal_tilt_rad == pytest.approx(math.radians(-12.0))
+    with pytest.raises(ValueError):
+        controller.command([1, 1, 1, 1])
 
 
 def test_hover_curriculum_scales_the_shared_uav_action_envelope():
@@ -922,7 +954,7 @@ def _classify_pad_contact(*, lateral=0.10, roll_deg=0.0,
         "battery": {"enabled": False},
         "landed": False,
     }
-    return env._classify(actor, state, np.zeros(4))
+    return env._classify(actor, state, np.zeros(5), np.zeros(3))
 
 
 def test_pad_contact_is_success_only_when_position_and_attitude_are_safe():
@@ -978,9 +1010,9 @@ def test_contact_gate_uses_pre_contact_kinematics_not_rebound_velocity():
         return actor, state
 
     actor, state = sample(contact=False, vertical_speed=-0.18)
-    env.last_step = env._classify(actor, state, np.zeros(4))
+    env.last_step = env._classify(actor, state, np.zeros(5), np.zeros(3))
     actor, state = sample(contact=True, vertical_speed=1.05)
-    contact = env._classify(actor, state, np.zeros(4))
+    contact = env._classify(actor, state, np.zeros(5), np.zeros(3))
 
     assert contact.strict_success
     assert contact.landing_metrics["vertical_velocity"] == pytest.approx(-0.18)
@@ -1013,7 +1045,7 @@ def test_contact_gate_retains_hard_pre_contact_descent():
             "extra": {"pad_contact": contact},
             "battery": {"enabled": False}, "landed": False,
         }
-        return env._classify(actor, state, np.zeros(4))
+        return env._classify(actor, state, np.zeros(5), np.zeros(3))
 
     env.last_step = classify(contact=False, vertical_speed=-0.72)
     contact = classify(contact=True, vertical_speed=1.05)
@@ -1200,7 +1232,7 @@ def test_shin_active_reward_uses_training_only_estimation_target():
     assert active_perception_reward(2.0, cfg) == pytest.approx(-0.1)
     reward = ShinReward(cfg)
     with pytest.raises(ValueError, match="training-only"):
-        reward(np.zeros(6), np.zeros(6), np.zeros(4), drone_vertical_velocity=0.0)
+        reward(np.zeros(6), np.zeros(6), np.zeros(3), drone_vertical_velocity=0.0)
 
 
 def test_shin_dense_reward_uses_truth_while_active_term_uses_estimate():
@@ -1209,7 +1241,8 @@ def test_shin_dense_reward_uses_truth_while_active_term_uses_estimate():
         actor=SimpleNamespace(body_velocity=np.array([0, 0, -0.5])))
     following = SimpleNamespace(
         critic=SimpleNamespace(true_relative_state=np.array([0.5, 0, -2, 0, 0, 0])),
-        command=np.zeros(4), physical_contact=False, crash=False,
+        command=np.zeros(5), normalized_command=np.zeros(3),
+        physical_contact=False, crash=False,
         excessive_drift=False, battery_depleted=False, terminal=False)
     # Deliberately contradictory estimates would report motion away from the
     # pad if they accidentally entered the Table-III progress terms.
@@ -1227,12 +1260,12 @@ def test_shin_dense_reward_uses_truth_while_active_term_uses_estimate():
 def test_table_iii_reward_equations():
     reward = ShinReward(ShinRewardConfig(active_enabled=False))
     total, parts = reward([2, 0, -3, 0, 0, 0], [0.5, 0, -2, 0, 0, 0],
-                          [0, 0, 0, 0.2], drone_vertical_velocity=-0.5)
+                          [0, 0, 0.2], drone_vertical_velocity=-0.5)
     assert parts["lateral_progress"] == 1.0
     assert parts["vertical_progress"] == 1.0
     assert parts["vertical_speed_penalty"] == 0.0
     assert parts["undershoot_penalty"] == 0.0
-    assert parts["yaw_rate_penalty"] == pytest.approx(-0.4)
+    assert parts["attitude_penalty"] == pytest.approx(-0.4)
     assert total == pytest.approx(1.6)
 
 
@@ -1240,7 +1273,7 @@ def test_table_iii_terminal_reward_replaces_dense_terms():
     reward = ShinReward(ShinRewardConfig(active_enabled=True))
     total, parts = reward(
         [2, 0, -3, 0, 0, 0], [0.5, 0, -2, 0, 0, 0],
-        [0, 0, 0, 0.2], drone_vertical_velocity=1.0,
+        [0, 0, 0.2], drone_vertical_velocity=1.0,
         next_estimation_loss=1.0, physical_contact=True, terminal=True)
     assert total == 10.0
     assert parts["task"] == 10.0
@@ -1314,8 +1347,8 @@ def test_recurrent_ppo_update_supports_truncated_sequences():
             "image": np.zeros((32, 32), dtype=np.uint8),
             "proprioception": np.array([0, 0, 0, 1, 0, 0, 0], dtype=np.float32),
             "truth": np.zeros(6, dtype=np.float32),
-            "pre_squash": np.zeros(4, dtype=np.float32),
-            "action": np.zeros(4, dtype=np.float32),
+            "pre_squash": np.zeros(3, dtype=np.float32),
+            "action": np.zeros(3, dtype=np.float32),
             "log_prob": -3.676, "value": 0.0, "reward": float(index == 2),
             "done": float(index == 2),
             "hidden_h": np.zeros((1, 1, 16), dtype=np.float32),
@@ -1329,7 +1362,7 @@ def test_benchmark_dimensions_and_modes():
     for mode in ("shin2026", "sparse", "manual_no_active", "ontoreward",
                  "ontoreward_plus_active"):
         cfg = default_shin2026_config(reward_mode=mode)
-        assert cfg.action_dimension == 4 and cfg.relative_state_dimension == 6
+        assert cfg.action_dimension == 3 and cfg.relative_state_dimension == 6
 
 
 def test_keypoint_calibration_names_which_filter_discarded_the_frames():
@@ -1500,12 +1533,34 @@ def test_no_shipped_config_declares_a_key_twice():
 
 
 def test_the_fov_risk_arm_reads_its_reward_from_the_graph_itself():
+    """The retired reward-side method, under its own id.
+
+    Its declaration is kept executable so recorded runs stay attributable and
+    the reward-side arm can still be flown for comparison. The headline
+    experiment no longer selects it -- see the test below.
+    """
+    from ontology_rgat.pipelines import LEGACY_PIPELINES
+
+    proposed = LEGACY_PIPELINES["shin_se_onto_rgat_recovery"]
+    assert proposed.fov_reward_readout == "direct_graph_scalar"
+    assert proposed.fov_risk_reward_enabled is True
+
+
+def test_the_headline_experiment_puts_the_ontology_in_the_state_not_the_reward():
     from conftest import default_experiment_config
 
     contract = load_experiment(default_experiment_config())
-    proposed = contract["pipeline_contract"]["shin_se_onto_rgat_recovery"]
-    assert proposed["fov_reward_readout"] == "direct_graph_scalar"
-    assert proposed["fov_risk_reward"] is True
+    proposed = contract["pipeline_contract"]["shin_se_onto_rgat_state"]
+    baseline = contract["pipeline_contract"]["shin_se_fixed"]
+    assert proposed["graph_state"] is True
+    assert proposed["ontology_input_mode"] == "state_situation_graph"
+    # The single experimental factor. Everything on the reward side has to be
+    # identical, or the comparison measures more than one thing.
+    assert proposed["fov_risk_reward"] is False
+    assert proposed["use_direct_rgat_potential"] is False
+    assert proposed["use_adaptive_reward_weights"] is False
+    assert proposed["reward_mode"] == baseline["reward_mode"]
+    assert baseline["graph_state"] is False
 
 
 def test_the_launcher_takes_over_a_previous_run_instead_of_refusing():
@@ -1573,14 +1628,29 @@ def test_the_shipped_configuration_cannot_ask_the_gateway_for_the_impossible():
             "hold_s": entry_hold_seconds(live.external.entry_timeout, margin)})
         assert 0.0 < request.hold_s <= GOTO_MAX_HOLD_S, pairs
 
-    # The action path: the full-scale velocity command the control envelope
-    # admits, in the units the gateway validates.
+    # The action path: the extreme command the planar envelope can emit, in
+    # the units the gateway validates. Lateral velocity and yaw rate are
+    # structurally zero, and the tilt travels in its own optional field.
+    from ontology_rgat.controllers import PlanarLongitudinalController
+    from ontology_rgat_px4.protocol import validate_velocity_extras
+
     control = dict(config.get("control") or {})
-    velocity = [float(v) for v in control.get("max_velocity_m_s", (2.0, 2.0, 1.0))]
-    yaw_rate = math.radians(float(control.get("max_yaw_rate_deg_s", 60.0)))
-    validate_velocity_action({"command": [*velocity, yaw_rate]})
-    validate_velocity_action({"command": [-velocity[0], -velocity[1],
-                                          -velocity[2], -yaw_rate]})
+    controller = PlanarLongitudinalController.from_mapping(
+        control, dt=float(control.get("dt_seconds", 0.1)))
+    for extreme in ([1.0, 1.0, 1.0], [-1.0, -1.0, -1.0]):
+        controller.reset()
+        for _ in range(120):
+            command = controller.command(extreme)
+        payload = {"command": [float(v) for v in command.as_array()],
+                   "tilt_rad": float(command.longitudinal_tilt_rad),
+                   "yaw_rad": math.pi}
+        validate_velocity_action(payload)
+        tilt, yaw = validate_velocity_extras(payload)
+        assert tilt == pytest.approx(float(command.longitudinal_tilt_rad))
+        assert yaw == pytest.approx(math.pi)
+    # An omitted pair is legal and means "no tilt, free yaw": that is how a
+    # recorded run and an older gateway keep working.
+    assert validate_velocity_extras({"command": [0.0] * 4}) == (0.0, None)
 
 
 def _classify_airborne(*, roll_deg, px4_attitude_failure):
@@ -1611,7 +1681,7 @@ def _classify_airborne(*, roll_deg, px4_attitude_failure):
         "battery": {"enabled": False},
         "landed": False,
     }
-    return env._classify(actor, state, np.zeros(4))
+    return env._classify(actor, state, np.zeros(5), np.zeros(3))
 
 
 def test_a_px4_attitude_failure_ends_the_episode_as_a_crash():

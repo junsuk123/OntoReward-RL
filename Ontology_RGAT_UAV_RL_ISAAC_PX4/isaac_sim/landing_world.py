@@ -1613,6 +1613,7 @@ class LandingWorld:
                                req.get("pad_scale", 1.0),
                                req.get("scenario", "training_random_walk"))
         initial = benchmark.get("initial_conditions") or {}
+        planar_entry = bool(benchmark.get("planar_entry", False))
         if str(benchmark.get("profile", "")).lower() == "shin2026":
             # Draw the Table-I box first. During training its curriculum starts
             # at the supported airborne hover and blends toward that draw;
@@ -1621,9 +1622,37 @@ class LandingWorld:
             y_range = initial.get("relative_lateral_y_m", (-3.0, 3.0))
             z_range = initial.get("relative_altitude_m", (2.0, 8.0))
             yaw_range = initial.get("platform_yaw_misalignment_deg", (-60.0, 60.0))
-            offset = np.array([rng.uniform(*x_range), rng.uniform(*y_range),
-                               rng.uniform(*z_range)])
-            rpy_deg = np.array([0.0, 0.0, rng.uniform(*yaw_range)])
+            if planar_entry:
+                # The reduced envelope pins lateral velocity to zero and holds
+                # yaw, so the entry has to start ON the deck's track and
+                # ALIGNED with it -- otherwise the vehicle is asked to close an
+                # offset it structurally cannot. The remaining freedom is the
+                # along-track stand-off and the altitude, which is what the
+                # sagittal-plane task is about.
+                #
+                # Every draw the full Table-I box makes is still made, in the
+                # same order, so a paired seed sweep stays paired across the
+                # two entry modes; the lateral and yaw draws are then discarded
+                # rather than skipped.
+                along_range = initial.get("relative_longitudinal_m", (-1.5, 1.5))
+                along = rng.uniform(*along_range)
+                _discarded_lateral = rng.uniform(*y_range)
+                altitude = rng.uniform(*z_range)
+                _discarded_yaw = rng.uniform(*yaw_range)
+                camera_cfg = (CONFIG.get("vision") or {}).get("camera", {}) or {}
+                body = camera_centered_hover_offset(
+                    altitude, float(camera_cfg.get("pitch_down_deg", 60.0)),
+                    camera_cfg.get("mount_translation_flu_m", (0.0, 0.0, -0.16)))
+                # Along-track stand-off on top of the camera-centred point, and
+                # a lateral component that is a constant of the experiment.
+                body = np.array([float(body[0]) + float(along), 0.0,
+                                 float(body[2])])
+                offset = yaw_aligned_hover_offset(body, self.deck.yaw)
+                rpy_deg = np.zeros(3)
+            else:
+                offset = np.array([rng.uniform(*x_range), rng.uniform(*y_range),
+                                   rng.uniform(*z_range)])
+                rpy_deg = np.array([0.0, 0.0, rng.uniform(*yaw_range)])
             offset, rpy_deg[2] = curriculum_camera_entry(
                 offset, rpy_deg[2],
                 req.get("initial_condition_scale", min(
@@ -1669,6 +1698,19 @@ class LandingWorld:
         deck_world = self.deck.world_from_pad(np.zeros(3))
         offset = self.urban.clear_of_buildings(
             deck_world + offset, deck_world) - deck_world
+        if planar_entry:
+            # ``clear_of_buildings`` and the camera-visibility pull both move
+            # the point in the plane, and either can take it off the deck's
+            # track. Project the lateral component back out: on this profile
+            # the urban model is disabled and the visibility pull is radial
+            # toward a point already on the track, so this normally changes
+            # nothing -- and when it does, being on the track matters more than
+            # the metre it moves.
+            heading = float(self.deck.yaw)
+            along = (math.cos(heading) * float(offset[0])
+                     + math.sin(heading) * float(offset[1]))
+            offset = np.array([along * math.cos(heading),
+                               along * math.sin(heading), float(offset[2])])
         # Drawn from the same generator as the entry pose so the whole initial
         # condition -- geometry, wind, deck motion and energy -- is one seed.
         hover_seconds = float(rng.uniform(*self.battery_hover_range))

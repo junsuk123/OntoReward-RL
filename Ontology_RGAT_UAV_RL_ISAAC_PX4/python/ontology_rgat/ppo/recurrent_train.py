@@ -16,6 +16,7 @@ import torch
 
 from ..bridge import (ArmingRefused, BridgeError, EntryResetError,
                       GatewayTimeout, PX4Failsafe, SimulatorFrameTimeout)
+from ..controllers import PLANAR_ACTION_DIM
 from ..curriculum import PlatformMotionCurriculum
 from ..perception import (POINT_CONFIDENCE_THRESHOLD, SEMANTIC_FEATURE_NAMES,
                           grayscale_image_tensor, semantic_graph,
@@ -33,6 +34,9 @@ from ..reward_modes import (AdaptiveRewardConfig, AdaptiveWeightReward,
                             ShinSERewardContext, TerminalFlags,
                             active_perception_reward, sparse_terminal_reward)
 from ..reward_modes.fov_risk import ontology_fov_reward
+from ..initialization import nadir_image_setpoint
+from ..rgat.state_graph import StateGraphGeometry, build_state_graph
+from .graph_state_encoder import graph_feature_tensor
 from ..reward_modes.adaptive_weight import shin_reward_components
 from ..reward_modes.adaptive_weight import RewardComponentNormalizer
 from .behavior_cloning import behavior_clone
@@ -112,7 +116,9 @@ def _reward(method, previous, following, estimate, next_estimate, potential,
         value = sparse_terminal_reward(**terminal.as_kwargs())
         return value, {"task": value}, next_loss
     if (spec is not None and spec.name in {
-            "shin_se_fixed", "shin_se_onto_rgat_recovery", "no_se_fixed"}
+            "shin_se_fixed", "shin_se_onto_rgat_state",
+            "shin_se_onto_gat_state", "shin_se_node_pool_state",
+            "shin_se_onto_rgat_recovery", "no_se_fixed"}
             and reward_normalizer is not None):
         if current_adaptive_graph is None:
             raise ValueError("normalized fixed reward requires current adaptive graph")
@@ -124,7 +130,7 @@ def _reward(method, previous, following, estimate, next_estimate, potential,
                 current_adaptive_graph,
                 previous.critic.true_relative_state,
                 following.critic.true_relative_state,
-                following.command,
+                following.normalized_command,
                     next_uav_vertical_velocity=_transition_result_vertical_velocity(
                         previous, following),
                 next_estimation_loss=next_loss,
@@ -146,7 +152,8 @@ def _reward(method, previous, following, estimate, next_estimate, potential,
             context = ShinSERewardContext(
                 current_training_relative_state=previous.critic.true_relative_state,
                 next_training_relative_state=following.critic.true_relative_state,
-                next_estimation_loss=float(next_loss), action=following.command,
+                next_estimation_loss=float(next_loss),
+                action=following.normalized_command,
                 uav_vertical_velocity=_transition_result_vertical_velocity(
                     previous, following),
                 terminal=terminal)
@@ -154,7 +161,7 @@ def _reward(method, previous, following, estimate, next_estimate, potential,
             context = NoSERewardContext(
                 current_training_relative_state=previous.critic.true_relative_state,
                 next_training_relative_state=following.critic.true_relative_state,
-                action=following.command,
+                action=following.normalized_command,
                 uav_vertical_velocity=_transition_result_vertical_velocity(
                     previous, following),
                 terminal=terminal)
@@ -197,7 +204,7 @@ def _reward(method, previous, following, estimate, next_estimate, potential,
             current_adaptive_graph,
             previous.critic.true_relative_state,
             following.critic.true_relative_state,
-            following.command,
+            following.normalized_command,
             next_graph=next_adaptive_graph,
             next_uav_vertical_velocity=_transition_result_vertical_velocity(
                 previous, following),
@@ -212,7 +219,8 @@ def _reward(method, previous, following, estimate, next_estimate, potential,
         value, parts = ShinReward(ShinRewardConfig(
             active_enabled=method == "shin2026"))(
                 previous.critic.true_relative_state,
-                following.critic.true_relative_state, following.command,
+                following.critic.true_relative_state,
+                following.normalized_command,
                 drone_vertical_velocity=_transition_result_vertical_velocity(
                     previous, following),
                 next_estimation_loss=next_loss, **terminal.as_kwargs())
@@ -263,6 +271,33 @@ def _semantic_from_output(output, proprioception, state, *, previous, dt):
 def _fov_graph_from_semantic(observation):
     fov_observation = fov_observation_from_visual_semantics(observation)
     return fov_observation, build_fov_graph(fov_observation)
+
+
+# Apparent scale past which the flare is committed: the pad fills a downward
+# camera and legitimately leaves it, so the situation graph stops reporting a
+# "searching" branch. Same constant the PN guidance law commits on.
+STATE_GRAPH_FLARE_SCALE = 0.20
+
+
+def _state_graph_geometry(cfg) -> StateGraphGeometry:
+    """Camera constants the situation graph needs, from the run's own profile."""
+    camera = dict(getattr(cfg.external, "landing_camera", None) or {})
+    horizontal_fov = float(camera.get("horizontal_fov_deg", 90.0))
+    pitch_down = float(camera.get("pitch_down_deg", 60.0))
+    setpoint = nadir_image_setpoint(horizontal_fov, pitch_down)
+    return StateGraphGeometry(
+        nadir_column=float(setpoint[0]),
+        tan_half_horizontal=math.tan(math.radians(horizontal_fov) / 2.0))
+
+
+def _state_graph_from_semantic(observation, *, geometry, previous, committed,
+                               dt):
+    """``G_t`` plus the updated flare latch."""
+    latched = bool(committed) or (
+        float(observation.apparent_target_scale) >= STATE_GRAPH_FLARE_SCALE)
+    graph = build_state_graph(observation, geometry=geometry, previous=previous,
+                              committed=latched, dt=float(dt))
+    return graph, latched
 
 
 def _landing_phase(observation) -> str:
@@ -320,7 +355,7 @@ def visual_recovery_metrics(rows, *, initial_in_fov: bool, success: bool,
     keypoint_confidence = []
     visible_keypoint_fraction = []
     for index, row in enumerate(rows):
-        command = np.asarray(row.get("command", np.zeros(4)), dtype=float)
+        command = np.asarray(row.get("command", np.zeros(5)), dtype=float)
         if not visibility[index]:
             lost_commands.append(command)
         semantic = np.asarray(row.get("semantic_features", ()), dtype=float)
@@ -436,15 +471,43 @@ def collect_episode(env, model: PipelineActorCritic, method: str, seed: int,
     longest_visual_loss = 0
     action_rng = np.random.default_rng(int(seed) + 9187)
     action_generator = torch.Generator(device="cpu").manual_seed(int(seed) + 2718)
+    # The ontology situation graph is built for EVERY arm, published for every
+    # arm and stored on every row, so the operator and the offline analysis see
+    # the same nine channels on both sides of the comparison. Only the proposed
+    # arm's actor and critic consume it; ``graph_features`` below is None
+    # otherwise, and the model refuses a graph it does not declare.
+    graph_geometry = _state_graph_geometry(env.cfg)
+    graph_committed = False
     with torch.no_grad():
         image, proprio = _tensor_observation(model, step.actor)
         truth = torch.as_tensor(step.critic.true_relative_state[None],
                                 dtype=torch.float32, device=model.device)
-        output = model(image, proprio, true_relative_state=truth, hidden=hidden,
+        # Encode the frame once, build the graph from that encoding, then run
+        # the rest of the network with the graph as an input. The actor cannot
+        # be handed a graph derived from its own forward pass, so the frozen
+        # keypoint encoder has to run first; ``visual`` hands the result on so
+        # the frame is still encoded exactly once.
+        visual, _ = model.perceive(image)
+        semantic = semantic_observation(
+            visual.keypoints.reshape(1, 6, 2)[0].detach().cpu().numpy(),
+            visual.heatmaps.reshape(1, 6, *visual.heatmaps.shape[-2:])[0]
+            .detach().cpu().numpy(),
+            np.asarray(step.actor.proprioception, dtype=np.float32).reshape(-1),
+            keypoint_visibility=visual.visibility.reshape(1, 6)[0]
+            .detach().cpu().numpy(),
+            battery_reserve=_battery_reserve(step.state), previous=None,
+            dt=float(env.cfg.sim.dt))
+        graph = semantic_graph(semantic)
+        state_graph, graph_committed = _state_graph_from_semantic(
+            semantic, geometry=graph_geometry, previous=None,
+            committed=graph_committed, dt=float(env.cfg.sim.dt))
+        graph_features = (
+            graph_feature_tensor(state_graph, device=model.device)[:, None]
+            if model.graph_state_enabled else None)
+        output = model(image, proprio, true_relative_state=truth,
+                       graph_features=graph_features, visual=visual,
+                       hidden=hidden,
                        episode_start=torch.tensor([True], device=model.device))
-        semantic, graph = _semantic_from_output(
-            output, step.actor.proprioception, step.state,
-            previous=None, dt=float(env.cfg.sim.dt))
         fov_semantic, fov_graph = _fov_graph_from_semantic(semantic)
         adaptive_graph = adaptive_reward_graph(semantic)
         while True:
@@ -457,8 +520,11 @@ def collect_episode(env, model: PipelineActorCritic, method: str, seed: int,
                 transformed = np.asarray(action_transform(
                     len(rows), action.cpu().numpy()[0], semantic, action_rng),
                     dtype=np.float32).reshape(-1)
-                if transformed.shape != (4,) or not np.isfinite(transformed).all():
-                    raise ValueError("estimator-free behavior transform returned invalid action")
+                if (transformed.shape != (PLANAR_ACTION_DIM,)
+                        or not np.isfinite(transformed).all()):
+                    raise ValueError(
+                        "estimator-free behavior transform must return the "
+                        "three planar channels [a_fwd, a_z, tilt]")
                 transformed = np.clip(transformed, -0.999999, 0.999999)
                 action = torch.as_tensor(
                     transformed[None], dtype=mean.dtype, device=mean.device)
@@ -468,12 +534,30 @@ def collect_episode(env, model: PipelineActorCritic, method: str, seed: int,
             next_image, next_proprio = _tensor_observation(model, following.actor)
             next_truth = torch.as_tensor(following.critic.true_relative_state[None],
                                          dtype=torch.float32, device=model.device)
+            next_visual, _ = model.perceive(next_image)
+            next_semantic = semantic_observation(
+                next_visual.keypoints.reshape(1, 6, 2)[0].detach().cpu().numpy(),
+                next_visual.heatmaps.reshape(
+                    1, 6, *next_visual.heatmaps.shape[-2:])[0].detach().cpu().numpy(),
+                np.asarray(following.actor.proprioception,
+                           dtype=np.float32).reshape(-1),
+                keypoint_visibility=next_visual.visibility.reshape(1, 6)[0]
+                .detach().cpu().numpy(),
+                battery_reserve=_battery_reserve(following.state),
+                previous=semantic, dt=float(env.cfg.sim.dt))
+            next_graph = semantic_graph(next_semantic)
+            next_state_graph, next_committed = _state_graph_from_semantic(
+                next_semantic, geometry=graph_geometry, previous=semantic,
+                committed=graph_committed, dt=float(env.cfg.sim.dt))
+            next_graph_features = (
+                graph_feature_tensor(next_state_graph,
+                                     device=model.device)[:, None]
+                if model.graph_state_enabled else None)
             next_output = model(next_image, next_proprio,
                                 true_relative_state=next_truth,
+                                graph_features=next_graph_features,
+                                visual=next_visual,
                                 hidden=output.hidden)
-            next_semantic, next_graph = _semantic_from_output(
-                next_output, following.actor.proprioception, following.state,
-                previous=semantic, dt=float(env.cfg.sim.dt))
             next_fov_semantic, next_fov_graph = _fov_graph_from_semantic(next_semantic)
             next_adaptive_graph = adaptive_reward_graph(next_semantic)
             estimate = (None if output.relative_state is None else
@@ -514,6 +598,7 @@ def collect_episode(env, model: PipelineActorCritic, method: str, seed: int,
                 "pre_squash": pre_squash.cpu().numpy()[0],
                 "action": action.cpu().numpy()[0],
                 "command": following.command.copy(),
+                "normalized_command": following.normalized_command.copy(),
                 "log_prob": float(log_prob.item()),
                 "value": float(output.value.item()), "reward": float(reward),
                 "done": float(following.terminal), "geometric_in_fov": following.geometric_pad_center_in_fov,
@@ -522,6 +607,9 @@ def collect_episode(env, model: PipelineActorCritic, method: str, seed: int,
                     "remaining_j", 0.0)),
                 "reward_parts": parts,
                 "semantic_graph_X": graph.X.copy(),
+                # The situation graph of the PRE-action state, which is the one
+                # the actor conditioned on and the one the PPO update replays.
+                "state_graph_X": state_graph.X.copy(),
                 "fov_graph_X": fov_graph.X.copy(),
                 "fov_graph_geometric_in_fov": bool(step.geometric_pad_center_in_fov),
                 "next_fov_graph_X": next_fov_graph.X.copy(),
@@ -529,7 +617,7 @@ def collect_episode(env, model: PipelineActorCritic, method: str, seed: int,
                 "rho_raw": shin_reward_components(
                     step.critic.true_relative_state,
                     following.critic.true_relative_state,
-                    following.command,
+                    following.normalized_command,
                     next_uav_vertical_velocity=float(
                         following.actor.body_velocity[2])),
                 "next_uav_vertical_velocity": float(
@@ -568,14 +656,32 @@ def collect_episode(env, model: PipelineActorCritic, method: str, seed: int,
                     # five reward-term nodes. Publish that exact graph so the
                     # dashboard traces the model's real input, not the smaller
                     # base semantic graph used by fixed-reward arms.
+                    # Which graph the 3-D view shows: the one this arm's
+                    # method actually uses. For BOTH arms of the current
+                    # comparison that is the situation graph -- the baseline
+                    # does not consume it, but publishing the same graph for
+                    # both is what lets an operator read the two sides on one
+                    # picture instead of two different ontologies.
                     semantic_graph=(
-                        next_adaptive_graph if model_spec.use_adaptive_reward_weights
+                        next_adaptive_graph
+                        if model_spec.use_adaptive_reward_weights
                         else next_fov_graph if model_spec.fov_risk_reward_enabled
-                        else next_graph),
+                        else next_graph if model_spec.use_direct_rgat_potential
+                        else next_state_graph),
+                    # The nine ontology channels, for both arms. The encoder
+                    # embedding exists only where there is an encoder.
+                    state_graph_values=next_state_graph.X[0],
+                    graph_embedding=(
+                        None if next_output.actor_graph_embedding is None
+                        else next_output.actor_graph_embedding[0, -1]
+                        .detach().cpu().numpy()),
+                    planar_command=following.command,
+                    normalized_action=following.normalized_command,
                     scenario=scenario, status=status)
             hidden = output.hidden
             step, output = following, next_output
             semantic, graph = next_semantic, next_graph
+            state_graph, graph_committed = next_state_graph, next_committed
             fov_semantic, fov_graph = next_fov_semantic, next_fov_graph
             adaptive_graph = next_adaptive_graph
             if following.terminal:
@@ -1060,6 +1166,7 @@ def update_estimator_episode(model, optimizer, rows, *, epochs=2,
                 torch.as_tensor(
                     np.stack([row["proprioception"] for row in chunk])[None],
                     dtype=torch.float32, device=device),
+                graph_features=_chunk_graph_features(model, chunk, device),
                 hidden=initial_hidden,
                 episode_start=torch.zeros(
                     (1, len(chunk)), dtype=torch.bool, device=device))
@@ -1083,6 +1190,27 @@ def update_estimator_episode(model, optimizer, rows, *, epochs=2,
         "ppo_early_stop": 0.0, "ppo_epochs_completed": 0.0,
         "effective_learning_rate": float(optimizer.param_groups[0]["lr"]),
     }
+
+
+def _chunk_graph_features(model, chunk, device):
+    """Replay the stored ``G_t`` of one sequence chunk, or None for an arm
+    whose observation does not carry one.
+
+    The graph is a constructed input, not a differentiable function of the
+    encoder, so the update replays exactly the matrices the rollout stored --
+    the policy is scored on the state it actually acted on.
+    """
+    if not model.graph_state_enabled:
+        return None
+    missing = [index for index, row in enumerate(chunk)
+               if row.get("state_graph_X") is None]
+    if missing:
+        raise ValueError(
+            "the graph state pipeline needs G_t on every stored transition; "
+            f"{len(missing)} rows in this chunk have none")
+    stacked = np.stack([np.asarray(row["state_graph_X"], dtype=np.float32).T
+                        for row in chunk])
+    return torch.as_tensor(stacked, dtype=torch.float32, device=device)[None]
 
 
 def update_episode(model, optimizer, rows, *, gamma=.99, gae_lambda=.95,
@@ -1146,6 +1274,7 @@ def update_episode(model, optimizer, rows, *, gamma=.99, gae_lambda=.95,
                                           dtype=torch.float32, device=device),
                 "truth_valid": torch.ones((1, len(chunk)), dtype=torch.bool,
                                           device=device),
+                "graph_features": _chunk_graph_features(model, chunk, device),
             }
             loss, values = recurrent_ppo_loss(
                 model, batch, clip=clip, value_coef=value_coef,

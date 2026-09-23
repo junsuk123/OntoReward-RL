@@ -27,7 +27,15 @@ PHYSICAL_METRICS = (
     "adaptive_rgat_inference_latency_ms_mean",
     "adaptive_rgat_parameter_count",
 )
-PRIMARY_PIPELINES = ("shin_se_fixed", "shin_se_onto_rgat_recovery")
+PRIMARY_PIPELINES = ("shin_se_fixed", "shin_se_onto_rgat_state")
+# Every proposed arm this file knows how to pair against the plain-PPO
+# baseline, in the order it prefers them. The current method first, then its
+# ablations, then the retired reward-side arm -- which is still runnable and
+# whose recorded results still have to be readable.
+PROPOSED_AGAINST_SHIN_SE_FIXED = (
+    "shin_se_onto_rgat_state", "shin_se_onto_gat_state",
+    "shin_se_node_pool_state", "shin_se_onto_rgat_recovery",
+)
 
 
 def _replicate(row) -> str:
@@ -121,8 +129,10 @@ def paired_differences(records):
     index = {(_replicate(row), row["pipeline"], row["scenario"], int(row["seed"])): row
              for row in records}
     present = {row["pipeline"] for row in records}
-    if "shin_se_onto_rgat_recovery" in present:
-        comparisons = (("shin_se_onto_rgat_recovery", "shin_se_fixed"),)
+    against_fixed = [name for name in PROPOSED_AGAINST_SHIN_SE_FIXED
+                     if name in present]
+    if against_fixed:
+        comparisons = tuple((name, "shin_se_fixed") for name in against_fixed)
     elif "onto_rgat_adaptive_weight_no_se" in present:
         proposed = "onto_rgat_adaptive_weight_no_se"
         baselines = [name for name in (
@@ -400,10 +410,12 @@ def _write_figures(records, training_records, figures_dir: Path,
     index = {(_replicate(row), row["pipeline"], row["scenario"], int(row["seed"])): row
              for row in records}
     labels, values = [], []
-    proposed = ("shin_se_onto_rgat_recovery" if "shin_se_onto_rgat_recovery" in pipelines
+    against_fixed = [name for name in PROPOSED_AGAINST_SHIN_SE_FIXED
+                     if name in pipelines]
+    proposed = (against_fixed[0] if against_fixed
                 else "onto_rgat_adaptive_weight_no_se"
                 if "onto_rgat_adaptive_weight_no_se" in pipelines else "onto_no_se")
-    baselines = (["shin_se_fixed"] if proposed == "shin_se_onto_rgat_recovery" else
+    baselines = (["shin_se_fixed"] if against_fixed else
         [name for name in (
             "shin_se_fixed", "shin_se_rgat_weight", "no_se_fixed",
             "onto_rgat_potential_pbrs_no_se") if name in pipelines]

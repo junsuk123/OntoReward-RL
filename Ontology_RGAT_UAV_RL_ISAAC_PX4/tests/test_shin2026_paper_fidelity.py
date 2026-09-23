@@ -44,7 +44,8 @@ def paper_shaping_reward(previous_state, next_state, action, vertical_velocity):
     """Table III, transcribed independently of the production implementation.
 
     ``previous_state``/``next_state`` are [dx, dy, dz, dvx, dvy, dvz] in the
-    drone body frame, ``action`` is [vx, vy, vz, wz] and ``vertical_velocity``
+    drone body frame, ``action`` is the planar [a_fwd, a_z, tilt] and
+    ``vertical_velocity``
     is the drone's own body-frame v_z.
     """
     def clip(value, low, high):
@@ -59,13 +60,19 @@ def paper_shaping_reward(previous_state, next_state, action, vertical_velocity):
                          / max(d_xy_next, 1.0))
     vertical_speed_penalty = -clip(float(vertical_velocity) + 0.5, 0.0, float("inf"))
     undershoot_penalty = -(dz_next if dz_next > 0.0 else 0.0)
-    yaw_rate_penalty = -abs(float(action[3]))
+    # The paper's fifth term is -|omega_z| on the yaw-rate channel of its
+    # four-vector action. The reduced planar envelope has no yaw channel -- the
+    # heading is a constraint of the experiment -- so the same penalty is
+    # applied to the channel that replaced it, the longitudinal tilt, at the
+    # same weight. This oracle carries the deviation explicitly rather than
+    # quietly indexing whatever is last: see docs/PAPER_FIDELITY.md.
+    attitude_penalty = -abs(float(action[2]))
 
     return (1.0 * lateral_progress
             + 1.0 * vertical_progress
             + 0.5 * vertical_speed_penalty
             + 1.0 * undershoot_penalty
-            + 2.0 * yaw_rate_penalty)
+            + 2.0 * attitude_penalty)
 
 
 def paper_active_perception_reward(next_estimation_loss,
@@ -100,7 +107,7 @@ def _cases(seed=0, count=64):
     rng = np.random.default_rng(seed)
     for _ in range(count):
         yield (rng.uniform(-6, 6, 6), rng.uniform(-6, 6, 6),
-               rng.uniform(-2, 2, 4), float(rng.uniform(-2.5, 2.5)),
+               rng.uniform(-1, 1, 3), float(rng.uniform(-2.5, 2.5)),
                float(rng.uniform(0.0, 1.5)))
 
 
@@ -115,7 +122,7 @@ def test_the_implementation_matches_an_independent_table_iii_oracle():
         # Term by term, so a compensating pair of errors cannot pass.
         assert parts["lateral_progress"] == pytest.approx(
             np.clip(np.hypot(*previous[:2]) - np.hypot(*following[:2]), -1, 1))
-        assert parts["yaw_rate_penalty"] == pytest.approx(-2.0 * abs(action[3]))
+        assert parts["attitude_penalty"] == pytest.approx(-2.0 * abs(action[2]))
         assert parts["active_perception"] == pytest.approx(
             paper_active_perception_reward(loss))
 
@@ -133,7 +140,7 @@ def test_active_perception_uses_the_paper_gains_and_saturates_as_printed():
     reward = ShinReward(ShinRewardConfig())
     previous, following = np.zeros(6), np.zeros(6)
     for loss in (0.0, 0.01, 0.26, 0.51, 50.0):
-        _, parts = reward(previous, following, np.zeros(4),
+        _, parts = reward(previous, following, np.zeros(3),
                           drone_vertical_velocity=0.0, next_estimation_loss=loss)
         assert parts["active_perception"] == pytest.approx(
             paper_active_perception_reward(loss))
@@ -150,7 +157,7 @@ def test_terminal_outcomes_replace_rather_than_augment_the_step_reward():
     reward = ShinReward(ShinRewardConfig())
     previous = np.array([2.0, 1.0, -3.0, 0.0, 0.0, 0.0])
     following = np.array([1.0, 0.5, -2.0, 0.0, 0.0, 0.0])
-    action = np.array([0.4, -0.3, -0.5, 0.9])
+    action = np.array([0.4, -0.5, 0.9])
     shaping = paper_shaping_reward(previous, following, action, -0.4)
     assert shaping != 0.0  # the case below would be vacuous otherwise
 

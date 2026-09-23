@@ -1,0 +1,212 @@
+extends: two_pipeline_comparison.yaml
+experiment: planar_ontology_graph_state
+paired_seeds: true
+
+# The CICS2026 headline comparison, rebuilt 2026-09-23.
+#
+# WHAT CHANGED, AND WHY
+#
+# The previous design put the ontology in the REWARD: a frozen R-GAT predicted
+# near-future FOV unavailability and its scalar was subtracted as
+# ``-lambda_fov q(G_t)``. Two problems with it, both measured rather than
+# suspected:
+#
+#   1. The ontology's contribution could not be separated from the reward
+#      weight it was multiplied by. A term worth 0.1 against a five-term
+#      shaping sum is a small perturbation of a reward that already works, and
+#      a run either shows a difference too small to attribute or a difference
+#      that a hand-tuned constant would have produced too.
+#   2. The policy never saw the ontology. Whatever structure the graph carried
+#      reached the actor only through a scalar penalty, averaged over the whole
+#      situation, one step at a time.
+#
+# The graph is now the policy's STATE. The reward is identical on both learned
+# arms -- the same five shaping terms, the same active-perception term, the
+# same terminal values -- and the single experimental factor is whether the
+# actor and the critic see the ontology situation graph. That is a factor the
+# comparison can actually attribute, and it is what the reduced 2-D study
+# (github.com/junsuk123/ugv_landing_2d_workspace) established the method on.
+#
+# The reduced control envelope is the second change and applies to all three
+# arms equally: see config/shin2026-planar-system.yaml and
+# docs/PLANAR_ENVELOPE.md.
+
+# Only the LEARNED arms belong here. ``pipelines`` drives training, the PPO
+# checkpoint machinery and _training_pair_replicas, whose
+# ``pair_count % len(methods) == 0`` invariant is satisfied by two arms on four
+# pairs and would be broken by three. The control condition trains nothing and
+# holds no pair during training; it enters only at evaluation.
+pipelines: [shin_se_fixed, shin_se_onto_rgat_state]
+
+# The two declarations are deliberately identical everywhere except the last
+# two lines. In particular ``reward_mode`` is the same and no ontology term
+# appears on the reward side of either.
+pipeline_contract:
+  shin_se_fixed:
+    state_estimation: true
+    auxiliary_estimation_loss: true
+    active_perception: true
+    reward_mode: shin_table_active
+    ontology_enabled: false
+    ontology_input_mode: null
+    use_direct_rgat_potential: false
+    fov_risk_reward: false
+    use_adaptive_reward_weights: false
+    adaptive_reward_architecture: null
+    fov_reward_readout: null
+    graph_state: false
+    graph_state_representation: null
+  shin_se_onto_rgat_state:
+    state_estimation: true
+    auxiliary_estimation_loss: true
+    active_perception: true
+    reward_mode: shin_table_active
+    ontology_enabled: true
+    ontology_input_mode: state_situation_graph
+    use_direct_rgat_potential: false
+    fov_risk_reward: false
+    use_adaptive_reward_weights: false
+    adaptive_reward_architecture: null
+    fov_reward_readout: null
+    graph_state: true
+    graph_state_representation: ontology_rgat
+
+# The ontology situation-graph encoder. It is part of the policy: PPO trains
+# it, there is no offline stage, no artifact and no checksum gate, and
+# ``validate_pipeline_configuration`` refuses a configuration that tries to
+# freeze it or point it at a pre-trained file.
+graph_state:
+  # Nine nodes, four relations, twelve declared edges plus self-loops. The
+  # schema itself is in python/ontology_rgat/rgat/state_graph.py and is not
+  # configurable from here: a schema change invalidates every checkpoint, so it
+  # belongs in code where a test can fix it.
+  representation: ontology_rgat
+  # Width. The reduced study measured 16 against 32 over three seeds and took
+  # 32: 16 landed 44% of scenarios against 56%, and the mean score was -109
+  # against -21. 32 costs about twice the training time. Lower it to 16 if the
+  # budget is short, and report that you did.
+  hidden_dim: 32
+  graph_dim: 32
+  relation_dim: 6
+  heads: 1
+  # Actor and critic encoders are seeded from this and this + 1.
+  seed: 42
+  freeze_during_ppo: false
+
+# Explicitly off. The retired reward-side method is still runnable under its
+# own arm id, but mixing the two in one run would give the comparison two
+# factors, and ``validate_pipeline_configuration`` rejects that.
+fov_risk: null
+fov_risk_design: null
+rgat_design: null
+
+# Display names. The dashboard, the RViz HUD and the figures all read this one
+# list rather than hard-coding a name apiece.
+arm_labels:
+  shin_se_fixed: "Baseline · PPO (관측 벡터)"
+  shin_se_onto_rgat_state: "Proposed · PPO + 온톨로지 상황 그래프"
+
+# The non-learned control condition: proportional-navigation guidance in the
+# sagittal plane, reading only the frozen encoder's output. It is the reference
+# law of the reduced 2-D study, so the three arms here are the three arms
+# there, and it emits the same three-channel planar action the policies do --
+# a difference between it and an arm is a difference in control, not in
+# observation or in authority.
+baseline_arms:
+  - method: pn_guidance_v1
+    label: "PN guidance (비학습)"
+    controller: pn_guidance_v1
+    learned: false
+
+control:
+  dt_seconds: 0.1
+  horizon_steps: 300
+  # The reduced envelope. Three channels, shared by every arm:
+  #   a_fwd   fore/aft acceleration      [m/s^2]
+  #   a_z     climb/descent acceleration [m/s^2]
+  #   tilt    longitudinal tilt          [deg]
+  # Lateral velocity and yaw rate are structurally zero and are not channels.
+  action: planar_longitudinal
+  # (longitudinal, vertical). Sized against the decks below, whose fastest
+  # segment is 1.00 m/s: 1.6 m/s leaves 0.6 m/s of closing speed at the worst
+  # case, which is the margin the retired 6-deck design needed and did not
+  # always have.
+  max_velocity_m_s: [1.6, 0.9]
+  max_acceleration_m_s2: [1.2, 0.8]
+  # Attitude channel. 12 deg is what the privileged teacher was already
+  # limited to, so the policy's attitude authority matches the demonstrations'.
+  max_longitudinal_tilt_deg: 12.0
+  max_tilt_rate_deg_s: 60.0
+  # Set false to run the two-channel ablation: the policy keeps [a_fwd, a_z]
+  # and the tilt channel is held at zero for every arm. The action dimension
+  # does not change, so checkpoints stay loadable.
+  tilt_channel_enabled: true
+  curriculum_min_action_scale: 0.90
+  curriculum_min_pad_motion_scale: 0.35
+  require_initial_pad_visible: true
+
+# Deck motion for PPO. All three scenarios, rotated by episode index, so the
+# policy trains on the same speed range it is evaluated on.
+training:
+  scenarios:
+    - segmented_cruise_slow
+    - segmented_cruise_medium
+    - segmented_cruise_fast
+
+behavior_cloning:
+  enabled: true
+  source_pipeline: no_se_fixed
+  # A recovered flight is longer than an approach, and the segmented decks put
+  # a speed change at 3 s and another at 15 s, so the demonstration horizon has
+  # to outlast both. Inherited from the six-deck design, which measured it.
+  horizon_steps: 600
+  # PN guidance is the teacher as well as the control condition. That is the
+  # reduced study's arrangement and it is what makes the warm start a property
+  # of the comparison rather than of one side of it: both learned arms clone
+  # the same demonstrations, from the law the control arm flies.
+  #
+  # Each arm clones into its own model. They cannot share one checkpoint --
+  # the proposed arm has encoder parameters the baseline does not -- so the
+  # shared thing is the demonstration set, the epoch count and the seed.
+  teacher: pn_guidance_v1
+  scenarios:
+    - segmented_cruise_slow
+    - segmented_cruise_medium
+    - segmented_cruise_fast
+  successful_episodes: 4
+  max_attempts: 60
+  parallel_pairs: 0
+  # The demonstration pass may fly an easier regime than PPO: it only has to
+  # produce successful landings for the policy to start from.
+  curriculum: 0.20
+  # PN gains. Transcribed from the reduced study and re-based on this camera;
+  # see python/ontology_rgat/controllers/pn_guidance.py for what each does.
+  pn_navigation_gain: 3.0
+  pn_approach_speed_m_s: 0.45
+  pn_approach_gain: 0.60
+  pn_closing_gain: 1.20
+  pn_vertical_gain: 2.00
+  pn_climb_reference_m_s: 0.35
+  pn_noise_std: 0.01
+  # Apparent RMS keypoint scale at one metre of altitude: the only inverse-range
+  # signal available without estimating relative state.
+  reference_scale: 0.06
+  flare_scale: 0.20
+  flare_descent_m_s: 0.25
+  descent_floor: 0.10
+
+# Three scenarios, evenly. The retired decks are not deleted -- the six-deck
+# design still declares them -- but a run that does not fly them must say zero
+# explicitly, because ``evaluation`` is a mapping the loader deep-merges.
+evaluation:
+  segmented_cruise_slow: 400
+  segmented_cruise_medium: 400
+  segmented_cruise_fast: 400
+  straight_escape_burst: 0
+  straight_escape_burst_track: 0
+  straight_8mps: 0
+  linear_acceleration_wave: 0
+  circle: 0
+  zigzag: 0
+  u_turn: 0
+  vertical_heave_boat: 0

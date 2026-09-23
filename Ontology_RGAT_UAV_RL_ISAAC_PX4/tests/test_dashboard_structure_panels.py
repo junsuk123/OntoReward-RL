@@ -218,7 +218,7 @@ def test_the_three_panels_are_wired_into_the_page():
                    "mdp-grid"):
         assert marker in PAGE, marker
     assert "시뮬레이션 · 학습 · 검증 파이프라인" in PAGE
-    assert "제안 알고리즘 · 센서 → 온톨로지/R-GAT 그래프 → 보상 함수" in PAGE
+    assert "제안 알고리즘 · 센서 → 온톨로지 상황 그래프 → R-GAT → 정책 상태 g_t" in PAGE
     assert "두 강화학습 에이전트의 State · Action · Environment · Reward" in PAGE
     assert "4 · 알고리즘과 MDP 구조" in PAGE
     # The identical rows are merged into one cell on purpose.

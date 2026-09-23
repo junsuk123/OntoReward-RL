@@ -107,6 +107,27 @@ SEGMENTED_CRUISE_SPEED_SCALE = 1.0 / 7.0
 # Bound on the speed change at a segment boundary, in the study's units
 # (its ``ugvAccelMax``), scaled with the speeds.
 SEGMENTED_CRUISE_ACCELERATION_M_S2 = 4.0
+# The lane every segmented-cruise deck drives, in world ENU. One heading for
+# every pair, so the pairs spawn in a row across the lane and set off in the
+# same direction (``parallel.pair_offsets_enu_m`` places the row).
+#
+# Fixing it replaces the per-episode heading draw, which is what the open
+# straight decks used and what made the episode sequence a 2-D random walk.
+SEGMENTED_CRUISE_LANE_HEADING_DEG = 0.0
+# How far down the lane a deck may get before the NEXT episode sends it back.
+#
+# A fixed heading cannot use the inward steering that bounds the random walk --
+# there is no heading left to rotate -- so the lane is a shuttle instead: the
+# deck drives one way until it has run out its leg, and the following episode
+# starts it back the other way. The reversal happens BETWEEN episodes, so no
+# episode ever contains one and every episode is a straight line at a constant
+# heading, which is what the reduced control envelope depends on.
+#
+# 150 m is about 8 episodes of the fastest deck (18 m per 30 s episode), so the
+# pairs stay pointed the same way for long stretches and the excursion is
+# bounded at leg + one episode. It is not a physical constant: raise it for
+# longer unbroken runs, at the cost of a wider arena.
+SEGMENTED_CRUISE_LEG_M = 150.0
 
 BENCHMARK_SCENARIOS = (
     "training_random_walk", "straight_8mps", "linear_acceleration_wave",
@@ -311,6 +332,10 @@ class PadMotionConfig:
     # the reduced study's 1.0-7.0 m/s rather than against an 8.0 m/s peak, so
     # they need their own factor to land on the carrier's ceiling.
     segmented_cruise_speed_scale: float
+    # The lane those decks drive, and how far along it they may get before the
+    # next episode turns them round. See the constants above.
+    segmented_cruise_heading_rad: float
+    segmented_cruise_leg_m: float
     # Radius the ``circle`` scenario turns at. Exposed because scaling the deck
     # down without shrinking this turns the episode into a shallow arc: at
     # scale 0.125 the stock 8 m circle completes under half a lap in 30 s.
@@ -397,6 +422,14 @@ class PadMotionConfig:
                 or segmented_cruise_speed_scale <= 0.0):
             raise ValueError(
                 "pad.segmented_cruise_speed_scale must be positive and finite")
+        segmented_cruise_heading_deg = float(pad.get(
+            "segmented_cruise_heading_deg", SEGMENTED_CRUISE_LANE_HEADING_DEG))
+        if not math.isfinite(segmented_cruise_heading_deg):
+            raise ValueError("pad.segmented_cruise_heading_deg must be finite")
+        segmented_cruise_leg_m = float(pad.get(
+            "segmented_cruise_leg_m", SEGMENTED_CRUISE_LEG_M))
+        if not math.isfinite(segmented_cruise_leg_m) or segmented_cruise_leg_m <= 0.0:
+            raise ValueError("pad.segmented_cruise_leg_m must be positive and finite")
         benchmark_track_straight_m = float(pad.get(
             "benchmark_track_straight_m", BENCHMARK_TRACK_STRAIGHT_M))
         benchmark_track_radius_m = float(pad.get(
@@ -553,6 +586,8 @@ class PadMotionConfig:
             arena_radius_m=float(pad.get("arena_radius_m", 8.0)),
             benchmark_speed_scale=benchmark_speed_scale,
             segmented_cruise_speed_scale=segmented_cruise_speed_scale,
+            segmented_cruise_heading_rad=math.radians(segmented_cruise_heading_deg),
+            segmented_cruise_leg_m=segmented_cruise_leg_m,
             benchmark_circle_radius_m=benchmark_circle_radius_m,
             benchmark_track_straight_m=benchmark_track_straight_m,
             benchmark_track_radius_m=benchmark_track_radius_m,
@@ -822,6 +857,10 @@ class PadTrajectory:
         # dash (``following`` trigger); the drawn track is kept so the dash can
         # be laid over it at whatever instant that turns out to be.
         self.escape_burst_armed = False
+        # Which way along the fixed lane a segmented-cruise deck is currently
+        # driving. Flipped between episodes by ``_segmented_cruise_heading``;
+        # never inside one.
+        self._segmented_cruise_reversed = False
         self._track_speeds = np.zeros(0)
         # How far along a closed track the deck has driven. Zero for every
         # other scenario, and the thing ``route_start: continue`` carries for
@@ -936,6 +975,11 @@ class PadTrajectory:
         self._driven = True
         self._yaw_initialised = False
         if cfg.mode == "random_walk":
+            if scenario in SEGMENTED_CRUISE_SCENARIOS:
+                # Replaces the drawn heading entirely: every pair drives the
+                # same lane, so the row spawned by
+                # ``parallel.pair_offsets_enu_m`` sets off together.
+                self.heading0 = self._segmented_cruise_heading(carried_offset)
             self._prepare_benchmark_motion(rng, max(float(speed_scale), 0.0))
             # ``continue`` means the same thing it means for the surveyed
             # route: leave the deck where it stands rather than teleporting it
@@ -966,7 +1010,13 @@ class PadTrajectory:
                 # position. Measured here with an adversarial dash that always
                 # points the same way, 30 episodes reached the arena edge. The
                 # rotation is what turns that walk back.
-                if limit > 0.0 and radius > 0.5 * limit:
+                # A segmented-cruise deck has no heading left to rotate --
+                # its lane is fixed so the pairs stay in a row pointing the
+                # same way -- so it is bounded by the shuttle above instead.
+                # Rotating it here would bend the straight the envelope needs.
+                if scenario in SEGMENTED_CRUISE_SCENARIOS:
+                    pass
+                elif limit > 0.0 and radius > 0.5 * limit:
                     inward = math.atan2(-self.random_walk_origin[1],
                                         -self.random_walk_origin[0])
                     pull = min(1.0, (radius - 0.5 * limit) / (0.5 * limit))
@@ -996,6 +1046,35 @@ class PadTrajectory:
             "benchmark_scenario": self.benchmark_scenario,
             "escape_burst": self.escape_burst,
         }
+
+    def _segmented_cruise_heading(self, carried_offset) -> float:
+        """Lane heading for the episode about to start.
+
+        One fixed lane for every pair, so the row of pairs sets off in the same
+        direction; reversed once this pair's deck has run its leg out, so the
+        sequence is bounded without the inward steering a drawn heading gets.
+
+        The decision is taken HERE, at the reset, from where the deck ended the
+        previous episode. Inside an episode the heading is a constant, which is
+        what lets the reduced envelope hold zero lateral velocity and one yaw
+        and still stay on the deck's track (docs/PLANAR_ENVELOPE.md).
+        """
+        cfg = self.cfg
+        lane = float(cfg.segmented_cruise_heading_rad)
+        if cfg.route_start != "continue":
+            # A reseeded deck starts at its own lane origin every episode, so
+            # there is nothing to shuttle.
+            self._segmented_cruise_reversed = False
+            return lane
+        offset = np.asarray(carried_offset, dtype=float).reshape(-1)
+        along = (math.cos(lane) * float(offset[0])
+                 + math.sin(lane) * float(offset[1]))
+        leg = float(cfg.segmented_cruise_leg_m)
+        if along >= leg:
+            self._segmented_cruise_reversed = True
+        elif along <= -leg:
+            self._segmented_cruise_reversed = False
+        return lane + math.pi if self._segmented_cruise_reversed else lane
 
     def _prepare_benchmark_motion(self, rng, scale: float,
                                   samples: int = 6001) -> None:

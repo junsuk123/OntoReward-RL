@@ -53,11 +53,74 @@ pad:
   # enough that no controller can land before it and skip the disturbance.
   segmented_cruise_speed_scale: 0.142857142857
   start_position_enu_m: [0.0, 0.0, 0.0]
-  # The fastest deck covers about 18 m in a 30 s episode and each episode
-  # continues from where the last ended, so the sequence walks. The inward
-  # steering in pad_motion turns the DRAWN heading of the next episode, never
-  # the heading inside one, so the straight line the planar envelope depends on
-  # is untouched. Measured over 300 episodes the deck stays inside 99 m.
-  arena_radius_m: 120.0
+
+  # ONE LANE FOR EVERY PAIR, so the pairs spawn in a row across it and set off
+  # in the same direction. 0 deg is +X in world ENU; the row is placed across
+  # it by ``parallel.pair_offsets_enu_m`` below.
+  #
+  # This REPLACES the per-episode heading draw. The open straight decks drew a
+  # fresh heading every episode, which made the episode sequence a 2-D random
+  # walk and needed the inward steering in ``pad_motion`` to pull it back.
+  segmented_cruise_heading_deg: 0.0
+
+  # A fixed heading has nothing left for that steering to rotate, so the lane
+  # is a shuttle instead: a deck drives one way until it has run out its leg,
+  # and the FOLLOWING episode starts it back the other way. The reversal is
+  # taken at the reset, so no episode ever contains one -- every episode is a
+  # straight line at a constant heading, which is what lets the reduced
+  # envelope hold zero lateral velocity and one yaw and still stay on the
+  # deck's track.
+  #
+  # 150 m is about eight episodes of the fastest deck (18 m per 30 s episode),
+  # so the pairs point the same way for long stretches. They reverse
+  # independently -- each pair's own deck position decides -- so after a
+  # reversal two pairs can briefly run opposite ways down parallel lanes.
+  # Nothing depends on them agreeing; the lateral separation below is what
+  # keeps them apart.
+  segmented_cruise_leg_m: 150.0
+
+  # The backstop, not the bound. ``pose()`` pins the deck on this circle with
+  # zero velocity -- a stationary target dressed up as a moving one -- so it
+  # has to sit well clear of what the shuttle actually reaches: the leg plus
+  # one episode's travel, 150 + 36 m for a 600-step demonstration flight. 400 m
+  # leaves room for the degraded control-rate case, where a 300-step episode
+  # can cover several times its nominal simulated duration (see the bandwidth
+  # caveat in the top-level README).
+  arena_radius_m: 400.0
   route_start: continue
   route_waypoints_enu_m: null
+
+parallel:
+  # The pairs in a ROW ACROSS THE LANE, all driving +X together.
+  #
+  # The minimal profile separates pairs on a 150 m grid because its decks
+  # wander in arbitrary directions and two tiles can close on each other.
+  # These decks are parallel: they never move laterally at all, so the gap
+  # between two lanes is constant and 80 m is permanent separation rather than
+  # a worst case. Against it, a camera at the highest entry altitude (8 m) sees
+  # about 8 m to each side for this 90-degree lens, so a neighbour's deck sits
+  # ten times further out than anything this pair's camera can reach.
+  #
+  # Laid out alternating outward from the origin, so the row is symmetric as a
+  # whole and the four-pair run this machine sizes for stays within two lanes
+  # of the origin rather than trailing off to one side of it.
+  pair_offsets_enu_m:
+    - [0.0, 0.0, 0.0]
+    - [0.0, 80.0, 0.0]
+    - [0.0, -80.0, 0.0]
+    - [0.0, 160.0, 0.0]
+    - [0.0, -160.0, 0.0]
+    - [0.0, 240.0, 0.0]
+    - [0.0, -240.0, 0.0]
+    - [0.0, 320.0, 0.0]
+
+landing:
+  # The gateway clamps the velocity setpoint's integrated position target to
+  # this radius about the WORLD origin, so it has to clear everything the row
+  # can reach: 400 m of lane plus 320 m of row. Without it the drone is pinned
+  # at the boundary while the deck it is following drives on, which reads as a
+  # policy that stopped tracking.
+  #
+  # ``world_xy_limit_m`` is a different quantity and is unchanged: it is the
+  # PAD-RELATIVE stray-too-far termination bound.
+  world_radius_m: 800.0

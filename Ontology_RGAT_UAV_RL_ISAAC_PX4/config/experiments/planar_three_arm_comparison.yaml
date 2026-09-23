@@ -168,6 +168,26 @@ behavior_cloning:
   # Each arm clones into its own model. They cannot share one checkpoint --
   # the proposed arm has encoder parameters the baseline does not -- so the
   # shared thing is the demonstration set, the epoch count and the seed.
+  #
+  # RISK, STATED RATHER THAN DISCOVERED IN FLIGHT. PN guidance has not yet been
+  # flown on this stack, and the last purely image-based teacher tried here --
+  # image_based_visual_servo_v1 -- landed 0 of 26 attempts: it lost the deck
+  # outright and never re-acquired it, which pointed at the encoder's
+  # raw_scale collapsing out of frame rather than at the loop. PN reads the
+  # same signal for its range, so the same failure is available to it.
+  #
+  # Two things make this an acceptable risk rather than a gamble. The reduced
+  # envelope removes the lateral axis that servo was hunting on, and the
+  # fallback is one line: set this to
+  # ``privileged_relative_state_velocity_pd_v4``, whose measured landing rate
+  # on this stack is roughly 1 in 3 and whose gains are inherited below. The
+  # demonstrations are training-only under either teacher, and nothing from
+  # them reaches the deployed actor beyond the image embedding, the
+  # proprioception and the situation graph.
+  #
+  # If the demonstration stage exhausts max_attempts, switch the teacher
+  # rather than widening the budget, and record which teacher the run used --
+  # it is part of the demonstration fingerprint.
   teacher: pn_guidance_v1
   scenarios:
     - segmented_cruise_slow

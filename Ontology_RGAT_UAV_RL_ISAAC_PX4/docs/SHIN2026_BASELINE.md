@@ -19,7 +19,7 @@ and Automation Letters 11(5), 2026, DOI `10.1109/LRA.2026.3674011`이다.
 | Environment | 움직임이 불확실한 이동식 착륙 플랫폼과 제한된 camera FOV |
 | Agent | keypoint encoder, LSTM 상태추정 layer, PPO actor |
 | Observation | grayscale landing image + UAV body velocity/quaternion |
-| Action | `[v_x, v_y, v_z, ω_z]` 속도 명령 |
+| Action | 원문 `[v_x, v_y, v_z, ω_z]` 속도 명령. **이 저장소는 평면 3채널 `[a_fwd, a_z, tilt]`로 축소**했다 ([PAPER_FIDELITY](PAPER_FIDELITY.md) §3.8, [PLANAR_ENVELOPE](PLANAR_ENVELOPE.md)) |
 | Critic | UAV proprioception + 실제 상대상태를 쓰는 asymmetric critic |
 | Reward | 5개 touchdown shaping + active-perception penalty + terminal ±10 |
 | Curriculum | 플랫폼 운동 난이도를 단계적으로 증가 |
@@ -51,7 +51,8 @@ Actor는 논문 Fig. 4와 같이 `y_{t,6:256}`과 UAV state를 사용한다. 추
 ## 4. 보상의 정확한 형태
 
 상대상태 `s^rel = [Δx, Δy, Δz, Δv_x, Δv_y, Δv_z]`(플랫폼 − UAV, UAV body frame),
-행동 `a = [v_x, v_y, v_z, ω_z]`, UAV body 수직속도 `v_z^{UAV}`에 대해
+행동 `a`(원문 `[v_x, v_y, v_z, ω_z]`, 이 저장소 `[a_fwd, a_z, tilt]`),
+UAV body 수직속도 `v_z^{UAV}`에 대해
 
 | i | 항 | 식 | `w_i^0` |
 |---|---|---|---|
@@ -59,7 +60,7 @@ Actor는 논문 Fig. 4와 같이 `y_{t,6:256}`과 UAV state를 사용한다. 추
 | 2 | vertical progress | `clip(|Δz(t)| − |Δz(t+1)|, −1, 1) / max(‖Δp_xy(t+1)‖, 1)` | 1.0 |
 | 3 | vertical-speed penalty | `−max(v_z^{UAV}(t+1) + 0.5, 0)` | 0.5 |
 | 4 | undershoot penalty | `−Δz(t+1)` if `Δz(t+1) > 0` else `0` | 1.0 |
-| 5 | yaw-rate penalty | `−|ω_z^{cmd}|` | 2.0 |
+| 5 | attitude penalty | 원문 `−|ω_z^{cmd}|`. 이 저장소는 요 채널이 없어 같은 가중치로 `−|tilt^{cmd}|` ([PAPER_FIDELITY](PAPER_FIDELITY.md) §3.9) | 2.0 |
 
 $$
 r_t^{\mathrm{active}}=-0.1\,\mathrm{clip}\bigl(1.0\cdot(L_{t+1}^{\mathrm{est}}-0.01),\,0,\,1\bigr)
@@ -99,10 +100,19 @@ $$
 
 ## 6. 제안법과의 관계
 
-`shin_se_onto_rgat_recovery`는 위의 보조 상태추정, active-perception reward,
-다섯 shaping 항과 가중치를 모두 그대로 사용한다. 유일한 추가는 영상 관측성 cue의
-온톨로지 graph와 동결 R-GAT 미래 FOV 비가용 시간 비율 보상이다.
+`shin_se_onto_rgat_state`(현재 제안법)는 위의 보조 상태추정, active-perception
+reward, 다섯 shaping 항과 가중치를 **보상 쪽에서 아무것도 바꾸지 않고** 그대로
+사용한다. 유일한 추가는 **관측**이다: 영상 관측성 cue의 9-node 온톨로지 상황
+그래프를 R-GAT으로 부호화해 actor와 critic 입력에 이어붙인다.
 
 $$
-r_{\text{proposed}}(t)=r_{\text{Shin}}(t)-\lambda_{\text{fov}}\,q_\theta(G_t).
+r_{\text{proposed}}(t)=r_{\text{Shin}}(t),\qquad
+o_{\text{proposed}}(t)=o_{\text{Shin}}(t)\;\Vert\;g_t .
+$$
+
+은퇴한 `shin_se_onto_rgat_recovery`는 대신 보상에 항을 더했다. 그 arm은 자기
+id로 남아 있고 지금도 실행할 수 있다.
+
+$$
+r_{\text{retired}}(t)=r_{\text{Shin}}(t)-\lambda_{\text{fov}}\,q_\theta(G_t).
 $$

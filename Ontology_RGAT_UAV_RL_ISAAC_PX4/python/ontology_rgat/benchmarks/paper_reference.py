@@ -173,6 +173,42 @@ BACKEND_DEVIATIONS: tuple[Deviation, ...] = (
         identical_across_arms=True,
         evidence=(("experiment", "estimator.keypoint_pretraining.enabled"),),
     ),
+    Deviation(
+        key="action_space",
+        backend="px4_transfer",
+        item="Action space",
+        paper="a_t = [v_x, v_y, v_z, omega_z], body-heading velocity and yaw "
+              "rate (Sec. III-B)",
+        repository="the planar envelope a_t = [a_fwd, a_z, tilt]: fore/aft and "
+                   "vertical ACCELERATION plus a longitudinal tilt command. "
+                   "Lateral velocity and yaw rate are identically zero and are "
+                   "constraints of the experiment rather than controls",
+        reason="The four-degree-of-freedom command let the policy solve three "
+               "problems at once and the ontology's contribution was not "
+               "separable underneath it. The reduced envelope removes the two "
+               "degrees of freedom that carry no information about the "
+               "question being asked; see docs/PLANAR_ENVELOPE.md for why the "
+               "two constraints are not an oracle.",
+        identical_across_arms=True,
+        evidence=(("experiment", "control.action"),
+                  ("experiment", "control.max_longitudinal_tilt_deg"),
+                  ("system", "benchmark.planar_entry")),
+    ),
+    Deviation(
+        key="shaping_term_5",
+        backend="px4_transfer",
+        item="Table-III fifth shaping term",
+        paper="-2|omega_z|, a penalty on the yaw-rate channel of the action",
+        repository="-2|tilt|, the same penalty at the same weight on the "
+                   "channel that took the yaw channel's place",
+        reason="The planar envelope has no yaw channel, so the paper's term "
+               "would be identically zero and the reward would silently drop "
+               "to four components. The role (price gratuitous use of the "
+               "attitude channel) and the relative weight against a "
+               "normalized channel are both unchanged.",
+        identical_across_arms=True,
+        evidence=(("experiment", "control.max_longitudinal_tilt_deg"),),
+    ),
 )
 
 

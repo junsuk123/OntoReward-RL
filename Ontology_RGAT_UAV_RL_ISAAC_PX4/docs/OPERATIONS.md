@@ -1,16 +1,16 @@
 # 운영: 실행 프로파일, 산출물, 상태 확인
 
-[문서 안내](README.md) · [실험 설계](TWO_PIPELINE_COMPARISON.md) ·
-[아키텍처](ARCHITECTURE.md)
+[문서 안내](README.md) · [제안 알고리즘](ONTOLOGY_RGAT_STATE.md) ·
+[평면 엔벨로프](PLANAR_ENVELOPE.md) · [아키텍처](ARCHITECTURE.md)
 
 ## 1. 실행 프로파일
 
 ```bash
-./run.sh                 # 기본: 3-arm 급가속 이탈 비교, full 예산
+./run.sh                 # 기본: 평면 3-arm 비교, full 예산
 ./run.sh --mode quick    # 전 구간 배관 검증 (수십 분)
 ```
 
-인자 없는 `./run.sh`는 `config/experiments/three_arm_burst_comparison.yaml`을 그
+인자 없는 `./run.sh`는 `config/experiments/planar_three_arm_comparison.yaml`을 그
 파일이 선언한 예산으로, 기계가 재는 만큼의 페어에서 실행한다. 각 pair는 별도 PX4
 instance, ROS namespace, gateway/learner UDP port, controller/reset state를 쓰고,
 각 worker가 별도 model, rollout buffer, optimizer를 소유하며 GPU update만 lock으로
@@ -18,13 +18,14 @@ instance, ROS namespace, gateway/learner UDP port, controller/reset state를 쓰
 
 | 항목 | 값 |
 |---|---:|
-| 설정 | `config/experiments/three_arm_burst_comparison.yaml` |
-| system 설정 | `config/shin2026-minimal-system.yaml` |
-| arm | 3 (학습 2 + 비학습 대조군 1) |
-| 덱 | `straight_escape_burst` 하나 |
-| training / 학습 arm | 1000 episodes (`--mode full`) |
-| evaluation / arm | 1200 episodes |
-| 결과 | `results/three_arm_burst/<mode>/` |
+| 설정 | `config/experiments/planar_three_arm_comparison.yaml` |
+| system 설정 | `config/shin2026-planar-system.yaml` |
+| arm | 3 (학습 2 + 비학습 PN 유도 대조군 1) |
+| 액션 | 평면 3채널 `[a_fwd, a_z, tilt]`, 세 arm 공통 |
+| 덱 | `segmented_cruise_{slow,medium,fast}` 셋 |
+| training / 학습 arm | `training.episodes_full` (`--mode full`) |
+| evaluation / arm | 덱당 400 episodes (총 1200) |
+| 결과 | `results/planar_ontology_graph_state/<mode>/` |
 
 **학습 페어는 학습 arm에만 나뉜다**(4 ÷ 2 = 각 2 replica). 대조군은 학습 중 페어를
 갖지 않고 평가에서만 참여하므로 `pair_count % len(pipelines) == 0` 불변식이 유지된다.
@@ -32,13 +33,16 @@ instance, ROS namespace, gateway/learner UDP port, controller/reset state를 쓰
 대체된 설계와 예비 프로파일도 그대로 남아 있다.
 
 ```bash
-./run.sh --config config/experiments/two_pipeline_comparison.yaml   # 6-덱 2-arm
+./run.sh --config config/experiments/three_arm_burst_comparison.yaml  # 은퇴한 보상항 방법
+./run.sh --config config/experiments/two_pipeline_comparison.yaml     # 6-덱 2-arm
+./run.sh --pipelines shin_se_fixed shin_se_onto_gat_state             # 소거 실험
 ./run.sh --seminar-fast   # publication_claim_allowed: false — 논문 결과로 보고 금지
 ```
 
-> **full 전에 `--mode quick`을 먼저 돌릴 것.** full은 약 1.5–2일이고 quick은 수십
-> 분에 keypoint → teacher → 행동복제 → FOV 수집 → R-GAT → PPO → checkpoint 선택 →
-> 3-arm 평가 → 리포트 전 구간을 실행한다. 2026-09-22의 quick 패스는 full이었다면 하루치
+> **full 전에 `--mode quick`을 먼저 돌릴 것.** quick은 수십 분에 keypoint → PN 유도
+> 시연 → 행동복제 → PPO → checkpoint 선택 → 3-arm 평가 → 리포트 전 구간을 실행한다.
+> 평면 설계에는 오프라인 보상 설계 단계가 없다 — 그래프 부호기는 PPO가 학습한다.
+> **2026-09-23 개편 이후 quick 패스는 아직 수행되지 않았다.** 2026-09-22의 quick 패스는 full이었다면 하루치
 > 연산 뒤에야 드러났을 결함 세 개를 잡았다 — 비학습 arm의 평가 크래시, 은퇴한 덱의
 > 부활, 완주한 run의 manifest를 죽이는 NaN.
 

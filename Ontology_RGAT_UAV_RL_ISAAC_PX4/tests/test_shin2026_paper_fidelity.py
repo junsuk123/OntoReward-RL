@@ -319,12 +319,23 @@ def test_the_network_interface_reserves_the_first_six_latent_components():
 # ------------------------------------------------------ declared deviations
 
 def test_every_transfer_deviation_from_the_paper_is_declared_with_evidence():
-    system = load_system(SYSTEM)
-    experiment = load_experiment(EXPERIMENT)
+    """Checked against the configuration a bare ``./run.sh`` actually opens.
+
+    The registry describes what THIS backend does, so the evidence has to come
+    from the profile it runs. Naming a file here guarded whatever that file
+    happened to be after the headline experiment moved, which is how the two
+    deviations added on 2026-09-23 -- the reduced action space and the
+    re-based fifth shaping term -- could have gone unevidenced.
+    """
+    from conftest import default_experiment_config
+
+    system = load_system(ROOT / "config/shin2026-planar-system.yaml")
+    experiment = load_experiment(default_experiment_config())
     keys = assert_declared_deviations(system, experiment)
     assert set(keys) == {"simulator", "platform_motion_model", "platform_speed",
                          "command_envelope", "battery_termination",
-                         "entry_handover", "keypoint_encoder"}
+                         "entry_handover", "keypoint_encoder",
+                         "action_space", "shaping_term_5"}
     for entry in BACKEND_DEVIATIONS:
         assert entry.paper.strip() and entry.repository.strip()
         assert entry.reason.strip() and entry.evidence

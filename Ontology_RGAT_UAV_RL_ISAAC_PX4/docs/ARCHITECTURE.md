@@ -1,7 +1,8 @@
 # 아키텍처와 정보경계
 
 [문서 안내](README.md) · [시스템 개요](SYSTEM_OVERVIEW.md) ·
-[제안 알고리즘](ONTOLOGY_RGAT_FOV_RISK.md) · [운영](OPERATIONS.md)
+[제안 알고리즘](ONTOLOGY_RGAT_STATE.md) · [평면 엔벨로프](PLANAR_ENVELOPE.md) ·
+[운영](OPERATIONS.md)
 
 ## 1. 구성
 
@@ -29,19 +30,25 @@ multicopter rigid body, camera, contact와 battery/외란 simulation을 소유�
 Pegasus는 multicopter dynamics와 PX4 backend를 연결한다. PX4 SITL은 estimator와
 position, attitude, body-rate controller를 실행한다.
 
-RL actor는 모터/추력을 직접 명령하지 않는다.
+RL actor는 모터/추력을 직접 명령하지 않는다. 2026-09-23부터 액션은 축소된 평면
+엔벨로프이며 세 arm 전부가 이것을 쓴다. 상세는 [평면 엔벨로프](PLANAR_ENVELOPE.md).
 
 $$
-a_t=[v_x^b,\,v_y^b,\,v_z^b,\,\omega_z]
-\;\xrightarrow{\text{rate/acceleration limit}}\;
+a_t=[a_{\text{fwd}},\,a_z,\,\theta_{\text{tilt}}]
+\;\xrightarrow[\;\text{yaw 유지 · 틸트 피드포워드}\;]{\text{적분 · rate/limit}}\;
 \text{PX4 OFFBOARD setpoint}
 $$
 
+횡방향 속도와 요레이트는 **항등적으로 0**이며 실험의 제약이지 제어가 아니다.
+앞의 두 채널은 가속도이고 컨트롤러가 속도 설정점으로 적분한다. 세 번째 채널은
+`a = g·tan(θ)` 가속도 피드포워드로 PX4에 전달된다.
+
 | 제한 | 값 |
 |---|---|
-| 최대 속도 | `[2.0, 2.0, 1.0]` m/s |
-| 최대 가속도 | `[1.5, 1.5, 1.0]` m/s² |
-| 최대 yaw rate / 가속도 | 60°/s · 90°/s² |
+| 최대 속도 (전후진, 수직) | `[1.6, 0.9]` m/s |
+| 최대 가속도 (전후진, 수직) | `[1.2, 0.8]` m/s² |
+| 최대 종방향 틸트 / 틸트율 | 12° · 60°/s |
+| 횡방향 속도 · 요레이트 | **0 (제약)** |
 | Control period | 0.1 s (**공칭**, 강제되지 않음 — 아래 참조) |
 | Episode horizon | 300 step |
 | Camera | 512×320 grayscale, 수평 FOV 90°, 60° 하향, 30 Hz |
@@ -141,7 +148,12 @@ Keypoint 채널 k는 패드 좌표계 landmark k가 아니라 image plane 정규
 identity는 고도 2 m 위에서 관측 불가능하고, graph 입력(centroid, apparent scale,
 가시성)은 어차피 identity에 의존하지 않는다.
 
-`build_fov_graph`의 유일한 인자는 `FOVSemanticObservation`이며 그 10개 필드는 모두
+현재 방법의 상황 그래프도 같은 경계를 갖는다: `build_state_graph`의 유일한
+관측 인자는 `SemanticObservation`이고, 시뮬레이터 truth·6-D 추정·critic state·
+기하 패드중심 FOV 라벨이 들어갈 인자 자체가 없다
+(`tests/test_ontology_graph_state.py`가 서명과 구문 트리로 확인).
+
+은퇴한 보상항 경로의 `build_fov_graph`의 유일한 인자는 `FOVSemanticObservation`이며 그 10개 필드는 모두
 `[0,1]`로 검증된다. Payload validator는 `truth`, `relative_position`,
 `relative_velocity`, `platform_pose`, `critic`, `privileged` 등 metric/privileged
 field를 중첩 mapping 안에서도 이름 기반으로 거부한다. 기하 패드 중심 가시성
@@ -150,11 +162,19 @@ field를 중첩 mapping 안에서도 이름 기반으로 거부한다. 기하 �
 ## 9. Pipeline 차이
 
 - `shin_se_fixed`: 6-D 보조 추정기 + active-perception reward + 고정 5성분 shaping
-- `shin_se_onto_rgat_recovery`: 위와 동일 + `-λ_fov q_θ(G_t)`
+- `shin_se_onto_rgat_state`: **보상 쪽은 위와 완전히 동일**. 차이는 관측 하나 —
+  9-node 온톨로지 상황 그래프를 R-GAT으로 부호화한 `g_t`가 actor와 critic 입력에
+  이어붙는다 ([ONTOLOGY_RGAT_STATE.md](ONTOLOGY_RGAT_STATE.md)).
+- 소거: `shin_se_onto_gat_state`(관계 유형 통합), `shin_se_node_pool_state`
+  (메시지 전달 없음). 같은 부호기 클래스와 같은 PPO를 쓴다.
+- 비학습 대조군 `pn_guidance_v1`: 같은 encoder 출력만 읽는 사가탈 평면 비례항법
+  유도. `PipelineSpec`을 갖지 않으므로 보상 dispatch에 넘길 수 없다.
 
-그 외 actor, critic, controller, simulator는 동일한 class를 재사용한다. Legacy
+그 외 actor, critic, controller, simulator는 동일한 class를 재사용한다. 은퇴한
+보상항 방법 `shin_se_onto_rgat_recovery`(위와 동일 + `-λ_fov q_θ(G_t)`)와
 estimator-free/adaptive-weight/PBRS 구성은 `ALL_PIPELINES`에만 남아 있고 주 실행
-경로에 나타나지 않는다.
+경로에 나타나지 않는다. 상태 표현 방법과 보상항 방법을 한 실행에 섞는 것은
+`validate_pipeline_configuration`이 거부한다 — 요인이 둘이 되기 때문이다.
 
 ## 10. Timing과 episode commit
 

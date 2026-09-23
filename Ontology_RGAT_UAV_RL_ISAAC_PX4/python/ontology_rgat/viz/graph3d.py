@@ -28,7 +28,8 @@ from typing import Any, Sequence
 
 import numpy as np
 
-from ..semantic import GOAL_NODE, RISK_NODES
+from ..rgat.state_graph import STATE_RISK_NODES
+from ..semantic import GOAL_NODE, N_NODES, RISK_NODES
 from .live import STORE, LiveStore
 
 __all__ = ["layer_of", "layout_3d", "graph_payload", "GraphPublisher"]
@@ -118,10 +119,26 @@ def _geometry(src, dst, n_nodes: int, goal_node: int) -> tuple[np.ndarray, np.nd
     return cached
 
 
-def _role(index: int, goal_node: int, name: str = "") -> str:
+# Which nodes mean "more is worse", per schema that this view can be handed.
+# Matched by NAME rather than by index: the legacy 14-node schema's
+# ``RISK_NODES`` index tuple describes that schema alone, and applying it to
+# the 9-node situation graph coloured four unrelated nodes as risks.
+_RISK_NODE_NAMES = frozenset(STATE_RISK_NODES) | {
+    "PositionError", "DescentSpeed", "FovMargin", "FOVMargin",
+    "SearchDuration", "RelativeDistance", "MeasurementAge", "VisualLossRisk",
+    "BatteryRisk", "ImagePlaneMotion", "ScaleRate", "TargetMotion",
+}
+
+
+def _role(index: int, goal_node: int, name: str = "",
+          legacy_indices: bool = False) -> str:
     if index == goal_node:
         return "goal"
-    return "risk" if index in RISK_NODES or "risk" in name.lower() else "support"
+    if str(name) in _RISK_NODE_NAMES or "risk" in str(name).lower():
+        return "risk"
+    if legacy_indices and index in RISK_NODES:
+        return "risk"
+    return "support"
 
 
 def _plain(value: Any) -> Any:
@@ -194,7 +211,10 @@ def graph_payload(graph, values: Sequence[float] | None = None, *,
             "value": float(values[i]) if i < values.size else 0.0,
             "pos": [round(float(c), 4) for c in pos[i]],
             "layer": int(layer),
-            "role": _role(i, int(graph.goal_node), str(name)),
+            "role": _role(i, int(graph.goal_node), str(name),
+                          # The index tuple only describes the 14-node
+                          # legacy schema, so it is consulted only for it.
+                          legacy_indices=n_nodes == N_NODES),
         }
         if (node_embeddings is not None and node_embeddings.ndim == 2
                 and i < node_embeddings.shape[0]):

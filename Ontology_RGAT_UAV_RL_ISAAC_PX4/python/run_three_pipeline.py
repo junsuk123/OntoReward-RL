@@ -836,6 +836,39 @@ PN_GUIDANCE_CONTROLLER = PN_GUIDANCE_METHOD
 ANALYTIC_CONTROLLERS = (PRIVILEGED_VELOCITY_TEACHER, VISUAL_SERVO_TEACHER,
                         PN_GUIDANCE_CONTROLLER)
 
+# The behaviour teachers the warm start can fly, and what each one's attempt
+# rows say about it. Membership here is the single gate: a law that
+# ``_prepare_fast_demonstrations`` can bind but that this table does not name
+# is rejected before the stack is spun up, and a law it names must be bindable.
+# ``method`` is the column the attempts CSV and the dashboard read, so it names
+# the law that actually flew rather than defaulting to the PD's id, and
+# ``information`` states the boundary the labels were computed inside -- the
+# warm start's claim travelling with the artifact rather than with the prose.
+BEHAVIOR_TEACHERS = {
+    PRIVILEGED_VELOCITY_TEACHER: {
+        "method": "privileged_teacher",
+        "information": (
+            "training-only simulator relative state for action labels; "
+            "stored/deployed actor inputs are image embedding and UAV "
+            "proprioception only"),
+    },
+    VISUAL_SERVO_TEACHER: {
+        "method": "visual_servo_teacher",
+        "information": (
+            "estimator-free image-plane servo on the frozen keypoint encoder's "
+            "centroid and apparent scale; no relative state of any kind enters "
+            "the action labels"),
+    },
+    PN_GUIDANCE_CONTROLLER: {
+        "method": "pn_guidance_teacher",
+        "information": (
+            "estimator-free sagittal-plane proportional navigation on the "
+            "frozen keypoint encoder's centroid and apparent scale plus the "
+            "UAV's own body velocity; no relative state of any kind enters "
+            "the action labels"),
+    },
+}
+
 
 def _visual_servo_teacher_action(
         semantic, previous, velocity_limit, *, setpoint, dt, integral,
@@ -1241,10 +1274,12 @@ def _pn_guidance_controller(environment, *, settings, monitor=None):
             closing_gain=float(settings.get("pn_closing_gain", 1.20)),
             vertical_gain=float(settings.get("pn_vertical_gain", 2.00)),
             climb_reference_m_s=float(settings.get("pn_climb_reference_m_s", .35)),
-            reference_scale=float(settings.get("reference_scale", .06)),
-            flare_scale=float(settings.get("flare_scale", .20)),
-            flare_descent_m_s=float(settings.get("flare_descent_m_s", .25)),
-            descent_floor_m_s=float(settings.get("descent_floor", .10)),
+            reference_scale=float(settings.get("pn_reference_scale", .65)),
+            flare_range_m=float(settings.get("pn_flare_range_m", 1.20)),
+            alignment_tolerance=float(
+                settings.get("pn_alignment_tolerance", .80)),
+            flare_descent_m_s=float(settings.get("pn_flare_descent_m_s", .25)),
+            descent_floor_m_s=float(settings.get("pn_descent_floor_m_s", .10)),
             noise_std=float(settings.get("pn_noise_std", 0.0)),
         ),
         nadir_column=float(setpoint[0]),
@@ -1292,6 +1327,8 @@ def _pn_guidance_controller(environment, *, settings, monitor=None):
                 "pn_range_m": float(diagnostics.get("range_m", 0.0)),
                 "pn_closing_speed_m_s": float(
                     diagnostics.get("closing_speed_m_s", 0.0)),
+                "pn_aligned": float(bool(diagnostics.get("aligned", True))),
+                "pn_committed": float(bool(diagnostics.get("committed", False))),
                 "visual_lost": bool(
                     float(semantic.visible_keypoint_fraction) < 0.5
                     or float(semantic.visual_loss_risk) > 0.0),
@@ -1771,6 +1808,21 @@ _DEMONSTRATION_FLIGHT_KEYS = (
     "rate_filter_s", "integral_leak_s", "anti_windup")
 
 
+# Gains only one law reads. Keyed by teacher rather than appended to the shared
+# tuple above so that naming a new law's knobs does not re-fingerprint -- and
+# therefore re-fly -- the sets collected under the other laws: the unprefixed
+# descent keys, for instance, sit in the same config the PD flies from and mean
+# nothing to it.
+_TEACHER_FLIGHT_KEYS = {
+    PN_GUIDANCE_CONTROLLER: (
+        "pn_navigation_gain", "pn_approach_speed_m_s", "pn_approach_gain",
+        "pn_closing_gain", "pn_vertical_gain", "pn_climb_reference_m_s",
+        "pn_noise_std", "pn_reference_scale", "pn_flare_range_m",
+        "pn_flare_descent_m_s", "pn_descent_floor_m_s",
+        "pn_alignment_tolerance"),
+}
+
+
 # Wall-clock and retry budgets for the bridge and the shared stack. They
 # decide when a flight is abandoned as infrastructure failure, never how a
 # completed flight was flown, so a stored demonstration means the same thing
@@ -1799,8 +1851,10 @@ def demonstration_fingerprint(config, settings, *, cfg, system=None) -> str:
     if isinstance(benchmark, dict):
         benchmark = {key: value for key, value in benchmark.items()
                      if key not in _DEMONSTRATION_BUDGET_KEYS}
+    flight_keys = (*_DEMONSTRATION_FLIGHT_KEYS, *_TEACHER_FLIGHT_KEYS.get(
+        str(settings.get("teacher", PRIVILEGED_VELOCITY_TEACHER)), ()))
     parts = {
-        "flight_settings": {key: settings[key] for key in _DEMONSTRATION_FLIGHT_KEYS
+        "flight_settings": {key: settings[key] for key in flight_keys
                             if key in settings},
         "seed_start": int((config.get("seeds") or {}).get(
             "behavior_cloning_start", 90000)),
@@ -1860,8 +1914,9 @@ def _prepare_fast_demonstrations(*, cfg, camera, config, config_hash,
     if get_pipeline(source_pipeline).state_estimation_enabled:
         raise ValueError("the behavior-teacher encoder source must be estimator-free")
     teacher_id = str(settings.get("teacher", PRIVILEGED_VELOCITY_TEACHER))
-    if teacher_id not in (PRIVILEGED_VELOCITY_TEACHER, VISUAL_SERVO_TEACHER):
+    if teacher_id not in BEHAVIOR_TEACHERS:
         raise ValueError(f"unknown behavior teacher: {teacher_id}")
+    teacher_provenance = BEHAVIOR_TEACHERS[teacher_id]
     # Deck motion the teacher demonstrates against. ``scenarios`` flies a
     # rotation -- one deck per seed, so a given seed always flies the same one
     # however the flights are batched or resumed -- and ``scenario`` the single
@@ -2118,7 +2173,7 @@ def _prepare_fast_demonstrations(*, cfg, camera, config, config_hash,
                     if failure is not None:
                         attempted_seeds.append(seed)
                         attempts.append({
-                            "method": "privileged_teacher",
+                            "method": teacher_provenance["method"],
                             "pipeline": "shared_warm_start",
                             "episode": len(attempted_seeds),
                             "seed": seed,
@@ -2145,9 +2200,7 @@ def _prepare_fast_demonstrations(*, cfg, camera, config, config_hash,
                     flight_attempts += 1
                     environment_steps += int(metric["steps"])
                     metric.update({
-                        "method": ("visual_servo_teacher"
-                                   if teacher_id == VISUAL_SERVO_TEACHER
-                                   else "privileged_teacher"),
+                        "method": teacher_provenance["method"],
                         "pipeline": "shared_warm_start",
                         "episode": len(attempted_seeds),
                         "scenario": scenario_for(seed),
@@ -2155,14 +2208,7 @@ def _prepare_fast_demonstrations(*, cfg, camera, config, config_hash,
                         "teacher": teacher_id,
                         "config_hash": config_hash,
                         "physical_pair_index": int(worker_index),
-                        "teacher_information": (
-                            "estimator-free image-plane servo on the frozen keypoint "
-                            "encoder's centroid and apparent scale; no relative state "
-                            "of any kind enters the action labels"
-                            if teacher_id == VISUAL_SERVO_TEACHER else
-                            "training-only simulator relative state for action labels; "
-                            "stored/deployed actor inputs are image embedding and UAV "
-                            "proprioception only"),
+                        "teacher_information": teacher_provenance["information"],
                     })
                     attempts.append(metric)
                     _write_csv(attempts_path, attempts)

@@ -208,12 +208,31 @@ behavior_cloning:
   pn_vertical_gain: 2.00
   pn_climb_reference_m_s: 0.35
   pn_noise_std: 0.01
-  # Apparent RMS keypoint scale at one metre of altitude: the only inverse-range
-  # signal available without estimating relative state.
-  reference_scale: 0.06
-  flare_scale: 0.20
-  flare_descent_m_s: 0.25
-  descent_floor: 0.10
+  # Apparent RMS keypoint scale at one metre of RANGE: the only inverse-range
+  # signal available without estimating relative state. Measured on this stack
+  # 2026-09-23 from 256 frames with the pad fully visible between 4.3 m and
+  # 14 m -- raw_scale * range = 0.65 +- 0.07, against four times that scatter
+  # when read as an altitude. The first PN stage shipped 0.06, an altitude
+  # constant off by eleven times, and flew the whole approach believing it was
+  # 0.43 m from a pad 4.7 m away.
+  #
+  # These keys are PN's own. The retired image servo reads unprefixed
+  # ``reference_scale``/``flare_scale``/``descent_floor`` and means different
+  # things by them, exactly as the PD owns the ``pd_`` ones.
+  pn_reference_scale: 0.65
+  # Commit to the flare at this estimated range, in metres. Not on
+  # apparent_target_scale: it is reliability-weighted and clipped at one, so it
+  # saturates around 0.9 m and reached its shipped 0.20 threshold at 4.9 m.
+  pn_flare_range_m: 1.20
+  # The approach cone: the horizontal offset may be at most this many times
+  # the altitude while descending. Outside it the law holds altitude and closes
+  # the gap first. Without it, 37 of 60 teacher flights on 2026-09-24 descended
+  # with a metre still to close, lost the pad past the frame edge at about one
+  # metre of altitude, climbed, re-acquired and repeated until the battery was
+  # flat. See the controller module docstring for the measurement and margin.
+  pn_alignment_tolerance: 0.80
+  pn_flare_descent_m_s: 0.25
+  pn_descent_floor_m_s: 0.10
 
 # Three scenarios, evenly. The retired decks are not deleted -- the six-deck
 # design still declares them -- but a run that does not fly them must say zero

@@ -26,20 +26,64 @@ column axis of the image gives the bearing from nadir,
 and apparent scale gives the range, the same monotone inverse-range signal the
 retired servo used:
 
-    h = clip(reference_scale / raw_scale, ...)   (metres of altitude)
-    R = h * sqrt(1 + e^2)
+    R = clip(reference_scale / raw_scale, ...)   (metres of slant range)
+    h = R / sqrt(1 + e^2)
+
+``reference_scale`` is the encoder's apparent RMS keypoint scale at one metre
+of *range*, not of altitude. Measured on this stack 2026-09-23 from 256 frames
+in which the pad was fully visible between 4.3 m and 14 m: raw_scale * range
+held at 0.65 +- 0.07, while raw_scale * altitude scattered four times as
+widely. The signal is a range signal, and reading it as an altitude one -- the
+shipped 0.06, eleven times out -- is what put the law's whole approach schedule
+on a range estimate of 0.43 m while the vehicle was 4.7 m out.
 
 With ``lambda_dot`` and ``R_dot`` filtered from those, the commanded
 acceleration is the textbook pair -- PN across the line of sight, closing-speed
 regulation along it:
 
     a_perp = N * V_c * lambda_dot,            V_c = -R_dot
-    a_los  = -k_close * (v_ref + R_dot),      v_ref = min(v_app, k_app * R)
+    a_los  = k_close * (v_ref + R_dot),       v_ref = min(v_app, k_app * R)
+
+
+``a_los`` is signed along the line of sight *towards* the pad, which is the
+direction the decomposition below projects it onto. Written as the range's own
+second derivative it carries the opposite sign, and projecting that form onto
+the toward-pad unit vector -- the 2026-09-23 defect -- makes every closing
+command a retreat: on the first flight of the stage the vehicle answered a pad
+2.5 m ahead by accelerating backwards, and held full reverse for all 60 s.
+
+The approach cone
+-----------------
+PN commands on the bearing RATE, and a bearing that is merely large produces
+nothing: a vehicle closing the range purely by descending sees a growing
+bearing, but slowly, and ``a_perp = N * V_c * lambda_dot`` is worth 0.08 m/s^2
+against a 1.10 m/s^2 envelope at the 0.4 m/s this approach actually makes. The
+along-line-of-sight term does not help either -- the range shrinks whether or
+not the horizontal gap does, so descending satisfies it on its own.
+
+Nothing in the textbook pair therefore closes the horizontal gap, and the
+vehicle arrives over nothing. Measured on 2818 frames of flight telemetry
+2026-09-24: with the pad centre in frame the encoder reports 0.85-1.00 of its
+landmarks at every altitude, but below one metre the pad centre was IN frame in
+only 38 of 210 samples. Descending with a metre still to close puts the bearing
+past the frame edge, the search branch climbs, the pad is re-acquired and it
+repeats -- 37 of 60 teacher flights died on a flat battery inside that cycle.
+
+So the descent is gated on the bearing: outside ``alignment_tolerance`` the law
+holds its altitude and lets the closing term, which is mostly horizontal at a
+large bearing, shut the gap first. The tolerance is a bearing tangent, so the
+gate is a cone about nadir and the vehicle flies a funnel down it.
 
 and when the pad is not trustworthy the law switches to the reduced study's
 search branch: climb at a reference rate until it is re-acquired, and stop
 climbing once the vehicle is committed to the flare (where the pad legitimately
 fills and leaves a downward camera).
+
+The flare commits on the estimated range rather than on
+``apparent_target_scale``. That scalar is reliability-weighted and clipped at
+one, so it saturates about 0.9 m out and cannot express anything inside the
+flare at all; at the calibration above it reaches the shipped 0.20 threshold at
+4.9 m, which latched the commit 1.3 s into a 60 s flight.
 
 The result is decomposed onto the sagittal axes and emitted as the same
 three-channel planar action every other arm uses. Its tilt channel carries the
@@ -70,9 +114,12 @@ class PNGuidanceConfig:
     """Gains, transcribed from the reduced study and re-based on this camera.
 
     The reduced study works in metres directly; here ``reference_scale`` is the
-    apparent RMS keypoint scale at one metre of altitude, which is what turns
-    an image bearing into metres. ``range_gain_bounds`` keeps a collapsed or
+    apparent RMS keypoint scale at one metre of *range*, which is what turns an
+    image bearing into metres. ``range_gain_bounds`` keeps a collapsed or
     saturated scale from producing an unbounded range.
+
+    Every value with a unit is measured against this stack rather than carried
+    over: see the module docstring for what ``reference_scale`` was fitted on.
     """
 
     navigation_gain: float = 3.0            # N
@@ -83,12 +130,29 @@ class PNGuidanceConfig:
     climb_reference_m_s: float = 0.35
     minimum_closing_speed_m_s: float = 0.15  # floor on V_c in the PN term
     minimum_range_m: float = 0.15
-    # Image-plane geometry.
-    reference_scale: float = 0.06
-    range_gain_bounds: tuple[float, float] = (0.30, 12.0)
+    # Image-plane geometry. ``reference_scale`` is raw_scale * range, fitted
+    # from flight; the bounds are the range band the encoder is usable over.
+    reference_scale: float = 0.65
+    range_gain_bounds: tuple[float, float] = (0.30, 20.0)
     rate_filter_s: float = 0.30
-    # Phase logic, shared in spirit with the retired servo.
-    flare_scale: float = 0.20               # commit threshold on apparent scale
+    # Phase logic. The commit is on the estimated range, in metres, because
+    # apparent_target_scale saturates before the flare begins.
+    flare_range_m: float = 1.20
+    # The approach cone, as a bearing tangent: the horizontal offset may be at
+    # most this many times the altitude while descending. This camera holds
+    # about 1.58 of bearing tangent ahead of nadir before the pad centre leaves
+    # the frame, so 0.80 keeps roughly half the frame in hand for the wind and
+    # the deck's speed changes. An offline sweep on the flight-calibrated model
+    # peaks near 1.20 (88% against 81% here); that model omits exactly the
+    # disturbances the margin is for, so the peak is not where this sits.
+    alignment_tolerance: float = 0.80
+    # One threshold, at every phase. A relaxed in-flare version sounds right --
+    # the pad does overflow a camera pitched 60 degrees down -- and a model
+    # built on the retired landmark ladder rewarded one. It is not what this
+    # encoder does: over 2818 frames of flight telemetry it reported 0.85-1.00
+    # of its landmarks whenever the pad centre was in frame, at every altitude,
+    # and nothing at all when it was not. The fraction is near-binary here, so
+    # the second threshold could only ever fire on a measurement error.
     trustworthy_visible_fraction: float = 0.5
     # Descent authority near the deck, so the flare is a landing and not a hover.
     flare_descent_m_s: float = 0.25
@@ -148,15 +212,22 @@ class PNGuidanceController:
 
     # ----------------------------------------------------------- estimation
     def _geometry(self, semantic) -> tuple[float, float, float]:
-        """``(bearing_tangent, altitude_estimate_m, range_m)`` from the image."""
+        """``(bearing_tangent, altitude_estimate_m, range_m)`` from the image.
+
+        The apparent scale reads the slant range, so it is the range that comes
+        out of it directly and the altitude that is derived; doing it the other
+        way round costs a factor of ``sqrt(1 + e^2)`` on top of whatever the
+        calibration constant is worth.
+        """
         centroid = np.asarray(semantic.centroid_xy, dtype=float).reshape(-1)
         bearing_tangent = float(
             (centroid[0] - self.nadir_column) * self.tan_half_horizontal)
         scale = max(float(semantic.raw_scale), 1e-3)
         low, high = self.config.range_gain_bounds
-        altitude = float(np.clip(self.config.reference_scale / scale, low, high))
-        distance = max(altitude * math.hypot(1.0, bearing_tangent),
+        distance = max(float(np.clip(self.config.reference_scale / scale,
+                                     low, high)),
                        self.config.minimum_range_m)
+        altitude = distance / math.hypot(1.0, bearing_tangent)
         return bearing_tangent, altitude, distance
 
     def _filtered(self, previous: float | None, current: float,
@@ -188,8 +259,11 @@ class PNGuidanceController:
             float(semantic.visible_keypoint_fraction)
             >= cfg.trustworthy_visible_fraction
             and float(semantic.visual_loss_risk) <= 0.0)
-        apparent = float(semantic.apparent_target_scale)
-        state.committed = bool(state.committed) or apparent >= cfg.flare_scale
+        # Only a trustworthy frame may latch the flare: a range computed from
+        # a collapsed scale is exactly the reading that would commit the
+        # vehicle to a descent from altitude.
+        state.committed = bool(state.committed) or (
+            trustworthy and distance <= cfg.flare_range_m)
 
         if trustworthy:
             state.bearing_rate = self._filtered(
@@ -199,6 +273,7 @@ class PNGuidanceController:
             state.previous_bearing = bearing
             state.previous_range = distance
         state.search = bool(not trustworthy and not state.committed)
+        aligned = abs(bearing_tangent) <= cfg.alignment_tolerance
 
         if state.search:
             # Reduced study, search branch: climb on a reference rate until the
@@ -210,12 +285,17 @@ class PNGuidanceController:
                 "mode": "search", "bearing_rad": bearing,
                 "bearing_rate_rad_s": 0.0, "range_m": distance,
                 "range_rate_m_s": 0.0, "altitude_estimate_m": altitude,
-                "closing_speed_m_s": 0.0, "committed": state.committed}
+                "closing_speed_m_s": 0.0, "aligned": bool(aligned),
+                "committed": state.committed}
         else:
             closing_speed = max(-state.range_rate, cfg.minimum_closing_speed_m_s)
             across = cfg.navigation_gain * closing_speed * state.bearing_rate
             reference = min(cfg.approach_speed_m_s, cfg.approach_gain * distance)
-            along = -cfg.closing_gain * (reference + state.range_rate)
+            # Signed towards the pad, which is where ``los`` points. The range
+            # is closing correctly when ``range_rate == -reference``; short of
+            # that the bracket is positive and the command pulls the vehicle
+            # in, and past it the bracket is negative and the command brakes.
+            along = cfg.closing_gain * (reference + state.range_rate)
             # Sagittal unit vectors in (forward, up). The pad sits below the
             # vehicle at a horizontal offset of ``bearing_tangent * altitude``.
             norm = math.hypot(1.0, bearing_tangent)
@@ -227,8 +307,28 @@ class PNGuidanceController:
                 # Past the commit the pad fills and leaves a downward camera,
                 # so the flare runs on a scheduled rate rather than on a
                 # bearing the geometry no longer supports.
-                vertical = min(vertical, -cfg.flare_descent_m_s
-                               * cfg.vertical_gain * 0.5)
+                #
+                # NOTE, measured and not yet acted on: this is a FLOOR, and a
+                # floor cannot brake a vehicle that is already descending. The
+                # law bounds the RANGE rate only, and a range closes as well
+                # straight down as along the approach, so the closing term can
+                # spend the envelope's whole 0.83 m/s on the vertical axis.
+                # 2026-09-24 the stack answered this 0.25 m/s schedule with
+                # touchdowns at 0.61, 0.75 and 0.88 against a 0.55 gate -- one
+                # of them on a flight 0.11 m from the deck centre. A descent
+                # CEILING fixes it by construction; it is not here because the
+                # offline model cannot see the failure (it records a 0.25 m/s
+                # median and no vertical-gate failure at all) and so cannot
+                # price the approach it would slow down. Decide it on the next
+                # full run's numbers, not on that model's.
+                vertical = min(vertical, cfg.vertical_gain
+                               * (-cfg.flare_descent_m_s - float(velocity[2])))
+            elif not aligned:
+                # Outside the cone: hold altitude and close the gap first. A
+                # rate tracked to zero rather than a zero acceleration, which
+                # would merely hold whatever descent was already running.
+                vertical = max(vertical, cfg.vertical_gain
+                               * (0.0 - float(velocity[2])))
             elif trustworthy:
                 # Never let the closing law hold a perfect hover: creep down.
                 vertical = min(vertical,
@@ -241,6 +341,7 @@ class PNGuidanceController:
                 "range_m": distance, "range_rate_m_s": float(state.range_rate),
                 "altitude_estimate_m": altitude,
                 "closing_speed_m_s": float(closing_speed),
+                "aligned": bool(aligned),
                 "committed": state.committed}
 
         action = np.array([

@@ -223,11 +223,13 @@ def test_pn_guidance_climbs_while_the_pad_is_lost_and_not_after_the_commit():
 
     # Past the flare the marker legitimately leaves a downward camera, so
     # losing it must not restart the climb.
+    inside = PNGuidanceConfig().reference_scale / 0.8      # 0.81 m of range
+    assert inside < PNGuidanceConfig().flare_range_m
     state = PNGuidanceState()
-    guidance.action(_observation(SETPOINT, scale=0.5), body, state)
+    guidance.action(_observation(SETPOINT, scale=0.8), body, state)
     assert state.committed
     committed = guidance.action(
-        _observation(SETPOINT, scale=0.5, visible=0.0, loss=0.6), body, state)
+        _observation(SETPOINT, scale=0.8, visible=0.0, loss=0.6), body, state)
     assert state.diagnostics["mode"] == "flare"
     assert committed[1] < 0.0
 
@@ -243,6 +245,157 @@ def test_pn_guidance_emits_the_shared_three_channel_action():
     # so the control condition exercises all three channels rather than
     # leaving one silent.
     assert np.sign(action[2]) == np.sign(action[0]) or action[0] == 0.0
+
+
+def test_pn_guidance_commands_towards_the_pad_and_not_away_from_it():
+    """The sign of the closing command, which magnitude assertions cannot see.
+
+    2026-09-23 the along-line-of-sight term was the range's own second
+    derivative -- positive away from the pad -- projected onto the unit vector
+    that points at it. Every closing command was therefore a retreat, and the
+    first demonstration flight answered a pad 2.5 m ahead by accelerating
+    backwards and holding full reverse for all 60 s. The two tests above both
+    passed throughout: one compares magnitudes, the other reads the search
+    branch, and neither ever asks which way the vehicle is being sent.
+    """
+    guidance = _pn()
+    body = np.zeros(3)
+    # Pad ahead: the image column sits further from nadir than the setpoint.
+    # The nadir column is -0.577 of the half width, so the frame holds about
+    # 1.58 of bearing tangent ahead of it and only 0.42 behind.
+    for bearing_tangent in (0.25, 0.50, 1.00):
+        ahead = guidance.action(
+            _observation(SETPOINT + [bearing_tangent, 0.0], scale=0.10),
+            body, PNGuidanceState())
+        assert ahead[0] > 0.0, (
+            f"a pad {bearing_tangent:.2f} ahead must pull the vehicle forward, "
+            f"got {ahead[0]:+.3f}")
+        if bearing_tangent <= PNGuidanceConfig().alignment_tolerance:
+            # Outside the approach cone the descent is deliberately arrested;
+            # inside it, towards the pad means down as well as forward.
+            assert ahead[1] < 0.0, "and down towards it, not up away from it"
+    for bearing_tangent in (0.10, 0.25, 0.40):
+        behind = guidance.action(
+            _observation(SETPOINT - [bearing_tangent, 0.0], scale=0.10),
+            body, PNGuidanceState())
+        assert behind[0] < 0.0, (
+            f"a pad {bearing_tangent:.2f} behind must send it backwards, "
+            f"got {behind[0]:+.3f}")
+
+
+def test_pn_guidance_brakes_when_it_is_closing_faster_than_its_reference():
+    """The other half of the sign: the law must be able to say "too fast"."""
+    guidance = _pn()
+    body = np.zeros(3)
+    state = PNGuidanceState()
+    # A range that collapses far faster than approach_speed_m_s.
+    for scale in (0.05, 0.12, 0.30, 0.60):
+        action = guidance.action(_observation(SETPOINT + [0.4, 0.0], scale=scale),
+                                 body, state)
+    assert state.range_rate < -PNGuidanceConfig().approach_speed_m_s
+    assert action[0] < 0.0, "closing too fast must command a brake, not more throttle"
+
+
+def test_pn_guidance_reads_the_encoder_scale_as_a_range_and_not_an_altitude():
+    """The calibration the law is only as good as.
+
+    ``reference_scale`` is raw_scale * RANGE, fitted in flight at 0.65. Shipped
+    at 0.06 -- an altitude constant, eleven times out -- the law believed it was
+    0.43 m from a pad 4.7 m away, committed to its flare 1.3 s into a 60 s
+    flight and drove itself into the ground beside the deck.
+    """
+    guidance = _pn()
+    config = PNGuidanceConfig()
+    assert config.reference_scale == pytest.approx(0.65, abs=0.08), (
+        "the fitted constant is 0.65 +- 0.07; see the module docstring")
+    for metres in (1.0, 2.5, 5.0, 10.0):
+        state = PNGuidanceState()
+        guidance.action(_observation(SETPOINT, scale=config.reference_scale / metres),
+                        np.zeros(3), state)
+        assert state.diagnostics["range_m"] == pytest.approx(metres, rel=0.02)
+
+
+def test_pn_guidance_commits_to_the_flare_by_range_and_only_once_it_is_there():
+    """Where the commit happens, and what is allowed to trigger it.
+
+    It used to latch on ``apparent_target_scale``, which is reliability-weighted
+    and clipped at one: it saturates around 0.9 m and reached its 0.20 threshold
+    at 4.9 m. A commit is irreversible and schedules a descent, so it must
+    happen at a range, and only on a frame the law would trust at altitude.
+    """
+    guidance = _pn()
+    config = PNGuidanceConfig()
+    body = np.zeros(3)
+
+    outside = PNGuidanceState()
+    guidance.action(
+        _observation(SETPOINT, scale=config.reference_scale / (config.flare_range_m + 1.0)),
+        body, outside)
+    assert not outside.committed
+
+    inside = PNGuidanceState()
+    guidance.action(
+        _observation(SETPOINT, scale=config.reference_scale / (config.flare_range_m - 0.4)),
+        body, inside)
+    assert inside.committed
+
+    # A frame this law calls blind cannot commit it, however close the scale
+    # says the pad is. A commit is irreversible and schedules a descent.
+    blind = PNGuidanceState()
+    guidance.action(
+        _observation(SETPOINT, scale=config.reference_scale / 0.5,
+                     visible=0.0, loss=1.0),
+        body, blind)
+    assert not blind.committed
+    assert blind.diagnostics["mode"] == "search"
+
+
+def test_pn_guidance_will_not_descend_with_the_pad_outside_its_approach_cone():
+    """The gap has to close before the altitude does.
+
+    Neither textbook term closes a horizontal gap on its own: the range shrinks
+    whether or not the offset does, so the along-line-of-sight term is happy,
+    and ``N * V_c * lambda_dot`` is worth 0.08 m/s2 against a 1.10 m/s2
+    envelope at the speed this approach makes. 2026-09-24 that cost 37 of 60
+    teacher flights -- each descended with a metre still to close, lost the pad
+    past the frame edge at about a metre of altitude, climbed, re-acquired and
+    repeated until the battery was flat.
+    """
+    guidance = _pn()
+    config = PNGuidanceConfig()
+    body = np.array([0.0, 0.0, -0.4])            # already descending
+    outside = config.alignment_tolerance + 0.5
+    inside = config.alignment_tolerance - 0.3
+
+    state = PNGuidanceState()
+    action = guidance.action(_observation(SETPOINT + [outside, 0.0], scale=0.10),
+                             body, state)
+    assert not state.diagnostics["aligned"]
+    assert action[1] > 0.0, (
+        "outside the cone the descent must be arrested, not continued")
+    assert action[0] > 0.0, "while the closing term still pulls the gap shut"
+
+    state = PNGuidanceState()
+    action = guidance.action(_observation(SETPOINT + [inside, 0.0], scale=0.10),
+                             body, state)
+    assert state.diagnostics["aligned"]
+    assert action[1] < 0.0, "inside it the vehicle descends"
+
+
+def test_the_approach_cone_keeps_the_pad_inside_the_frame():
+    """The cone is only worth having if it is tighter than the frame.
+
+    The pad centre leaves this camera at about 1.58 of bearing tangent ahead of
+    nadir. A tolerance at or past that is not a gate, it is a no-op, and the
+    law is back to the 2026-09-24 failure with a knob that says otherwise.
+    """
+    setpoint = nadir_image_setpoint(90.0, 60.0)
+    tan_half = math.tan(math.radians(90.0) / 2.0)
+    frame_limit = (1.0 - float(setpoint[0])) * tan_half
+    assert frame_limit == pytest.approx(1.577, abs=0.01)
+    assert PNGuidanceConfig().alignment_tolerance < 0.75 * frame_limit, (
+        "the cone must leave real frame margin for wind and the deck's "
+        "speed changes, which no offline model of it contains")
 
 
 def test_pn_guidance_needs_its_own_body_velocity_and_nothing_wider():

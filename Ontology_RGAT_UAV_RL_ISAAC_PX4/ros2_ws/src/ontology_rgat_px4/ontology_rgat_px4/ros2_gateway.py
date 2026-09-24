@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 from dataclasses import replace
 import json
 import math
 from pathlib import Path
+import sys
 import threading
+import time
+import traceback
 from typing import Any
 
 import numpy as np
@@ -160,6 +164,32 @@ FAILSAFE_SITL_INFRASTRUCTURE_FIELDS = frozenset({
 # bit at 60 deg while the learner's own crash verdict sits at 75 deg, so every
 # genuine tip-over was intercepted before it could ever be scored.
 FAILSAFE_ATTITUDE_FIELDS = frozenset({"fd_critical_failure"})
+
+
+# How long either timer may go unserved before the gateway is called wedged.
+# The learner's control period is about 0.1 s and PX4 declares an OFFBOARD loss
+# after 0.5 s, so two seconds is already far outside normal operation and well
+# inside the 45 s the learner waits before abandoning the episode.
+WEDGE_THRESHOLD_S = 2.0
+# One report per wedge, not one per half-second of it.
+WEDGE_REPORT_COOLDOWN_S = 15.0
+
+
+def _all_thread_stacks() -> str:
+    """Every thread's stack, for naming what a wedged gateway is waiting on.
+
+    The gateway does not crash when it stops answering -- it goes quiet, and
+    its log's last line is whatever routine message preceded the silence. The
+    only thing that distinguishes "blocked on the control lock", "blocked in a
+    DDS publish" and "starved of CPU" is where the threads actually are.
+    """
+    frames = sys._current_frames()
+    names = {thread.ident: thread.name for thread in threading.enumerate()}
+    blocks = []
+    for ident, frame in frames.items():
+        stack = "".join(traceback.format_stack(frame)).rstrip()
+        blocks.append(f"  thread {names.get(ident, '?')} ({ident}):\n{stack}")
+    return "\n".join(blocks)
 
 
 def failsafe_detail(message: Any, *, target: str = "sitl") -> dict[str, Any]:
@@ -469,6 +499,19 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
             self.control_callback_group = MutuallyExclusiveCallbackGroup()
             self.control_lock = threading.RLock()
+            # Wedge instrumentation. Both timers below share ``control_lock``
+            # and the executor has two threads, so one callback blocking while
+            # it holds the lock stops the UDP replies AND the OFFBOARD
+            # heartbeat together -- which is exactly the pair of symptoms seen
+            # on 2026-09-24 (gateway timeouts at the learner, and PX4 raising
+            # offboard_control_signal_lost every few seconds). These fields
+            # cost an attribute write per callback and let the watchdog say
+            # which of the two was holding, and for how long.
+            self._poll_seen = time.monotonic()
+            self._tick_seen = time.monotonic()
+            self._lock_holder: tuple[str, str, float] | None = None
+            self._wedge_since: float | None = None
+            self._wedge_reported = 0.0
             self.cfg = cfg
             self.safety = safety
             self.sample = VehicleSample()
@@ -672,11 +715,13 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             self.udp = DatagramServer(
                 cfg.bind_host, cfg.gateway_port, cfg.protocol_version,
                 self._on_udp_synchronized)
-            self.create_timer(0.005, self.udp.poll)
+            self.create_timer(0.005, self._poll_udp)
             self.create_timer(
                 1.0 / self.heartbeat_hz,
                 self._control_tick_synchronized,
                 callback_group=self.control_callback_group)
+            threading.Thread(target=self._watch_for_wedges, daemon=True,
+                             name="gateway-watchdog").start()
             self.get_logger().info(
                 f"gateway target={cfg.target}, UDP={cfg.bind_host}:{cfg.gateway_port}, "
                 f"PX4 namespace={cfg.namespace}, arm_allowed={safety.may_arm()}, "
@@ -694,13 +739,64 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
         def _timestamp_us(self) -> int:
             return self.get_clock().now().nanoseconds // 1000
 
-        def _on_udp_synchronized(self, msg: dict[str, Any]) -> None:
+        @contextmanager
+        def _holding(self, site: str):
+            """Take the control lock, recording who has it and since when."""
             with self.control_lock:
+                previous = self._lock_holder
+                self._lock_holder = (site, threading.current_thread().name,
+                                     time.monotonic())
+                try:
+                    yield
+                finally:
+                    self._lock_holder = previous
+
+        def _poll_udp(self) -> None:
+            self._poll_seen = time.monotonic()
+            self.udp.poll()
+
+        def _on_udp_synchronized(self, msg: dict[str, Any]) -> None:
+            with self._holding("udp"):
                 self._on_udp(msg)
 
         def _control_tick_synchronized(self) -> None:
-            with self.control_lock:
+            self._tick_seen = time.monotonic()
+            with self._holding("control_tick"):
                 self._control_tick()
+
+        def _watch_for_wedges(self) -> None:
+            """Report, from outside the executor, when the node stops serving.
+
+            A daemon thread rather than another timer: the thing being measured
+            is the executor failing to run its callbacks, and a watchdog that
+            shares its threads cannot see that happen.
+            """
+            while True:
+                time.sleep(0.5)
+                now = time.monotonic()
+                poll_gap = now - self._poll_seen
+                tick_gap = now - self._tick_seen
+                holder = self._lock_holder
+                held = (now - holder[2]) if holder else 0.0
+                worst = max(poll_gap, tick_gap, held)
+                if worst < WEDGE_THRESHOLD_S:
+                    if self._wedge_since is not None:
+                        self.get_logger().warning(
+                            f"gateway serving again after "
+                            f"{now - self._wedge_since:.1f}s")
+                        self._wedge_since = None
+                    continue
+                if self._wedge_since is None:
+                    self._wedge_since = now
+                if now - self._wedge_reported < WEDGE_REPORT_COOLDOWN_S:
+                    continue
+                self._wedge_reported = now
+                where = (f"{holder[0]} on {holder[1]} for {held:.1f}s"
+                         if holder else "nobody")
+                self.get_logger().warning(
+                    f"gateway wedged: udp poll {poll_gap:.1f}s ago, control "
+                    f"tick {tick_gap:.1f}s ago, control lock held by {where}"
+                    f"\n{_all_thread_stacks()}")
 
         def _on_udp(self, msg: dict[str, Any]) -> None:
             kind = msg["type"]

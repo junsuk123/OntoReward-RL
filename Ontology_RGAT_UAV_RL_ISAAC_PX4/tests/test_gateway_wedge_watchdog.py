@@ -67,6 +67,30 @@ def test_the_dump_names_the_thread_and_where_it_is_blocked():
     assert dump.count("thread ") >= 2, "every thread, not just the culprit"
 
 
+def test_a_late_reply_is_attributed_to_the_node_or_to_its_input():
+    """The first pass measured the wrong thing, and said so.
+
+    2026-09-24, one hour with the lock and timer instrumentation live: five
+    learner timeouts, zero wedge reports. The node was serving throughout. The
+    state reply is deferred -- ``_on_udp`` records the sequence owed and
+    ``_on_odometry`` sends it -- so a healthy gateway owes the learner an
+    answer indefinitely whenever PX4 stops publishing odometry. A stall report
+    that cannot tell those apart sends the next reader to the wrong process.
+    """
+    source = (ROOT / "ros2_ws/src/ontology_rgat_px4/ontology_rgat_px4"
+              / "ros2_gateway.py").read_text(encoding="utf-8")
+    assert "_reply_owed_since" in source
+    assert "_odometry_seen" in source
+    # Both shapes named, and the odometry age reported either way.
+    assert "input starved" in source
+    assert "blocked -- this node stopped running its timers" in source
+    assert "odometry {odometry_gap:.1f}s ago" in source
+    # The reply is owed from the moment it is recorded and cleared where it is
+    # sent, or the age means nothing.
+    assert source.count("self._reply_owed_since = time.monotonic()") == 2
+    assert "self._reply_owed_since = None" in source
+
+
 def test_the_two_timers_that_share_the_lock_are_both_instrumented():
     """A wedge report is only useful if it can name either holder.
 

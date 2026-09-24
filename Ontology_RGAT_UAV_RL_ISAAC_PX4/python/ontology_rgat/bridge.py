@@ -147,6 +147,11 @@ def _yaw_from_quaternion_wxyz(quaternion) -> float | None:
 # other sees nothing but timeouts, and a learner reads those as a dead
 # simulator and rebuilds the shared stack. Two workers on one pair is a
 # scheduling bug, and it has to fail at the second bind, not as that storm.
+# How often a blocked exchange looks up from the socket to ask whether the
+# simulator it is talking to still exists. The socket timeout is 2 ms, so this
+# is one cheap lock probe per fifty iterations.
+_STACK_CHECK_PERIOD_S = 0.1
+
 _LIVE_LOCAL_PORTS: dict[tuple[str, int], int] = {}
 _LIVE_LOCAL_PORTS_LOCK = threading.Lock()
 
@@ -188,6 +193,23 @@ def entry_hold_seconds(entry_timeout: float, hold_margin_s: float) -> float:
             f"({GATEWAY_MAX_HOLD_S:.0f} s); asking for the maximum. The guard "
             "itself is unchanged.")
     return GATEWAY_MAX_HOLD_S
+
+
+def _shared_stack():
+    """The stack this run owns, or ``None`` when it owns none.
+
+    A module function rather than a method: it reads nothing from the bridge,
+    and keeping it off the class lets the protocol tests drive ``transact``
+    with a stand-in that borrows the method without inheriting it.
+
+    Hardware and adopted simulators are nobody's to rebuild, so there is
+    nothing to watch and the exchange simply waits out its budget.
+    """
+    try:
+        from . import stack as stack_module
+        return stack_module.current()
+    except Exception:                           # pragma: no cover - defensive
+        return None
 
 
 class PX4Bridge:
@@ -329,8 +351,37 @@ class PX4Bridge:
         self.socket.sendto(payload, (self.cfg.gateway_host, int(self.cfg.gateway_port)))
 
         budget = float(self.cfg.timeout if timeout is None else timeout)
-        deadline = time.monotonic() + budget
+        started = time.monotonic()
+        deadline = started + budget
+        # Waiting out the budget for a gateway that no longer exists is the
+        # dominant cost of every shared-stack rebuild. One worker's genuine
+        # failure cycles the simulator all four pairs share, and the siblings
+        # are mid-exchange with gateways that are being killed: 2026-09-24 the
+        # run log shows "Stopping gateway_0" followed immediately by two
+        # siblings each spending the full timeout, three times in one hour,
+        # and each of those spurious timeouts then scheduled a rebuild of its
+        # own. Nothing was wrong with the gateway -- instrumenting it found no
+        # wedge, no starved input and no dropped datagram, because the process
+        # was simply gone.
+        #
+        # So watch the stack instead of the socket: a rebuild in progress, or a
+        # generation that has already moved on, means the answer is not coming.
+        # ``recover_infrastructure`` then reconnects to the new generation
+        # rather than cycling the simulator a second time.
+        watch = _shared_stack()
+        generation = getattr(watch, "generation", None)
+        next_stack_check = started + _STACK_CHECK_PERIOD_S
         while time.monotonic() < deadline:
+            now = time.monotonic()
+            if watch is not None and now >= next_stack_check:
+                next_stack_check = now + _STACK_CHECK_PERIOD_S
+                if (watch.restart_in_progress()
+                        or getattr(watch, "generation", generation) != generation):
+                    raise GatewayTimeout(
+                        f"the shared simulator is being rebuilt by another "
+                        f"pair worker; abandoning this {kind} exchange "
+                        f"(seq={seq}) after {now - started:.1f} s instead of "
+                        f"waiting out the remaining {deadline - now:.1f} s.")
             try:
                 raw = self.socket.recv(65535)
             except (socket.timeout, BlockingIOError):

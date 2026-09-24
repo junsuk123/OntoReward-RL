@@ -111,12 +111,15 @@ benchmark:
   # Raised again after run 6 (2026-09-21): at ~1/9 real time a peer pair's
   # reset (teleport, respawn) can freeze the stage for several seconds, and a
   # 6 s reply budget still turned that into a shared-stack rebuild.
-  # A reply is late, not lost, when the simulator stalls: the entry gate has
-  # measured 963 s of wall clock for 71.9 simulated s under render load. At
-  # 20 s a stall that long was read as a dead gateway and paid for with a full
-  # Isaac rebuild -- minutes, and eight of them in one 3.9 h run. Waiting is
-  # cheaper than rebuilding, and a genuinely dead gateway still fails, later.
-  gateway_timeout_s: 45.0
+  # Back to 20 s. Raising this to 45 on 2026-09-24 was reasoning from a wrong
+  # premise -- that a late reply meant a stalled simulator worth waiting for.
+  # Instrumenting the gateway showed otherwise: when this timeout fires the
+  # gateway is not stalled, it has been TORN DOWN by a sibling pair worker
+  # rebuilding the shared stack, and the reply is never coming. A longer
+  # budget only makes each rebuild cost its siblings more. The bridge now
+  # abandons such an exchange as soon as it sees the rebuild, so what this
+  # number governs is the rarer case of a genuinely unresponsive gateway.
+  gateway_timeout_s: 20.0
   setup_timeout_s: 480.0
   # How many times one episode may be retried through an infrastructure
   # failure before the whole run is abandoned. Three was too few for a run

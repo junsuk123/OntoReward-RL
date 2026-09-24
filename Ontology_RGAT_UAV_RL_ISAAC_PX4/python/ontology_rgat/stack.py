@@ -406,6 +406,21 @@ class ExternalStack:
                       "simulator is restarted outside this run.")
             return True
 
+    def restart_in_progress(self) -> bool:
+        """Whether another worker is cycling the shared stack right now.
+
+        The non-blocking counterpart to :meth:`wait_for_restart`, for a worker
+        that is already blocked on something else -- a gateway exchange, say --
+        and only needs to know whether waiting can still pay off. The restart
+        lock is held across the whole stop-and-start, so failing to take it
+        means a rebuild is under way and this gateway is either gone or about
+        to be.
+        """
+        if self._restart_lock.acquire(blocking=False):
+            self._restart_lock.release()
+            return False
+        return True
+
     def wait_for_restart(self, timeout: float | None = None) -> bool:
         """Block while another worker is cycling the shared simulator.
 

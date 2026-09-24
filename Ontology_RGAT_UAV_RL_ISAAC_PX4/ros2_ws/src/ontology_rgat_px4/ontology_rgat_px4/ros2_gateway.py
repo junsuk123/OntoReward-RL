@@ -512,6 +512,17 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             self._lock_holder: tuple[str, str, float] | None = None
             self._wedge_since: float | None = None
             self._wedge_reported = 0.0
+            # The state reply is deferred: ``_on_udp`` records the sequence it
+            # owes and ``_on_odometry`` is what actually sends it. So a gateway
+            # whose timers are all running and whose lock is free can still owe
+            # the learner an answer forever, simply because PX4 stopped
+            # publishing odometry -- which is what the first watchdog pass
+            # showed on 2026-09-24: five learner timeouts, zero wedge reports.
+            # These two say whether the reply is late because this process is
+            # stuck or because its input dried up.
+            self._reply_owed_since: float | None = None
+            self._odometry_seen = time.monotonic()
+            self._odometry_count = 0
             self.cfg = cfg
             self.safety = safety
             self.sample = VehicleSample()
@@ -776,14 +787,18 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                 now = time.monotonic()
                 poll_gap = now - self._poll_seen
                 tick_gap = now - self._tick_seen
+                owed = self._reply_owed_since
+                owed_for = (now - owed) if owed is not None else 0.0
+                odometry_gap = now - self._odometry_seen
                 holder = self._lock_holder
                 held = (now - holder[2]) if holder else 0.0
-                worst = max(poll_gap, tick_gap, held)
+                worst = max(poll_gap, tick_gap, held, owed_for)
                 if worst < WEDGE_THRESHOLD_S:
                     if self._wedge_since is not None:
                         self.get_logger().warning(
                             f"gateway serving again after "
-                            f"{now - self._wedge_since:.1f}s")
+                            f"{now - self._wedge_since:.1f}s "
+                            f"({self._odometry_count} odometry msgs total)")
                         self._wedge_since = None
                     continue
                 if self._wedge_since is None:
@@ -793,10 +808,22 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                 self._wedge_reported = now
                 where = (f"{holder[0]} on {holder[1]} for {held:.1f}s"
                          if holder else "nobody")
+                # Name the shape of the stall before the stacks, because the
+                # two shapes need different fixes: a blocked process is this
+                # node's problem, a silent input is the PX4/DDS link's.
+                if owed_for >= WEDGE_THRESHOLD_S and poll_gap < WEDGE_THRESHOLD_S:
+                    shape = ("input starved -- this node is serving, PX4 is "
+                             "not publishing")
+                elif poll_gap >= WEDGE_THRESHOLD_S or tick_gap >= WEDGE_THRESHOLD_S:
+                    shape = "blocked -- this node stopped running its timers"
+                else:
+                    shape = "lock contention"
                 self.get_logger().warning(
-                    f"gateway wedged: udp poll {poll_gap:.1f}s ago, control "
-                    f"tick {tick_gap:.1f}s ago, control lock held by {where}"
-                    f"\n{_all_thread_stacks()}")
+                    f"gateway stalled ({shape}): state reply owed "
+                    f"{owed_for:.1f}s, odometry {odometry_gap:.1f}s ago "
+                    f"({self._odometry_count} msgs), udp poll {poll_gap:.1f}s "
+                    f"ago, control tick {tick_gap:.1f}s ago, control lock held "
+                    f"by {where}\n{_all_thread_stacks()}")
 
         def _on_udp(self, msg: dict[str, Any]) -> None:
             kind = msg["type"]
@@ -814,6 +841,7 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                 self.last_command_seq = seq
                 self.pending_state_ack = seq
                 self.pending_state_peer = self.udp.peer
+                self._reply_owed_since = time.monotonic()
                 self.goto_target_enu = None
                 if not self.battery_armed:
                     self._arm_battery()
@@ -832,6 +860,7 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                 self.last_command_seq = seq
                 self.pending_state_ack = seq
                 self.pending_state_peer = self.udp.peer
+                self._reply_owed_since = time.monotonic()
                 # The first policy action ends the pre-episode position hold and
                 # starts the energy budget: the seeded reserve is the reserve at
                 # handover, so the climb PX4 flew to get here is not charged to
@@ -1255,6 +1284,8 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             self.command_pub.publish(msg)
 
         def _on_odometry(self, msg) -> None:
+            self._odometry_seen = time.monotonic()
+            self._odometry_count += 1
             try:
                 # Into the world frame the deck is broadcast in. Everything
                 # downstream differences the two, so this has to happen before
@@ -1396,6 +1427,7 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                 peer = self.pending_state_peer
                 self.pending_state_ack = -1
                 self.pending_state_peer = None
+                self._reply_owed_since = None
                 self._send_state(seq, peer=peer)
 
         def _on_status(self, msg) -> None:

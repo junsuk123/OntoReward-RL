@@ -2,3 +2,7 @@ Ontology_RGAT_UAV_RL_ISAAC_PX4/external/Micro-XRCE-DDS-Agent
 Ontology_RGAT_UAV_RL_ISAAC_PX4/external/PX4-Autopilot
 past.zip
 past/
+
+# Simulator and middleware logs: PX4 ulogs alone run ~15 GB/day.
+# Kept on disk (and in Synology Drive) but never in git.
+Ontology_RGAT_UAV_RL_ISAAC_PX4/logs/

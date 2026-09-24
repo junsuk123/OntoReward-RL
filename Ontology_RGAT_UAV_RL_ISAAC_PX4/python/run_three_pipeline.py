@@ -1825,10 +1825,13 @@ _TEACHER_FLIGHT_KEYS = {
 
 # Wall-clock and retry budgets for the bridge and the shared stack. They
 # decide when a flight is abandoned as infrastructure failure, never how a
-# completed flight was flown, so a stored demonstration means the same thing
-# under any of them. Keying on them re-flew the whole teacher set three times
-# on 2026-09-21 while the budgets were being tuned.
-_DEMONSTRATION_BUDGET_KEYS = frozenset({
+# completed flight was flown, so a stored demonstration -- and a trained
+# checkpoint -- means the same thing under any of them. Keying on them re-flew
+# the whole teacher set three times on 2026-09-21 while the budgets were being
+# tuned, and on 2026-09-24 the same keying in the scientific hash meant the
+# retry budget could not be raised without discarding 148 trained episodes.
+# Excluded from both the demonstration fingerprint and the configuration hash.
+_TRANSPORT_BUDGET_KEYS = frozenset({
     "gateway_timeout_s", "setup_timeout_s", "reset_recoveries",
     "entry_timeout_s"})
 
@@ -1842,7 +1845,7 @@ def demonstration_fingerprint(config, settings, *, cfg, system=None) -> str:
     2026-09-20 encoder redesign changed only perception settings, and keying
     the demonstrations on the whole hash threw away 26 teacher attempts that
     could have been re-embedded from their retained frames. Transport budgets
-    (:data:`_DEMONSTRATION_BUDGET_KEYS`) are left out for the same reason.
+    (:data:`_TRANSPORT_BUDGET_KEYS`) are left out for the same reason.
     """
     from ontology_rgat.datastore import data_fingerprint
 
@@ -1850,7 +1853,7 @@ def demonstration_fingerprint(config, settings, *, cfg, system=None) -> str:
     benchmark = system.get("benchmark")
     if isinstance(benchmark, dict):
         benchmark = {key: value for key, value in benchmark.items()
-                     if key not in _DEMONSTRATION_BUDGET_KEYS}
+                     if key not in _TRANSPORT_BUDGET_KEYS}
     flight_keys = (*_DEMONSTRATION_FLIGHT_KEYS, *_TEACHER_FLIGHT_KEYS.get(
         str(settings.get("teacher", PRIVILEGED_VELOCITY_TEACHER)), ()))
     parts = {
@@ -3303,6 +3306,19 @@ def main(*, primary_only: bool = False):
     # manifest, and the live camera encoder is still empirically revalidated.
     scientific_system = deepcopy(system)
     scientific_system.pop("parallel", None)
+    # Transport budgets decide when an attempt is abandoned as infrastructure
+    # failure, never how a completed flight was flown, so a checkpoint means
+    # the same thing under any of them -- exactly the argument that already
+    # keeps them out of the demonstration fingerprint. Leaving them in made the
+    # retry budget unraisable: on 2026-09-24 a fault the gateway itself calls
+    # recoverable (offboard heartbeat flickering every ~5 s) exhausted the
+    # three retries and ended a run at episode 148 of 2016, and raising that
+    # three would have discarded the 148.
+    benchmark = scientific_system.get("benchmark")
+    if isinstance(benchmark, dict):
+        scientific_system["benchmark"] = {
+            key: value for key, value in benchmark.items()
+            if key not in _TRANSPORT_BUDGET_KEYS}
     # Display-only keys are excluded from the identity of a run. ``arm_labels``
     # names arms on a chart and has no scientific content, but the hash gates
     # checkpoint compatibility: leaving it in means fixing a typo in a legend

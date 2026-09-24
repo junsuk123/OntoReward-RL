@@ -1,4 +1,4 @@
-"""Transport budgets must not decide whether stored teacher flights are reused.
+"""Transport budgets must not decide whether stored work is reused.
 
 Keying the demonstration fingerprint on the whole ``system.benchmark`` block
 re-flew the four-flight teacher set three times on 2026-09-21, each time a
@@ -19,7 +19,7 @@ sys.path.insert(0, str(ROOT / "isaac_sim"))
 from config_loader import load_config as load_system  # noqa: E402
 
 from ontology_rgat.benchmarks.experiment import load_experiment  # noqa: E402
-from run_three_pipeline import (_DEMONSTRATION_BUDGET_KEYS,  # noqa: E402
+from run_three_pipeline import (_TRANSPORT_BUDGET_KEYS,  # noqa: E402
                                 behavior_cloning_settings,
                                 demonstration_fingerprint)
 
@@ -36,7 +36,7 @@ def _fingerprint(system):
 
 def test_budget_keys_do_not_change_the_demonstration_fingerprint():
     system = load_system(ROOT / "config/shin2026-minimal-system.yaml")
-    assert set(_DEMONSTRATION_BUDGET_KEYS) <= set(system["benchmark"]), (
+    assert set(_TRANSPORT_BUDGET_KEYS) <= set(system["benchmark"]), (
         "the shipped benchmark block should declare every excluded budget")
     baseline = _fingerprint(system)
     widened = deepcopy(system)
@@ -46,7 +46,7 @@ def test_budget_keys_do_not_change_the_demonstration_fingerprint():
     widened["benchmark"]["entry_timeout_s"] = 4321.0
     assert _fingerprint(widened) == baseline
     stripped = deepcopy(system)
-    for key in _DEMONSTRATION_BUDGET_KEYS:
+    for key in _TRANSPORT_BUDGET_KEYS:
         stripped["benchmark"].pop(key, None)
     assert _fingerprint(stripped) == baseline
 
@@ -110,3 +110,44 @@ def test_servo_only_knobs_stay_out_of_a_privileged_teacher_configuration():
             assert key not in settings, (
                 f"{path.name}: {key} is a servo knob; recorded here it would "
                 "re-fly the PD set")
+
+
+def test_budget_keys_do_not_change_the_configuration_hash():
+    """The same argument, for the hash that gates trained checkpoints.
+
+    2026-09-24 a fault the gateway itself classifies as recoverable -- the
+    OFFBOARD heartbeat flickering on and off every ~5 s -- drew the three
+    retries an episode is allowed and ended a 2016-episode run at 148. Raising
+    that three meant changing ``benchmark.reset_recoveries``, which was inside
+    the scientific hash, which would have discarded the 148 episodes it was
+    being raised to protect. A budget cannot be both the remedy and the thing
+    the remedy destroys.
+    """
+    from copy import deepcopy
+
+    from run_three_pipeline import configuration_hash, _TRANSPORT_BUDGET_KEYS
+
+    system = load_system(ROOT / "config/shin2026-minimal-system.yaml")
+
+    def scientific(candidate):
+        trimmed = deepcopy(candidate)
+        trimmed.pop("parallel", None)
+        benchmark = trimmed.get("benchmark")
+        if isinstance(benchmark, dict):
+            trimmed["benchmark"] = {key: value for key, value in benchmark.items()
+                                    if key not in _TRANSPORT_BUDGET_KEYS}
+        return configuration_hash({"system": trimmed})
+
+    baseline = scientific(system)
+    widened = deepcopy(system)
+    widened["benchmark"]["reset_recoveries"] = 12
+    widened["benchmark"]["gateway_timeout_s"] = 45.0
+    widened["benchmark"]["setup_timeout_s"] = 9999.0
+    widened["benchmark"]["entry_timeout_s"] = 4321.0
+    assert scientific(widened) == baseline
+
+    changed = deepcopy(system)
+    changed["benchmark"]["entry_speed_tolerance_m_s"] = float(
+        changed["benchmark"]["entry_speed_tolerance_m_s"]) + 0.5
+    assert scientific(changed) != baseline, (
+        "a budget is excluded; what the entry gate ACCEPTS is not")

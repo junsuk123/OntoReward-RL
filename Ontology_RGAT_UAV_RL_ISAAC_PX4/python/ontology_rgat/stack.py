@@ -17,6 +17,7 @@ would get from a terminal.
 """
 from __future__ import annotations
 
+from datetime import datetime
 import os
 import shlex
 import signal
@@ -155,6 +156,27 @@ def _exit_status(code: int | None) -> str:
     return f"exited with status {code}"
 
 
+# One directory per run, under the project so the logs live with the results
+# and reach Synology Drive. Computed once per process: a run that rebuilds the
+# simulator ten times keeps all ten generations side by side rather than
+# scattering them across ten directories.
+_RUN_STAMP = datetime.now().strftime("%Y%m%d-%H%M")
+
+
+def default_stack_log_dir() -> Path:
+    """Where Isaac, the gateways and the DDS agent write, absent an override.
+
+    ``ONTOLOGY_RGAT_LOG_DIR`` wins if it is set, so a machine that cannot spare
+    the space in the project -- PX4 alone writes about 15 GB a day -- can send
+    them somewhere else without a code change.
+    """
+    override = os.environ.get("ONTOLOGY_RGAT_LOG_DIR")
+    if override:
+        return Path(override).expanduser() / f"run-{_RUN_STAMP}" / "stack"
+    return (Path(__file__).resolve().parents[2]
+            / "logs" / "runs" / f"run-{_RUN_STAMP}" / "stack")
+
+
 class StackError(RuntimeError):
     pass
 
@@ -189,7 +211,7 @@ class ExternalStack:
         # to it instead of launching one. ``stop`` will not terminate it, so
         # ``restart`` cannot replace it either.
         self.adopted_simulator = False
-        self.log_dir = Path(log_dir) if log_dir else Path("/tmp/ontology_rgat_stack")
+        self.log_dir = Path(log_dir) if log_dir else default_stack_log_dir()
         self.log_dir.mkdir(parents=True, exist_ok=True)
         self.timeouts = {"agent": agent_timeout, "isaac": isaac_timeout,
                          "gateway": gateway_timeout}
@@ -446,13 +468,18 @@ class ExternalStack:
         Pegasus' PX4 child dies with Isaac instead of holding TCP 4560.
         """
         log = self.log_dir / f"{name}.log"
-        # Each launch truncates its log, so a relaunch used to erase the
-        # evidence of the startup that just failed. Keep exactly one previous
-        # attempt: enough to diagnose the crash, bounded on a long run that
-        # cycles the simulator many times.
+        # Each launch truncates its log, so a relaunch erases the evidence of
+        # the startup that just failed. Keeping one previous attempt was not
+        # enough: on 2026-09-24 the simulator was rebuilt every twenty minutes
+        # and the log that explained a failure was overwritten twice before
+        # anyone read it. Every generation is kept now, numbered in launch
+        # order, inside a directory that is already per-run.
         if log.is_file() and log.stat().st_size:
+            generation = 1
+            while (self.log_dir / f"{name}.{generation:03d}.log").exists():
+                generation += 1
             try:
-                log.replace(self.log_dir / f"{name}.previous.log")
+                log.replace(self.log_dir / f"{name}.{generation:03d}.log")
             except OSError:
                 pass
         environment = dict(os.environ)

@@ -111,9 +111,20 @@ benchmark:
   # Raised again after run 6 (2026-09-21): at ~1/9 real time a peer pair's
   # reset (teleport, respawn) can freeze the stage for several seconds, and a
   # 6 s reply budget still turned that into a shared-stack rebuild.
-  gateway_timeout_s: 20.0
+  # A reply is late, not lost, when the simulator stalls: the entry gate has
+  # measured 963 s of wall clock for 71.9 simulated s under render load. At
+  # 20 s a stall that long was read as a dead gateway and paid for with a full
+  # Isaac rebuild -- minutes, and eight of them in one 3.9 h run. Waiting is
+  # cheaper than rebuilding, and a genuinely dead gateway still fails, later.
+  gateway_timeout_s: 45.0
   setup_timeout_s: 480.0
-  reset_recoveries: 3
+  # How many times one episode may be retried through an infrastructure
+  # failure before the whole run is abandoned. Three was too few for a run
+  # measured in days: 2026-09-24 the OFFBOARD heartbeat flickered on and off
+  # every ~5 s -- a fault the gateway itself classifies as recoverable SITL
+  # infrastructure -- and one episode drew it three times in a row, ending a
+  # 2016-episode run at 148. A recoverable fault must not be able to do that.
+  reset_recoveries: 12
   # The budget the entry gate is judged against, in *simulated* PX4 seconds.
   # Its wall-clock counterpart (external.entry_timeout) is only a hang guard.
   # The vehicle has to fly up to a few metres to the seeded Table-I offset and

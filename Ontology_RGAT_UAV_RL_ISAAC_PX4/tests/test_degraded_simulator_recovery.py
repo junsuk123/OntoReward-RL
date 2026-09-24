@@ -161,21 +161,31 @@ def test_a_clean_startup_exit_is_reported_without_a_kit_assertion(tmp_path,
     assert "not a benchmark fault" not in report
 
 
-def test_the_failed_attempt_log_survives_the_relaunch(tmp_path):
+def test_every_failed_attempt_log_survives_the_relaunch(tmp_path):
+    """Every generation, not the last one.
+
+    Keeping a single ``.previous`` was enough while the simulator was rebuilt
+    rarely. On 2026-09-24 it was rebuilt eight times in three and a half hours,
+    and the log that explained a failure was overwritten twice before anyone
+    read it -- the run was diagnosed from what survived, which was the wrong
+    stack. The directory is per-run now, so the pile is bounded by the run.
+    """
     from ontology_rgat.stack import ExternalStack
 
     stack = ExternalStack.__new__(ExternalStack)
     stack.log_dir = tmp_path
     stack.root = tmp_path
     stack.managed = []
-    (tmp_path / "isaac.log").write_text("first attempt output\n", encoding="utf-8")
-    stack._launch("isaac", ["true"])
-    assert (tmp_path / "isaac.previous.log").read_text() == "first attempt output\n"
-    # A second relaunch keeps one slot, never an unbounded pile.
-    (tmp_path / "isaac.log").write_text("second attempt output\n", encoding="utf-8")
-    stack._launch("isaac", ["true"])
-    assert (tmp_path / "isaac.previous.log").read_text() == "second attempt output\n"
-    assert not list(tmp_path.glob("isaac.previous.previous*"))
+    for index, text in enumerate(("first", "second", "third"), start=1):
+        (tmp_path / "isaac.log").write_text(f"{text} attempt output\n",
+                                            encoding="utf-8")
+        stack._launch("isaac", ["true"])
+        assert ((tmp_path / f"isaac.{index:03d}.log").read_text()
+                == f"{text} attempt output\n")
+    # Numbered in launch order, and nothing lost along the way.
+    assert sorted(path.name for path in tmp_path.glob("isaac.[0-9]*.log")) == [
+        "isaac.001.log", "isaac.002.log", "isaac.003.log"]
+    assert not list(tmp_path.glob("isaac.previous*"))
 
 
 def test_the_dead_process_is_named_even_when_another_one_is_waited_on(tmp_path,

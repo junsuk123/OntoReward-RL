@@ -10,6 +10,7 @@ import argparse
 from copy import deepcopy
 import json
 import math
+from datetime import datetime
 import os
 import sys
 import time
@@ -149,11 +150,50 @@ from vn100_imu import Vn100Imu
 IDENTITY_QUAT = np.array([1.0, 0.0, 0.0, 0.0])
 
 
+class _KeptRootFs:
+    """A PX4 root filesystem that outlives the flight that wrote it.
+
+    Pegasus gives each PX4 a ``tempfile.TemporaryDirectory`` and runs it from
+    there, so PX4's own ``./log/<date>/<time>.ulg`` flight logs land inside it.
+    Nothing reads them and, because the simulator is normally killed rather
+    than shut down, nothing removes them either: 69.9 GB across 3325 files had
+    collected under /tmp by 2026-09-24, while the logs that would have
+    explained that day's failures were the ones being deleted.
+
+    Same interface, different lifetime: a per-run directory in the project, so
+    a flight log sits beside the run that flew it and reaches Synology Drive
+    with everything else. ``cleanup`` is deliberately a no-op -- that is the
+    entire point -- and the per-run naming keeps PX4 from inheriting another
+    run's ``eeprom``/``dataman`` state the way a shared directory would.
+    """
+
+    def __init__(self, path: Path):
+        self.name = str(path)
+        path.mkdir(parents=True, exist_ok=True)
+
+    def cleanup(self) -> None:
+        return None
+
+
+_PX4_LOG_STAMP = datetime.now().strftime("%Y%m%d-%H%M")
+
+
+def _px4_root_fs(vehicle_id) -> _KeptRootFs:
+    override = os.environ.get("ONTOLOGY_RGAT_LOG_DIR")
+    root = (Path(override).expanduser() if override
+            else Path(__file__).resolve().parents[1] / "logs" / "runs")
+    return _KeptRootFs(root / f"run-{_PX4_LOG_STAMP}" / "px4" / f"px4_{vehicle_id}")
+
+
 class ParameterizedPX4LaunchTool(PX4LaunchTool):
-    """Pegasus launcher using a temporary rcS wrapper owned by this run."""
+    """Pegasus launcher using a kept rcS wrapper and root fs owned by this run."""
 
     def __init__(self, px4_dir, vehicle_id, px4_model, parameters):
         super().__init__(px4_dir, vehicle_id, px4_model)
+        # Replace the temporary root filesystem before anything is written to
+        # it; the base class only created it, PX4 has not started yet.
+        self.root_fs.cleanup()
+        self.root_fs = _px4_root_fs(vehicle_id)
         wrapper = Path(self.root_fs.name) / "ontology_rgat_rcS"
         wrapper.write_text(px4_rc_script(self.rc_script, parameters), encoding="utf-8")
         self.rc_script = str(wrapper)

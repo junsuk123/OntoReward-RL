@@ -110,7 +110,7 @@ FAILSAFE_HARD_FIELDS = frozenset({
     "angular_velocity_invalid", "attitude_invalid", "local_altitude_invalid",
     "local_position_invalid", "local_position_invalid_relaxed",
     "local_velocity_invalid", "global_position_invalid",
-    "home_position_invalid", "battery_low_remaining_time", "battery_unhealthy",
+    "home_position_invalid", "battery_low_remaining_time",
     "primary_geofence_breached", "mission_failure",
     "vtol_fixed_wing_system_failure", "wind_limit_exceeded",
     "flight_time_limit_exceeded", "local_position_accuracy_low",
@@ -126,6 +126,27 @@ FAILSAFE_HARD_FIELDS = frozenset({
 FAILSAFE_SITL_INFRASTRUCTURE_FIELDS = frozenset({
     "auto_mission_missing", "offboard_control_signal_lost",
     "manual_control_signal_lost", "gcs_connection_lost",
+    # ``battery_unhealthy`` is here, and not in the hard set, for SITL only.
+    #
+    # The simulated pack cannot discharge: ``px4.sitl_parameters`` pins
+    # ``SIM_BAT_MIN_PCT`` at 100 because airborne episode staging stays armed
+    # and the stock SITL pack empties in 60 simulated seconds. The pack the
+    # experiment actually measures is the independently integrated one in the
+    # ``battery`` config block -- it is what ends an episode as
+    # ``battery_depleted``, which 37 of 60 teacher flights did on 2026-09-24
+    # while PX4 reported this same pinned, full pack.
+    #
+    # So "unhealthy" here cannot be a charge state. What it is, is a stale
+    # ``battery_status`` topic: on 2026-09-24 it appeared in the middle of a
+    # uXRCE-DDS message-loss burst (``vehicle_command lost, generation
+    # 5 -> 10``) and, classified hard, it re-raised through
+    # ``collect_episode_resilient`` without spending a retry and ended a run
+    # that had already collected its demonstrations and trained 16 episodes.
+    #
+    # Hardware is untouched: ``_classify_failsafe`` only offers recovery when
+    # the target is SITL, and a real pack there reports through
+    # ``battery.prefer_px4_telemetry_on_hardware``.
+    "battery_unhealthy",
 })
 
 # ``fd_critical_failure`` is PX4's attitude failure detector: roll or pitch

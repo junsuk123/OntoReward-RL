@@ -17,6 +17,8 @@ import torch
 from ..bridge import (ArmingRefused, BridgeError, EntryResetError,
                       GatewayTimeout, PX4Failsafe, SimulatorFrameTimeout)
 from ..controllers import PLANAR_ACTION_DIM
+from ..contracts import causal_packet_from_visual
+from ..evaluation.selection import robust_checkpoint_score
 from ..curriculum import PlatformMotionCurriculum
 from ..perception import (POINT_CONFIDENCE_THRESHOLD, SEMANTIC_FEATURE_NAMES,
                           grayscale_image_tensor, semantic_graph,
@@ -30,15 +32,18 @@ from ..rgat.fov_risk_dataset import future_fov_unavailability_targets
 from ..reward_modes import (AdaptiveRewardConfig, AdaptiveWeightReward,
                             FixedBaselineRewardWeights,
                             OntoRewardPBRS, ShinReward, ShinRewardConfig,
+                            reward_config_from,
                             NoSERewardContext, OntologyRewardContext,
                             ShinSERewardContext, TerminalFlags,
                             active_perception_reward, sparse_terminal_reward)
 from ..reward_modes.fov_risk import ontology_fov_reward
 from ..initialization import nadir_image_setpoint
 from ..rgat.state_graph import StateGraphGeometry, build_state_graph
+from ..rgat.selective_state import build_selective_graph
 from .graph_state_encoder import graph_feature_tensor
 from ..reward_modes.adaptive_weight import shin_reward_components
 from ..reward_modes.adaptive_weight import RewardComponentNormalizer
+from ..reward_modes.two_term import TwoTermReward
 from .behavior_cloning import behavior_clone
 from .recurrent import PipelineActorCritic, recurrent_ppo_loss
 
@@ -87,8 +92,8 @@ def _reward(method, previous, following, estimate, next_estimate, potential,
             current_semantic_graph=None, next_semantic_graph=None,
             current_adaptive_graph=None, next_adaptive_graph=None,
             current_fov_graph=None,
-            reward_normalizer=None,
-            estimation_loss_fn=None, fov_risk_lambda=0.1):
+            reward_normalizer=None, reward_weights=None,
+            estimation_loss_fn=None, fov_risk_lambda=0.1, reward_dt=0.1):
     """Dispatch reward through the selected pipeline's narrow data contract."""
     terminal = _terminal_flags(following)
     try:
@@ -115,6 +120,22 @@ def _reward(method, previous, following, estimate, next_estimate, potential,
     if method == "sparse":
         value = sparse_terminal_reward(**terminal.as_kwargs())
         return value, {"task": value}, next_loss
+    if spec is not None and spec.reward_mode == "capture_distance_two_term":
+        current = np.asarray(previous.critic.true_relative_state, dtype=float)
+        nxt = np.asarray(following.critic.true_relative_state, dtype=float)
+        current_distance = float(np.hypot(current[0], current[2]))
+        next_distance = float(np.hypot(nxt[0], nxt[2]))
+        # 90-degree horizontal FOV in the preserved primary camera profile.
+        # The reward receives truth, but this value never enters O_t.
+        half_width = max(abs(float(nxt[2])), 1e-6)
+        normalized_error = abs(float(nxt[0])) / half_width
+        failed_contact = bool(following.terminal and not following.strict_success)
+        value, parts = TwoTermReward()(
+            normalized_longitudinal_error=normalized_error,
+            distance_m=next_distance, previous_distance_m=current_distance,
+            dt_s=float(reward_dt), landed=bool(following.strict_success),
+            failed_contact=failed_contact, terminal=bool(following.terminal))
+        return value, parts, None
     if (spec is not None and spec.name in {
             "shin_se_fixed", "shin_se_onto_rgat_state",
             "shin_se_onto_gat_state", "shin_se_node_pool_state",
@@ -165,8 +186,8 @@ def _reward(method, previous, following, estimate, next_estimate, potential,
                 uav_vertical_velocity=_transition_result_vertical_velocity(
                     previous, following),
                 terminal=terminal)
-        value, parts = ShinReward(ShinRewardConfig(
-            active_enabled=spec.active_perception_enabled))(
+        value, parts = ShinReward(reward_config_from(
+            reward_weights, active_enabled=spec.active_perception_enabled))(
                 context.current_training_relative_state,
                 context.next_training_relative_state, context.action,
                 drone_vertical_velocity=context.uav_vertical_velocity,
@@ -432,12 +453,40 @@ def visual_recovery_metrics(rows, *, initial_in_fov: bool, success: bool,
     return output
 
 
+def _tell_envelope_where_the_pad_is(env, semantic) -> None:
+    """Hand the shared envelope this step's bearing, for the approach cone.
+
+    The envelope refuses a descent while the pad is outside its cone, and it
+    can only do that if something tells it where the pad is. The two numbers
+    are the actor's own: the confidence-weighted centroid and the apparent
+    scale, read through the same camera geometry the PN control condition
+    uses. No privileged state, and an environment without a planar controller
+    or without the cone configured is left alone.
+    """
+    controller = getattr(getattr(env, "adapter", None), "controller", None)
+    observe = getattr(controller, "observe_pad", None)
+    if not callable(observe) or float(
+            getattr(controller, "approach_cone_tolerance", 0.0)) <= 0.0:
+        return
+    camera = dict(getattr(env.cfg.external, "landing_camera", None) or {})
+    horizontal_fov = float(camera.get("horizontal_fov_deg", 90.0))
+    nadir = float(nadir_image_setpoint(
+        horizontal_fov, float(camera.get("pitch_down_deg", 60.0)))[0])
+    centroid = np.asarray(semantic.centroid_xy, dtype=float).reshape(-1)
+    bearing = (float(centroid[0]) - nadir) * math.tan(
+        math.radians(horizontal_fov) / 2.0)
+    trustworthy = (float(semantic.visible_keypoint_fraction) >= 0.5
+                   and float(semantic.visual_loss_risk) <= 0.0)
+    observe(bearing, float(semantic.raw_scale), trustworthy)
+
+
 def collect_episode(env, model: PipelineActorCritic, method: str, seed: int,
                     *, curriculum=1.0, potential=None, deterministic=False,
                     gamma=0.99, shaping_lambda=1.0,
                     scenario="training_random_walk", monitor=None,
                     phase="evaluation", action_transform=None,
-                    reward_normalizer=None, fov_risk_lambda=0.1):
+                    reward_normalizer=None, reward_weights=None,
+                    fov_risk_lambda=0.1):
     """Collect one real episode while keeping actor/reward contracts separate."""
     model_spec = model.pipeline_spec
     try:
@@ -478,6 +527,7 @@ def collect_episode(env, model: PipelineActorCritic, method: str, seed: int,
     # otherwise, and the model refuses a graph it does not declare.
     graph_geometry = _state_graph_geometry(env.cfg)
     graph_committed = False
+    packet = None
     with torch.no_grad():
         image, proprio = _tensor_observation(model, step.actor)
         truth = torch.as_tensor(step.critic.true_relative_state[None],
@@ -497,15 +547,29 @@ def collect_episode(env, model: PipelineActorCritic, method: str, seed: int,
             .detach().cpu().numpy(),
             battery_reserve=_battery_reserve(step.state), previous=None,
             dt=float(env.cfg.sim.dt))
+        if model.observation_registry is not None:
+            packet = causal_packet_from_visual(
+                keypoints=visual.keypoints.reshape(1, 6, 2)[0].detach().cpu().numpy(),
+                keypoint_visibility=visual.visibility.reshape(1, 6)[0]
+                .detach().cpu().numpy(), semantic_observation=semantic,
+                proprioception=step.actor.proprioception, timestamp_s=0.0,
+                registry=model.observation_registry)
         graph = semantic_graph(semantic)
         state_graph, graph_committed = _state_graph_from_semantic(
             semantic, geometry=graph_geometry, previous=None,
             committed=graph_committed, dt=float(env.cfg.sim.dt))
+        if model.pipeline_spec.policy_state_mode == "selective_graph":
+            state_graph = build_selective_graph(
+                packet, registry=model.observation_registry)
         graph_features = (
             graph_feature_tensor(state_graph, device=model.device)[:, None]
             if model.graph_state_enabled else None)
         output = model(image, proprio, true_relative_state=truth,
                        graph_features=graph_features, visual=visual,
+                       observation_packet=(
+                           None if packet is None else torch.as_tensor(
+                               packet.values[None, None], dtype=torch.float32,
+                               device=model.device)),
                        hidden=hidden,
                        episode_start=torch.tensor([True], device=model.device))
         fov_semantic, fov_graph = _fov_graph_from_semantic(semantic)
@@ -530,6 +594,7 @@ def collect_episode(env, model: PipelineActorCritic, method: str, seed: int,
                     transformed[None], dtype=mean.dtype, device=mean.device)
                 pre_squash = torch.atanh(action)
             log_prob = model.log_prob(pre_squash, action, mean, std)
+            _tell_envelope_where_the_pad_is(env, semantic)
             following = env.step(action.cpu().numpy()[0])
             next_image, next_proprio = _tensor_observation(model, following.actor)
             next_truth = torch.as_tensor(following.critic.true_relative_state[None],
@@ -545,10 +610,25 @@ def collect_episode(env, model: PipelineActorCritic, method: str, seed: int,
                 .detach().cpu().numpy(),
                 battery_reserve=_battery_reserve(following.state),
                 previous=semantic, dt=float(env.cfg.sim.dt))
+            next_packet = None
+            if model.observation_registry is not None:
+                next_packet = causal_packet_from_visual(
+                    keypoints=next_visual.keypoints.reshape(
+                        1, 6, 2)[0].detach().cpu().numpy(),
+                    keypoint_visibility=next_visual.visibility.reshape(
+                        1, 6)[0].detach().cpu().numpy(),
+                    semantic_observation=next_semantic,
+                    proprioception=following.actor.proprioception,
+                    timestamp_s=(len(rows) + 1) * float(env.cfg.sim.dt),
+                    previous_packet=packet,
+                    registry=model.observation_registry)
             next_graph = semantic_graph(next_semantic)
             next_state_graph, next_committed = _state_graph_from_semantic(
                 next_semantic, geometry=graph_geometry, previous=semantic,
                 committed=graph_committed, dt=float(env.cfg.sim.dt))
+            if model.pipeline_spec.policy_state_mode == "selective_graph":
+                next_state_graph = build_selective_graph(
+                    next_packet, registry=model.observation_registry)
             next_graph_features = (
                 graph_feature_tensor(next_state_graph,
                                      device=model.device)[:, None]
@@ -556,6 +636,10 @@ def collect_episode(env, model: PipelineActorCritic, method: str, seed: int,
             next_output = model(next_image, next_proprio,
                                 true_relative_state=next_truth,
                                 graph_features=next_graph_features,
+                                observation_packet=(
+                                    None if next_packet is None else torch.as_tensor(
+                                        next_packet.values[None, None],
+                                        dtype=torch.float32, device=model.device)),
                                 visual=next_visual,
                                 hidden=output.hidden)
             next_fov_semantic, next_fov_graph = _fov_graph_from_semantic(next_semantic)
@@ -572,7 +656,9 @@ def collect_episode(env, model: PipelineActorCritic, method: str, seed: int,
                 next_adaptive_graph=next_adaptive_graph,
                 current_fov_graph=fov_graph,
                 reward_normalizer=reward_normalizer,
+                reward_weights=reward_weights,
                 fov_risk_lambda=fov_risk_lambda,
+                reward_dt=float(env.cfg.sim.dt),
                 estimation_loss_fn=(
                     None if model.relative_state_head is None else
                     model.relative_state_head.numpy_loss))
@@ -610,6 +696,10 @@ def collect_episode(env, model: PipelineActorCritic, method: str, seed: int,
                 # The situation graph of the PRE-action state, which is the one
                 # the actor conditioned on and the one the PPO update replays.
                 "state_graph_X": state_graph.X.copy(),
+                "observation_packet": (
+                    None if packet is None else packet.values.copy()),
+                "observation_registry_hash": (
+                    None if packet is None else packet.registry_sha256),
                 "fov_graph_X": fov_graph.X.copy(),
                 "fov_graph_geometric_in_fov": bool(step.geometric_pad_center_in_fov),
                 "next_fov_graph_X": next_fov_graph.X.copy(),
@@ -647,6 +737,7 @@ def collect_episode(env, model: PipelineActorCritic, method: str, seed: int,
                     estimation_loss=estimation_loss, state=following.state,
                     pipeline_spec=model_spec,
                     semantic_features=next_semantic.feature_vector,
+                    semantic_observation=next_semantic,
                     # The eight visual FOV features are computed for both arms
                     # and published for both, so the operator compares
                     # perception quality on identical terms. Only the proposed
@@ -682,6 +773,7 @@ def collect_episode(env, model: PipelineActorCritic, method: str, seed: int,
             step, output = following, next_output
             semantic, graph = next_semantic, next_graph
             state_graph, graph_committed = next_state_graph, next_committed
+            packet = next_packet
             fov_semantic, fov_graph = next_fov_semantic, next_fov_graph
             adaptive_graph = next_adaptive_graph
             if following.terminal:
@@ -725,6 +817,16 @@ def collect_episode(env, model: PipelineActorCritic, method: str, seed: int,
     relative_horizontal_speed = float(landing["relative_horizontal_speed"])
     tilt = float(landing["tilt"])
     angular_rate = float(landing["angular_rate"])
+    altitudes = np.asarray(
+        [max(0.0, -float(row["truth"][2])) for row in rows], dtype=float)
+    first_loss = next((index for index, row in enumerate(rows)
+                       if not row["geometric_in_fov"]), len(rows))
+    after_loss = altitudes[first_loss:]
+    cumulative_climb = float(np.maximum(np.diff(after_loss), 0.0).sum()
+                             if after_loss.size > 1 else 0.0)
+    commands = np.asarray([row["normalized_command"] for row in rows], dtype=float)
+    command_variation = float(np.abs(np.diff(commands, axis=0)).sum()
+                              if len(commands) > 1 else 0.0)
     metric = {
         "seed": int(seed), "episode_return": float(sum(row["reward"] for row in rows)),
         # Retain the established report column name, but define it as the
@@ -782,6 +884,14 @@ def collect_episode(env, model: PipelineActorCritic, method: str, seed: int,
             np.mean(loss_runs) * env.cfg.sim.dt if loss_runs else 0.0),
         "action_envelope_scale": action_scale,
         "touchdown_time_s": float(len(rows) * env.cfg.sim.dt),
+        "landing_time_s": float(len(rows) * env.cfg.sim.dt),
+        "capture_rate": float(np.mean(
+            [row["geometric_in_fov"] for row in rows])),
+        "peak_height_m": float(altitudes.max(initial=0.0)),
+        "cumulative_climb_after_loss_m": cumulative_climb,
+        "longitudinal_tracking_rms_m": float(np.sqrt(np.mean(
+            [float(row["truth"][0]) ** 2 for row in rows]))),
+        "command_variation": command_variation,
         "battery_reserve_initial": float(initial_battery.get("reserve", 1.0)),
         "battery_reserve_final": _battery_reserve(state),
         "battery_energy_initial_j": float(initial_battery.get("remaining_j", 0.0)),
@@ -1050,16 +1160,30 @@ def collect_episode_resilient(env, model: PipelineActorCritic, method: str,
     raise AssertionError("unreachable infrastructure-recovery state")
 
 
-def flown_episode_batches(envs, model, method, seed_list, completed, *,
-                          scenarios, warmup_episodes, curriculum,
-                          collect_episode_kwargs, env_monitors=None,
-                          warmup_is_deterministic=False):
-    """Yield episodes flown against the shared pre-batch policy, in order.
+def flown_episode_batches(envs, model, method, seed_list, completed, **kwargs):
+    """Yield the flights of :func:`flown_episode_groups` one at a time.
+
+    Kept because an episode is still the unit of the history row, the
+    checkpoint and the curriculum observation. The *update* is no longer per
+    episode -- see :func:`flown_episode_groups` and :func:`update_episode`.
+    """
+    for group in flown_episode_groups(
+            envs, model, method, seed_list, completed, **kwargs):
+        yield from group
+
+
+def flown_episode_groups(envs, model, method, seed_list, completed, *,
+                         scenarios, warmup_episodes, curriculum,
+                         collect_episode_kwargs, env_monitors=None,
+                         physical_pair_indices=None,
+                         warmup_is_deterministic=False):
+    """Yield each batch of episodes flown against one shared policy snapshot.
 
     With one environment this is exactly the sequential loop it replaces: fly
     an episode, hand it back, update on it, fly the next. With several it
     becomes a vectorised PPO rollout -- ``len(envs)`` episodes flown at once on
-    their own UAV/UGV pairs, then updated one after another in episode order.
+    their own UAV/UGV pairs and handed back as one group, so the caller can
+    take a single on-policy update over all of them.
 
     That is worth doing because the shared Isaac stage runs several pairs
     faster in total than it runs one: measured on this machine, total simulated
@@ -1071,7 +1195,11 @@ def flown_episode_batches(envs, model, method, seed_list, completed, *,
 
     * every episode in a batch is flown by the *same* policy, the one in place
       before the batch started, rather than by a policy updated after each
-      flight;
+      flight. The group is therefore the unit of the PPO update: updating its
+      episodes one after another makes every episode but the first off-policy
+      against a trust region sized for on-policy data, and the KL guard then
+      discards them. Measured on the 2026-10-01 planar run, the second replica
+      lost 44.7-49.1 % of its updates against 14.7-19.9 % for the first;
     * the curriculum level is likewise fixed for the batch, since the episodes
       are in the air simultaneously and there is no order in which to advance
       it between them.
@@ -1091,6 +1219,11 @@ def flown_episode_batches(envs, model, method, seed_list, completed, *,
     pending = list(enumerate(seed_list[completed:], start=completed + 1))
     env_monitors = list(env_monitors or ())
     width = max(1, len(envs))
+    physical_pair_indices = list(
+        range(width) if physical_pair_indices is None else physical_pair_indices)
+    if len(physical_pair_indices) != width:
+        raise ValueError(
+            "flown_episode_batches needs one physical pair index per environment")
     while pending:
         batch, pending = pending[:width], pending[width:]
         lead_episode = batch[0][0]
@@ -1116,6 +1249,10 @@ def flown_episode_batches(envs, model, method, seed_list, completed, *,
                 phase="perception warm-up" if warming else "training",
                 deterministic=bool(warming and warmup_is_deterministic),
                 **kwargs)
+            # Persist the physical lane with the scientific row. Reconstructing
+            # it later from episode parity stops being valid after an odd
+            # checkpoint, retry, or a different replica count.
+            metric["physical_pair_index"] = int(physical_pair_indices[slot])
             return episode, seed, scenario, rows, metric
 
         if width == 1:
@@ -1125,8 +1262,8 @@ def flown_episode_batches(envs, model, method, seed_list, completed, *,
                 # list() re-raises the first failure here rather than leaving it
                 # to surface as a missing result later.
                 flights = list(pool.map(fly, list(enumerate(batch))))
-        for episode, seed, scenario, rows, metric in flights:
-            yield episode, seed, scenario, level, rollout_model_state, rows, metric
+        yield [(episode, seed, scenario, level, rollout_model_state, rows, metric)
+               for episode, seed, scenario, rows, metric in flights]
 
 
 def _gae(rows, gamma, gae_lambda):
@@ -1213,6 +1350,21 @@ def _chunk_graph_features(model, chunk, device):
     return torch.as_tensor(stacked, dtype=torch.float32, device=device)[None]
 
 
+def _chunk_observation_packets(model, chunk, device):
+    if model.observation_registry is None:
+        return None
+    missing = [index for index, row in enumerate(chunk)
+               if row.get("observation_packet") is None]
+    if missing:
+        raise ValueError("refactored pipeline needs O_t on every transition")
+    for row in chunk:
+        if row.get("observation_registry_hash") != model.observation_registry.sha256:
+            raise ValueError("stored transition observation registry mismatch")
+    stacked = np.stack([np.asarray(row["observation_packet"], dtype=np.float32)
+                        for row in chunk])
+    return torch.as_tensor(stacked, dtype=torch.float32, device=device)[None]
+
+
 def update_episode(model, optimizer, rows, *, gamma=.99, gae_lambda=.95,
                    epochs=5, clip=.2, value_coef=.5, entropy_coef=.003,
                    auxiliary_coef=1.0, grad_clip=5.0, sequence_length=32,
@@ -1220,10 +1372,39 @@ def update_episode(model, optimizer, rows, *, gamma=.99, gae_lambda=.95,
                    maximum_learning_rate=None,
                    learning_rate_recovery_factor=1.0,
                    learning_rate_recovery_kl_fraction=.5,
+                   learning_rate_backoff_factor=.5,
                    rollback_on_excessive_kl=True,
                    log_std_bounds=(-3.0, -0.8)):
-    advantage, returns = _gae(rows, gamma, gae_lambda)
-    advantage = (advantage - advantage.mean()) / (advantage.std() + 1e-8)
+    """Take one PPO update over one or more episodes flown by the same policy.
+
+    ``rows`` is either a single episode's transitions or a list of such
+    episodes. Passing the whole flown batch is what keeps a vectorised rollout
+    on-policy: ``flown_episode_batches`` flies ``width`` episodes against one
+    weight snapshot, so updating them one after another leaves every episode
+    after the first measuring its KL against a policy that has already moved.
+    Measured on the 2026-10-01 planar run, that discarded 44.7-49.1 % of the
+    second replica's updates against 14.7-19.9 % of the first's, biasing the
+    gradient toward whichever pair happened to be flown first.
+
+    GAE is still computed per episode -- bootstrapping across an episode
+    boundary would be wrong -- and the advantages are standardised over the
+    whole batch, which is the usual vectorised-PPO normalisation.
+    """
+    episodes = ([list(rows)] if rows and isinstance(rows[0], dict)
+                else [list(episode) for episode in rows])
+    episodes = [episode for episode in episodes if episode]
+    if not episodes:
+        raise ValueError("a PPO update needs at least one non-empty episode")
+    per_episode = [_gae(episode, gamma, gae_lambda) for episode in episodes]
+    flat_advantage = np.concatenate([item[0] for item in per_episode])
+    mean, deviation = float(flat_advantage.mean()), float(flat_advantage.std())
+    per_episode = [((advantage - mean) / (deviation + 1e-8), returns)
+                   for advantage, returns in per_episode]
+    # One flat chunk plan over the batch: the inner loop no longer knows
+    # whether two consecutive chunks came from the same flight.
+    chunk_plan = [(index, start, min(start + int(sequence_length), len(episode)))
+                  for index, episode in enumerate(episodes)
+                  for start in range(0, len(episode), int(sequence_length))]
     device = model.device
     metrics = []
     early_stop = False
@@ -1239,9 +1420,10 @@ def update_episode(model, optimizer, rows, *, gamma=.99, gae_lambda=.95,
         epoch_optimizer = (copy.deepcopy(optimizer.state_dict())
                            if rollback_on_excessive_kl else None)
         rollback_epoch = False
-        for start in range(0, len(rows), int(sequence_length)):
-            stop = min(start + int(sequence_length), len(rows))
-            chunk = rows[start:stop]
+        for episode_index, start, stop in chunk_plan:
+            episode_rows = episodes[episode_index]
+            advantage, returns = per_episode[episode_index]
+            chunk = episode_rows[start:stop]
             images = np.stack([row["image"] for row in chunk])[:, None]
             initial_hidden = (
                 torch.as_tensor(chunk[0]["hidden_h"], dtype=torch.float32, device=device),
@@ -1275,6 +1457,8 @@ def update_episode(model, optimizer, rows, *, gamma=.99, gae_lambda=.95,
                 "truth_valid": torch.ones((1, len(chunk)), dtype=torch.bool,
                                           device=device),
                 "graph_features": _chunk_graph_features(model, chunk, device),
+                "observation_packet": _chunk_observation_packets(
+                    model, chunk, device),
             }
             loss, values = recurrent_ppo_loss(
                 model, batch, clip=clip, value_coef=value_coef,
@@ -1285,7 +1469,9 @@ def update_episode(model, optimizer, rows, *, gamma=.99, gae_lambda=.95,
                 break
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), float(grad_clip))
+            torch.nn.utils.clip_grad_norm_(
+                [parameter for parameter in model.parameters()
+                 if parameter.requires_grad], float(grad_clip))
             optimizer.step()
             with torch.no_grad():
                 model.log_std.clamp_(log_std_low, log_std_high)
@@ -1305,7 +1491,8 @@ def update_episode(model, optimizer, rows, *, gamma=.99, gae_lambda=.95,
                     model.load_state_dict(epoch_model)
                     optimizer.load_state_dict(epoch_optimizer)
                     rollback_count += 1
-                reduced_lr = max(float(minimum_learning_rate), 0.5 * current_lr)
+                reduced_lr = max(float(minimum_learning_rate),
+                                 float(learning_rate_backoff_factor) * current_lr)
                 for group in optimizer.param_groups:
                     group["lr"] = reduced_lr
                 break
@@ -1334,6 +1521,10 @@ def update_episode(model, optimizer, rows, *, gamma=.99, gae_lambda=.95,
         "ppo_epochs_completed": float(epochs_completed),
         "effective_learning_rate": float(optimizer.param_groups[0]["lr"]),
         "learning_rate_recovered": float(recovered),
+        # Every episode of a batch carries the same optimiser diagnostics
+        # because they were one update. Analysis must de-duplicate on this
+        # rather than read N independent updates out of N rows.
+        "ppo_update_episode_count": float(len(episodes)),
     })
     return summary
 
@@ -1413,7 +1604,10 @@ def training_health_issue(history, ppo, *, warmup_episodes=0,
     if len(policy_rows) < window:
         return None
     recent = policy_rows[-window:]
-    successes = sum(float(row.get("paper_success", 0.0)) for row in recent)
+    recent_successes = sum(
+        float(row.get("paper_success", 0.0)) for row in recent)
+    lifetime_successes = sum(
+        float(row.get("paper_success", 0.0)) for row in policy_rows)
     issues = []
     battery_fraction, battery_label = battery_depletion_beyond_reserve(recent)
     battery_limit = float(ppo.get(
@@ -1423,7 +1617,14 @@ def training_health_issue(history, ppo, *, warmup_episodes=0,
             f"{battery_label} is {battery_fraction:.1%} (limit {battery_limit:.1%})")
     if len(policy_rows) < grace:
         return "; ".join(issues) or None
-    if successes == 0.0 and len(policy_rows) >= no_landing_grace:
+    # This is a first-success guard, not a rolling-performance early stopper.
+    # Once an arm has proved that its observation/control path can land, a
+    # later dry spell is a policy outcome that must remain in the experiment.
+    # Treating the last window as the entire lifetime stopped a healthy 1,000
+    # episode run at 758/740 even though both arms had dozens of prior safe
+    # landings and their best checkpoints were intact.
+    if (recent_successes == 0.0 and lifetime_successes == 0.0
+            and len(policy_rows) >= no_landing_grace):
         issues.append(f"no landing in the last {window} policy episodes")
     # Geometric FOV retention, reacquisition rate and low-visibility descent
     # are *the* dependent variables of the Baseline-vs-Proposed comparison.
@@ -1482,7 +1683,8 @@ def training_health_issue(history, ppo, *, warmup_episodes=0,
 def save_recurrent_checkpoint(path, model, optimizer, *, method, episode,
                               config_hash, curriculum, potential=None,
                               selection_score=None, selection_metric=None,
-                              model_state=None, training_contract_id=None):
+                              model_state=None, training_contract_id=None,
+                              checkpoint_signature_manifest=None):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     model_spec = getattr(model, "pipeline_spec", None)
@@ -1491,6 +1693,7 @@ def save_recurrent_checkpoint(path, model, optimizer, *, method, episode,
         "pipeline_spec": (model_spec.to_manifest() if model_spec is not None else None),
         "episode": int(episode), "config_hash": config_hash,
         "training_contract_id": training_contract_id,
+        "checkpoint_signature": checkpoint_signature_manifest,
         "model": (model.state_dict() if model_state is None else model_state),
         "optimizer": optimizer.state_dict(),
         "curriculum": curriculum.state_dict(),
@@ -1538,6 +1741,7 @@ def aggregate_deployment_validation(metrics) -> dict[str, float]:
     def mean(name: str, default: float = 0.0) -> float:
         return float(np.mean([float(row.get(name, default)) for row in rows]))
 
+    robust_score, robust_detail = robust_checkpoint_score(rows)
     return {
         "episodes": float(len(rows)),
         "successes": float(sum(float(
@@ -1553,6 +1757,8 @@ def aggregate_deployment_validation(metrics) -> dict[str, float]:
             "touchdown_lateral_error", 5.0),
         "mean_physical_score": float(np.mean([
             deployment_checkpoint_score(row) for row in rows])),
+        "robust_selection_score": robust_score,
+        **robust_detail,
     }
 
 
@@ -1593,12 +1799,106 @@ def _call_with_optional_lock(lock, function, *args, **kwargs):
         return function(*args, **kwargs)
 
 
+def _atomic_json(path: Path, payload: dict) -> None:
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    os.replace(temporary, path)
+
+
+def _rotate_reward_trace(trace_path: Path, manifest_path: Path,
+                         reason: str) -> Path | None:
+    """Archive a trace and its provenance sidecar under the same unique tag."""
+    if not trace_path.exists() and not manifest_path.exists():
+        return None
+    safe_reason = "".join(
+        character if character.isalnum() or character in "-_" else "-"
+        for character in str(reason)).strip("-") or "stale"
+    sequence = 0
+    while True:
+        suffix = f".{safe_reason}" + ("" if sequence == 0 else f"-{sequence}")
+        trace_archive = trace_path.with_name(
+            f"{trace_path.stem}{suffix}{trace_path.suffix}")
+        manifest_archive = manifest_path.with_name(
+            f"{manifest_path.stem}{suffix}{manifest_path.suffix}")
+        if not trace_archive.exists() and not manifest_archive.exists():
+            break
+        sequence += 1
+    if trace_path.exists():
+        os.replace(trace_path, trace_archive)
+    if manifest_path.exists():
+        os.replace(manifest_path, manifest_archive)
+    return trace_archive if trace_archive.exists() else manifest_archive
+
+
+def _prepare_reward_trace(trace_path: Path, *, method: str, config_hash: str,
+                          training_contract_id: str | None,
+                          completed_episode: int) -> set[int]:
+    """Validate trace provenance and return its committed episode ids.
+
+    Reward traces are append-only and are not learner inputs. They still need
+    the same lineage guarantees as checkpoints: an old trace sharing episode
+    numbers with a resumed run silently suppresses current trace records.
+    """
+    manifest_path = trace_path.with_suffix(".manifest.json")
+    expected = {
+        "format": "ontology-rgat-reward-trace-v2",
+        "method": str(method),
+        "config_hash": str(config_hash),
+        "training_contract_id": training_contract_id,
+    }
+    recorded = None
+    if manifest_path.is_file():
+        try:
+            recorded = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError):
+            recorded = None
+
+    rotate_reason = None
+    if trace_path.is_file() and trace_path.stat().st_size:
+        if recorded is None:
+            rotate_reason = "unattributed"
+        elif any(recorded.get(key) != value for key, value in expected.items()):
+            rotate_reason = "contract-mismatch"
+
+    logged: set[int] = set()
+    if rotate_reason is None and trace_path.is_file():
+        with trace_path.open(encoding="utf-8") as stream:
+            for line in stream:
+                try:
+                    record = json.loads(line)
+                    if bool(record.get("episode_complete", False)):
+                        logged.add(int(record["episode"]))
+                except (ValueError, KeyError, TypeError, json.JSONDecodeError):
+                    # A final interrupted line is recoverable; completed rows
+                    # before it remain valid.
+                    continue
+        if logged and max(logged) > int(completed_episode):
+            rotate_reason = "ahead-of-checkpoint"
+
+    if rotate_reason is not None:
+        archive = _rotate_reward_trace(
+            trace_path, manifest_path, rotate_reason)
+        print(
+            f"Archived {method} reward trace as {archive.name}; "
+            f"reason={rotate_reason}.")
+        logged.clear()
+
+    _atomic_json(manifest_path, {
+        **expected,
+        "checkpoint_episode_at_open": int(completed_episode),
+    })
+    return logged
+
+
 def train_live(env_factory: Callable, model, method, seeds, output_dir,
                *, config_hash, potential=None, ppo=None, curriculum_config=None,
                monitor=None, restart_incompatible=False,
                demonstration_dataset=None, demonstration_anchor=None,
                optimizer_lock=None, training_contract_id=None,
-               scenarios=None, env_factories=None, env_monitors=None):
+               checkpoint_signature_manifest=None,
+               scenarios=None, env_factories=None, env_monitors=None,
+               physical_pair_indices=None):
     ppo = ppo or {}
     # Deck motion the episodes are flown against. One analytic scenario per
     # episode, rotated by episode index rather than drawn, so a resumed run
@@ -1615,6 +1915,12 @@ def train_live(env_factory: Callable, model, method, seeds, output_dir,
     if env_monitors and len(env_monitors) != len(env_factories):
         raise ValueError(
             "train_live needs one monitor per environment factory, or none")
+    physical_pair_indices = list(
+        range(len(env_factories)) if physical_pair_indices is None
+        else physical_pair_indices)
+    if len(physical_pair_indices) != len(env_factories):
+        raise ValueError(
+            "train_live needs one physical pair index per environment factory")
     scenarios = tuple(scenarios or ("training_random_walk",))
     # The gateway is the authority on the scenario vocabulary and rejects an
     # unknown one, but it only does so on the first reset -- minutes into a
@@ -1637,24 +1943,15 @@ def train_live(env_factory: Callable, model, method, seeds, output_dir,
     curriculum = PlatformMotionCurriculum(**(curriculum_config or {}))
     if hasattr(potential, "assert_frozen"):
         potential.assert_frozen()
-    optimizer = torch.optim.Adam(model.parameters(), lr=float(ppo.get("learning_rate", 2e-4)))
+    optimizer = torch.optim.Adam(
+        [parameter for parameter in model.parameters() if parameter.requires_grad],
+        lr=float(ppo.get("learning_rate", 2e-4)))
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     checkpoint_path = output_dir / f"{method}.pt"
     best_checkpoint_path = output_dir / f"{method}.best.pt"
     history_path = output_dir / f"{method}_training.csv"
     reward_trace_path = output_dir / f"{method}_reward_steps.jsonl"
-    logged_reward_episodes = set()
-    if reward_trace_path.is_file():
-        for line in reward_trace_path.read_text(encoding="utf-8").splitlines():
-            try:
-                record = json.loads(line)
-                if bool(record.get("episode_complete", False)):
-                    logged_reward_episodes.add(int(record["episode"]))
-            except (ValueError, KeyError, json.JSONDecodeError):
-                # 마지막 줄이 중단 중 잘렸다면 안전하게 무시한다. 완성된
-                # checkpoint/history가 권위이며 다음 commit 때 다시 쓴다.
-                continue
     history = []
     completed = 0
     best_score = -float("inf")
@@ -1691,6 +1988,10 @@ def train_live(env_factory: Callable, model, method, seeds, output_dir,
         elif (training_contract_id is not None
               and saved.get("training_contract_id") != training_contract_id):
             incompatibility = "checkpoint training-contract mismatch"
+        elif (checkpoint_signature_manifest is not None
+              and saved.get("checkpoint_signature")
+              != checkpoint_signature_manifest):
+            incompatibility = "checkpoint full-signature mismatch"
         elif (saved_format == "three-pipeline-recurrent-v3-scaled-estimator"
               and not legacy_test_model
               and saved.get("pipeline_spec") != model_spec.to_manifest()):
@@ -1724,6 +2025,15 @@ def train_live(env_factory: Callable, model, method, seeds, output_dir,
                 best_archive = archive.with_name(
                     f"{archive.stem}.best{best_checkpoint_path.suffix}")
                 os.replace(best_checkpoint_path, best_archive)
+            trace_manifest_path = reward_trace_path.with_suffix(".manifest.json")
+            trace_archive = archive.with_name(
+                f"{archive.stem}_reward_steps.jsonl")
+            if reward_trace_path.is_file():
+                os.replace(reward_trace_path, trace_archive)
+            if trace_manifest_path.is_file():
+                os.replace(
+                    trace_manifest_path,
+                    trace_archive.with_suffix(".manifest.json"))
             print(f"Archived incompatible {method} checkpoint as {archive.name}; "
                   "starting with the current control configuration.")
         else:
@@ -1732,7 +2042,13 @@ def train_live(env_factory: Callable, model, method, seeds, output_dir,
                 state_dict = _migrate_legacy_shin_state_dict(state_dict)
                 print(f"Migrating legacy Shin checkpoint module names: {checkpoint_path}")
             model.load_state_dict(state_dict)
-            optimizer.load_state_dict(saved["optimizer"])
+            if bool(saved.get("reset_optimizer_on_resume", False)):
+                print(
+                    f"Resetting {method} optimizer at learning rate "
+                    f"{float(optimizer.param_groups[0]['lr']):.3g} for the "
+                    "recovery contract.")
+            else:
+                optimizer.load_state_dict(saved["optimizer"])
             completed = int(saved["episode"])
             saved_curriculum = dict(saved["curriculum"])
             interval_changed = int(saved_curriculum["episodes_per_update"]) != int(
@@ -1764,12 +2080,19 @@ def train_live(env_factory: Callable, model, method, seeds, output_dir,
                         and (training_contract_id is None or
                              best_saved.get("training_contract_id") ==
                              training_contract_id)
+                        and (checkpoint_signature_manifest is None or
+                             best_saved.get("checkpoint_signature") ==
+                             checkpoint_signature_manifest)
                         and best_saved.get("reward_design_sha256") == expected_design):
                     best_score = float(best_saved.get("selection_score", -float("inf")))
                     best_episode = int(best_saved.get("episode", 0))
                 else:
                     print(f"Ignoring incompatible best-policy checkpoint: "
                           f"{best_checkpoint_path}")
+    logged_reward_episodes = _prepare_reward_trace(
+        reward_trace_path, method=method, config_hash=config_hash,
+        training_contract_id=training_contract_id,
+        completed_episode=completed)
     seed_list = list(seeds)
     planned_policy_episodes = max(0, len(seed_list) - warmup_episodes)
     no_landing_grace = no_landing_abort_episode(
@@ -1807,6 +2130,8 @@ def train_live(env_factory: Callable, model, method, seeds, output_dir,
         gamma=float(ppo.get("gamma", .99)),
         shaping_lambda=float(ppo.get("shaping_lambda", 1.0)),
         fov_risk_lambda=float(ppo.get("fov_risk_lambda", 0.1)),
+        # Shared by both learned arms; see the experiment's ``reward:`` block.
+        reward_weights=dict(ppo.get("reward_weights") or {}),
         reward_normalizer=reward_normalizer,
         monitor=monitor)
     # Deterministic collection belongs to the perception warm-up alone: a PPO
@@ -1815,31 +2140,55 @@ def train_live(env_factory: Callable, model, method, seeds, output_dir,
     # can straddle the warm-up boundary.
     warmup_is_deterministic = not ppo.get(
         "perception_warmup_safe_exploration", True)
+    # Behaviour cloning pins log_std at ``post_log_std`` and PPO can only move
+    # it at the effective learning rate. On the 2026-10-01 planar run that rate
+    # sat near its floor, so log_std stayed at -2.5 (sigma 0.082) for 750
+    # episodes: entropy was 3*(log_std + 1.4189) = -3.24 from the first policy
+    # episode to the last, and the arms explored almost nothing. The floor
+    # restores a declared exploration scale on resume. It is applied to every
+    # arm identically and recorded in the training contract.
+    exploration_floor = ppo.get("resume_log_std_floor")
+    if exploration_floor is not None:
+        with torch.no_grad():
+            lifted = float(model.log_std.min())
+            if lifted < float(exploration_floor):
+                model.log_std.clamp_(min=float(exploration_floor))
+                print(f"Lifted {method} exploration log_std from {lifted:.3f} "
+                      f"to the declared floor {float(exploration_floor):.3f}.")
     with ExitStack() as env_stack:
         envs = [env_stack.enter_context(
                     open_live_env_resilient(factory, method))
                 for factory in env_factories]
-        for (episode, seed, scenario, c, rollout_model_state, rows,
-             metric) in flown_episode_batches(
+        for group in flown_episode_groups(
                 envs, model, method, seed_list, completed,
                 scenarios=scenarios, warmup_episodes=warmup_episodes,
                 curriculum=curriculum,
                 collect_episode_kwargs=collect_episode_kwargs,
                 env_monitors=env_monitors,
+                physical_pair_indices=physical_pair_indices,
                 warmup_is_deterministic=warmup_is_deterministic):
-            perception_warmup = episode <= warmup_episodes
-            ppo_episode = max(0, episode - warmup_episodes)
-            if perception_warmup:
-                loss = _call_with_optional_lock(
-                    optimizer_lock, update_estimator_episode,
-                    model, optimizer, rows,
-                    epochs=int(ppo.get("perception_warmup_epochs", 2)),
-                    grad_clip=float(ppo.get("grad_clip", 5.0)),
-                    sequence_length=int(ppo.get("sequence_length", 32)))
-            else:
-                loss = _call_with_optional_lock(
+            # The group, not the episode, is the unit of the PPO update: its
+            # flights share one weight snapshot, so one update over all of them
+            # is the only on-policy way to spend them. The perception warm-up
+            # is supervised and off-policy-safe, so it stays per episode and
+            # runs first, preserving episode order where a group straddles the
+            # warm-up boundary.
+            episode_losses = {}
+            for flight in group:
+                if flight[0] <= warmup_episodes:
+                    episode_losses[flight[0]] = _call_with_optional_lock(
+                        optimizer_lock, update_estimator_episode,
+                        model, optimizer, flight[5],
+                        epochs=int(ppo.get("perception_warmup_epochs", 2)),
+                        grad_clip=float(ppo.get("grad_clip", 5.0)),
+                        sequence_length=int(ppo.get("sequence_length", 32)))
+            policy_flights = [flight for flight in group
+                              if flight[0] > warmup_episodes]
+            if policy_flights:
+                shared_loss = _call_with_optional_lock(
                     optimizer_lock, update_episode,
-                    model, optimizer, rows, gamma=float(ppo.get("gamma", .99)),
+                    model, optimizer, [flight[5] for flight in policy_flights],
+                    gamma=float(ppo.get("gamma", .99)),
                     gae_lambda=float(ppo.get("gae_lambda", .95)),
                     epochs=int(ppo.get("epochs", 5)), clip=float(ppo.get("clip", .2)),
                     value_coef=float(ppo.get("value_coef", .5)),
@@ -1857,144 +2206,158 @@ def train_live(env_factory: Callable, model, method, seeds, output_dir,
                         "learning_rate_recovery_factor", 1.0)),
                     learning_rate_recovery_kl_fraction=float(ppo.get(
                         "learning_rate_recovery_kl_fraction", .5)),
+                    learning_rate_backoff_factor=float(ppo.get(
+                        "learning_rate_backoff_factor", .5)),
                     rollback_on_excessive_kl=bool(ppo.get(
                         "rollback_on_excessive_kl", True)),
                     log_std_bounds=tuple(ppo.get(
                         "log_std_bounds", (-3.0, -0.8))))
-                # Short live runs can forget a small set of successful
-                # demonstrations before PPO observes its first sparse terminal
-                # success. A decaying auxiliary BC pass provides demonstration
-                # replay to every arm equally; value and reward learning remain
-                # on-policy and the learned exploration variance is untouched.
-                anchor_until = max(0, int(demonstration_anchor.get(
-                    "until_policy_episode", 0)))
-                anchor_interval = max(1, int(demonstration_anchor.get(
-                    "interval_episodes", 1)))
-                if (anchor_enabled and ppo_episode <= anchor_until
-                        and (ppo_episode - 1) % anchor_interval == 0):
-                    start_lr = float(demonstration_anchor.get(
-                        "learning_rate", 5e-5))
-                    end_lr = float(demonstration_anchor.get(
-                        "minimum_learning_rate", start_lr * .2))
-                    progress = ((ppo_episode - 1) / max(1, anchor_until - 1))
-                    anchor_lr = start_lr + (end_lr - start_lr) * progress
-                    anchor_metric = _call_with_optional_lock(
-                        optimizer_lock, behavior_clone,
-                        model, demonstration_dataset,
-                        epochs=max(1, int(demonstration_anchor.get("epochs", 1))),
-                        learning_rate=anchor_lr,
-                        sequence_length=max(1, int(demonstration_anchor.get(
-                            "sequence_length", 48))),
-                        auxiliary_coefficient=float(demonstration_anchor.get(
-                            "auxiliary_coefficient", .10)),
-                        post_log_std=None)
-                    loss.update({
-                        "imitation_anchor_applied": 1.0,
-                        "imitation_anchor_learning_rate": anchor_lr,
-                        "imitation_anchor_action_loss_before": anchor_metric[
-                            "action_loss_before"],
-                        "imitation_anchor_action_loss_after": anchor_metric[
-                            "action_loss_after"],
-                    })
-                else:
-                    loss["imitation_anchor_applied"] = 0.0
-            if hasattr(potential, "assert_frozen"):
-                # Reward design is not a PPO module/optimizer parameter. This
-                # hash+mode assertion catches accidental mutation immediately.
-                potential.assert_frozen()
-            metric.update(loss)
-            prior_steps = sum(
-                int(float(row.get("steps", 0))) for row in history
-                if row.get("optimization_phase") == "ppo")
-            metric.update({"method": method, "scenario": scenario,
-                           "episode": episode, "curriculum_level": curriculum.level,
-                           "curriculum": float(c),
-                           "optimization_phase": ("perception_warmup"
-                                                  if perception_warmup else "ppo"),
-                           "training_sample_efficiency": ppo_episode,
-                           "ppo_episode": ppo_episode,
-                           "ppo_environment_steps": (prior_steps
-                               + (0 if perception_warmup else int(metric["steps"])))})
-            log_every = max(1, int(ppo.get("reward_log_every_steps", 1)))
-            if episode not in logged_reward_episodes:
-                with reward_trace_path.open("a", encoding="utf-8") as stream:
-                    for step_index, transition in enumerate(rows):
-                        if step_index % log_every and step_index != len(rows) - 1:
-                            continue
-                        record = {
-                            "episode": episode, "time_index": step_index,
-                            "episode_complete": step_index == len(rows) - 1,
-                            "method": method,
-                            "phase": ("perception_warmup" if perception_warmup else "ppo"),
-                            "landing_phase": transition.get("landing_phase", "unknown"),
-                            "scenario": scenario,
-                            "success": int(metric["paper_success"]),
-                            "failure": int(metric["failure"]),
-                            "failure_type": metric["status"],
-                            "disturbance_level": float(
-                                metric.get("domain_external_force_n", 0.0)),
-                            "reward": float(transition["reward"]),
-                            **{key: (float(value) if isinstance(
-                                value, (int, float, np.integer, np.floating)) else value)
-                               for key, value in transition["reward_parts"].items()},
-                        }
-                        stream.write(json.dumps(record, allow_nan=False) + "\n")
-                logged_reward_episodes.add(episode)
-            advanced = (False if perception_warmup else curriculum.observe(metric))
-            metric["curriculum_advanced"] = float(advanced)
-            metric["next_curriculum_level"] = curriculum.level
-            history.append(metric)
-            if monitor is not None:
-                monitor.training_update(method, metric)
-            save_recurrent_checkpoint(
-                checkpoint_path, model, optimizer, method=method,
-                episode=episode, config_hash=config_hash, curriculum=curriculum,
-                potential=potential,
-                training_contract_id=training_contract_id)
-            selection_score = deployment_checkpoint_score(metric)
-            if selection_score > best_score:
-                best_score = selection_score
-                best_episode = episode
+                for flight in policy_flights:
+                    episode_losses[flight[0]] = dict(shared_loss)
+            for (episode, seed, scenario, c, rollout_model_state, rows,
+                 metric) in group:
+                perception_warmup = episode <= warmup_episodes
+                ppo_episode = max(0, episode - warmup_episodes)
+                loss = episode_losses[episode]
+                if not perception_warmup:
+                    # Short live runs can forget a small set of successful
+                    # demonstrations before PPO observes its first sparse terminal
+                    # success. A decaying auxiliary BC pass provides demonstration
+                    # replay to every arm equally; value and reward learning remain
+                    # on-policy and the learned exploration variance is untouched.
+                    anchor_until = max(0, int(demonstration_anchor.get(
+                        "until_policy_episode", 0)))
+                    anchor_interval = max(1, int(demonstration_anchor.get(
+                        "interval_episodes", 1)))
+                    if (anchor_enabled and ppo_episode <= anchor_until
+                            and (ppo_episode - 1) % anchor_interval == 0):
+                        start_lr = float(demonstration_anchor.get(
+                            "learning_rate", 5e-5))
+                        end_lr = float(demonstration_anchor.get(
+                            "minimum_learning_rate", start_lr * .2))
+                        progress = ((ppo_episode - 1) / max(1, anchor_until - 1))
+                        anchor_lr = start_lr + (end_lr - start_lr) * progress
+                        anchor_metric = _call_with_optional_lock(
+                            optimizer_lock, behavior_clone,
+                            model, demonstration_dataset,
+                            epochs=max(1, int(demonstration_anchor.get("epochs", 1))),
+                            learning_rate=anchor_lr,
+                            sequence_length=max(1, int(demonstration_anchor.get(
+                                "sequence_length", 48))),
+                            auxiliary_coefficient=float(demonstration_anchor.get(
+                                "auxiliary_coefficient", .10)),
+                            post_log_std=None)
+                        loss.update({
+                            "imitation_anchor_applied": 1.0,
+                            "imitation_anchor_learning_rate": anchor_lr,
+                            "imitation_anchor_action_loss_before": anchor_metric[
+                                "action_loss_before"],
+                            "imitation_anchor_action_loss_after": anchor_metric[
+                                "action_loss_after"],
+                        })
+                    else:
+                        loss["imitation_anchor_applied"] = 0.0
+                if hasattr(potential, "assert_frozen"):
+                    # Reward design is not a PPO module/optimizer parameter. This
+                    # hash+mode assertion catches accidental mutation immediately.
+                    potential.assert_frozen()
+                metric.update(loss)
+                prior_steps = sum(
+                    int(float(row.get("steps", 0))) for row in history
+                    if row.get("optimization_phase") == "ppo")
+                metric.update({"method": method, "scenario": scenario,
+                               "episode": episode, "curriculum_level": curriculum.level,
+                               "curriculum": float(c),
+                               "optimization_phase": ("perception_warmup"
+                                                      if perception_warmup else "ppo"),
+                               "training_sample_efficiency": ppo_episode,
+                               "ppo_episode": ppo_episode,
+                               "ppo_environment_steps": (prior_steps
+                                   + (0 if perception_warmup else int(metric["steps"])))})
+                log_every = max(1, int(ppo.get("reward_log_every_steps", 1)))
+                if episode not in logged_reward_episodes:
+                    with reward_trace_path.open("a", encoding="utf-8") as stream:
+                        for step_index, transition in enumerate(rows):
+                            if step_index % log_every and step_index != len(rows) - 1:
+                                continue
+                            record = {
+                                "episode": episode, "time_index": step_index,
+                                "episode_complete": step_index == len(rows) - 1,
+                                "method": method,
+                                "physical_pair_index": int(
+                                    metric["physical_pair_index"]),
+                                "phase": ("perception_warmup" if perception_warmup else "ppo"),
+                                "landing_phase": transition.get("landing_phase", "unknown"),
+                                "scenario": scenario,
+                                "success": int(metric["paper_success"]),
+                                "failure": int(metric["failure"]),
+                                "failure_type": metric["status"],
+                                "disturbance_level": float(
+                                    metric.get("domain_external_force_n", 0.0)),
+                                "reward": float(transition["reward"]),
+                                **{key: (float(value) if isinstance(
+                                    value, (int, float, np.integer, np.floating)) else value)
+                                   for key, value in transition["reward_parts"].items()},
+                            }
+                            stream.write(json.dumps(record, allow_nan=False) + "\n")
+                    logged_reward_episodes.add(episode)
+                advanced = (False if perception_warmup else curriculum.observe(metric))
+                metric["curriculum_advanced"] = float(advanced)
+                metric["next_curriculum_level"] = curriculum.level
+                history.append(metric)
+                if monitor is not None:
+                    monitor.training_update(method, metric)
                 save_recurrent_checkpoint(
-                    best_checkpoint_path, model, optimizer, method=method,
-                    episode=episode, config_hash=config_hash,
-                    curriculum=curriculum, potential=potential,
-                    selection_score=selection_score,
-                    selection_metric={
-                        key: metric.get(key) for key in (
-                            "paper_success", "pad_contact", "unsafe_pad_contact",
-                            "crash_failure", "touchdown_lateral_error",
-                            "geometric_fov_loss_fraction",
-                            "descent_during_low_keypoint_visibility_fraction")},
-                    model_state=rollout_model_state,
-                    training_contract_id=training_contract_id)
-            persist_history()
-            issue = training_health_issue(
-                history, ppo, warmup_episodes=warmup_episodes,
-                planned_policy_episodes=planned_policy_episodes)
-            if issue is not None:
-                raise RuntimeError(f"training health gate stopped {method}: {issue}")
-            health_grace = max(
-                int(ppo.get("health_window_episodes", 20)),
-                int(ppo.get("health_grace_episodes", 40)))
-            recent_policy = [row for row in history
-                             if int(float(row.get("episode", 0))) > warmup_episodes]
-            recent_window = recent_policy[-max(
-                1, int(ppo.get("health_window_episodes", 20))):]
-            if (ppo_episode >= health_grace
-                    and ppo_episode < no_landing_grace
-                    and not any(float(row.get("paper_success", 0.0))
-                                for row in recent_window)
-                    and (ppo_episode == health_grace
-                         or episode == completed + 1)):
-                print(
-                    f"WARNING: {method} has no landing in the last "
-                    f"{len(recent_window)} policy episodes; dense health metrics "
-                    f"remain inside their limits, so training continues until "
-                    f"policy episode {no_landing_grace} before zero success is fatal.")
-            print(f"{method} episode {episode}/{len(seed_list)} "
-                  f"return={metric['episode_return']:+.3f} "
-                  f"success={int(metric['paper_success'])} c={c:.3f}")
+                    checkpoint_path, model, optimizer, method=method,
+                    episode=episode, config_hash=config_hash, curriculum=curriculum,
+                    potential=potential,
+                    training_contract_id=training_contract_id,
+                    checkpoint_signature_manifest=checkpoint_signature_manifest)
+                selection_score = deployment_checkpoint_score(metric)
+                if selection_score > best_score:
+                    best_score = selection_score
+                    best_episode = episode
+                    save_recurrent_checkpoint(
+                        best_checkpoint_path, model, optimizer, method=method,
+                        episode=episode, config_hash=config_hash,
+                        curriculum=curriculum, potential=potential,
+                        selection_score=selection_score,
+                        selection_metric={
+                            key: metric.get(key) for key in (
+                                "paper_success", "pad_contact", "unsafe_pad_contact",
+                                "crash_failure", "touchdown_lateral_error",
+                                "geometric_fov_loss_fraction",
+                                "descent_during_low_keypoint_visibility_fraction")},
+                        model_state=rollout_model_state,
+                        training_contract_id=training_contract_id,
+                        checkpoint_signature_manifest=checkpoint_signature_manifest)
+                persist_history()
+                issue = training_health_issue(
+                    history, ppo, warmup_episodes=warmup_episodes,
+                    planned_policy_episodes=planned_policy_episodes)
+                if issue is not None:
+                    raise RuntimeError(f"training health gate stopped {method}: {issue}")
+                health_grace = max(
+                    int(ppo.get("health_window_episodes", 20)),
+                    int(ppo.get("health_grace_episodes", 40)))
+                recent_policy = [row for row in history
+                                 if int(float(row.get("episode", 0))) > warmup_episodes]
+                recent_window = recent_policy[-max(
+                    1, int(ppo.get("health_window_episodes", 20))):]
+                if (ppo_episode >= health_grace
+                        and ppo_episode < no_landing_grace
+                        and not any(float(row.get("paper_success", 0.0))
+                                    for row in recent_window)
+                        and (ppo_episode == health_grace
+                             or episode == completed + 1)):
+                    print(
+                        f"WARNING: {method} has no landing in the last "
+                        f"{len(recent_window)} policy episodes; dense health metrics "
+                        f"remain inside their limits, so training continues until "
+                        f"policy episode {no_landing_grace} before zero success is fatal.")
+                print(f"{method} episode {episode}/{len(seed_list)} "
+                      f"return={metric['episode_return']:+.3f} "
+                      f"success={int(metric['paper_success'])} c={c:.3f}")
     if best_checkpoint_path.is_file():
         selected = torch.load(best_checkpoint_path, map_location=model.device,
                               weights_only=False)

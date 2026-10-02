@@ -114,7 +114,10 @@ class PlanarLongitudinalController:
                  max_longitudinal_tilt_deg=12.0,
                  max_tilt_rate_deg_s=60.0,
                  dt=0.1, curriculum_min_action_scale=0.35,
-                 tilt_channel_enabled=True):
+                 tilt_channel_enabled=True,
+                 approach_cone_tolerance=0.0,
+                 approach_cone_flare_range_m=1.20,
+                 approach_cone_reference_scale=0.65):
         self.max_velocity = np.asarray(max_velocity, dtype=float).reshape(-1)
         self.max_acceleration = np.asarray(max_acceleration, dtype=float).reshape(-1)
         if self.max_velocity.shape != (2,) or self.max_acceleration.shape != (2,):
@@ -126,6 +129,34 @@ class PlanarLongitudinalController:
         self.dt = float(dt)
         self.curriculum_min_action_scale = float(curriculum_min_action_scale)
         self.tilt_channel_enabled = bool(tilt_channel_enabled)
+        # The approach cone: the vertical channel may not command a descent
+        # while the pad sits outside a cone about nadir, measured as a bearing
+        # tangent (horizontal offset over altitude). Zero disables it and every
+        # retired configuration keeps the envelope it was run under.
+        #
+        # This is an envelope constraint, not a reward and not a gain: it sits
+        # here, with the velocity, acceleration and tilt limits, because the
+        # whole point of this object is that no arm can buy authority another
+        # one lacks. Both learned arms and the non-learned control condition
+        # fly under exactly the same rule.
+        #
+        # Measured 2026-09-25 over 1302 training episodes: a policy that lets
+        # the pad leave the frame never recovers it. Reacquisition events were
+        # zero in every episode of both arms, the climb-while-blind fraction
+        # was zero, the descend-while-blind fraction was one, and of the 609
+        # episodes whose mean visible-keypoint fraction fell below 0.3, not one
+        # landed. Losing sight while descending is a one-way door, so the
+        # envelope refuses to open it.
+        self.approach_cone_tolerance = float(approach_cone_tolerance)
+        self.approach_cone_flare_range_m = float(approach_cone_flare_range_m)
+        self.approach_cone_reference_scale = float(approach_cone_reference_scale)
+        if (self.approach_cone_tolerance < 0.0
+                or self.approach_cone_flare_range_m <= 0.0
+                or self.approach_cone_reference_scale <= 0.0):
+            raise ValueError(
+                "the approach cone needs a non-negative tolerance and positive "
+                "flare range and reference scale")
+        self._approach: tuple[float, float, bool] | None = None
         if self.dt <= 0 or np.any(self.max_velocity <= 0) or np.any(self.max_acceleration <= 0):
             raise ValueError("controller period and limits must be positive")
         if not 0.0 < self.max_longitudinal_tilt < 0.5 * math.pi:
@@ -169,6 +200,12 @@ class PlanarLongitudinalController:
                 control.get("curriculum_min_action_scale", 0.35)),
             tilt_channel_enabled=bool(
                 control.get("tilt_channel_enabled", True)),
+            approach_cone_tolerance=float(
+                control.get("approach_cone_tolerance", 0.0)),
+            approach_cone_flare_range_m=float(
+                control.get("approach_cone_flare_range_m", 1.20)),
+            approach_cone_reference_scale=float(
+                control.get("approach_cone_reference_scale", 0.65)),
         )
 
     # ------------------------------------------------------------- envelope
@@ -184,6 +221,39 @@ class PlanarLongitudinalController:
     def reset(self) -> None:
         self._velocity = np.zeros(2, dtype=float)   # longitudinal, vertical
         self._tilt = 0.0
+        self._approach = None
+
+    # ------------------------------------------------------- approach cone
+    def observe_pad(self, bearing_tangent: float, raw_scale: float,
+                    trustworthy: bool) -> None:
+        """Tell the envelope where the pad is, in image-plane terms.
+
+        The same two numbers the PN control condition reads and the same two a
+        learned actor is given: the bearing from nadir as a tangent, and the
+        encoder's apparent scale, whose product with range is a measured
+        constant. Nothing privileged enters here -- an arm that never calls
+        this simply flies unconstrained, which is what a recorded run or a
+        hardware bring-up does.
+        """
+        self._approach = (float(bearing_tangent), float(raw_scale),
+                          bool(trustworthy))
+
+    def descent_permitted(self) -> bool:
+        """Whether the vertical channel may command a descent this step."""
+        if self.approach_cone_tolerance <= 0.0:
+            return True
+        if self._approach is None:
+            return True
+        bearing, raw_scale, trustworthy = self._approach
+        distance = (self.approach_cone_reference_scale / raw_scale
+                    if raw_scale > 1e-3 else float("inf"))
+        if distance <= self.approach_cone_flare_range_m:
+            # Committed. The pad legitimately fills a camera pitched down and
+            # leaves it; refusing to descend here would refuse to land.
+            return True
+        if not trustworthy:
+            return False
+        return abs(bearing) <= self.approach_cone_tolerance
 
     # -------------------------------------------------------------- command
     def command(self, normalized_action) -> PlanarCommand:
@@ -199,6 +269,13 @@ class PlanarLongitudinalController:
         velocity_limit = self.max_velocity * scale
         self._velocity = np.clip(self._velocity + acceleration * self.dt,
                                  -velocity_limit, velocity_limit)
+        if not self.descent_permitted():
+            # Hold altitude, do not impose a climb: the constraint is on the
+            # door the policy must not walk through, not on what it does
+            # instead. Clamping the integrated setpoint rather than the action
+            # keeps the action space, and therefore every stored checkpoint,
+            # exactly as it was.
+            self._velocity[1] = max(float(self._velocity[1]), 0.0)
 
         tilt_limit = self.max_longitudinal_tilt * scale
         if self.tilt_channel_enabled:
@@ -295,6 +372,8 @@ class PlanarLongitudinalController:
             "max_longitudinal_tilt_deg": float(
                 math.degrees(self.max_longitudinal_tilt * scale)),
             "tilt_channel_enabled": bool(self.tilt_channel_enabled),
+            "approach_cone_tolerance": float(self.approach_cone_tolerance),
+            "approach_cone_flare_range_m": float(self.approach_cone_flare_range_m),
             "lateral_velocity_m_s": 0.0,
             "yaw_rate_deg_s": 0.0,
             "action_scale": float(scale),

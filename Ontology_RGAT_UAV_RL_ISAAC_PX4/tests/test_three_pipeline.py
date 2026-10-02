@@ -669,6 +669,102 @@ def test_robust_adaptive_profile_rejects_the_collapsed_seminar_artifact():
     assert any("unsafe failure" in issue for issue in issues)
 
 
+def _single_step_episode(model, steps=4, reward_at=3):
+    """One synthetic episode of ``steps`` transitions logged under ``model``."""
+    images = torch.randint(0, 255, (steps, 32, 32), dtype=torch.uint8)
+    proprio = np.tile(np.asarray([0., 0., 0., 1., 0., 0., 0.]), (steps, 1))
+    truth = np.zeros((steps, 6), dtype=np.float32)
+    hidden = model.initial_state(1)
+    with torch.no_grad():
+        output = model(images[:, None].float()[None] / 255.0,
+                       torch.as_tensor(proprio[None], dtype=torch.float32),
+                       true_relative_state=torch.as_tensor(truth[None]))
+        pre = output.action_mean[0].numpy()
+        action = torch.tanh(output.action_mean[0]).numpy()
+        log_prob = model.log_prob(
+            output.action_mean, torch.tanh(output.action_mean),
+            output.action_mean, output.action_std)[0].numpy()
+        values = output.value[0].numpy()
+    return [{
+        "image": images[index].numpy(), "proprioception": proprio[index],
+        "truth": truth[index], "pre_squash": pre[index],
+        "action": action[index], "log_prob": float(log_prob[index]),
+        "value": float(values[index]), "reward": float(index == reward_at),
+        "done": float(index == steps - 1),
+        "hidden_h": hidden[0].numpy(), "hidden_c": hidden[1].numpy(),
+    } for index in range(steps)]
+
+
+def test_a_flown_batch_is_spent_as_one_on_policy_update():
+    """The second replica must not be discarded for being off-policy.
+
+    ``flown_episode_groups`` flies a batch against one weight snapshot. Taking
+    one update per episode made every episode after the first off-policy, and
+    the KL guard then threw it away. One update over the group is the fix, so
+    the batch must cost exactly one optimiser trajectory, not one per episode.
+    """
+    model = _model("no_se")
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
+    episodes = [_single_step_episode(model), _single_step_episode(model)]
+
+    metrics = update_episode(
+        model, optimizer, episodes, epochs=2, sequence_length=4,
+        target_kl=0.0, entropy_coef=0.0, value_coef=0.0)
+    # Both episodes were spent, and they were spent together.
+    assert metrics["ppo_update_episode_count"] == 2.0
+    assert metrics["ppo_epochs_completed"] == 2.0
+    assert metrics["ppo_early_stop"] == 0.0
+
+    # A bare list of transitions still means a single episode.
+    flat = update_episode(
+        model, optimizer, episodes[0], epochs=1, sequence_length=4,
+        target_kl=0.0, entropy_coef=0.0, value_coef=0.0)
+    assert flat["ppo_update_episode_count"] == 1.0
+
+
+def test_grouped_update_standardises_advantages_over_the_whole_batch():
+    """Per-episode normalisation would erase which flight did better."""
+    import ontology_rgat.ppo.recurrent_train as rt
+
+    model = _model("no_se")
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-6)
+    poor = _single_step_episode(model, reward_at=0)
+    good = _single_step_episode(model, reward_at=3)
+    seen = []
+
+    original = rt.recurrent_ppo_loss
+
+    def spy(model_, batch, **kwargs):
+        seen.append(float(batch["advantage"].mean()))
+        return original(model_, batch, **kwargs)
+    rt.recurrent_ppo_loss = spy
+    try:
+        rt.update_episode(model, optimizer, [poor, good], epochs=1,
+                          sequence_length=4, target_kl=0.0,
+                          entropy_coef=0.0, value_coef=0.0)
+    finally:
+        rt.recurrent_ppo_loss = original
+    # One chunk per episode, measured before and after its step; the two
+    # episodes must not both come out centred on zero.
+    chunk_means = [seen[0], seen[2]]
+    assert abs(chunk_means[0] - chunk_means[1]) > 1e-6
+    assert abs(sum(chunk_means)) < 1e-4
+
+
+def test_learning_rate_backoff_factor_is_configurable():
+    """0.5 down against 1.25 up needed 3.1 quiet updates to undo one cut."""
+    model = _model("no_se")
+    optimizer = torch.optim.Adam(model.parameters(), lr=.01)
+    rows = _single_step_episode(model)
+    metrics = update_episode(
+        model, optimizer, rows, epochs=1, sequence_length=4,
+        target_kl=1e-12, rollback_on_excessive_kl=True,
+        learning_rate_backoff_factor=.7, minimum_learning_rate=1e-9,
+        entropy_coef=0.0, value_coef=0.0)
+    assert metrics["ppo_kl_rollback_count"] == 1.0
+    assert metrics["effective_learning_rate"] == pytest.approx(.007)
+
+
 def test_excessive_post_update_kl_rolls_back_the_ppo_epoch():
     model = _model("no_se")
     optimizer = torch.optim.Adam(model.parameters(), lr=.05)
@@ -756,6 +852,131 @@ def test_normalized_estimator_loss_restores_active_reward_gradient():
     assert active_perception_reward(raw, cfg) == pytest.approx(-0.1)
     assert normalized == pytest.approx(0.14467593)
     assert -0.02 < active_perception_reward(normalized, cfg) < -0.01
+
+
+def _shin_episode(cfg, *, close_per_step, descend_per_step, vertical_velocity,
+                  tilt, terminal, steps=250):
+    """Total reward for a stylised episode flown from 5.7 m out at 4 m up."""
+    from ontology_rgat.reward_modes import ShinReward
+
+    reward = ShinReward(cfg)
+    total, lateral, height = 0.0, 5.7, -4.0
+    for _ in range(steps):
+        current = np.array([lateral, 0.0, height, 0.0, 0.0, 0.0])
+        lateral = max(lateral - close_per_step, 0.0)
+        height = min(height + descend_per_step, 0.0)
+        value, _ = reward(
+            current, np.array([lateral, 0.0, height, 0.0, 0.0, 0.0]),
+            np.array([0.3, 0.0, tilt]),
+            drone_vertical_velocity=vertical_velocity,
+            next_estimation_loss=0.02)
+        total += value
+    return total + (cfg.success_value if terminal == "land" else cfg.timeout_value)
+
+
+def _planar_reward_config():
+    """The weights the planar experiment declares, as both arms receive them."""
+    from ontology_rgat.reward_modes import reward_config_from
+
+    config = load_experiment(
+        ROOT / "config/experiments/planar_three_arm_comparison.yaml")
+    return reward_config_from(config.get("reward"), active_enabled=True)
+
+
+def test_landing_must_outscore_loitering_to_a_timeout():
+    """The defect that stalled the 2026-10-01 run, pinned as a property.
+
+    Table III's weights transcribed literally onto the planar envelope paid
+    -2|tilt| for the only longitudinal actuator and scored a timeout at zero.
+    Loitering out of reach then beat approaching and landing by 99.8, and the
+    proposed arm duly converged on it: one deck contact in 80 episodes.
+    """
+    cfg = _planar_reward_config()
+    loiter = _shin_episode(
+        cfg, close_per_step=0.0, descend_per_step=0.0,
+        vertical_velocity=0.0, tilt=0.14, terminal="timeout")
+    land = _shin_episode(
+        cfg, close_per_step=0.03, descend_per_step=0.02,
+        vertical_velocity=-0.5, tilt=0.5, terminal="land")
+    assert land > loiter, "a safe landing must beat running the clock out"
+    assert land - loiter > 50.0
+
+    # Table III's own weights, which are still this module's defaults.
+    retired = ShinRewardConfig()
+    assert _shin_episode(
+        retired, close_per_step=0.0, descend_per_step=0.0,
+        vertical_velocity=0.0, tilt=0.14, terminal="timeout") > _shin_episode(
+        retired, close_per_step=0.03, descend_per_step=0.02,
+        vertical_velocity=-0.5, tilt=0.5, terminal="land")
+
+
+def test_approach_actuator_cannot_outbid_the_approach_it_pays_for():
+    """Tilt is the planar envelope's only longitudinal acceleration."""
+    cfg = _planar_reward_config()
+    assert cfg.attitude_weight < cfg.lateral_progress_weight / 10.0
+    # Closing at 1 m/s for one 0.1 s step, at full tilt, must still pay.
+    from ontology_rgat.reward_modes import ShinReward
+
+    value, parts = ShinReward(cfg)(
+        np.array([5.7, 0.0, -4.0, 0.0, 0.0, 0.0]),
+        np.array([5.6, 0.0, -4.0, 0.0, 0.0, 0.0]),
+        np.array([0.3, 0.0, 1.0]), drone_vertical_velocity=0.0,
+        next_estimation_loss=0.02)
+    assert parts["lateral_progress"] > -parts["attitude_penalty"]
+
+
+def test_timeout_is_not_the_cheapest_terminal():
+    from ontology_rgat.reward_modes.sparse import sparse_terminal_reward
+
+    common = dict(physical_contact=False, excessive_drift=False, terminal=True,
+                  success_value=50.0, failure_value=-10.0, timeout_value=-5.0)
+    timeout = sparse_terminal_reward(crash=False, battery_depleted=False, **common)
+    assert timeout == -5.0
+    # Still cheaper than crashing, but no longer free.
+    assert sparse_terminal_reward(
+        crash=True, battery_depleted=False, **common) < timeout < 0.0
+    # Mid-episode steps are untouched.
+    assert sparse_terminal_reward(
+        physical_contact=False, crash=False, excessive_drift=False,
+        terminal=False, battery_depleted=False, timeout_value=-5.0) == 0.0
+
+
+def test_both_learned_arms_receive_the_same_reward_weights():
+    """The comparison's single factor is the situation graph, not the reward."""
+    from ontology_rgat.reward_modes import reward_config_from
+
+    baseline, proposed = PIPELINES["shin_se_fixed"], PIPELINES["shin_se_onto_rgat_state"]
+    assert baseline.reward_mode == proposed.reward_mode == "shin_table_active"
+    assert baseline.active_perception_enabled == proposed.active_perception_enabled
+    config = load_experiment(
+        ROOT / "config/experiments/planar_three_arm_comparison.yaml")
+    # One ``reward:`` block, read once per arm with only ``active_enabled``
+    # varying -- and both primary arms enable active perception.
+    assert reward_config_from(
+        config.get("reward"),
+        active_enabled=baseline.active_perception_enabled) == reward_config_from(
+        config.get("reward"), active_enabled=proposed.active_perception_enabled)
+
+
+def test_an_experiment_cannot_misspell_a_reward_weight():
+    """A typo used to leave the weight silently at its paper value."""
+    from ontology_rgat.reward_modes import reward_config_from
+
+    with pytest.raises(ValueError, match="unknown reward blocks"):
+        reward_config_from({"shapping": {"attitude": 0.1}}, active_enabled=True)
+    with pytest.raises(ValueError, match="unknown reward weights.*'shaping'"):
+        reward_config_from({"shaping": {"lateral_progess": 5.0}},
+                           active_enabled=True)
+    with pytest.raises(ValueError, match="unknown reward weights.*'terminal'"):
+        reward_config_from({"terminal": {"timout": -5.0}}, active_enabled=True)
+
+
+def test_table_iii_defaults_survive_the_planar_re_weighting():
+    """The Shin baseline reproduction must not inherit the planar weights."""
+    paper = ShinRewardConfig()
+    assert (paper.lateral_progress_weight, paper.attitude_weight) == (1.0, 2.0)
+    assert (paper.success_value, paper.failure_value) == (10.0, -10.0)
+    assert paper.timeout_value == 0.0
 
 
 def test_three_pipeline_keeps_all_physical_evaluation_scenarios():
@@ -901,6 +1122,22 @@ def test_no_landing_grace_is_capped_for_large_publication_run():
     issue = training_health_issue(
         history, {}, planned_policy_episodes=40960)
     assert issue == "no landing in the last 20 policy episodes"
+
+
+def test_late_dry_spell_does_not_abort_an_arm_that_has_landed_before():
+    """A rolling drought is a result; the gate only catches zero-ever success."""
+    history = [{
+        "episode": episode,
+        "paper_success": 1 if episode == 30 else 0,
+        "geometric_fov_loss_fraction": .2,
+        "battery_depleted": 0,
+        "position_rmse": 1.0,
+        "active_reward_saturation_fraction": .1,
+        "geometric_fov_loss_events": 0,
+    } for episode in range(1, 801)]
+
+    assert training_health_issue(
+        history, {}, planned_policy_episodes=1000) is None
 
 
 def test_transport_failure_restarts_and_retries_the_same_seed(monkeypatch):

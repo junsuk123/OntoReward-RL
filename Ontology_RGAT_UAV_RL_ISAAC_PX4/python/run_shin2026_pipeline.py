@@ -37,6 +37,11 @@ from ontology_rgat.perception import (RosGrayscaleSource,
                                       prepare_keypoint_encoder)
 from ontology_rgat.ppo.recurrent import PipelineActorCritic
 from ontology_rgat.ppo.recurrent_train import collect_episode, train_live
+from ontology_rgat.pipelines import get_pipeline
+from ontology_rgat.contracts import load_observation_registry
+from ontology_rgat.ppo.selective_graph_encoder import SELECTIVE_ARTIFACT_FORMAT
+from ontology_rgat.rgat.selective_state import (RELATION_PARTITION_HASH,
+                                                SELECTIVE_SCHEMA_HASH)
 from ontology_rgat.reward_modes import (FrozenControlledPotential,
                                         episode_rollout_dataset,
                                         load_rollout_dataset,
@@ -152,6 +157,35 @@ def _build_model(config, device, keypoint_pretraining=None, pipeline="shin_se"):
     # declaration does not carry the graph -- ``PipelineActorCritic`` builds no
     # encoder in that case.
     graph_state = config.get("graph_state") or {}
+    graph_artifact = graph_state.get("pretrained_artifact")
+    if graph_artifact:
+        graph_artifact = Path(str(graph_artifact))
+        if not graph_artifact.is_absolute():
+            graph_artifact = ROOT / graph_artifact
+    selective_payload = None
+    if graph_artifact is not None and graph_artifact.is_file():
+        selective_payload = torch.load(
+            graph_artifact, map_location="cpu", weights_only=False)
+    base_state = ({} if selective_payload is None
+                  else dict(selective_payload.get("base_state") or {}))
+    pipeline_spec = get_pipeline(pipeline)
+    if pipeline_spec.policy_state_mode in {"canonical_vector", "selective_graph"}:
+        if selective_payload is None:
+            raise FileNotFoundError(
+                f"refactored PPO requires pretrained R-GAT artifact: {graph_artifact}")
+        metadata = dict(selective_payload.get("metadata") or {})
+        required = {
+            "format": SELECTIVE_ARTIFACT_FORMAT,
+            "graph_schema_hash": SELECTIVE_SCHEMA_HASH,
+            "relation_partition_hash": RELATION_PARTITION_HASH,
+            "observation_registry_hash": load_observation_registry().sha256,
+            "control_sufficiency_passed": True,
+        }
+        mismatches = {key: (metadata.get(key), value)
+                      for key, value in required.items()
+                      if metadata.get(key) != value}
+        if mismatches:
+            raise ValueError(f"selective R-GAT artifact mismatch: {mismatches}")
     torch_device = torch.device(device)
     pretraining_enabled = bool(
         (estimator.get("keypoint_pretraining") or {}).get("enabled", False))
@@ -174,6 +208,18 @@ def _build_model(config, device, keypoint_pretraining=None, pipeline="shin_se"):
         graph_relation_dim=int(graph_state.get("relation_dim", 6)),
         graph_heads=int(graph_state.get("heads", 1)),
         graph_seed=int(graph_state.get("seed", ppo.get("seed", 42))),
+        graph_pretrained_artifact=(
+            graph_artifact
+            if pipeline_spec.graph_state_representation == "selective_rgat"
+            and graph_artifact is not None and graph_artifact.is_file()
+            else None),
+        graph_gate_beta=float(graph_state.get("beta", .35)),
+        canonical_normalization_mean=(
+            None if "normalization_mean" not in base_state
+            else base_state["normalization_mean"]),
+        canonical_normalization_std=(
+            None if "normalization_std" not in base_state
+            else base_state["normalization_std"]),
     )
     if keypoint_pretraining is not None:
         model.encoder.load_state_dict(keypoint_pretraining["encoder"])

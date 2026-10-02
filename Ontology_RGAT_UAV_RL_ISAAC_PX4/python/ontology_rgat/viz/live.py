@@ -566,18 +566,28 @@ class BenchmarkMonitor:
                   arms: Sequence[Mapping[str, Any]] | None = None) -> None:
         """Configure the run's arms, budgets and physical pair layout.
 
-        ``arms`` describes what the comparison is made of, one entry per arm:
-        ``{"method": id, "label": display name, "learned": bool}``. A
-        non-learned arm -- the visual servo the 2026-09-22 three-arm
-        comparison puts beside the two PPO arms -- has no training curve and
-        no checkpoint, so the dashboard has to know not to expect one rather
-        than render an empty chart. Omitted, every method in ``methods`` is
-        taken to be learned and labelled by its id, which is what every
-        two-arm run did before.
+        ``arms`` is the runner's arm manifest, one entry per arm, and it is
+        forwarded whole. A non-learned arm -- the PN guidance control condition
+        beside the two PPO arms -- has no training curve and no checkpoint, so
+        the dashboard has to know not to expect one rather than render an empty
+        chart. Omitted, every method in ``methods`` is taken to be learned and
+        labelled by its id, which is what every two-arm run did before.
+
+        Forwarded WHOLE, and that word is the fix. This used to rebuild each
+        entry from three keys, which silently dropped ``ontology_role`` -- the
+        field ``_arm_manifest`` computes from the pipeline spec precisely so the
+        dashboard does not have to guess how the ontology takes part. The
+        dashboard gates its panels on that role, so with every role arriving as
+        ``None`` the gate was permanently false and the panels built for the
+        current method -- the situation graph's node values, its support nodes
+        and its embedding norm -- had never once been displayed. The retired
+        reward-term panels stayed hidden for the same reason and by accident,
+        which is the only part of it that looked like it was working.
         """
         self.methods = tuple(str(method) for method in methods)
         self.arms = [
-            {"method": str(arm["method"]),
+            {**{str(key): value for key, value in dict(arm).items()},
+             "method": str(arm["method"]),
              "label": str(arm.get("label", arm["method"])),
              "learned": bool(arm.get("learned", True))}
             for arm in (arms or [{"method": name} for name in self.methods])]
@@ -808,7 +818,7 @@ class BenchmarkMonitor:
              estimation_loss: float | None,
              state: dict[str, Any] | None = None, pipeline_spec=None,
              semantic_features=None, fov_semantic_features=None,
-             semantic_graph=None,
+             semantic_graph=None, semantic_observation=None,
              state_graph_values=None, graph_embedding=None,
              planar_command=None, normalized_action=None,
              scenario: str = "", status: str = "running",
@@ -887,8 +897,11 @@ class BenchmarkMonitor:
         # control input. Re-running the encoder trace every fifth 10 Hz step is
         # sufficient while keeping the telemetry cost away from PPO timing.
         if semantic_graph is not None and (int(index) == 1 or int(index) % 5 == 0):
-            from .graph3d import graph_payload
+            from .graph3d import graph_payload, sensor_ontology_provenance
             graph_key = f"pair_{resolved_pair_index}:{method}"
+            provenance = (None if semantic_observation is None else
+                          sensor_ontology_provenance(
+                              semantic_observation, semantic_graph))
             self.store.graph(graph_payload(
                 semantic_graph, potential=self.potential_for(method),
                 source=f"pair {resolved_pair_index + 1} · {method} step {index}",
@@ -896,6 +909,7 @@ class BenchmarkMonitor:
                     "graph_id": graph_key,
                     "method": str(method),
                     "pair_index": int(resolved_pair_index),
+                    "sensor_provenance": provenance,
                 }), key=graph_key)
         for key in ("task", "lateral_progress", "vertical_progress",
                     "vertical_speed_penalty", "undershoot_penalty",

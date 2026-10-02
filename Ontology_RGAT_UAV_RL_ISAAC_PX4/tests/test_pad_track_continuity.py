@@ -117,13 +117,15 @@ def test_every_replica_reports_to_the_pair_it_is_actually_flying():
             warmup_episodes=0,
             curriculum=SimpleNamespace(update=lambda _n: 1.0),
             collect_episode_kwargs={"monitor": "primary-monitor"},
-            env_monitors=monitors))
+            env_monitors=monitors,
+            physical_pair_indices=[2, 3]))
     finally:
         rt.collect_episode_resilient = original
 
     assert len(batches) == 2
     assert dict((env, monitor) for env, monitor, _seed in seen) == {
         "pair-0-env": "pair-0-monitor", "pair-1-env": "pair-1-monitor"}
+    assert [row[6]["physical_pair_index"] for row in batches] == [2, 3]
 
 
 def test_without_replica_monitors_the_single_monitor_is_still_used():
@@ -157,6 +159,15 @@ def test_train_live_rejects_a_monitor_list_that_does_not_match_the_pairs():
         train_live(lambda: None, object(), "shin_se_fixed", [1], Path("/tmp"),
                    config_hash="x", env_factories=[lambda: None, lambda: None],
                    env_monitors=[object()])
+
+
+def test_train_live_rejects_pair_provenance_that_does_not_match_the_pairs():
+    from ontology_rgat.ppo.recurrent_train import train_live
+
+    with pytest.raises(ValueError, match="one physical pair index per environment"):
+        train_live(lambda: None, object(), "shin_se_fixed", [1], Path("/tmp"),
+                   config_hash="x", env_factories=[lambda: None, lambda: None],
+                   physical_pair_indices=[2])
 
 
 # ------------------------------------------------------------ closed track

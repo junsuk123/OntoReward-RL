@@ -46,16 +46,16 @@ while [ $# -gt 0 ]; do
   shift
 done
 
-# One directory per run, named for the runner that is flying now. Falling back
-# to a timestamp keeps a manual collection from landing in another run's tree.
-run_started=$(ps -o lstart= -C python3 2>/dev/null | head -1 || true)
-runner_pid=$(pgrep -f 'python/run_(two|three)_pipeline\.py' | head -1 || true)
-if [ -n "$runner_pid" ]; then
-  stamp=$(date -d "@$(($(date +%s) - $(ps -o etimes= -p "$runner_pid" | tr -d ' ')))" +%Y%m%d-%H%M)
-  run="run-$stamp"
+# Join the run directory the stack itself created rather than deriving a name.
+# Deriving one from the runner's start time drifts by a minute against
+# ``stack.py``'s own stamp and leaves an empty directory per collection pass --
+# 79 of them by 2026-09-25, which is noise in every listing that counts runs.
+# The newest directory that actually holds stack logs is the live run.
+run=$(ls -1dt "$logs/runs"/run-*/stack 2>/dev/null | head -1 || true)
+if [ -n "$run" ]; then
+  run=$(basename "$(dirname "$run")")
 else
-  run=$(ls -1 "$logs/runs" 2>/dev/null | sort | tail -1)
-  [ -n "$run" ] || run="run-$(date +%Y%m%d-%H%M)"
+  run="run-$(date +%Y%m%d-%H%M)"
 fi
 destination="$logs/runs/$run"
 mkdir -p "$destination/stack" "$destination/px4" "$logs/ros2" "$logs/isaac_kit"

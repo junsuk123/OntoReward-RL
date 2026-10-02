@@ -57,6 +57,12 @@ from .state_graph import (
     STATE_RISK_NODES, StateGraphGeometry, StateGraphScales, build_state_graph,
     empty_state_graph, state_node_signs, state_node_values,
     unreachable_state_input_nodes)
+from .selective_state import (
+    ADAPTIVE_RELATIONS, INVARIANT_RELATIONS, RELATION_PARTITION_HASH,
+    SELECTIVE_GRAPH_EDGES, SELECTIVE_GRAPH_INPUT_DIM, SELECTIVE_GRAPH_VERSION,
+    SELECTIVE_NODE_NAMES, SELECTIVE_RELATION_NAMES, SELECTIVE_SCHEMA_HASH,
+    build_selective_graph, selective_topology_hash,
+    unreachable_or_too_distant_nodes)
 
 __all__ = ["RGAT", "RelationalGraphAttention", "RGATEncoder", "PotentialHead",
            "RGATPotential", "Topology",
@@ -99,4 +105,10 @@ __all__ = ["RGAT", "RelationalGraphAttention", "RGATEncoder", "PotentialHead",
            "STATE_GRAPH_VERSION", "STATE_NODE_NAMES", "STATE_RELATION_NAMES",
            "STATE_RISK_NODES", "StateGraphGeometry", "StateGraphScales",
            "build_state_graph", "empty_state_graph", "state_node_signs",
-           "state_node_values", "unreachable_state_input_nodes"]
+           "state_node_values", "unreachable_state_input_nodes",
+           "ADAPTIVE_RELATIONS", "INVARIANT_RELATIONS",
+           "RELATION_PARTITION_HASH", "SELECTIVE_GRAPH_EDGES",
+           "SELECTIVE_GRAPH_INPUT_DIM", "SELECTIVE_GRAPH_VERSION",
+           "SELECTIVE_NODE_NAMES", "SELECTIVE_RELATION_NAMES",
+           "SELECTIVE_SCHEMA_HASH", "build_selective_graph",
+           "selective_topology_hash", "unreachable_or_too_distant_nodes"]

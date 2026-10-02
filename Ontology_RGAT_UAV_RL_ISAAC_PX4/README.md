@@ -1,5 +1,13 @@
 # 구현 개요
 
+> **2026-09-29 선택적 R-GAT 리팩터링:** 새 breaking scientific contract는
+> `config/experiments/selective_rgat_three_arm.yaml`에 있다. 동일한 canonical
+> observation과 capture/distance 2항 보상을 쓰는 `ppo_vector_state`와,
+> 사전학습·고정된 R-GAT 위에서 네 evidence relation gate만 PPO로 갱신하는
+> `ppo_ontology_selective_rgat`를 비교한다. 아래의 기존 end-to-end graph-state
+> 방법은 재현/ablation용으로 보존하며 새 checkpoint와 호환되지 않는다.
+> 감사 결과와 설계는 `docs/refactor/`를 참고한다.
+
 이 디렉터리는 [상위 README](../README.md)가 정의한 3-arm 비교의 실행 코드다.
 아래는 알고리즘의 각 구성요소가 어느 모듈에 대응하는지, 그리고 어떤 artifact가
 어느 단계에서 확정되는지를 정리한다.

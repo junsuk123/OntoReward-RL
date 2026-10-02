@@ -1,0 +1,85 @@
+extends: planar_three_arm_comparison.yaml
+experiment: selective_rgat_three_arm_v1
+algorithm_version: selective-rgat-v1
+pipelines: [ppo_vector_state, ppo_ontology_selective_rgat]
+baseline_arms:
+  - {method: pn_guidance_v1, learned: false}
+paired_seeds: true
+
+pipeline_contract:
+  ppo_vector_state:
+    state_estimation: false
+    auxiliary_estimation_loss: false
+    active_perception: false
+    reward_mode: capture_distance_two_term
+    ontology_enabled: false
+    ontology_input_mode: null
+    use_direct_rgat_potential: false
+    graph_state: false
+    graph_state_representation: null
+    policy_state_mode: canonical_vector
+    graph_encoder_training: null
+  ppo_ontology_selective_rgat:
+    state_estimation: false
+    auxiliary_estimation_loss: false
+    active_perception: false
+    reward_mode: capture_distance_two_term
+    ontology_enabled: true
+    ontology_input_mode: causal_selective_situation_graph
+    use_direct_rgat_potential: false
+    graph_state: true
+    graph_state_representation: selective_rgat
+    policy_state_mode: selective_graph
+    graph_encoder_training: frozen_base_selective_gates
+
+observation:
+  registry: config/observation/causal_packet_v1.json
+  require_identical_registry_hash: true
+  actor_privileged_truth: forbidden
+
+reward:
+  mode: capture_distance_two_term
+  capture_weight: 0.20
+  distance_weight: 0.71
+  capture_boundary_value: -0.5
+  capture_outside_scale: 1.0
+  distance_rate_share: 0.30
+  distance_rate_scale_m_s: 1.5
+  distance_scale_m: 6.0
+  distance_exponent: 0.5
+  failed_contact_signals: [-1.0, -1.0]
+
+graph_state:
+  representation: selective_rgat
+  schema: ontology_rgat.selective_situation_graph/1
+  pretrained_artifact: results/selective_rgat/pretrain/rgat_base.pt
+  freeze_during_ppo: true
+  beta: 0.35
+  hidden_dim: 32
+  graph_dim: 32
+  relation_dim: 6
+  heads: 1
+  adaptive_relations: [Tracking_evidence, VisualRetention_evidence,
+                       ContactKinematics_evidence, StateReliability_evidence]
+  invariant_relations: [concept_to_landing_goal, self]
+  require_control_sufficiency: true
+
+behavior_cloning: {enabled: false}
+stages: [audit, collect, pretrain, train, evaluate, report, all]
+quick_is_evidence: false
+
+checkpoint_selection:
+  held_out_deterministic_only: true
+  gradient_enabled: false
+  return_role: tiebreak_only
+
+checkpoint_signature:
+  strict: true
+  fields: [algorithm_version, environment_config_hash, observation_registry_hash,
+           reward_config_hash, action_contract_hash, graph_schema_hash,
+           pretrained_artifact_hash, relation_partition_hash, normalization_hash,
+           seed_contract_hash, training_budget_hash]
+
+simulator_contract:
+  profile: config/shin2026-planar-system.yaml
+  preserve_isaac_pegasus_px4_ros_camera_contact_frames_action: true

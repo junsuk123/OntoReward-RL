@@ -152,6 +152,13 @@ def _yaw_from_quaternion_wxyz(quaternion) -> float | None:
 # is one cheap lock probe per fifty iterations.
 _STACK_CHECK_PERIOD_S = 0.1
 
+# Waiting for simulated time to pass: sleep this fraction of the gap that is
+# left, capped, rather than polling the gateway flat out. The cap bounds how
+# far past the control period a step can overshoot; the fraction keeps the
+# final approach to the deadline fine-grained.
+_PACING_BACKOFF_FRACTION = 0.5
+_PACING_BACKOFF_MAX_S = 0.02
+
 _LIVE_LOCAL_PORTS: dict[tuple[str, int], int] = {}
 _LIVE_LOCAL_PORTS_LOCK = threading.Lock()
 
@@ -1030,6 +1037,26 @@ class PX4Bridge:
         deadline = self.last_px4_time_us + self.control_period_us
         started = time.monotonic()
         while observed < deadline:
+            # Wait for simulated time, do not race it. This loop used to poll
+            # flat out: the socket carries a 2 ms timeout, so one control step
+            # asked the gateway for state up to five hundred times, and every
+            # one of those took ``control_lock`` and built a full state message.
+            # The gateway's executor has two threads; with the poll holding one
+            # and the OFFBOARD heartbeat the other, the sensor callbacks that
+            # actually advance PX4's clock were the ones left waiting -- so the
+            # simulated time this loop is waiting for arrived more slowly the
+            # harder it waited. Measured 2026-09-25: 0.07x realtime inside an
+            # episode against 1.1x during the entry hover, which is the same
+            # stack with nobody polling it.
+            #
+            # Sleeping most of the remaining gap keeps the overshoot under one
+            # poll interval while cutting the request rate by more than an
+            # order of magnitude. It changes no state and no decision: the
+            # same simulated instant is waited for either way.
+            remaining_s = (deadline - observed) / 1e6
+            if remaining_s > 0.0:
+                time.sleep(min(remaining_s * _PACING_BACKOFF_FRACTION,
+                               _PACING_BACKOFF_MAX_S))
             if time.monotonic() - started > float(self.cfg.timeout):
                 advanced = (observed - self.last_px4_time_us) / 1e3
                 raise BridgeError(

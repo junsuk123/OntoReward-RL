@@ -1,0 +1,27 @@
+{
+  "schema": "ontology_rgat.causal_observation_packet/1",
+  "clock": "simulator_control_time",
+  "fields": [
+    {"name": "keypoint_xy", "size": 12, "source": "keypoint_encoder", "normalization": "image_-1_1"},
+    {"name": "keypoint_visibility", "size": 6, "source": "keypoint_encoder", "normalization": "probability_0_1"},
+    {"name": "keypoint_confidence", "size": 1, "source": "keypoint_encoder", "normalization": "probability_0_1"},
+    {"name": "centroid_xy", "size": 2, "source": "causal_visual_history", "normalization": "image_-1_1"},
+    {"name": "apparent_scale", "size": 1, "source": "causal_visual_history", "normalization": "train_split_standardize"},
+    {"name": "centroid_rate_xy", "size": 2, "source": "causal_visual_history", "normalization": "train_split_standardize"},
+    {"name": "scale_rate", "size": 1, "source": "causal_visual_history", "normalization": "train_split_standardize"},
+    {"name": "visible_fraction", "size": 1, "source": "keypoint_encoder", "normalization": "probability_0_1"},
+    {"name": "measurement_valid", "size": 1, "source": "causal_visual_history", "normalization": "binary"},
+    {"name": "measurement_age_s", "size": 1, "source": "causal_visual_history", "normalization": "train_split_standardize"},
+    {"name": "stale", "size": 1, "source": "causal_visual_history", "normalization": "binary"},
+    {"name": "fov_margin", "size": 1, "source": "causal_visual_history", "normalization": "image_0_1"},
+    {"name": "fov_margin_rate", "size": 1, "source": "causal_visual_history", "normalization": "train_split_standardize"},
+    {"name": "body_velocity", "size": 3, "source": "uav_proprioception", "normalization": "train_split_standardize"},
+    {"name": "attitude_quaternion", "size": 4, "source": "uav_proprioception", "normalization": "unit_quaternion"}
+  ],
+  "forbidden_sources": [
+    "future", "reward", "episode_outcome", "scenario_id", "programmed_ugv_speed",
+    "simulator_truth", "ground_truth", "true_relative_state", "critic",
+    "platform_position", "platform_velocity", "pad_position", "pad_velocity",
+    "geometric_fov_label", "teacher_action", "pn_action", "after_action"
+  ]
+}

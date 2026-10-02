@@ -12,6 +12,7 @@ import yaml
 # retired reward-side arm -- which keeps its id so its recorded runs stay
 # attributable and can still be flown for comparison.
 PRIMARY_PIPELINES = ("shin_se_fixed", "shin_se_onto_rgat_state")
+REFACTORED_PIPELINES = ("ppo_vector_state", "ppo_ontology_selective_rgat")
 GRAPH_STATE_ABLATIONS = ("shin_se_onto_gat_state", "shin_se_node_pool_state")
 RETIRED_REWARD_PIPELINES = ("shin_se_onto_rgat_recovery",)
 ADAPTIVE_PIPELINES = (
@@ -22,7 +23,7 @@ ADAPTIVE_PIPELINES = (
 )
 LEGACY_METHODS = ("shin2026", "sparse", "manual_no_active", "ontoreward",
                   "ontoreward_plus_active")
-METHODS = (PRIMARY_PIPELINES + GRAPH_STATE_ABLATIONS + RETIRED_REWARD_PIPELINES
+METHODS = (PRIMARY_PIPELINES + REFACTORED_PIPELINES + GRAPH_STATE_ABLATIONS + RETIRED_REWARD_PIPELINES
            + ADAPTIVE_PIPELINES + LEGACY_METHODS)
 
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import asdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import ExitStack
 from copy import deepcopy
@@ -35,6 +36,7 @@ from ontology_rgat.cli import ensure_fastdds
 from ontology_rgat.controllers import (PLANAR_ACTION_DIM, PN_GUIDANCE_METHOD,
                                        PNGuidanceConfig, PNGuidanceController,
                                        PNGuidanceState)
+from ontology_rgat.contracts import CheckpointSignature, load_observation_registry
 from ontology_rgat.initialization import nadir_image_setpoint
 from ontology_rgat.evaluation import (write_adaptive_reward_figures,
                                       write_presentation_results,
@@ -46,12 +48,13 @@ from ontology_rgat.perception import (RosGrayscaleSource,
 from ontology_rgat.pipelines import (ablation_pipeline_ids,
                                      assert_no_aruco_in_primary_system,
                                      available_pipeline_ids, get_pipeline,
-                                     primary_pipeline_ids,
+                                     primary_pipeline_ids, refactored_pipeline_ids,
                                      validate_pipeline_configuration)
 from ontology_rgat.ppo.behavior_cloning import (
     behavior_clone, encoded_demonstration_episode,
     load_encoded_demonstrations, merge_encoded_demonstrations,
     save_encoded_demonstrations)
+from ontology_rgat.ppo.selective_graph_encoder import artifact_sha256
 from ontology_rgat.ppo.recurrent_train import (_battery_reserve,
                                                collect_episode_resilient,
                                                aggregate_deployment_validation,
@@ -67,6 +70,8 @@ from ontology_rgat.rgat import (
     FrozenFOVRiskPredictor, build_fov_risk_dataset, fov_risk_data_fingerprint,
     horizon_steps, load_fov_risk_dataset, prepare_fov_risk_artifact,
     save_fov_risk_dataset)
+from ontology_rgat.rgat.selective_state import (RELATION_PARTITION_HASH,
+                                                SELECTIVE_SCHEMA_HASH)
 from ontology_rgat.datastore import KIND_FOV_RISK, open_datastore
 from ontology_rgat.stack import ExternalStack
 from ontology_rgat.viz.contracts import (algorithm_pipeline_contract,
@@ -1430,9 +1435,14 @@ def _atomic_save_selected_checkpoint(path: Path, payload: dict, *, candidate,
                                      summary: dict, validation_seeds) -> None:
     selected = dict(payload)
     selected["training_selection_score"] = selected.get("selection_score")
-    selected["selection_score"] = float(summary["mean_physical_score"])
+    selective = ((payload.get("pipeline_spec") or {}).get("policy_state_mode")
+                 in {"canonical_vector", "selective_graph"})
+    selected["selection_score"] = float(summary[
+        "robust_selection_score" if selective else "mean_physical_score"])
     selected["selection_metric"] = dict(summary)
-    selected["selection_method"] = "held_out_deterministic_multi_seed_v1"
+    selected["selection_method"] = (
+        "held_out_robust_boundary_score_v1" if selective
+        else "held_out_deterministic_multi_seed_v1")
     selected["selection_candidate_kind"] = str(candidate["kind"])
     selected["selection_candidate_sha256"] = str(candidate["sha256"])
     selected["selection_validation_seeds"] = [int(seed) for seed in validation_seeds]
@@ -3108,6 +3118,7 @@ def main(*, primary_only: bool = False):
         "--pipelines", nargs="+",
         choices=(tuple(dict.fromkeys(
             primary_pipeline_ids() + ablation_pipeline_ids()
+            + refactored_pipeline_ids()
             + ("shin_se_onto_rgat_recovery",)))
             if primary_only else available_pipeline_ids()))
     parser.add_argument("--mode", choices=("quick", "full"), default="quick")
@@ -3627,9 +3638,13 @@ def main(*, primary_only: bool = False):
     training_pair_for, pair_training_methods = _balanced_training_pair_assignment(
         args.pipelines, args.parallel_pairs, args.training_replicate)
     ppo = dict(config.get("ppo") or {})
+    # Reward weights are an experiment-level declaration, identical for every
+    # arm. Carried on the ppo dict because that is what reaches ``train_live``.
+    ppo["reward_weights"] = dict(config.get("reward") or {})
     ppo["fov_risk_lambda"] = float(
         (config.get("fov_risk") or {}).get("lambda_fov", 0.1))
     ppo_runtime_overrides = {}
+    training_contract_id = None
     if args.robust_adaptive_reward:
         ppo_runtime_overrides = {
             "learning_rate": min(float(ppo.get("learning_rate", 5e-5)), 5e-5),
@@ -3640,10 +3655,44 @@ def main(*, primary_only: bool = False):
             "learning_rate_recovery_factor": 1.10,
             "learning_rate_recovery_kl_fraction": .50,
         }
-        ppo.update(ppo_runtime_overrides)
-    training_contract_id = (
-        "robust_ppo_anchor_lr_recovery_v1"
-        if args.robust_adaptive_reward else None)
+        training_contract_id = "robust_ppo_anchor_lr_recovery_v1"
+    elif primary_only and uses_graph_state:
+        # The first run halved 5e-5 to the 5e-6 floor by policy episode 8 and
+        # never recovered: 553/560 proposed updates stayed at the floor, while
+        # 80% stopped early on KL. The graph arm's recent *mean* KL remained
+        # 0.013--0.021, so 0.03 was rejecting transient recurrent chunks rather
+        # than a diverged policy. Keep rollback, reset the recovered optimizer,
+        # admit a bounded 0.05 trust region, and climb gradually after a quiet
+        # update. Both learned arms receive the same controller.
+        # v3, 2026-10-01. v2 kept the trust region and the LR controller but
+        # still updated a batch's episodes one after another, so the second
+        # replica of each arm was off-policy by construction: it lost 44.7-49.1
+        # % of its updates against 14.7-19.9 % for the first, 32 % of all
+        # episodes produced no gradient at all, and only 36 % completed their
+        # three epochs. ``update_episode`` now takes the whole flown group in
+        # one on-policy update. With the spurious early stops gone the LR
+        # controller is no longer fighting them, but ``*0.5`` down against
+        # ``*1.25`` up still needs 3.1 quiet updates to undo one back-off, so
+        # the back-off is softened to 0.7 (1.7 quiet updates). Exploration is
+        # lifted off the cloned -2.5 that PPO could not move at the floor rate.
+        ppo_runtime_overrides = {
+            "target_kl": .05,
+            "learning_rate_recovery_factor": 1.25,
+            "learning_rate_recovery_kl_fraction": .50,
+            "learning_rate_backoff_factor": .70,
+            "resume_log_std_floor": -1.8,
+        }
+        # v4, 2026-10-02. The Table-III weights were re-based for this envelope
+        # (see reward_modes/shin2026.py): under v3's weights an episode that
+        # loitered to a timeout scored 99.8 ABOVE one that approached and landed
+        # safely, so a policy trained against it cannot be resumed here.
+        # v5, 2026-10-02. The v4 reward rebalance was necessary but not
+        # sufficient: with it the graph-state arm still ended 89 consecutive
+        # episodes with zero deck contact, 6.66 m out at ~4.5 m altitude, a
+        # bearing tangent near 1.48 against an approach cone of 0.80. The cone
+        # is relaxed to the camera's own limit (1.60); see the control block.
+        training_contract_id = "planar_cone_relaxed_v5"
+    ppo.update(ppo_runtime_overrides)
     manifest["ppo_runtime_overrides"] = ppo_runtime_overrides
     manifest["ppo_training_contract_id"] = training_contract_id
     manifest["parallel_execution"]["training_pair_assignment"] = {
@@ -3651,6 +3700,50 @@ def main(*, primary_only: bool = False):
     manifest["parallel_execution"]["assignment_rule"] = (
         "cyclic Latin-square counterbalance by training_replicate; final "
         "evaluation crosses every method over every physical pair")
+    selective_checkpoint_signatures = {}
+    if any(get_pipeline(name).policy_state_mode in {
+            "canonical_vector", "selective_graph"} for name in args.pipelines):
+        registry = load_observation_registry()
+        artifact_path = Path(str(graph_state_cfg.get("pretrained_artifact", "")))
+        if not artifact_path.is_absolute():
+            artifact_path = ROOT / artifact_path
+        if not artifact_path.is_file():
+            raise FileNotFoundError(
+                f"selective PPO requires pretraining first: {artifact_path}")
+        artifact_payload = torch.load(
+            artifact_path, map_location="cpu", weights_only=False)
+        artifact_metadata = dict(artifact_payload.get("metadata") or {})
+        shared = {
+            "algorithm_version": str(config.get(
+                "algorithm_version", "selective-rgat-v1")),
+            "environment_config_hash": configuration_hash(system),
+            "observation_registry_hash": registry.sha256,
+            "reward_config_hash": configuration_hash(config.get("reward") or {}),
+            "action_contract_hash": configuration_hash(control),
+            "pretrained_artifact_hash": artifact_sha256(artifact_path),
+            "normalization_hash": str(
+                artifact_metadata.get("normalization_hash", "missing")),
+            "seed_contract_hash": configuration_hash({
+                "paired": config.get("paired_seeds", True),
+                "seeds": config.get("seeds") or {}}),
+            "training_budget_hash": configuration_hash({
+                "training": config.get("training") or {}, "ppo": ppo}),
+        }
+        for name in args.pipelines:
+            spec = get_pipeline(name)
+            if spec.policy_state_mode not in {"canonical_vector", "selective_graph"}:
+                continue
+            signature = CheckpointSignature(
+                **shared,
+                graph_schema_hash=(SELECTIVE_SCHEMA_HASH
+                                   if spec.policy_state_mode == "selective_graph"
+                                   else "not-applicable-vector-state"),
+                relation_partition_hash=(RELATION_PARTITION_HASH
+                                         if spec.policy_state_mode == "selective_graph"
+                                         else "not-applicable-vector-state"))
+            selective_checkpoint_signatures[name] = {
+                **asdict(signature), "sha256": signature.sha256}
+        manifest["checkpoint_signatures"] = selective_checkpoint_signatures
     _write_json(manifest_path, manifest)
     runtime_reward_normalizer = None
     adaptive_runtime = dict(config.get("adaptive_reward") or {})
@@ -3985,9 +4078,12 @@ def main(*, primary_only: bool = False):
                         anchor),
                     optimizer_lock=gpu_update_lock,
                     training_contract_id=training_contract_id,
+                    checkpoint_signature_manifest=(
+                        selective_checkpoint_signatures.get(name)),
                     scenarios=training_scenarios,
                     env_factories=replica_factories,
-                    env_monitors=replica_monitors)
+                    env_monitors=replica_monitors,
+                    physical_pair_indices=replica_pairs)
                 if primary:
                     for row in history:
                         row["training_replicate"] = args.training_replicate
@@ -4582,7 +4678,12 @@ def main(*, primary_only: bool = False):
                                 cached = metric
                             candidate_metrics.append(cached)
                         summary = aggregate_deployment_validation(candidate_metrics)
-                        summaries.append((deployment_validation_key(summary),
+                        selection_key = (
+                            (float(summary["robust_selection_score"]),)
+                            if get_pipeline(name).policy_state_mode in {
+                                "canonical_vector", "selective_graph"}
+                            else deployment_validation_key(summary))
+                        summaries.append((selection_key,
                                           candidate["episode"], candidate,
                                           payload, summary))
                 # Prefer the later snapshot only when every held-out safety and
@@ -4597,8 +4698,11 @@ def main(*, primary_only: bool = False):
                 model.load_state_dict(payload["model"])
                 model.eval()
                 model._selected_checkpoint_episode = int(candidate["episode"])
-                model._selected_checkpoint_score = float(
-                    summary["mean_physical_score"])
+                model._selected_checkpoint_score = float(summary[
+                    "robust_selection_score"
+                    if get_pipeline(name).policy_state_mode in {
+                        "canonical_vector", "selective_graph"}
+                    else "mean_physical_score"])
                 model._selected_checkpoint_kind = str(candidate["kind"])
                 model._selected_checkpoint_sha256 = str(candidate["sha256"])
                 with selection_lock:

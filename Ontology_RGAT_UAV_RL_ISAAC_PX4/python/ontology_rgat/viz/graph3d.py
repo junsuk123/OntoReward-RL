@@ -32,7 +32,10 @@ from ..rgat.state_graph import STATE_RISK_NODES
 from ..semantic import GOAL_NODE, N_NODES, RISK_NODES
 from .live import STORE, LiveStore
 
-__all__ = ["layer_of", "layout_3d", "graph_payload", "GraphPublisher"]
+__all__ = [
+    "layer_of", "layout_3d", "graph_payload", "sensor_ontology_provenance",
+    "GraphPublisher",
+]
 
 
 def layer_of(src: Sequence[int], dst: Sequence[int], n_nodes: int) -> np.ndarray:
@@ -154,6 +157,149 @@ def _plain(value: Any) -> Any:
     if isinstance(value, (list, tuple)):
         return [_plain(item) for item in value]
     return value
+
+
+_SEMANTIC_CHANNELS = (
+    ("centroid_x", "Keypoint centroid x", "normalized image", "context"),
+    ("centroid_y", "Keypoint centroid y", "normalized image", "context"),
+    ("raw_target_scale", "Raw target scale", "normalized image", "context"),
+    ("keypoint_confidence", "Keypoint confidence", "0..1", "semantic"),
+    ("visible_keypoint_fraction", "Visible keypoint fraction", "0..1", "semantic"),
+    ("image_alignment", "Image alignment", "0..1", "semantic"),
+    ("apparent_target_scale", "Apparent target scale", "0..1", "semantic"),
+    ("image_plane_motion_safety", "Image motion safety", "0..1", "context"),
+    ("scale_rate_safety", "Scale-rate safety", "0..1", "context"),
+    ("visibility_memory", "Visibility memory", "0..1", "context"),
+    ("reacquisition_trend", "Reacquisition trend", "0..1", "context"),
+    ("vertical_motion_safety", "Vertical-motion safety", "0..1", "semantic"),
+    ("attitude_stability", "Attitude stability", "0..1", "semantic"),
+    ("battery_risk", "Battery risk", "0..1", "semantic"),
+    ("visual_loss_risk", "Visual-loss risk", "0..1", "context"),
+    ("visual_loss_duration_s", "Visual-loss duration", "s", "context"),
+)
+
+_SENSOR_CHANNEL_LINKS = (
+    ("landing_camera", "centroid_x", "confidence-weighted keypoint centroid"),
+    ("landing_camera", "centroid_y", "confidence-weighted keypoint centroid"),
+    ("landing_camera", "raw_target_scale", "RMS keypoint spread"),
+    ("keypoint_encoder", "keypoint_confidence", "heatmap entropy + visibility"),
+    ("keypoint_encoder", "visible_keypoint_fraction", "visible keypoints / 6"),
+    ("keypoint_encoder", "image_alignment", "centroid distance from image centre"),
+    ("keypoint_encoder", "apparent_target_scale", "reliability-weighted scale"),
+    ("landing_camera", "image_plane_motion_safety", "centroid delta / dt"),
+    ("temporal_context", "image_plane_motion_safety", "previous frame"),
+    ("landing_camera", "scale_rate_safety", "scale delta / dt"),
+    ("temporal_context", "scale_rate_safety", "previous frame"),
+    ("keypoint_encoder", "visibility_memory", "current reliability"),
+    ("temporal_context", "visibility_memory", "1.5 s exponential memory"),
+    ("keypoint_encoder", "reacquisition_trend", "confidence recovery"),
+    ("temporal_context", "reacquisition_trend", "previous confidence"),
+    ("px4_odometry", "vertical_motion_safety", "exp(-|vz| / 0.6)"),
+    ("px4_imu", "attitude_stability", "exp(-tilt / 22 deg)"),
+    ("battery_monitor", "battery_risk", "1 - reserve"),
+    ("keypoint_encoder", "visual_loss_risk", "keypoint dropout"),
+    ("temporal_context", "visual_loss_risk", "loss duration / 2 s"),
+    ("temporal_context", "visual_loss_duration_s", "consecutive dropout time"),
+)
+
+_ONTOLOGY_CHANNEL_LINKS = (
+    ("centroid_x", "AlignmentError", "bearing from camera nadir column"),
+    ("vertical_motion_safety", "DescentRate", "recover |vz|, then soft saturation"),
+    ("image_plane_motion_safety", "TargetMotion", "1 - motion safety"),
+    ("centroid_x", "FOVMargin", "distance to horizontal image edge"),
+    ("centroid_y", "FOVMargin", "distance to vertical image edge"),
+    ("visual_loss_risk", "MeasurementAge", "bounded observation age"),
+    ("raw_target_scale", "RelativeRange", "inverse apparent scale"),
+    ("keypoint_confidence", "PadVisibility", "confidence × visible fraction"),
+    ("visible_keypoint_fraction", "PadVisibility", "confidence × visible fraction"),
+    ("visibility_memory", "PadVisibility", "dropout memory support"),
+    ("visual_loss_risk", "PadVisibility", "suppresses stale memory"),
+    # Selective-RGAT v1: raw evidence nodes expose which onboard channels form
+    # each semantic/context relation before message passing.
+    ("centroid_x", "LongitudinalTrackingEvidence", "signed image bearing"),
+    ("image_plane_motion_safety", "LongitudinalTrackingEvidence",
+     "causal centroid-rate context"),
+    ("centroid_x", "VisualRetentionEvidence", "horizontal FOV margin"),
+    ("centroid_y", "VisualRetentionEvidence", "vertical FOV margin"),
+    ("visible_keypoint_fraction", "VisualRetentionEvidence", "current visibility"),
+    ("visibility_memory", "VisualRetentionEvidence", "retention history"),
+    ("vertical_motion_safety", "ContactKinematicsEvidence", "observable vertical rate"),
+    ("raw_target_scale", "ContactKinematicsEvidence", "apparent approach scale"),
+    ("keypoint_confidence", "StateReliabilityEvidence", "measurement confidence"),
+    ("visible_keypoint_fraction", "StateReliabilityEvidence", "validity mask"),
+    ("visual_loss_risk", "StateReliabilityEvidence", "age/stale context"),
+)
+
+
+def sensor_ontology_provenance(observation, graph) -> dict[str, Any]:
+    """Describe the live, non-privileged path from sensors into ``G_t``.
+
+    This mirrors the transformations in :mod:`ontology_rgat.rgat.state_graph`;
+    it does not infer causality from R-GAT attention.
+    """
+    centroid = np.asarray(observation.centroid_xy, dtype=float).reshape(-1)
+    values = {
+        "centroid_x": float(centroid[0]),
+        "centroid_y": float(centroid[1]),
+        "raw_target_scale": float(observation.raw_scale),
+        "visual_loss_duration_s": float(observation.visual_loss_duration_s),
+    }
+    values.update({name: float(getattr(observation, name))
+                   for name, *_ in _SEMANTIC_CHANNELS
+                   if hasattr(observation, name)})
+    vertical_safety = max(1e-6, min(1.0, values["vertical_motion_safety"]))
+    sensors = [
+        {"id": "landing_camera", "label": "Landing camera", "kind": "sensor",
+         "readings": [
+             {"label": "centroid x", "value": values["centroid_x"], "unit": "norm"},
+             {"label": "centroid y", "value": values["centroid_y"], "unit": "norm"},
+             {"label": "raw scale", "value": values["raw_target_scale"], "unit": "norm"},
+         ]},
+        {"id": "keypoint_encoder", "label": "Frozen 6-keypoint encoder",
+         "kind": "inference", "readings": [
+             {"label": "confidence", "value": values["keypoint_confidence"], "unit": "0..1"},
+             {"label": "visible", "value": values["visible_keypoint_fraction"], "unit": "fraction"},
+         ]},
+        {"id": "temporal_context", "label": "Visual history", "kind": "context",
+         "readings": [{"label": "loss age", "value": values["visual_loss_duration_s"],
+                       "unit": "s"}]},
+        {"id": "px4_odometry", "label": "PX4 local odometry", "kind": "sensor",
+         "readings": [{"label": "|vertical speed|",
+                       "value": float(-0.6 * math.log(vertical_safety)),
+                       "unit": "m/s"}]},
+        {"id": "px4_imu", "label": "PX4 IMU attitude", "kind": "sensor",
+         "readings": [{"label": "stability", "value": values["attitude_stability"],
+                       "unit": "0..1"}]},
+        {"id": "battery_monitor", "label": "PX4 battery monitor", "kind": "sensor",
+         "readings": [{"label": "reserve", "value": 1.0 - values["battery_risk"],
+                       "unit": "fraction"}]},
+    ]
+    semantics = [
+        {"id": name, "label": label, "value": values.get(name),
+         "unit": unit, "kind": kind}
+        for name, label, unit, kind in _SEMANTIC_CHANNELS
+    ]
+    node_names = {str(name) for name in graph.node_names}
+    connections = [
+        {"source": source, "target": target, "stage": "sensor_to_semantic",
+         "transform": transform}
+        for source, target, transform in _SENSOR_CHANNEL_LINKS
+    ]
+    connections.extend(
+        {"source": source, "target": target, "stage": "semantic_to_ontology",
+         "transform": transform}
+        for source, target, transform in _ONTOLOGY_CHANNEL_LINKS
+        if target in node_names)
+    return {
+        "format": "ontology-rgat-sensor-provenance-v1",
+        "sensors": sensors,
+        "semantics": semantics,
+        "connections": connections,
+        "boundary": [
+            "No simulator truth", "No geometric FOV label",
+            "No relative-pose estimate", "Onboard camera/PX4 signals only",
+        ],
+    }
 
 
 def graph_payload(graph, values: Sequence[float] | None = None, *,

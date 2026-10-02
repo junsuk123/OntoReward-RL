@@ -890,6 +890,38 @@ def test_flown_episode_batches_shares_one_policy_across_a_batch(monkeypatch):
     assert {flown[0][6]["env"], flown[1][6]["env"]} == {"envA", "envB"}
 
 
+def test_flown_episode_groups_hands_back_a_whole_batch(monkeypatch):
+    """The group is the unit of the PPO update, so it must arrive as one."""
+    import ontology_rgat.ppo.recurrent_train as rt
+
+    def fake_collect(env, model, method, seed, **kwargs):
+        return [], {"seed": seed}
+    monkeypatch.setattr(rt, "collect_episode_resilient", fake_collect)
+
+    class Curriculum:
+        level = 1
+        def update(self, index): return 0.0
+
+    class Model:
+        def state_dict(self): return {}
+
+    groups = list(rt.flown_episode_groups(
+        ["envA", "envB"], Model(), "m", [10, 11, 12], 0,
+        scenarios=("circle",), warmup_episodes=0,
+        curriculum=Curriculum(), collect_episode_kwargs={}))
+    # Two full flights, then the short tail batch.
+    assert [len(group) for group in groups] == [2, 1]
+    assert [[flight[0] for flight in group] for group in groups] == [[1, 2], [3]]
+    # Every flight of a group shares one weight snapshot.
+    assert groups[0][0][4] is groups[0][1][4]
+    # The flattening wrapper is still the old per-episode contract.
+    flat = list(rt.flown_episode_batches(
+        ["envA", "envB"], Model(), "m", [10, 11, 12], 0,
+        scenarios=("circle",), warmup_episodes=0,
+        curriculum=Curriculum(), collect_episode_kwargs={}))
+    assert [flight[0] for flight in flat] == [1, 2, 3]
+
+
 def test_flown_episode_batches_propagates_a_failed_flight(monkeypatch):
     """A flight that fails past its own recovery must stop training, not vanish."""
     import ontology_rgat.ppo.recurrent_train as rt

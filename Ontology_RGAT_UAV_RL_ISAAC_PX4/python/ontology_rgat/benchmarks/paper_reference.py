@@ -209,6 +209,33 @@ BACKEND_DEVIATIONS: tuple[Deviation, ...] = (
         identical_across_arms=True,
         evidence=(("experiment", "control.max_longitudinal_tilt_deg"),),
     ),
+    Deviation(
+        key="planar_reward_weights",
+        backend="px4_transfer",
+        item="Table-III shaping weights and terminal values",
+        paper="lateral progress 1, attitude term 2, terminal +-10, and no "
+              "value for a horizon timeout (Table III, Sec. III-D-4)",
+        repository="lateral progress 5, attitude term 0.1, success +50 and a "
+                   "timeout scored -5, declared in the experiment's ``reward:`` "
+                   "block and read by both learned arms",
+        reason="Table III's weights are written for the paper's four-dimensional "
+               "action. Under the reduced planar envelope the substituted "
+               "attitude term (see ``shaping_term_5``) prices the only source "
+               "of longitudinal acceleration, so it taxes the approach itself. "
+               "Measured over 40 episodes per arm the per-episode decomposition "
+               "was attitude -69.6, vertical speed -48.2, undershoot -40.5, "
+               "active perception -6.0, task -4.3 and lateral progress -3.4: "
+               "the approach signal was the smallest term and negative. Scored "
+               "over a whole episode, loitering to a timeout beat approaching "
+               "and landing safely by 99.8, and both arms learned to loiter. "
+               "The re-weighting restores the ordering; it does not change "
+               "which terms exist.",
+        identical_across_arms=True,
+        evidence=(("experiment", "reward.shaping.lateral_progress"),
+                  ("experiment", "reward.shaping.attitude"),
+                  ("experiment", "reward.terminal.success"),
+                  ("experiment", "reward.terminal.timeout")),
+    ),
 )
 
 

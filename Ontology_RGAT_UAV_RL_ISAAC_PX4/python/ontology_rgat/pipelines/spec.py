@@ -35,11 +35,13 @@ RETIRED_FOV_REWARD_READOUTS = ("binary_classifier_linear_head",)
 # onto the actor's and the critic's feature vector. Nothing about the reward
 # changes, which is what makes the comparison single-factor.
 STATE_GRAPH_INPUT_MODE = "state_situation_graph"
+SELECTIVE_GRAPH_INPUT_MODE = "causal_selective_situation_graph"
 
 # How the situation graph is encoded. ``ontology_rgat`` is the proposed model;
 # the other two are the ablations that remove, in turn, the relation types and
 # the message passing.
-GRAPH_STATE_REPRESENTATIONS = ("ontology_rgat", "gat", "node_pool")
+GRAPH_STATE_REPRESENTATIONS = ("ontology_rgat", "gat", "node_pool",
+                               "selective_rgat")
 
 # The reduced control envelope every arm flies. Kept here because the spec is
 # what the runner, the model builder and the manifest all read.
@@ -66,6 +68,10 @@ class PipelineSpec:
     # reward, and it is mutually exclusive with every reward-side ontology use.
     graph_state_enabled: bool = False
     graph_state_representation: str | None = None
+    # Refactored method: the vector arm consumes canonical O_t directly; the
+    # proposed arm consumes only g_t from a frozen base plus selective gates.
+    policy_state_mode: str = "legacy_temporal"
+    graph_encoder_training: str | None = None
 
     def __post_init__(self) -> None:
         if not self.name:
@@ -83,8 +89,20 @@ class PipelineSpec:
             raise ValueError("active perception requires supervised state estimation")
         if self.reward_mode not in {
                 "shin_table_active", "shin_table_no_active", "semantic_pbrs",
-                "adaptive_weight"}:
+                "adaptive_weight", "capture_distance_two_term"}:
             raise ValueError(f"unknown pipeline reward mode: {self.reward_mode}")
+        if self.policy_state_mode not in {
+                "legacy_temporal", "canonical_vector", "selective_graph"}:
+            raise ValueError("unknown policy_state_mode")
+        if self.policy_state_mode == "canonical_vector" and self.graph_state_enabled:
+            raise ValueError("canonical vector policy cannot enable a graph encoder")
+        if self.policy_state_mode == "selective_graph":
+            if not self.graph_state_enabled or self.graph_state_representation != "selective_rgat":
+                raise ValueError("selective graph policy requires selective_rgat")
+            if self.graph_encoder_training != "frozen_base_selective_gates":
+                raise ValueError("selective graph policy must freeze the base and train gates")
+        elif self.graph_encoder_training is not None:
+            raise ValueError("only a selective graph policy declares encoder training")
         if (self.reward_mode in {"shin_table_active", "shin_table_no_active"}
                 and ((self.reward_mode == "shin_table_active")
                      != self.active_perception_enabled)):
@@ -95,10 +113,13 @@ class PipelineSpec:
         if self.graph_state_enabled:
             if not self.ontology_enabled:
                 raise ValueError("the graph state representation is an ontology pipeline")
-            if self.ontology_input_mode != STATE_GRAPH_INPUT_MODE:
+            expected_input = (SELECTIVE_GRAPH_INPUT_MODE
+                              if self.graph_state_representation == "selective_rgat"
+                              else STATE_GRAPH_INPUT_MODE)
+            if self.ontology_input_mode != expected_input:
                 raise ValueError(
                     "the graph state representation requires ontology_input_mode "
-                    f"{STATE_GRAPH_INPUT_MODE!r}")
+                    f"{expected_input!r}")
             if self.graph_state_representation not in GRAPH_STATE_REPRESENTATIONS:
                 raise ValueError(
                     "a graph state pipeline must declare its representation: "
@@ -108,7 +129,8 @@ class PipelineSpec:
                 raise ValueError(
                     "the ontology graph is the state here; it cannot also "
                     "shape, weight or replace the reward")
-            if self.reward_mode not in {"shin_table_active", "shin_table_no_active"}:
+            if self.reward_mode not in {"shin_table_active", "shin_table_no_active",
+                                        "capture_distance_two_term"}:
                 raise ValueError(
                     "a graph state pipeline must keep the baseline reward mode")
         elif self.graph_state_representation is not None:
@@ -191,6 +213,26 @@ PIPELINES = {
         graph_state_enabled=True,
         graph_state_representation="ontology_rgat",
     ),
+}
+
+# Breaking-contract implementation requested by the 2026-09-29 patched
+# protocol. It is registered separately so old runs retain their attribution.
+REFACTORED_PIPELINES = {
+    "ppo_vector_state": PipelineSpec(
+        name="ppo_vector_state", state_estimation_enabled=False,
+        auxiliary_estimation_loss_enabled=False, active_perception_enabled=False,
+        reward_mode="capture_distance_two_term", ontology_enabled=False,
+        ontology_input_mode=None, use_direct_rgat_potential=False,
+        policy_state_mode="canonical_vector"),
+    "ppo_ontology_selective_rgat": PipelineSpec(
+        name="ppo_ontology_selective_rgat", state_estimation_enabled=False,
+        auxiliary_estimation_loss_enabled=False, active_perception_enabled=False,
+        reward_mode="capture_distance_two_term", ontology_enabled=True,
+        ontology_input_mode=SELECTIVE_GRAPH_INPUT_MODE,
+        use_direct_rgat_potential=False, graph_state_enabled=True,
+        graph_state_representation="selective_rgat",
+        policy_state_mode="selective_graph",
+        graph_encoder_training="frozen_base_selective_gates"),
 }
 
 # Ablations of the proposed arm. Same reward, same action, same environment,
@@ -335,7 +377,7 @@ ADAPTIVE_PIPELINES = {
         ontology_input_mode="semantic_observation", use_direct_rgat_potential=False,
         use_adaptive_reward_weights=True, adaptive_reward_architecture="rgat"),
 }
-ALL_PIPELINES = {**PIPELINES, **ABLATION_PIPELINES, **LEGACY_PIPELINES,
+ALL_PIPELINES = {**PIPELINES, **REFACTORED_PIPELINES, **ABLATION_PIPELINES, **LEGACY_PIPELINES,
                  **ADAPTIVE_PIPELINES}
 
 # Old commands remain accepted, but the three new names are the only primary
@@ -367,6 +409,10 @@ def graph_state_pipeline_ids() -> tuple[str, ...]:
     """Every registered arm whose observation carries the situation graph."""
     return tuple(name for name, spec in ALL_PIPELINES.items()
                  if spec.graph_state_enabled)
+
+
+def refactored_pipeline_ids() -> tuple[str, ...]:
+    return tuple(REFACTORED_PIPELINES)
 
 
 def available_pipeline_ids() -> tuple[str, ...]:
@@ -456,6 +502,8 @@ def validate_pipeline_configuration(config: dict) -> None:
             "fov_reward_readout": spec.fov_reward_readout,
             "graph_state": spec.graph_state_enabled,
             "graph_state_representation": spec.graph_state_representation,
+            "policy_state_mode": spec.policy_state_mode,
+            "graph_encoder_training": spec.graph_encoder_training,
         }
         for key, value in optional_expected.items():
             if key in declared and declared[key] != value:
@@ -486,27 +534,46 @@ def validate_pipeline_configuration(config: dict) -> None:
         for name in ("hidden_dim", "graph_dim"):
             if int(graph_state.get(name, 32)) <= 0:
                 raise ValueError(f"graph_state.{name} must be positive")
-        # The encoder is part of the policy. A configuration that froze it, or
-        # that pointed it at a pre-trained artifact, would be the retired
-        # reward-side method wearing the new name.
-        if bool(graph_state.get("freeze_during_ppo", False)):
-            raise ValueError(
-                "the graph state encoder is trained by PPO and must not be frozen")
-        if graph_state.get("pretrained_artifact"):
-            raise ValueError(
-                "the graph state encoder has no offline stage and no artifact")
         representation = graph_state.get("representation")
         if (representation is not None
                 and representation not in GRAPH_STATE_REPRESENTATIONS):
             raise ValueError(
                 "graph_state.representation must be one of "
                 f"{GRAPH_STATE_REPRESENTATIONS}")
+        selective = any(ALL_PIPELINES[name].graph_state_representation
+                        == "selective_rgat" for name in configured)
+        if selective:
+            if not bool(graph_state.get("freeze_during_ppo", False)):
+                raise ValueError("selective R-GAT must freeze the pretrained base")
+            if not graph_state.get("pretrained_artifact"):
+                raise ValueError("selective R-GAT requires a pretrained artifact")
+            if float(graph_state.get("beta", .35)) != .35:
+                raise ValueError("selective relation gate beta is fixed at 0.35")
+            if not bool(graph_state.get("require_control_sufficiency", True)):
+                raise ValueError("selective artifact must pass control sufficiency")
+        else:
+            # Retained end-to-end ablation has no offline artifact.
+            if bool(graph_state.get("freeze_during_ppo", False)):
+                raise ValueError(
+                    "legacy graph-state encoder is trained by PPO and must not be frozen")
+            if graph_state.get("pretrained_artifact"):
+                raise ValueError(
+                    "legacy graph-state encoder has no offline artifact")
         # A run that puts the graph in the state must not also put it in the
         # reward: that is two factors, not one.
         if any(ALL_PIPELINES[name].fov_risk_reward_enabled for name in configured):
             raise ValueError(
                 "a run cannot mix the graph-state method with the retired "
                 "FOV-risk reward method: the comparison would have two factors")
+    refactored = [ALL_PIPELINES[name] for name in configured
+                  if name in REFACTORED_PIPELINES]
+    if refactored:
+        if set(configured) != set(REFACTORED_PIPELINES):
+            raise ValueError("default selective comparison requires exactly both PPO arms")
+        if bool((config.get("behavior_cloning") or {}).get("enabled", False)):
+            raise ValueError("behavior cloning is forbidden in the default selective path")
+        if any(spec.reward_mode != "capture_distance_two_term" for spec in refactored):
+            raise ValueError("both refactored arms must share the two-term reward")
     adaptive_specs = [ALL_PIPELINES[name] for name in configured
                       if ALL_PIPELINES[name].use_adaptive_reward_weights]
     if adaptive_specs:

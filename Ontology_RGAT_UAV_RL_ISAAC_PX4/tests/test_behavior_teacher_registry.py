@@ -70,6 +70,21 @@ def test_each_teacher_signs_its_own_attempt_rows():
         assert entry["information"].strip(), teacher
 
 
+def test_primary_uses_the_pd_fallback_without_replacing_the_pn_control_arm():
+    """A failed warm-start teacher is not a reason to change the baseline.
+
+    PN produced only one accepted landing in its 60-flight live trial.  The
+    privileged PD is training-only, while PN remains the non-learned arm the
+    learned policies are evaluated against.
+    """
+    config = load_experiment(
+        ROOT / "config/experiments/planar_three_arm_comparison.yaml")
+    settings = behavior_cloning_settings(config)
+    assert str(settings["teacher"]) == PRIVILEGED_VELOCITY_TEACHER
+    assert [str(arm["method"]) for arm in config["baseline_arms"]] == [
+        PN_GUIDANCE_CONTROLLER]
+
+
 def _fingerprint(settings):
     config = load_experiment(
         ROOT / "config/experiments/planar_three_arm_comparison.yaml")
@@ -86,8 +101,10 @@ def test_pn_gains_decide_what_a_stored_demonstration_set_means():
     """
     config = load_experiment(
         ROOT / "config/experiments/planar_three_arm_comparison.yaml")
-    settings = behavior_cloning_settings(config)
-    assert str(settings["teacher"]) == PN_GUIDANCE_CONTROLLER
+    # PN remains a supported teacher even when the primary experiment uses
+    # the PD fallback after PN exhausted its live collection budget.
+    settings = dict(behavior_cloning_settings(config))
+    settings["teacher"] = PN_GUIDANCE_CONTROLLER
     baseline = _fingerprint(settings)
     for key, value in (("pn_navigation_gain", 4.0),
                        ("pn_approach_speed_m_s", 0.9),

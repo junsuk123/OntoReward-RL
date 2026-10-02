@@ -1,4 +1,4 @@
-"""The trajectory panels: stable identity, and a view that shows altitude.
+"""The trajectory panels: stable identity and comparable absolute geometry.
 
 Two defects, both reported from watching a live four-pair run on 2026-09-22.
 
@@ -10,13 +10,13 @@ pair flies the reward-design source policy, and crossover evaluation cycles the
 arms across pairs seed by seed. The pair cards already separated the standing
 assignment from the borrowed policy; this panel did not.
 
-*The view could not answer the landing question.* It was a top-down plot of
-world ENU x/y, so whether the vehicle was descending onto the deck or holding
-above it -- the thing the whole experiment is about -- was invisible.
+The four canvases must use one fixed-size world-ENU box and one metres-to-pixels
+factor. Its X origin is the episode's initial UGV position, because the UGV
+continues from its previous world position between episodes. Auto-fitting each
+flight made identical motion look different between pairs and made the axes
+jump whenever a new extreme sample arrived.
 """
 from __future__ import annotations
-
-import re
 
 from ontology_rgat.viz.dashboard import PAGE
 
@@ -56,39 +56,51 @@ def test_the_trajectory_panel_matches_how_the_pair_cards_name_things():
         assert "assigned_method" in body and "active_method" in body, name
 
 
-# ------------------------------------------------- altitude-bearing side view
+# -------------------------------- fixed absolute X, nonnegative altitude view
 
-def test_the_plot_is_a_side_elevation_with_altitude_up():
+def test_the_plot_uses_absolute_world_x_and_nonnegative_altitude():
     body = _function("drawTrajectory")
-    # vertical axis is the z component of the stored 3-D points
-    assert "proj=arr=>arr.map(p=>[along(p),p[2]])" in body
-    assert "고도 기준 측면 뷰" in PAGE
-    # and the retired top-down framing is gone
-    assert "world ENU top-down" not in PAGE
-    assert "축 world ENU x/y (m)" not in PAGE
+    assert "U=uav.map(p=>[p[0],p[2]])" in body
+    assert "P=pad.map(p=>[p[0],p[2]])" in body
+    assert "world ENU X (m)" in body and "altitude / world ENU Z (m)" in body
+    assert "sideViewAxis" not in PAGE
 
 
-def test_the_view_axis_is_the_track_direction_not_the_instantaneous_bearing():
-    """A vehicle directly overhead has no bearing, and that is the flare."""
-    assert "function sideViewAxis" in PAGE
-    body = _function("sideViewAxis")
-    assert "Math.atan2(2*sxy,sxx-syy)" in body
-    assert "return [1,0]" in body, "a hover with no extent still needs an axis"
-
-
-def test_the_two_axes_are_scaled_independently_and_the_legend_says_so():
+def test_x_bound_is_anchored_to_the_episode_initial_ugv_position():
+    assert "const TRAJECTORY_VIEWPORT=Object.freeze" in PAGE
+    assert "xLength:170,yMin:0,yMax:10,xTick:20,yTick:1" in PAGE
     body = _function("drawTrajectory")
-    assert "aSpan" in body and "zSpan" in body
-    assert re.search(r"const aSpan=.*\n?.*const aMid", body) or "aMid" in body
-    # the equal-aspect square this replaced would flatten the descent
-    assert "const span=Math.max(x1-x0,y1-y0,2.0)*1.15" not in PAGE
-    assert "두 축의 축척은 다름" in PAGE
+    assert "const initialUgvX=P.length?P[0][0]" in body
+    assert "xMin:initialUgvX,xMax:initialUgvX+TRAJECTORY_VIEWPORT.xLength" in body
+    assert "a0=Infinity" not in body and "z0=Infinity" not in body
 
 
-def test_the_altitude_gap_and_the_deck_level_are_drawn():
+def test_reverse_shuttle_anchors_the_initial_ugv_at_the_right_boundary():
     body = _function("drawTrajectory")
-    assert "(u[1]-p[1]).toFixed(2)" in body, "the altitude gap is the number"
-    assert "const deck=P[P.length-1][1]" in body, "the deck level is the target"
+    assert "const directionSample=P.find" in body
+    assert "const ugvDirection=" in body
+    assert "xMin:initialUgvX-TRAJECTORY_VIEWPORT.xLength,xMax:initialUgvX" in body
+
+
+def test_every_pair_uses_the_same_fixed_size_x_and_altitude_scales():
+    body = _function("drawTrajectory")
+    assert "const scaleX=availableW/xSpan,scaleY=availableH/ySpan" in body
+    assert "const px=v=>ox+(v-bound.xMin)*scaleX" in body
+    assert "const py=v=>oy+H-(v-bound.yMin)*scaleY" in body
+    assert "에피소드 초기 UGV 기준" in PAGE
+    assert "모든 pair 동일 축척" in PAGE
+
+
+def test_current_altitude_above_the_pad_is_drawn():
+    body = _function("drawTrajectory")
+    assert "const altitudeGap=u[1]-p[1]" in body
+    assert "Δh ${altitudeGap.toFixed(2)} m" in body
+    assert "패드 위 ${(last[2]-pz).toFixed(2)} m" in body
+
+
+def test_four_pair_cards_are_stacked_to_make_x_wide():
+    assert ".traj-grid{display:grid;grid-template-columns:1fr" in PAGE
+    assert ".traj-plot canvas{height:260px;aspect-ratio:auto}" in PAGE
 
 
 def test_both_tracks_are_still_drawn_with_their_start_and_current_markers():

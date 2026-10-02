@@ -341,7 +341,9 @@ def test_the_single_experimental_factor_is_the_state_representation():
 def test_a_graph_state_arm_cannot_also_touch_the_reward():
     for name in graph_state_pipeline_ids():
         spec = ALL_PIPELINES[name]
-        assert spec.reward_mode in {"shin_table_active", "shin_table_no_active"}
+        assert spec.reward_mode in {
+            "shin_table_active", "shin_table_no_active",
+            "capture_distance_two_term"}
         assert not spec.fov_risk_reward_enabled
         assert not spec.use_direct_rgat_potential
         assert not spec.use_adaptive_reward_weights

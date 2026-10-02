@@ -435,6 +435,39 @@ def test_baseline_reports_keypoint_quality_from_the_shared_visual_features():
     assert pair["geometric_pad_center_in_fov"] is True
 
 
+def test_graph_snapshot_carries_live_sensor_to_ontology_provenance():
+    from ontology_rgat.perception.semantic_observation import SemanticObservation
+    from ontology_rgat.rgat.state_graph import build_state_graph
+
+    monitor, store, _ = _monitor(["shin_se_onto_rgat_state"])
+    observation = SemanticObservation(
+        keypoint_confidence=.8, visible_keypoint_fraction=1.0,
+        image_alignment=.75, apparent_target_scale=.25,
+        image_plane_motion_safety=.9, scale_rate_safety=.8,
+        visibility_memory=.85, reacquisition_trend=.1,
+        vertical_motion_safety=.7, attitude_stability=.95,
+        battery_risk=.2, visual_loss_risk=0.0,
+        centroid_xy=(-.1, .05), raw_scale=.07)
+    graph = build_state_graph(observation)
+    monitor.step(
+        index=1, dt=.1, method="shin_se_onto_rgat_state", reward=0.0,
+        reward_parts={}, estimate=np.zeros(6), truth=np.zeros(6),
+        geometric_in_fov=True, estimation_loss=0.0,
+        semantic_features=observation.feature_vector,
+        semantic_observation=observation, semantic_graph=graph,
+        state_graph_values=graph.X[0], pair_index=0,
+        state={"position": [0.0, 0.0, -2.0],
+               "world": {"velocity": [0.0, 0.0, 0.0]},
+               "pad": {"velocity": [0.0, 0.0, 0.0]},
+               "battery": {"enabled": False}})
+    payload = store.snapshot()["graphs"]["pair_0:shin_se_onto_rgat_state"]
+    provenance = payload["sensor_provenance"]
+    assert provenance["format"] == "ontology-rgat-sensor-provenance-v1"
+    assert any(edge["target"] == "AlignmentError"
+               for edge in provenance["connections"])
+    assert provenance["sensors"][0]["readings"][0]["value"] == pytest.approx(-.1)
+
+
 def test_rviz_receives_geometric_fov_and_keypoint_quality_separately():
     monitor, _, rviz = _monitor(["shin_se_fixed"])
     from ontology_rgat.rgat.fov_graph import FOV_FEATURE_NAMES

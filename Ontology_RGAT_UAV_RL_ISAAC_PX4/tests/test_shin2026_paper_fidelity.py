@@ -335,7 +335,8 @@ def test_every_transfer_deviation_from_the_paper_is_declared_with_evidence():
     assert set(keys) == {"simulator", "platform_motion_model", "platform_speed",
                          "command_envelope", "battery_termination",
                          "entry_handover", "keypoint_encoder",
-                         "action_space", "shaping_term_5"}
+                         "action_space", "shaping_term_5",
+                         "planar_reward_weights"}
     for entry in BACKEND_DEVIATIONS:
         assert entry.paper.strip() and entry.repository.strip()
         assert entry.reason.strip() and entry.evidence

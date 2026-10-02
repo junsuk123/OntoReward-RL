@@ -204,7 +204,8 @@ class RelationalGraphAttention(nn.Module):
                 self.bias.zero_()
 
     # --------------------------------------------------------------- forward
-    def forward(self, H: torch.Tensor, *, return_attention: bool = False):
+    def forward(self, H: torch.Tensor, *, relation_gates: torch.Tensor | None = None,
+                return_attention: bool = False):
         if H.dim() == 2:
             H = H.unsqueeze(0)
             squeeze = True
@@ -242,6 +243,19 @@ class RelationalGraphAttention(nn.Module):
         # Messages are the source projections under the edge's own relation.
         messages = proj_flat.index_select(2, top.rel_src)         # [B, Hd, E, U]
         weighted = messages * alpha.unsqueeze(-1)
+        if relation_gates is not None:
+            gates = torch.as_tensor(relation_gates, dtype=weighted.dtype,
+                                    device=weighted.device)
+            if gates.shape[-1] != R:
+                raise ValueError(
+                    f"relation gates must have width {R}, got {gates.shape[-1]}")
+            gates = gates.reshape(-1, R)
+            if gates.shape[0] not in (1, B):
+                raise ValueError(
+                    "relation gates must have one row or one row per graph")
+            if gates.shape[0] == 1 and B != 1:
+                gates = gates.expand(B, -1)
+            weighted = weighted * gates[:, top.rel].unsqueeze(1).unsqueeze(-1)
         out = torch.zeros(B, Hd, N, U, dtype=weighted.dtype, device=weighted.device)
         out.index_add_(2, top.dst, weighted)
 

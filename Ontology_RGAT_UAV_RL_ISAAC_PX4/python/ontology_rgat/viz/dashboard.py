@@ -218,12 +218,12 @@ font-variant-numeric:tabular-nums}.teacher th:first-child,.teacher td:first-chil
 .teacher .tmode{font-weight:700;color:var(--accent);margin-top:4px}
 .teacher .tmode.lost{color:var(--warn)}.teacher .tmode.reacquired{color:var(--good)}
 .teacher .tnote{color:var(--muted);font-size:10.5px;margin-top:4px}
-/* trajectories: one square top-down plot per physical pair */
-.traj-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:8px}
+/* trajectories: four full-width elevation plots, one stable physical pair per row */
+.traj-grid{display:grid;grid-template-columns:1fr;gap:8px}
 .traj-plot{border:1px solid #b8b8b8;background:#fff;padding:7px;min-width:0}
 .traj-plot h3{margin:0 0 3px;font-size:11px;line-height:1.3;text-align:center;height:30px;
 overflow:hidden}
-.traj-plot canvas{height:230px}.traj-plot .legend{justify-content:center}
+.traj-plot canvas{height:260px;aspect-ratio:auto}.traj-plot .legend{justify-content:center}
 .collection{display:flex;flex-wrap:wrap;gap:8px;align-items:stretch}
 .collection .cstage{border:1px solid #b8b8b8;background:#fff;padding:8px 11px;min-width:150px}
 .collection .cstage b{display:block;font-size:13px}
@@ -245,6 +245,21 @@ font:12px/1.5 "Courier New",monospace;text-align:center}
 .g3d{position:relative}
 .g3d canvas{height:420px;cursor:grab;touch-action:none}
 .g3d canvas.drag{cursor:grabbing}
+.rgat-flow{position:relative;background:#101b35;border-color:#25365e;color:#e9f2ff;
+overflow:hidden}.rgat-flow h2{color:#e9f2ff}.rgat-flow canvas{height:520px;background:#101b35;
+cursor:grab;touch-action:none}.rgat-flow canvas.drag{cursor:grabbing}
+.rf-head{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:7px;
+font-size:10.5px;color:#a8badc}.rf-head b{color:#7de4ff;font-size:11.5px}.rf-pill{padding:2px 7px;
+border:1px solid #3b568d;border-radius:999px;background:rgba(26,46,86,.75)}
+.rf-pill.live{border-color:#24b8a8;color:#79f3d9}.rf-pill.wait{border-color:#b68339;color:#ffd182}
+.rf-stats{display:grid;grid-template-columns:repeat(6,minmax(90px,1fr));gap:6px;margin-top:8px}
+.rf-stat{border:1px solid #304874;background:rgba(16,28,55,.82);padding:5px 7px;min-width:0}
+.rf-stat b{display:block;color:#f1f6ff;font-size:13px;font-variant-numeric:tabular-nums}
+.rf-stat span{display:block;color:#91a8cf;font-size:8.5px;text-transform:uppercase;letter-spacing:.05em}
+.rgat-flow .note{color:#9eb0d0}.rf-legend{display:flex;gap:13px;flex-wrap:wrap;margin-top:7px;
+color:#9eb0d0;font-size:9.5px}.rf-legend i{display:inline-block;width:17px;height:2px;
+vertical-align:middle;margin-right:4px}.rf-tip{color:#e9f2ff;background:rgba(9,19,40,.96);
+border-color:#3e5f9d;box-shadow:0 5px 18px rgba(0,0,0,.45)}
 .bar{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:6px;
 font-size:11px;color:var(--muted)}
 .bar label{display:flex;gap:5px;align-items:center}
@@ -276,9 +291,32 @@ font-variant-numeric:tabular-nums}.audit-table th{position:sticky;top:0;backgrou
 .audit-table th,.audit-table td{padding:3px 5px;border-bottom:1px solid #e5e5e5;text-align:right;
 white-space:nowrap}.audit-table th:nth-child(2),.audit-table td:nth-child(2){text-align:left}
 .audit-empty{padding:12px;color:var(--muted);font-size:10px}
+.sensor-lineage{margin-top:10px;border:1px solid var(--line);background:#f8fafc;padding:8px 9px}
+.sensor-lineage-head{display:flex;align-items:baseline;gap:9px;flex-wrap:wrap;margin-bottom:6px}
+.sensor-lineage-head h3{font-size:12px;margin:0;color:var(--ink)}
+.sensor-lineage-head span{font-size:10px;color:var(--muted)}
+.sensor-lineage-head .boundary{margin-left:auto;color:#236c35;border:1px solid #77AC30;
+background:#f4f9ee;padding:2px 6px;border-radius:9px}
+.sensor-map{width:100%;overflow-x:auto;background:#fff;border:1px solid #d9dfe7}
+.sensor-map svg{display:block;width:100%;min-width:980px;height:auto}
+.sensor-map .prov-edge{fill:none;stroke:#8ba0b8;stroke-width:1.1;opacity:.30;
+transition:opacity .12s,stroke-width .12s}.sensor-map .prov-edge.ontology{stroke:#D95319}
+.sensor-map .prov-card{fill:#fff;stroke:#9faebf;stroke-width:1}
+.sensor-map .prov-card.sensor{fill:#eef6fb;stroke:#5f98bc}
+.sensor-map .prov-card.context{fill:#f8f4fc;stroke:#8a65a5}
+.sensor-map .prov-card.ontology{fill:#fff7f0;stroke:#cf8755}
+.sensor-map .prov-title{font:600 11px Arial,sans-serif;fill:#26384c}
+.sensor-map .prov-value{font:10px "Courier New",monospace;fill:#365b72}
+.sensor-map .prov-meta{font:8.5px Arial,sans-serif;fill:#718096}
+.sensor-map .prov-column{font:700 10px Arial,sans-serif;letter-spacing:.08em;fill:#59697c}
+.sensor-map .dim{opacity:.34}.sensor-map .focus{opacity:1!important;stroke-width:2.5!important}
+.sensor-map .prov-node.focus .prov-card{stroke:#0072BD;stroke-width:2.2}
+.sensor-lineage-legend{display:flex;gap:13px;flex-wrap:wrap;margin-top:6px;
+font-size:9.5px;color:var(--muted)}.sensor-lineage-legend b{color:var(--ink)}
 .note{font-size:11px;color:var(--muted);margin-top:8px}
 @media(max-width:780px){main{grid-template-columns:1fr}.pair-grid,.pair-plot-grid{
-grid-template-columns:1fr}.graph-audit{grid-template-columns:1fr}}
+grid-template-columns:1fr}.graph-audit{grid-template-columns:1fr}.rf-stats{
+grid-template-columns:repeat(2,minmax(90px,1fr))}}
 </style></head><body>
 <header><h1 id="page-title">2쌍 Shin baseline / Ontology-R-GAT FOV 비교</h1>
 <span id="stage">connecting</span><span id="detail"></span><span id="age"></span></header>
@@ -480,6 +518,8 @@ const CARDS=[
   labels:['틸트 [deg]','요레이트 [deg/s] (항상 0)'],smooth:3},
  {id:'graph3d',view:'benchmark',kind:'graph',
   title:'온톨로지 상황 그래프 G_t · node 값과 관계 (제안 arm은 이 그래프를 상태로 읽는다)'},
+ {id:'rgat_neural_flow',view:'benchmark',kind:'rgatflow',requiresRole:'state_representation',
+  title:'Ontology R-GAT · 실시간 message-passing 신경망'},
 
  {id:'head_run',view:'benchmark',kind:'heading',
   title:'3 · 실행 상태',
@@ -490,7 +530,7 @@ const CARDS=[
  {id:'teacher_demos',view:'benchmark',kind:'teacher',
   title:'교사 시연 비행 · 실시간 (behavior-cloning warm start, training-only)'},
  {id:'trajectories',view:'benchmark',kind:'trajectories',
-  title:'실시간 궤적 · UAV(실선)와 착륙 패드(점선) · 고도 기준 측면 뷰 · 물리 pair 고정'},
+  title:'실시간 궤적 · 절대 world ENU X / 고도 · 4개 pair 세로 배치 · 공통 고정 축'},
  {id:'parallel_live_perception',view:'benchmark',kind:'pairplots',plot:'perception',
   title:'실시간 기하 FOV 대 keypoint 인지 품질 · 두 arm 동일 정의'},
  {id:'parallel_live_reward',view:'benchmark',kind:'pairplots',plot:'reward',
@@ -535,10 +575,10 @@ const root=document.getElementById('root');
 for(const c of CARDS){
   const el=document.createElement('section');
   el.className=(c.kind==='heading'?'card section'
-    :'card'+((c.id==='tiles'||['graph','contract','evalbars','pairs','pairplots','phase',
+    :'card'+((c.id==='tiles'||['graph','rgatflow','contract','evalbars','pairs','pairplots','phase',
       'runpipe','algopipe','mdp','fovstatus','teacher','trajectories','collection']
       .includes(c.kind))?' wide':''))
-    +(c.kind==='graph'?' g3d':'');
+    +(c.kind==='graph'?' g3d':'')+(c.kind==='rgatflow'?' rgat-flow':'');
   el.id='card-'+c.id;
   el.dataset.view=c.view||'common';
   if(c.requiresRole)el.dataset.role=c.requiresRole;
@@ -588,6 +628,13 @@ for(const c of CARDS){
     <canvas id="cv-graph3d"></canvas><div class="tip" id="g3d-tip"></div>
     <div class="relbar" id="rel-graph3d"></div>
     <div class="module-flow" id="g3d-modules"></div>
+    <section class="sensor-lineage">
+      <div class="sensor-lineage-head"><h3>Sensor data → semantic/context → ontology node</h3>
+        <span>Hover any box to isolate the exact construction path and transform.</span>
+        <span class="boundary" id="g3d-sensor-boundary">onboard inputs only</span></div>
+      <div class="sensor-map" id="g3d-sensor-map"></div>
+      <div class="sensor-lineage-legend" id="g3d-sensor-legend"></div>
+    </section>
     <div class="graph-audit">
       <section class="audit-panel"><h3>모든 node 값</h3><div class="audit-scroll" id="g3d-nodes"></div></section>
       <section class="audit-panel"><h3>모든 edge · attention-head 값</h3><div class="audit-scroll" id="g3d-edges"></div></section>
@@ -598,10 +645,27 @@ for(const c of CARDS){
       colour are the channel's current activation; edge width and opacity are the
       R-GAT message-passing coefficients. They are not reported as relation importance
       or causal evidence. Self-loops remain in the audit table even though the 3D canvas omits them.</div>`;}
+  else if(c.kind==='rgatflow'){el.innerHTML=`<h2>${c.title}</h2>
+    <div class="rf-head"><b id="rf-source">제안 arm graph 대기</b>
+      <span class="rf-pill live">PPO와 함께 학습</span>
+      <span class="rf-pill">state representation</span>
+      <span class="rf-pill" id="rf-attention">attention telemetry 대기</span>
+      <span style="margin-left:auto">drag: 회전 · wheel: 확대</span></div>
+    <canvas id="cv-rgat-flow"></canvas><div class="tip rf-tip" id="rf-tip"></div>
+    <div class="rf-stats" id="rf-stats"></div>
+    <div class="rf-legend" id="rf-legend"></div>
+    <div class="note">실제 G_t node·relation·현재 activation을 사용한 계산 구조 뷰다.
+      입력 node 사이의 색 선은 선언된 ontology relation이고, R-GAT 내부의 조밀한 선은
+      feature-channel message routing을 나타낸다. attention 값이 payload에 있을 때만 선 굵기에
+      반영하며, 값이 없을 때는 구조를 균일하게 그린다. 시각적 연결은 인과 설명이 아니다.</div>`;}
   else{el.innerHTML=`<h2>${c.title}</h2><canvas id="cv-${c.id}"></canvas>
     <div class="legend" id="lg-${c.id}"></div>`;}
   root.appendChild(el);
 }
+// Cards are created after the browser's native hash-scroll pass. Repeat it
+// once so a direct link to the live R-GAT panel lands on the requested card.
+if(location.hash)requestAnimationFrame(()=>{
+  const target=document.querySelector(location.hash);if(target)target.scrollIntoView();});
 function smooth(v,w){if(w<2||v.length<2)return v;const o=[];let s=0;
   for(let i=0;i<v.length;i++){s+=v[i];if(i>=w)s-=v[i-w];o.push(s/Math.min(i+1,w));}return o;}
 function draw(card,state){
@@ -1229,28 +1293,15 @@ function drawTrajectories(state){
       document.getElementById(`lg-traj-${i}`),uav,pad);
   }
 }
-// The horizontal direction the side view looks ALONG. The plane asked for is
-// the one the vehicle and the deck span together with the vertical, so the
-// horizontal axis has to be the direction the action happens in -- the deck's
-// travel and the vehicle's chase are both along it.
-//
-// Taken as the principal axis of the combined horizontal track rather than the
-// instantaneous vehicle->pad bearing: that bearing is undefined when the
-// vehicle is directly overhead, which is exactly the flare, and using it would
-// swing the whole drawn history around from one frame to the next. Closed-form
-// eigenvector of the 2x2 covariance; a track with no horizontal extent (a pure
-// hover) falls back to world x so the view still has an axis.
-function sideViewAxis(points){
-  let n=0,mx=0,my=0;
-  for(const p of points){mx+=p[0];my+=p[1];n++;}
-  if(!n)return [1,0];
-  mx/=n;my/=n;
-  let sxx=0,syy=0,sxy=0;
-  for(const p of points){const dx=p[0]-mx,dy=p[1]-my;sxx+=dx*dx;syy+=dy*dy;sxy+=dx*dy;}
-  if(Math.sqrt(Math.max(sxx+syy,0)/n)<1e-3)return [1,0];
-  const theta=0.5*Math.atan2(2*sxy,sxx-syy);
-  return [Math.cos(theta),Math.sin(theta)];
-}
+// A fixed-size absolute viewport, re-anchored only when an episode's series is
+// reset. The first pad sample is the episode's initial UGV position. Put that
+// position on the leading boundary so carried world X cannot walk out of a
+// global box over successive episodes. The shuttle eventually reverses, so
+// select the leading boundary from its first observed movement direction.
+// Plot Y is physical altitude (world ENU Z), whose configured entry range ends
+// at 8 m; 0..10 m keeps the entire flight and removes impossible negative air.
+const TRAJECTORY_VIEWPORT=Object.freeze({
+  xLength:170,yMin:0,yMax:10,xTick:20,yTick:1});
 function drawTrajectory(cv,lg,uav,pad){
   if(!cv)return;
   const dpr=window.devicePixelRatio||1,w=cv.clientWidth,h=cv.clientHeight;
@@ -1258,49 +1309,41 @@ function drawTrajectory(cv,lg,uav,pad){
   const g=cv.getContext('2d');g.setTransform(dpr,0,0,dpr,0,0);g.clearRect(0,0,w,h);
   const css=getComputedStyle(document.body);
   const muted=css.getPropertyValue('--muted').trim(),gridColor=css.getPropertyValue('--grid').trim();
-  if(!uav.length&&!pad.length){g.fillStyle=muted;g.font='12px sans-serif';
-    g.fillText('no trajectory yet',10,h/2);if(lg)lg.innerHTML='';return;}
-  // Side elevation of the 3-D tracks: horizontal = distance along the view
-  // axis, vertical = world ENU altitude. A top-down view cannot show whether
-  // the vehicle is descending onto the deck or holding above it, which for a
-  // landing is the question.
-  const pts=uav.concat(pad);
-  const axis=sideViewAxis(pts);
-  let mx=0,my=0;for(const p of pts){mx+=p[0];my+=p[1];}
-  mx/=pts.length;my/=pts.length;
-  const along=p=>(p[0]-mx)*axis[0]+(p[1]-my)*axis[1];
-  const proj=arr=>arr.map(p=>[along(p),p[2]]);
-  const U=proj(uav),P=proj(pad),flat=U.concat(P);
-  let a0=Infinity,a1=-Infinity,z0=Infinity,z1=-Infinity;
-  for(const p of flat){a0=Math.min(a0,p[0]);a1=Math.max(a1,p[0]);
-    z0=Math.min(z0,p[1]);z1=Math.max(z1,p[1]);}
-  // Independent scales, deliberately. A landing lives in a few metres of
-  // altitude across tens of metres of ground, so the equal-aspect window this
-  // replaced would flatten the descent -- the one thing the view exists to
-  // show -- into a horizontal line. Both axes are labelled in metres and the
-  // legend says the scales differ.
-  const aSpan=Math.max(a1-a0,2.0)*1.12,zSpan=Math.max(z1-z0,1.5)*1.25;
-  const aMid=(a0+a1)/2,zMid=(z0+z1)/2;
-  const padL=36,padB=18,padT=8,padR=8;
-  const W=Math.max(10,w-padL-padR),H=Math.max(10,h-padT-padB),ox=padL,oy=padT;
-  const px=v=>ox+(v-(aMid-aSpan/2))/aSpan*W;
-  const py=v=>oy+H-(v-(zMid-zSpan/2))/zSpan*H;
-  const tick=s=>s>40?10:s>20?5:s>8?2:s>3?1:0.5;
-  const aStep=tick(aSpan),zStep=tick(zSpan);
+  const empty=!uav.length&&!pad.length;
+  const U=uav.map(p=>[p[0],p[2]]),P=pad.map(p=>[p[0],p[2]]);
+  const initialUgvX=P.length?P[0][0]:(U.length?U[0][0]:0);
+  const directionSample=P.find((p,i)=>i>0&&Math.abs(p[0]-initialUgvX)>1e-4);
+  const ugvDirection=(directionSample&&directionSample[0]<initialUgvX)?-1:1;
+  const bound=ugvDirection<0
+    ?{xMin:initialUgvX-TRAJECTORY_VIEWPORT.xLength,xMax:initialUgvX,
+      yMin:TRAJECTORY_VIEWPORT.yMin,yMax:TRAJECTORY_VIEWPORT.yMax,
+      xTick:TRAJECTORY_VIEWPORT.xTick,yTick:TRAJECTORY_VIEWPORT.yTick}
+    :{xMin:initialUgvX,xMax:initialUgvX+TRAJECTORY_VIEWPORT.xLength,
+      yMin:TRAJECTORY_VIEWPORT.yMin,yMax:TRAJECTORY_VIEWPORT.yMax,
+      xTick:TRAJECTORY_VIEWPORT.xTick,yTick:TRAJECTORY_VIEWPORT.yTick};
+  const xSpan=bound.xMax-bound.xMin,ySpan=bound.yMax-bound.yMin;
+  const padL=37,padB=27,padT=8,padR=9;
+  const availableW=Math.max(10,w-padL-padR),availableH=Math.max(10,h-padT-padB);
+  // Every pair gets these same two scale factors and literal bounds. X and
+  // altitude intentionally use the full wide rectangle; equal metric aspect
+  // would compress the useful 0..10 m altitude band to a few pixels.
+  const scaleX=availableW/xSpan,scaleY=availableH/ySpan;
+  const W=availableW,H=availableH,ox=padL,oy=padT;
+  const px=v=>ox+(v-bound.xMin)*scaleX;
+  const py=v=>oy+H-(v-bound.yMin)*scaleY;
   g.strokeStyle=gridColor;g.lineWidth=.6;g.setLineDash([1.5,2.5]);
   g.fillStyle=muted;g.font='9px Arial';
-  for(let v=Math.ceil((aMid-aSpan/2)/aStep)*aStep;v<=aMid+aSpan/2;v+=aStep){
+  for(let v=bound.xMin;v<=bound.xMax;v+=bound.xTick){
     const X=px(v);g.beginPath();g.moveTo(X,oy);g.lineTo(X,oy+H);g.stroke();
-    g.fillText(v.toFixed(aStep<1?1:0),X-7,oy+H+12);}
-  for(let v=Math.ceil((zMid-zSpan/2)/zStep)*zStep;v<=zMid+zSpan/2;v+=zStep){
+    g.textAlign='center';g.fillText(Number(v.toFixed(1)),X,oy+H+13);}
+  for(let v=bound.yMin;v<=bound.yMax;v+=bound.yTick){
     const Y=py(v);g.beginPath();g.moveTo(ox,Y);g.lineTo(ox+W,Y);g.stroke();
-    g.fillText(v.toFixed(zStep<1?1:0),2,Y+3);}
+    g.textAlign='right';g.fillText(String(v),ox-5,Y+3);}
   g.setLineDash([]);g.strokeStyle='#262626';g.lineWidth=.8;g.strokeRect(ox,oy,W,H);
-  // Deck level: the altitude the vehicle is actually trying to reach.
-  if(P.length){const deck=P[P.length-1][1];
-    g.strokeStyle=PALETTE[1];g.globalAlpha=.35;g.lineWidth=1;g.setLineDash([2,3]);
-    g.beginPath();g.moveTo(ox,py(deck));g.lineTo(ox+W,py(deck));g.stroke();
-    g.globalAlpha=1;g.setLineDash([]);}
+  g.fillStyle=muted;g.font='9px Arial';g.textAlign='center';
+  g.fillText('world ENU X (m)',ox+W/2,h-2);
+  g.save();g.translate(8,oy+H/2);g.rotate(-Math.PI/2);g.fillText('altitude / world ENU Z (m)',0,0);g.restore();
+  g.save();g.beginPath();g.rect(ox,oy,W,H);g.clip();
   const poly=(arr,color,dash)=>{if(!arr.length)return;
     g.strokeStyle=color;g.lineWidth=1.8;g.setLineDash(dash);g.beginPath();
     arr.forEach((p,k)=>{const X=px(p[0]),Y=py(p[1]);k?g.lineTo(X,Y):g.moveTo(X,Y);});g.stroke();
@@ -1310,21 +1353,26 @@ function drawTrajectory(cv,lg,uav,pad){
     g.arc(px(last[0]),py(last[1]),4.5,0,2*Math.PI);g.fill();};
   poly(P,PALETTE[1],[4,3]);
   poly(U,PALETTE[0],[]);
-  // The altitude gap, drawn where it is: between the two current markers.
   if(U.length&&P.length){
     const u=U[U.length-1],p=P[P.length-1];
     g.strokeStyle='#262626';g.globalAlpha=.55;g.lineWidth=1;g.setLineDash([3,2]);
     g.beginPath();g.moveTo(px(u[0]),py(u[1]));g.lineTo(px(u[0]),py(p[1]));g.stroke();
     g.setLineDash([]);g.globalAlpha=1;g.fillStyle='#262626';g.font='9px Arial';
-    g.fillText(`${(u[1]-p[1]).toFixed(2)} m`,px(u[0])+4,(py(u[1])+py(p[1]))/2);}
+    g.textAlign='left';const altitudeGap=u[1]-p[1];
+    g.fillText(`Δh ${altitudeGap.toFixed(2)} m`,px(u[0])+4,
+      (py(u[1])+py(p[1]))/2-4);}
+  g.restore();
+  if(empty){g.fillStyle=muted;g.font='12px sans-serif';g.textAlign='center';
+    g.fillText('no trajectory yet',ox+W/2,oy+H/2);}
   if(uav.length){const last=uav[uav.length-1],pz=pad.length?pad[pad.length-1][2]:null;
-    g.fillStyle='#262626';g.font='10px Arial';
-    g.fillText(`UAV z ${last[2].toFixed(2)} m${pz!==null?` · 패드 위 ${(last[2]-pz).toFixed(2)} m`:''}`
-      +` · ${uav.length} step`,ox+4,oy+12);}
+    g.fillStyle='#262626';g.font='10px Arial';g.textAlign='left';
+    g.fillText(`UAV X ${last[0].toFixed(1)} m · 고도 ${last[2].toFixed(2)} m`+
+      `${pz===null?'':` · 패드 위 ${(last[2]-pz).toFixed(2)} m`} · ${uav.length} step`,ox+4,oy+12);}
   if(lg)lg.innerHTML=`<span><i style="background:${PALETTE[0]}"></i>UAV</span>`
     +`<span><i style="background:${PALETTE[1]}"></i>착륙 패드</span>`
-    +`<span>○ 시작 &nbsp;● 현재 &nbsp;· 고도 기준 측면 뷰 · 가로 진행축 ${aStep} m / `
-    +`세로 고도(world ENU z) ${zStep} m · 두 축의 축척은 다름</span>`;
+    +`<span>○ 시작 &nbsp;● 현재 &nbsp;· 고도 기준 측면 뷰 · `
+    +`X ${bound.xMin.toFixed(1)}..${bound.xMax.toFixed(1)} m / `
+    +`고도 ${bound.yMin}..${bound.yMax} m · 에피소드 초기 UGV 기준 · 모든 pair 동일 축척</span>`;
 }
 function benchmarkPanel(state){
   const s=state.scalars||{},contract=s.actor_contract||{};
@@ -1412,7 +1460,7 @@ function drawEvaluationBars(card,state){
 // the depth cue, the attention width and the hover isolation share one pass.
 const REL_COLORS=['#c0392b','#0d8c4d','#1a59bf','#8a8f98'];
 const G={yaw:-0.55,pitch:0.30,zoom:1,auto:true,floor:0,hover:-1,drag:null,
-         data:null,graphs:{},selected:'',manual:false,dirty:true,pts:[],fit:0};
+         data:null,graphs:{},state:null,selected:'',manual:false,dirty:true,pts:[],fit:0};
 const clamp01=v=>Math.max(0,Math.min(1,v));
 function riskColor(v){const t=clamp01(v);
   return [Math.round(255*(0.20+0.72*t)),Math.round(255*(0.70-0.50*t)),
@@ -1613,7 +1661,182 @@ function graphAudit(){
     `<div class="module-box${box.head?' head':''}"><b>${escapeHTML(box.name)}</b>`+
     `<small>${escapeHTML(box.detail)}</small></div>`).join('');
 }
+const PROV_SEMANTICS=[
+  ['centroid_x','Keypoint centroid x','normalized image','context'],
+  ['centroid_y','Keypoint centroid y','normalized image','context'],
+  ['raw_target_scale','Raw target scale','normalized image','context'],
+  ['keypoint_confidence','Keypoint confidence','0..1','semantic'],
+  ['visible_keypoint_fraction','Visible keypoint fraction','0..1','semantic'],
+  ['image_alignment','Image alignment','0..1','semantic'],
+  ['apparent_target_scale','Apparent target scale','0..1','semantic'],
+  ['image_plane_motion_safety','Image motion safety','0..1','context'],
+  ['scale_rate_safety','Scale-rate safety','0..1','context'],
+  ['visibility_memory','Visibility memory','0..1','context'],
+  ['reacquisition_trend','Reacquisition trend','0..1','context'],
+  ['vertical_motion_safety','Vertical-motion safety','0..1','semantic'],
+  ['attitude_stability','Attitude stability','0..1','semantic'],
+  ['battery_risk','Battery risk','0..1','semantic'],
+  ['visual_loss_risk','Visual-loss risk','0..1','context'],
+  ['visual_loss_duration_s','Visual-loss duration','s','context']];
+const PROV_SENSOR_LINKS=[
+  ['landing_camera','centroid_x','confidence-weighted keypoint centroid'],
+  ['landing_camera','centroid_y','confidence-weighted keypoint centroid'],
+  ['landing_camera','raw_target_scale','RMS keypoint spread'],
+  ['keypoint_encoder','keypoint_confidence','heatmap entropy + visibility'],
+  ['keypoint_encoder','visible_keypoint_fraction','visible keypoints / 6'],
+  ['keypoint_encoder','image_alignment','centroid distance from image centre'],
+  ['keypoint_encoder','apparent_target_scale','reliability-weighted scale'],
+  ['landing_camera','image_plane_motion_safety','centroid delta / dt'],
+  ['temporal_context','image_plane_motion_safety','previous frame'],
+  ['landing_camera','scale_rate_safety','scale delta / dt'],
+  ['temporal_context','scale_rate_safety','previous frame'],
+  ['keypoint_encoder','visibility_memory','current reliability'],
+  ['temporal_context','visibility_memory','1.5 s exponential memory'],
+  ['keypoint_encoder','reacquisition_trend','confidence recovery'],
+  ['temporal_context','reacquisition_trend','previous confidence'],
+  ['px4_odometry','vertical_motion_safety','exp(-|vz| / 0.6)'],
+  ['px4_imu','attitude_stability','exp(-tilt / 22 deg)'],
+  ['battery_monitor','battery_risk','1 - reserve'],
+  ['keypoint_encoder','visual_loss_risk','keypoint dropout'],
+  ['temporal_context','visual_loss_risk','loss duration / 2 s'],
+  ['temporal_context','visual_loss_duration_s','consecutive dropout time']];
+const PROV_ONTOLOGY_LINKS=[
+  ['centroid_x','AlignmentError','bearing from camera nadir column'],
+  ['vertical_motion_safety','DescentRate','recover |vz|, then soft saturation'],
+  ['image_plane_motion_safety','TargetMotion','1 - motion safety'],
+  ['centroid_x','FOVMargin','distance to horizontal image edge'],
+  ['centroid_y','FOVMargin','distance to vertical image edge'],
+  ['visual_loss_risk','MeasurementAge','bounded observation age'],
+  ['raw_target_scale','RelativeRange','inverse apparent scale'],
+  ['keypoint_confidence','PadVisibility','confidence × visible fraction'],
+  ['visible_keypoint_fraction','PadVisibility','confidence × visible fraction'],
+  ['visibility_memory','PadVisibility','dropout memory support'],
+  ['visual_loss_risk','PadVisibility','suppresses stale memory']];
+function graphPointFor(state,graph){
+  if(!state||!graph)return {};
+  const series=state.series||{},pair=Number(graph.pair_index);
+  let rows=Number.isFinite(pair)?series[`benchmark_step_pair_${pair}`]:null;
+  if(!rows||!rows.length)rows=series[`benchmark_step_${graph.method||''}`]||[];
+  return rows.length?rows[rows.length-1]:{};
+}
+function fallbackSensorProvenance(state,graph){
+  const point=graphPointFor(state,graph),value=name=>{
+    if(name==='visual_loss_duration_s'){
+      const risk=Number(point.semantic_visual_loss_risk);
+      return Number.isFinite(risk)?Math.min(2,2*risk):null;}
+    const raw=point[`semantic_${name}`];return Number.isFinite(Number(raw))?Number(raw):null;};
+  const vertical=Math.max(1e-6,Math.min(1,Number(value('vertical_motion_safety')??1)));
+  const sensors=[
+    {id:'landing_camera',label:'Landing camera',kind:'sensor',readings:[
+      {label:'alignment',value:value('image_alignment'),unit:'0..1'},
+      {label:'apparent scale',value:value('apparent_target_scale'),unit:'0..1'}]},
+    {id:'keypoint_encoder',label:'Frozen 6-keypoint encoder',kind:'inference',readings:[
+      {label:'confidence',value:value('keypoint_confidence'),unit:'0..1'},
+      {label:'visible',value:value('visible_keypoint_fraction'),unit:'fraction'}]},
+    {id:'temporal_context',label:'Visual history',kind:'context',readings:[
+      {label:'loss age',value:value('visual_loss_duration_s'),unit:'s'}]},
+    {id:'px4_odometry',label:'PX4 local odometry',kind:'sensor',readings:[
+      {label:'|vertical speed|',value:-.6*Math.log(vertical),unit:'m/s'}]},
+    {id:'px4_imu',label:'PX4 IMU attitude',kind:'sensor',readings:[
+      {label:'stability',value:value('attitude_stability'),unit:'0..1'}]},
+    {id:'battery_monitor',label:'PX4 battery monitor',kind:'sensor',readings:[
+      {label:'reserve',value:value('battery_risk')===null?null:1-value('battery_risk'),unit:'fraction'}]}];
+  const semantics=PROV_SEMANTICS.map(([id,label,unit,kind])=>({
+    id,label,unit,kind,value:value(id)}));
+  const nodeNames=new Set((graph.nodes||[]).map(node=>String(node.name)));
+  const connections=PROV_SENSOR_LINKS.map(([source,target,transform])=>({
+    source,target,transform,stage:'sensor_to_semantic'}));
+  for(const [source,target,transform] of PROV_ONTOLOGY_LINKS)if(nodeNames.has(target))
+    connections.push({source,target,transform,stage:'semantic_to_ontology'});
+  return {format:'ontology-rgat-sensor-provenance-v1-fallback',sensors,semantics,connections,
+    boundary:['No simulator truth','No geometric FOV label','No relative-pose estimate',
+      'Onboard camera/PX4 signals only']};
+}
+function provenanceValue(value,unit){
+  const number=Number(value);if(!Number.isFinite(number))return '—';
+  const digits=Math.abs(number)>=10?2:3;
+  return `${number.toFixed(digits)}${unit&&unit!=='0..1'?' '+unit:''}`;
+}
+function graphSensorMap(state){
+  const box=document.getElementById('g3d-sensor-map');if(!box)return;
+  const graph=G.data;if(!graph){box.innerHTML='<div class="audit-empty">graph data 대기</div>';return;}
+  const p=(graph.sensor_provenance&&graph.sensor_provenance.sensors)
+    ?graph.sensor_provenance:fallbackSensorProvenance(state,graph);
+  const sensors=p.sensors||[],semantics=p.semantics||[],nodes=graph.nodes||[];
+  const links=(p.connections||[]).filter(link=>
+    link.stage==='sensor_to_semantic'||nodes.some(node=>node.name===link.target));
+  const width=1180,top=38,row=37;
+  const height=Math.max(390,top+Math.max(semantics.length*row,sensors.length*82,nodes.length*52)+12);
+  const columns={sensor:{x:18,w:245},semantic:{x:420,w:292},ontology:{x:895,w:260}};
+  const positions=new Map();
+  const spread=(items,column,step)=>{const total=(items.length-1)*step;
+    const start=top+Math.max(0,(height-top-12-total)/2);
+    items.forEach((item,index)=>positions.set(item.id||item.name,
+      {x:column.x,y:start+index*step,w:column.w,h:step-7}));};
+  spread(sensors,columns.sensor,82);spread(semantics,columns.semantic,row);
+  spread(nodes.map(node=>({...node,id:node.name})),columns.ontology,52);
+  const paths=links.map((link,index)=>{const A=positions.get(link.source),B=positions.get(link.target);
+    if(!A||!B)return '';const x0=A.x+A.w,y0=A.y+A.h/2,x1=B.x,y1=B.y+B.h/2;
+    const bend=(x1-x0)*.48,kind=link.stage==='semantic_to_ontology'?' ontology':'';
+    return `<path class="prov-edge${kind}" data-link="${index}" data-source="${escapeHTML(link.source)}" `+
+      `data-target="${escapeHTML(link.target)}" d="M${x0},${y0} C${x0+bend},${y0} ${x1-bend},${y1} ${x1},${y1}">`+
+      `<title>${escapeHTML(link.transform||'direct')}</title></path>`;}).join('');
+  const sensorCards=sensors.map(sensor=>{const q=positions.get(sensor.id),readings=sensor.readings||[];
+    const detail=readings.map(reading=>`${reading.label}: ${provenanceValue(reading.value,reading.unit)}`).join(' · ');
+    return `<g class="prov-node" data-entity="${escapeHTML(sensor.id)}"><rect class="prov-card sensor" `+
+      `x="${q.x}" y="${q.y}" width="${q.w}" height="${q.h}" rx="5"/>`+
+      `<text class="prov-title" x="${q.x+9}" y="${q.y+15}">${escapeHTML(sensor.label)}</text>`+
+      `<text class="prov-value" x="${q.x+9}" y="${q.y+31}">${escapeHTML(detail.slice(0,42))}</text>`+
+      `<text class="prov-meta" x="${q.x+9}" y="${q.y+45}">${escapeHTML(sensor.kind||'sensor')}</text>`+
+      `<title>${escapeHTML(detail)}</title></g>`;}).join('');
+  const semanticCards=semantics.map(channel=>{const q=positions.get(channel.id);
+    return `<g class="prov-node" data-entity="${escapeHTML(channel.id)}"><rect class="prov-card context" `+
+      `x="${q.x}" y="${q.y}" width="${q.w}" height="${q.h}" rx="4"/>`+
+      `<text class="prov-title" x="${q.x+8}" y="${q.y+14}">${escapeHTML(channel.label)}</text>`+
+      `<text class="prov-value" text-anchor="end" x="${q.x+q.w-8}" y="${q.y+14}">`+
+      `${escapeHTML(provenanceValue(channel.value,channel.unit))}</text>`+
+      `<text class="prov-meta" x="${q.x+8}" y="${q.y+26}">${escapeHTML(channel.kind||'semantic')}</text></g>`;}).join('');
+  const ontologyCards=nodes.map(node=>{const q=positions.get(node.name);
+    return `<g class="prov-node" data-entity="${escapeHTML(node.name)}"><rect class="prov-card ontology" `+
+      `x="${q.x}" y="${q.y}" width="${q.w}" height="${q.h}" rx="5"/>`+
+      `<text class="prov-title" x="${q.x+9}" y="${q.y+16}">${escapeHTML(node.name)}</text>`+
+      `<text class="prov-value" text-anchor="end" x="${q.x+q.w-9}" y="${q.y+16}">`+
+      `${escapeHTML(provenanceValue(node.value,'0..1'))}</text>`+
+      `<text class="prov-meta" x="${q.x+9}" y="${q.y+31}">${escapeHTML(node.role||'node')}</text></g>`;}).join('');
+  box.innerHTML=`<svg viewBox="0 0 ${width} ${height}" role="img" `+
+    `aria-label="Live sensor to semantic context to ontology provenance map">`+
+    `<text class="prov-column" x="18" y="19">1 · SENSOR / ONBOARD SIGNAL</text>`+
+    `<text class="prov-column" x="420" y="19">2 · SEMANTIC + TEMPORAL CONTEXT</text>`+
+    `<text class="prov-column" x="895" y="19">3 · ONTOLOGY G_t INPUT</text>`+
+    `${paths}${sensorCards}${semanticCards}${ontologyCards}</svg>`;
+  const boundary=document.getElementById('g3d-sensor-boundary');
+  boundary.textContent=(p.boundary||[]).join(' · ')||'onboard inputs only';
+  const legend=document.getElementById('g3d-sensor-legend');
+  legend.innerHTML='<b>Blue</b> sensor/inference → context &nbsp; <b>Orange</b> context → ontology '
+    +`&nbsp; ${p.format&&p.format.endsWith('-fallback')?'· existing-run compatibility view':''}`;
+  const svg=box.querySelector('svg'),nodeEls=[...box.querySelectorAll('.prov-node')];
+  const edgeEls=[...box.querySelectorAll('.prov-edge')];
+  const focus=entity=>{const sensor=sensors.some(item=>item.id===entity);
+    const semantic=semantics.some(item=>item.id===entity),active=new Set([entity]),activeLinks=[];
+    for(const link of links){let hit=false;
+      if(sensor&&link.source===entity){hit=true;active.add(link.target);}
+      if(semantic&&(link.source===entity||link.target===entity)){hit=true;active.add(link.source);active.add(link.target);}
+      if(!sensor&&!semantic&&link.target===entity){hit=true;active.add(link.source);}
+      if(hit)activeLinks.push(link);}
+    if(sensor)for(const link of links)if(active.has(link.source)&&link.stage==='semantic_to_ontology'){
+      active.add(link.target);activeLinks.push(link);}
+    if(!sensor&&!semantic)for(const link of links)if(active.has(link.target)&&link.stage==='sensor_to_semantic'){
+      active.add(link.source);activeLinks.push(link);}
+    nodeEls.forEach(el=>el.classList.toggle('dim',!active.has(el.dataset.entity)));
+    edgeEls.forEach((el,index)=>{const link=links[index],on=activeLinks.includes(link);
+      el.classList.toggle('dim',!on);el.classList.toggle('focus',on);});
+    const chosen=nodeEls.find(el=>el.dataset.entity===entity);if(chosen)chosen.classList.add('focus');};
+  nodeEls.forEach(el=>{el.addEventListener('pointerenter',()=>focus(el.dataset.entity));});
+  svg.addEventListener('pointerleave',()=>{nodeEls.forEach(el=>el.classList.remove('dim','focus'));
+    edgeEls.forEach(el=>el.classList.remove('dim','focus'));});
+}
 function graphSnapshots(state){
+  G.state=state;
   const incoming={...(state.graphs||{})};
   if(!Object.keys(incoming).length&&state.graph)incoming.legacy=state.graph;
   G.graphs=incoming;
@@ -1637,7 +1860,7 @@ function graphSnapshots(state){
     ?`${graph.source||G.selected}${graph.attention?'':' · attention 대기'}`+
       `${graph.phi!==undefined?` · Φ=${Number(graph.phi).toFixed(3)}`:''}`
     :'ontology graph 초기화 대기';
-  G.dirty=true;graphLegend();graphAudit();
+  G.dirty=true;graphLegend();graphAudit();graphSensorMap(state);
 }
 function graphTip(ev){
   const tip=document.getElementById('g3d-tip');
@@ -1665,7 +1888,7 @@ function graphBind(){
   const cv=document.getElementById('cv-graph3d');if(!cv)return;
   document.getElementById('g3d-select').addEventListener('change',event=>{
     G.selected=event.target.value;G.manual=true;G.data=G.graphs[G.selected]||null;
-    G.hover=-1;G.fit=0;G.dirty=true;graphLegend();graphAudit();
+    G.hover=-1;G.fit=0;G.dirty=true;graphLegend();graphAudit();graphSensorMap(G.state);
     const graph=G.data;
     document.getElementById('g3d-src').textContent=graph
       ?`${graph.source||G.selected}${graph.attention?'':' · attention 대기'}`+
@@ -1711,6 +1934,222 @@ function graphBind(){
 }
 graphBind();
 
+// ---------------------------------------------------- dense R-GAT flow view
+// This complements the compact ontology graph above. It expands the real
+// nine-node G_t into the feature channels processed by the two R-GAT layers,
+// then into graph readout g_t and the actor/critic consumers. Internal channel
+// edges are an architecture view; only published alpha values may claim to be
+// attention, and the panel says explicitly when those values are unavailable.
+const RF={data:null,arch:{input:14,hidden1:32,hidden2:32,graph:32,heads:1},
+  yaw:-0.45,pitch:0.08,zoom:1,auto:true,drag:null,dirty:true,pts:[],hover:null};
+function rfArchitecture(state){
+  const pipeline=((state.scalars||{}).algorithm_pipeline||{}).chain||[];
+  const text=pipeline.flatMap(stage=>stage.lines||[]).join(' · ');
+  const input=(text.match(/node 특징\s*(\d+)차원/)||[])[1];
+  const arrows=[...text.matchAll(/(\d+)\s*→\s*(\d+)/g)];
+  const graph=(text.match(/(?:^|·)\s*(\d+)차원/)||[])[1];
+  RF.arch={input:Number(input||14),hidden1:Number(arrows[0]?.[2]||32),
+    hidden2:Number(arrows[1]?.[2]||arrows[0]?.[2]||32),
+    graph:Number(graph||32),heads:1};
+}
+function rfRing(count,x,radius,phase,kind,values,names){
+  const nodes=[];
+  for(let i=0;i<count;i++){
+    const angle=phase+6.283185*i/Math.max(count,1);
+    const band=count>16?((i%4)-1.5)*0.055:0;
+    nodes.push({x:x+band,y:radius*Math.cos(angle),z:radius*Math.sin(angle),
+      kind:kind,index:i,value:values?Number(values[i]||0):0.5,
+      name:names?names[i]:`${kind} channel ${i+1}`});
+  }
+  return nodes;
+}
+function rfScene(){
+  const data=RF.data;if(!data||!(data.nodes||[]).length)return null;
+  const values=data.nodes.map(n=>Number(n.value||0));
+  const names=data.nodes.map(n=>String(n.name));
+  const input=rfRing(data.nodes.length,-3.35,1.72,0,'input',values,names);
+  const h1=rfRing(RF.arch.hidden1,-1.45,1.82,0.35,'R-GAT 1');
+  const h2=rfRing(RF.arch.hidden2,0.45,1.82,1.05,'R-GAT 2');
+  const embed=rfRing(RF.arch.graph,2.28,1.32,0.65,'g_t');
+  const output=[{x:3.75,y:-0.58,z:0,kind:'output',index:0,value:.8,name:'actor π(a|s)'},
+    {x:3.75,y:.58,z:0,kind:'output',index:1,value:.8,name:'critic V(s)'}];
+  const all=[...input,...h1,...h2,...embed,...output];
+  const offsets={input:0,h1:input.length,h2:input.length+h1.length,
+    embed:input.length+h1.length+h2.length,output:input.length+h1.length+h2.length+embed.length};
+  const edges=[];
+  const real=(data.edges||[]).filter(e=>e.s!==e.d);
+  for(const e of real)edges.push({a:e.s,b:e.d,r:e.r,strength:e.a,kind:'ontology'});
+  // Route each ontology node into several hidden channels. The relation comes
+  // from one of that node's actual outgoing ontology edges; no synthetic alpha
+  // is attached when the publisher did not provide one.
+  input.forEach((node,i)=>{
+    const outgoing=real.filter(e=>e.s===i);
+    for(let j=0;j<Math.min(7,h1.length);j++){
+      const source=outgoing[j%Math.max(outgoing.length,1)];
+      edges.push({a:i,b:offsets.h1+(i*7+j*5)%h1.length,
+        r:source?source.r:j%(data.relations||[]).length,
+        strength:source?source.a:undefined,kind:'message'});
+    }
+  });
+  h1.forEach((node,i)=>{for(let j=0;j<4;j++)edges.push({
+    a:offsets.h1+i,b:offsets.h2+(i*5+j*9)%h2.length,r:j%4,
+    strength:undefined,kind:'hidden'});});
+  h2.forEach((node,i)=>{for(let j=0;j<3;j++)edges.push({
+    a:offsets.h2+i,b:offsets.embed+(i*3+j*11)%embed.length,r:j%4,
+    strength:undefined,kind:'readout'});});
+  embed.forEach((node,i)=>{for(let j=0;j<2;j++)edges.push({
+    a:offsets.embed+i,b:offsets.output+j,r:j,strength:undefined,kind:'consumer'});});
+  return {nodes:all,edges:edges,offsets:offsets,counts:[input.length,h1.length,h2.length,
+    embed.length,output.length]};
+}
+function rfProject(node,w,h){
+  const cy=Math.cos(RF.yaw),sy=Math.sin(RF.yaw);
+  const y=node.y*cy-node.z*sy,z=node.y*sy+node.z*cy;
+  const cp=Math.cos(RF.pitch),sp=Math.sin(RF.pitch);
+  const x=node.x*cp-y*sp,depth=node.x*sp+y*cp+8.5;
+  const f=Math.min(w/9.6,h/5.3)*RF.zoom*8.5/Math.max(depth,2.5);
+  return {x:w*.49+x*f,y:h*.54-z*f,d:depth,f:f};
+}
+function rfNodeColor(node){
+  if(node.kind==='input'){
+    const source=(RF.data.nodes||[])[node.index]||{};return nodeRGB(source);}
+  if(node.kind==='R-GAT 1')return [30,176,239];
+  if(node.kind==='R-GAT 2')return [47,213,196];
+  if(node.kind==='g_t')return [181,229,80];
+  return node.index===0?[255,167,61]:[221,98,231];
+}
+function rfDraw(now=0){
+  const cv=document.getElementById('cv-rgat-flow');if(!cv)return;
+  const dpr=window.devicePixelRatio||1,w=cv.clientWidth,h=cv.clientHeight;
+  if(cv.width!==Math.round(w*dpr)||cv.height!==Math.round(h*dpr)){
+    cv.width=Math.round(w*dpr);cv.height=Math.round(h*dpr);}
+  const g=cv.getContext('2d');g.setTransform(dpr,0,0,dpr,0,0);
+  const bg=g.createLinearGradient(0,0,w,h);bg.addColorStop(0,'#111d38');
+  bg.addColorStop(.55,'#172747');bg.addColorStop(1,'#0c1630');g.fillStyle=bg;g.fillRect(0,0,w,h);
+  // Quiet floating diamonds supply depth without claiming to be graph nodes.
+  for(let i=0;i<18;i++){
+    const x=(i*137%997)/997*w,y=(i*83%521)/521*h+Math.sin(now*.0003+i)*7;
+    const size=3+(i%5);g.save();g.translate(x,y);g.rotate(Math.PI/4+now*.00005*(i%3));
+    g.fillStyle=`rgba(${45+i*9%150},${70+i*17%130},${150+i*23%100},.10)`;
+    g.fillRect(-size,-size,size*2,size*2);g.restore();
+  }
+  const scene=rfScene();RF.pts=[];
+  if(!scene){g.fillStyle='#9eb0d0';g.font='12px sans-serif';
+    g.fillText('제안 arm의 ontology graph를 기다리는 중',16,h/2);return;}
+  const P=scene.nodes.map(n=>rfProject(n,w,h));
+  // Stage halos and titles make the dense cloud readable as a computation.
+  const stages=[['ONTOLOGY G_t',0],['R-GAT 14→32',scene.offsets.h1],
+    ['R-GAT 32→32 + residual',scene.offsets.h2],['READOUT g_t',scene.offsets.embed],
+    ['PPO',scene.offsets.output]];
+  g.textAlign='center';g.font='600 10px ui-sans-serif,system-ui,sans-serif';
+  for(const [label,index] of stages){g.fillStyle='rgba(185,207,244,.82)';
+    g.fillText(label,P[index].x,18);}
+  g.globalCompositeOperation='lighter';
+  const ordered=scene.edges.map((edge,index)=>({edge,index,
+    d:(P[edge.a].d+P[edge.b].d)/2})).sort((a,b)=>b.d-a.d);
+  for(const item of ordered){
+    const e=item.edge,A=P[e.a],B=P[e.b];
+    const relation=REL_COLORS[(e.r||0)%REL_COLORS.length];
+    const rgb=hexRGB(relation);const hasAlpha=Number.isFinite(Number(e.strength));
+    const alpha=hasAlpha?clamp01(Number(e.strength)):0.32;
+    const base=e.kind==='ontology'?.28:e.kind==='consumer'?.18:.055;
+    g.strokeStyle=rgba(rgb,base*(.45+.9*alpha));
+    g.lineWidth=e.kind==='ontology'?1.1+2.5*alpha:.42+.75*alpha;
+    g.beginPath();g.moveTo(A.x,A.y);
+    const bend=(B.x-A.x)*.45;g.bezierCurveTo(A.x+bend,A.y,B.x-bend,B.y,B.x,B.y);g.stroke();
+    // A sparse moving pulse makes message direction visible without turning
+    // every one of the hundreds of architecture edges into visual noise.
+    if(item.index%11===0){const t=(now*.00018+item.index*.071)%1;
+      const mt=1-t,px=mt*mt*mt*A.x+3*mt*mt*t*(A.x+bend)+
+        3*mt*t*t*(B.x-bend)+t*t*t*B.x;
+      const py=mt*mt*mt*A.y+3*mt*mt*t*A.y+3*mt*t*t*B.y+t*t*t*B.y;
+      g.fillStyle=rgba([170,235,255],.58);g.beginPath();g.arc(px,py,1.6,0,6.2832);g.fill();}
+  }
+  g.globalCompositeOperation='source-over';
+  const nodeOrder=scene.nodes.map((node,index)=>({node,index,d:P[index].d})).sort((a,b)=>b.d-a.d);
+  for(const item of nodeOrder){
+    const n=item.node,p=P[item.index],rgb=rfNodeColor(n);
+    const r=n.kind==='input'?5.2+5*clamp01(n.value):n.kind==='output'?10:3.2;
+    const hovered=RF.hover===item.index;
+    const grad=g.createRadialGradient(p.x-r*.3,p.y-r*.35,.2,p.x,p.y,r);
+    grad.addColorStop(0,rgba([255,255,255],.95));grad.addColorStop(.28,rgba(rgb,.95));
+    grad.addColorStop(1,rgba(rgb,.38));g.fillStyle=grad;g.beginPath();g.arc(p.x,p.y,r,0,6.2832);g.fill();
+    if(hovered){g.strokeStyle='#fff';g.lineWidth=1.5;g.stroke();}
+    RF.pts.push({x:p.x,y:p.y,r:r+5,index:item.index,node:n});
+  }
+  g.textAlign='left';
+  // Input labels are the live ontology channels; internal channel labels are
+  // intentionally omitted because their vectors are not published per unit.
+  g.font='9.5px ui-sans-serif,system-ui,sans-serif';
+  scene.nodes.slice(0,scene.counts[0]).forEach((n,i)=>{
+    const p=P[i];g.fillStyle='rgba(226,238,255,.9)';
+    g.fillText(`${n.name} ${n.value.toFixed(2)}`,p.x+9,p.y+3);});
+  for(const i of [0,1]){const index=scene.offsets.output+i,p=P[index];
+    g.fillStyle='#f4f7ff';g.font='600 10px ui-sans-serif,system-ui,sans-serif';
+    g.fillText(scene.nodes[index].name,p.x+13,p.y+3);}
+}
+function rfSnapshot(state){
+  rfArchitecture(state);
+  const methods=new Set(ontologyArms().map(arm=>arm.method));
+  const candidates=Object.values(state.graphs||{}).filter(graph=>
+    graph&&methods.has(String(graph.method||''))&&(graph.nodes||[]).length);
+  candidates.sort((a,b)=>Number(b.time||0)-Number(a.time||0));
+  RF.data=candidates[0]||null;RF.dirty=true;
+  const source=document.getElementById('rf-source');
+  source.textContent=RF.data?(RF.data.source||RF.data.method||'ontology graph'):
+    '제안 arm graph 대기';
+  const attention=document.getElementById('rf-attention');
+  attention.textContent=RF.data&&RF.data.attention?'live attention α':'attention 미발행 · 구조 표시';
+  attention.className='rf-pill '+(RF.data&&RF.data.attention?'live':'wait');
+  const stats=document.getElementById('rf-stats');
+  const values=[
+    [RF.data?(RF.data.nodes||[]).length:'—','ontology nodes'],
+    [RF.data?(RF.data.relations||[]).length:'—','relation types'],
+    [RF.data?(RF.data.edges||[]).length:'—','declared edges'],
+    [`${RF.arch.input}→${RF.arch.hidden1}→${RF.arch.hidden2}`,'R-GAT channels'],
+    [RF.arch.graph,'graph state g_t'],['2','actor / critic encoders']];
+  stats.innerHTML=values.map(value=>`<div class="rf-stat"><b>${value[0]}</b>`+
+    `<span>${value[1]}</span></div>`).join('');
+  const legend=document.getElementById('rf-legend');
+  legend.innerHTML=(RF.data?.relations||[]).map((relation,index)=>
+    `<span><i style="background:${REL_COLORS[index%REL_COLORS.length]}"></i>`+
+    `${escapeHTML(relation.name)}</span>`).join('')+
+    '<span>● 크기/색 = 현재 ontology activation</span>';
+}
+function rfTip(ev){
+  const tip=document.getElementById('rf-tip');
+  if(RF.hover===null){tip.style.display='none';return;}
+  const hit=RF.pts.find(point=>point.index===RF.hover);if(!hit)return;
+  const node=hit.node;tip.innerHTML=`<b>${escapeHTML(node.name)}</b><br>`+
+    `${escapeHTML(node.kind)} · channel ${node.index+1}`+
+    (node.kind==='input'?`<br>live activation ${node.value.toFixed(3)}`:'');
+  const card=document.getElementById('card-rgat_neural_flow').getBoundingClientRect();
+  tip.style.display='block';tip.style.left=Math.min(ev.clientX-card.left+12,
+    card.width-tip.offsetWidth-8)+'px';tip.style.top=(ev.clientY-card.top+12)+'px';
+}
+function rfBind(){
+  const cv=document.getElementById('cv-rgat-flow');if(!cv)return;
+  cv.addEventListener('pointerdown',event=>{RF.drag={x:event.clientX,y:event.clientY};
+    RF.auto=false;cv.classList.add('drag');cv.setPointerCapture(event.pointerId);});
+  cv.addEventListener('pointermove',event=>{
+    if(RF.drag){RF.yaw+=(event.clientX-RF.drag.x)*.008;
+      RF.pitch=Math.max(-.5,Math.min(.5,RF.pitch+(event.clientY-RF.drag.y)*.003));
+      RF.drag={x:event.clientX,y:event.clientY};RF.dirty=true;return;}
+    const rect=cv.getBoundingClientRect(),x=event.clientX-rect.left,y=event.clientY-rect.top;
+    let best=null,distance=Infinity;for(const point of RF.pts){const d=Math.hypot(point.x-x,point.y-y);
+      if(d<point.r&&d<distance){distance=d;best=point.index;}}
+    RF.hover=best;rfTip(event);RF.dirty=true;});
+  const release=()=>{RF.drag=null;cv.classList.remove('drag');};
+  cv.addEventListener('pointerup',release);cv.addEventListener('pointercancel',release);
+  cv.addEventListener('pointerleave',()=>{release();RF.hover=null;
+    document.getElementById('rf-tip').style.display='none';});
+  cv.addEventListener('wheel',event=>{event.preventDefault();RF.zoom=Math.max(.55,
+    Math.min(2.4,RF.zoom*(event.deltaY<0?1.1:.91)));RF.dirty=true;},{passive:false});
+  (function frame(now){if(RF.auto&&!RF.drag)RF.yaw+=.0012;
+    rfDraw(now||0);requestAnimationFrame(frame);})(0);
+}
+rfBind();
+
 function applyProfile(state){
   const profile='benchmark';
   document.body.dataset.profile=profile;
@@ -1723,7 +2162,7 @@ function applyProfile(state){
     // rather than drawn empty: an FOV-reward panel on a graph-state run would
     // read as a broken measurement instead of an absent one.
     el.hidden=Boolean(c.view&&c.view!=='common'&&c.view!==profile)
-      ||(c.kind==='graph'&&!hasGraph)
+      ||((c.kind==='graph'||c.kind==='rgatflow')&&!hasGraph)
       ||!hasRole(c.requiresRole);
   }
   if(profile==='benchmark'){
@@ -1739,17 +2178,28 @@ function applyProfile(state){
   }
   return profile;
 }
-let lastRevision=-1,lastAt=0;
+let lastRevision=-1,lastAt=0,hashScrolled=false;
 async function tick(){
+  const controller=new AbortController();
+  const timeout=setTimeout(()=>controller.abort(),15000);
   try{
-    const r=await fetch('api/state',{cache:'no-store'});
+    const r=await fetch('api/state',{cache:'no-store',signal:controller.signal});
+    if(!r.ok)throw new Error(`telemetry HTTP ${r.status}`);
     const state=await r.json();
-    document.getElementById('stage').textContent=state.stage.name;
-    document.getElementById('detail').textContent=state.stage.detail||'';
+    if(!state.stage)throw new Error(state.error||'telemetry state is incomplete');
+    const upstream=r.headers.get('X-Dashboard-Upstream');
+    document.getElementById('stage').textContent=
+      upstream==='stale'?'reconnecting':state.stage.name;
+    document.getElementById('detail').textContent=upstream==='stale'
+      ?`last normal snapshot · ${state.stage.name}${state.stage.detail?' · '+state.stage.detail:''}`
+      :(state.stage.detail||'');
     if(state.revision!==lastRevision){
       lastRevision=state.revision;lastAt=Date.now();
       syncArms(state);
       const profile=applyProfile(state);
+      if(!hashScrolled&&location.hash){
+        const target=document.querySelector(location.hash);
+        if(target&&!target.hidden){target.scrollIntoView();hashScrolled=true;}}
       tiles(state);
       phasePanel(state);
       runPipelinePanel(state);
@@ -1760,7 +2210,7 @@ async function tick(){
       if(profile==='benchmark'){pairPanel(state);teacherPanel(state);drawTrajectories(state);}
       for(const c of CARDS){
         if(!hasRole(c.requiresRole))continue;
-        if(c.id==='tiles'||c.kind==='graph'||c.kind==='contract'||c.kind==='pairs'||
+        if(c.id==='tiles'||c.kind==='graph'||c.kind==='rgatflow'||c.kind==='contract'||c.kind==='pairs'||
            c.kind==='phase'||c.kind==='heading'||c.kind==='runpipe'||
            c.kind==='fovstatus'||c.kind==='teacher'||c.kind==='trajectories'||
            c.kind==='algopipe'||c.kind==='mdp'||c.kind==='collection'||
@@ -1771,27 +2221,73 @@ async function tick(){
       for(const c of CARDS.filter(item=>item.kind==='pairplots'))drawPairPlots(c,state);
       benchmarkPanel(state);
       graphSnapshots(state);
+      rfSnapshot(state);
     }
   }catch(e){document.getElementById('stage').textContent='disconnected';}
+  finally{clearTimeout(timeout);setTimeout(tick,1500);}
   const age=lastAt?Math.round((Date.now()-lastAt)/1000):0;
   document.getElementById('age').textContent=lastAt?`updated ${age}s ago`:'';
 }
-tick();setInterval(tick,1500);
-window.addEventListener('resize',()=>{lastRevision=-1;G.dirty=true;});
+tick();
+window.addEventListener('resize',()=>{lastRevision=-1;G.dirty=true;RF.dirty=true;});
 </script></body></html>
 """
 
 
+class _SerializedState:
+    """Keep one encoded state body for all dashboard HTTP workers."""
+
+    def __init__(self, store: LiveStore):
+        self.store = store
+        self._lock = threading.Lock()
+        self._revision = -1
+        self._body = b""
+
+    def body(self) -> bytes:
+        revision = self.store.revision
+        if revision == self._revision:
+            return self._body
+        with self._lock:
+            revision = self.store.revision
+            if revision != self._revision:
+                snapshot = self.store.snapshot()
+                self._body = json.dumps(
+                    snapshot, default=_jsonable,
+                    separators=(",", ":")).encode("utf-8")
+                self._revision = int(snapshot["revision"])
+            return self._body
+
+
 class _Handler(BaseHTTPRequestHandler):
     store: LiveStore = STORE
-    protocol_version = "HTTP/1.1"
+    encoder: _SerializedState | None = None
+    # The browser polls rather than streams. Closing each response prevents a
+    # reverse proxy's idle keep-alive from retaining a worker and a reference
+    # to a potentially large telemetry body.
+    protocol_version = "HTTP/1.0"
+
+    def handle(self) -> None:
+        """End a request quietly when the polling browser has gone away.
+
+        Refreshing or closing the dashboard can reset either the response
+        write or the next keep-alive read.  Both are normal client lifecycle
+        events; letting them escape makes ``socketserver`` print a full
+        traceback for every abandoned poll and obscures failures in the run
+        itself.
+        """
+        try:
+            super().handle()
+        except (BrokenPipeError, ConnectionResetError):
+            pass
 
     def _send(self, body: bytes, content_type: str) -> None:
         self.send_response(200)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
+        self.send_header("Connection", "close")
         self.end_headers()
+        self.close_connection = True
         self.wfile.write(body)
 
     def do_GET(self) -> None:                          # noqa: N802 - stdlib API
@@ -1799,7 +2295,7 @@ class _Handler(BaseHTTPRequestHandler):
         if path in ("/", "/index.html"):
             self._send(PAGE.encode("utf-8"), "text/html; charset=utf-8")
         elif path == "/api/state":
-            payload = json.dumps(self.store.snapshot(), default=_jsonable).encode("utf-8")
+            payload = ((self.encoder or _SerializedState(self.store)).body())
             self._send(payload, "application/json")
         else:
             self.send_error(404)
@@ -1843,7 +2339,10 @@ class Dashboard:
             reward_formula="r_sparse + lambda * (gamma * frozen_R_GAT(G') - frozen_R_GAT(G))",
             **_saved_reward_scalars(self.cfg),
         )
-        handler = type("BoundHandler", (_Handler,), {"store": self.store})
+        handler = type("BoundHandler", (_Handler,), {
+            "store": self.store,
+            "encoder": _SerializedState(self.store),
+        })
         try:
             self.server = ThreadingHTTPServer((str(opt.host), int(opt.port)), handler)
         except OSError as exc:

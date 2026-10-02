@@ -93,6 +93,45 @@ graph_state:
   seed: 42
   freeze_during_ppo: false
 
+# Reward weights, SHARED BY BOTH LEARNED ARMS. The comparison's single factor
+# is the situation graph, so this block is read once and handed to both. It
+# deep-merges onto the Table-III block in shin2026_baseline.yaml; anything not
+# named here keeps its paper value.
+#
+# Table III's weights are written for the paper's four-dimensional action and
+# its own reward scale. Transcribed literally onto the reduced planar envelope
+# they priced the task's own actuator out of existence. Measured 2026-10-02
+# over 40 episodes per arm, the per-episode decomposition was:
+#
+#     attitude -69.6 | vertical speed -48.2 | undershoot -40.5
+#     active perception -6.0 | task -4.3 | lateral progress  -3.4
+#
+# The approach signal was the smallest term in the sum, and negative. Scored
+# over a whole episode, loitering out of reach until the horizon expired beat
+# approaching and landing safely by 99.8. Both arms learned exactly that: in
+# its last 80 policy episodes the proposed arm touched the deck once, timed out
+# or flattened the battery 79 times, and held the pad in view the whole while
+# (FOV loss 0.078, visible keypoints 0.911) from 5.7 m out.
+reward:
+  shaping:
+    # Closing the gap is the task, so it is the dominant shaping term.
+    lateral_progress: 5.0
+    # Table III's -2|omega_z| prices YAW RATE, a channel the paper's task never
+    # needs -- pricing it costs the task nothing. The planar substitution kept
+    # the weight but not the role: tilt is this envelope's only source of
+    # longitudinal acceleration, so -2|tilt| taxes the approach itself. The
+    # term stays (gratuitous attitude use is still discouraged) at a weight
+    # that cannot outbid the manoeuvre it pays for.
+    attitude: 0.1
+  terminal:
+    # The terminal is the task. At +-10 against ~250 steps of shaping summing
+    # to about -150, a safe landing was inside the noise of the shaping it cost.
+    success: 50.0
+    # A horizon timeout used to be the only free terminal -- contact, crash,
+    # drift and a flat battery all scored, a timeout scored zero -- which made
+    # running the clock out the cheapest way to end an episode.
+    timeout: -5.0
+
 # Explicitly off. The retired reward-side method is still runnable under its
 # own arm id, but mixing the two in one run would give the comparison two
 # factors, and ``validate_pipeline_configuration`` rejects that.
@@ -141,6 +180,47 @@ control:
   # and the tilt channel is held at zero for every arm. The action dimension
   # does not change, so checkpoints stay loadable.
   tilt_channel_enabled: true
+  # The approach cone. The vertical channel may not command a descent while
+  # the pad sits outside a cone about nadir, measured as a bearing tangent --
+  # horizontal offset over altitude -- unless the vehicle is already inside the
+  # flare range, where the pad legitimately fills the camera and leaves it.
+  #
+  # An ENVELOPE constraint, alongside the velocity, acceleration and tilt
+  # limits and the structurally zero lateral velocity, and therefore identical
+  # for every arm: the two learned ones and the non-learned control condition.
+  # It changes the action space, not the reward, and no checkpoint's action
+  # dimension moves, so stored policies stay loadable.
+  #
+  # Measured 2026-09-25 over 1302 training episodes of the two learned arms:
+  # losing the pad is a one-way door. Reacquisition events were ZERO in every
+  # episode, climb-while-blind was zero, descend-while-blind was one, and of
+  # the 609 episodes whose mean visible-keypoint fraction fell below 0.3 not a
+  # single one landed -- against 4.5 % and 6.1 % for the episodes that kept it.
+  # The estimator follows rather than leads: its position RMSE is 0.6-0.7 m
+  # while the pad is in view and 2.9-5.6 m once it is not.
+  #
+  # 0.80 is the same tolerance the PN control law carries internally, and half
+  # the 1.58 of bearing tangent this camera holds ahead of nadir. Set to 0 to
+  # fly the retired unconstrained envelope.
+  # Relaxed 0.80 -> 1.60 on 2026-10-02, identically for every arm.
+  #
+  # 0.80 was half the bearing this camera holds, chosen as a margin. Measured
+  # on the rebalanced-reward run, it was instead a trap for the graph-state
+  # arm: it ended episodes 6.66 m out at about 4.5 m altitude, a bearing
+  # tangent near 1.48, so the cone forbade every descent while the arm could
+  # not close the gap -- 89 consecutive episodes with zero deck contact, mean
+  # episode length at the 266-step horizon. The baseline closed to 1.5-2.4 m
+  # (tangent ~0.4) and passed the gate, which is why only one arm stalled.
+  #
+  # 1.60 is the camera's own limit (1.58 of bearing tangent ahead of nadir),
+  # so the rule becomes "you may descend towards a pad you can actually see".
+  # The two protections that matter are untouched: ``descent_permitted``
+  # still refuses a descent when the keypoint observation is not trustworthy,
+  # and still refuses one when the pad has left the frame entirely.
+  approach_cone_tolerance: 1.60
+  approach_cone_flare_range_m: 1.20
+  # raw_scale * range, measured in flight; see the PN guidance module.
+  approach_cone_reference_scale: 0.65
   curriculum_min_action_scale: 0.90
   curriculum_min_pad_motion_scale: 0.35
   require_initial_pad_visible: true
@@ -185,10 +265,19 @@ behavior_cloning:
   # them reaches the deployed actor beyond the image embedding, the
   # proprioception and the situation graph.
   #
-  # If the demonstration stage exhausts max_attempts, switch the teacher
-  # rather than widening the budget, and record which teacher the run used --
-  # it is part of the demonstration fingerprint.
-  teacher: pn_guidance_v1
+  # PN exhausted all 60 flights on 2026-09-25 with only one accepted landing:
+  # 35 flights depleted the battery and 13 made unsafe contact. Use the
+  # documented fallback rather than widening the budget. The non-learned
+  # evaluation arm remains PN guidance; only the training-only label source
+  # changes, and the teacher id is part of the demonstration fingerprint.
+  teacher: privileged_relative_state_velocity_pd_v4
+  # Exploration handed to PPO after the clone. The 2026-10-01 run shipped -2.5
+  # (sigma 0.082) and PPO never moved it: the KL back-off held the effective
+  # learning rate near its 5e-6 floor, so entropy was 3*(log_std + 1.4189) =
+  # -3.24 at policy episode 1 and -3.26 at episode 750, and both arms spent
+  # 750 episodes replaying the clone. -1.8 (sigma 0.165) is the module default
+  # and is applied identically to both learned arms.
+  post_log_std: -1.8
   scenarios:
     - segmented_cruise_slow
     - segmented_cruise_medium

@@ -9,6 +9,7 @@ from .ontoreward import OntoRewardPBRS
 from .contexts import (NoSERewardContext, OntologyRewardContext,
                        ShinSERewardContext, TerminalFlags)
 from .shin2026 import (ShinReward, ShinRewardConfig,
+                       REWARD_SETTING_FIELDS, reward_config_from,
                        active_perception_approximation, active_perception_reward)
 from .sparse import sparse_terminal_reward
 from .adaptive_weight import (
@@ -18,6 +19,8 @@ from .adaptive_weight import (
     constrained_adaptive_weights, optional_estimation_error_component,
     shin_reward_components)
 from .fov_risk import DEFAULT_FOV_RISK_LAMBDA, ontology_fov_reward
+from .two_term import (TwoTermReward, TwoTermRewardConfig, capture_signal,
+                       distance_signal)
 
 __all__ = ["OntoRewardPBRS", "FrozenControlledPotential",
            "NoSERewardContext", "OntologyRewardContext",
@@ -25,6 +28,7 @@ __all__ = ["OntoRewardPBRS", "FrozenControlledPotential",
            "prepare_controlled_rgat_artifact", "episode_rollout_dataset",
            "load_rollout_dataset", "merge_rollout_datasets",
            "save_rollout_dataset", "ShinReward", "ShinRewardConfig",
+           "REWARD_SETTING_FIELDS", "reward_config_from",
            "active_perception_approximation", "active_perception_reward",
            "sparse_terminal_reward", "BASELINE_REWARD_WEIGHTS",
            "DEFAULT_COMPONENT_SCALES", "REWARD_COMPONENT_NAMES",
@@ -33,4 +37,5 @@ __all__ = ["OntoRewardPBRS", "FrozenControlledPotential",
            "FixedBaselineRewardWeights",
            "constrained_adaptive_weights", "optional_estimation_error_component",
            "shin_reward_components", "DEFAULT_FOV_RISK_LAMBDA",
-           "ontology_fov_reward"]
+           "ontology_fov_reward", "TwoTermReward", "TwoTermRewardConfig",
+           "capture_signal", "distance_signal"]

@@ -217,6 +217,12 @@ def test_one_command_run_archives_an_incompatible_policy(tmp_path):
     }, checkpoint)
     (model_dir / "shin2026_training.csv").write_text(
         "episode,episode_return\n1,0\n", encoding="utf-8")
+    (model_dir / "shin2026_reward_steps.jsonl").write_text(
+        '{"episode":1,"episode_complete":true}\n', encoding="utf-8")
+    (model_dir / "shin2026_reward_steps.manifest.json").write_text(
+        '{"format":"ontology-rgat-reward-trace-v2",'
+        '"method":"shin2026","config_hash":"old-control-config",'
+        '"training_contract_id":null}\n', encoding="utf-8")
 
     history = train_live(
         lambda: None, TinyPolicy(1, 1), "shin2026", [], model_dir,
@@ -227,6 +233,13 @@ def test_one_command_run_archives_an_incompatible_policy(tmp_path):
     assert len(list(model_dir.glob("shin2026.incompatible-old-control*.pt"))) == 1
     assert len(list(model_dir.glob(
         "shin2026.incompatible-old-control*_training.csv"))) == 1
+    assert len(list(model_dir.glob(
+        "shin2026.incompatible-old-control*_reward_steps.jsonl"))) == 1
+    assert len(list(model_dir.glob(
+        "shin2026.incompatible-old-control*_reward_steps.manifest.json"))) == 1
+    current_manifest = json.loads((
+        model_dir / "shin2026_reward_steps.manifest.json").read_text())
+    assert current_manifest["config_hash"] == "new-control-config"
 
 
 def test_new_training_contract_archives_an_old_completed_policy(tmp_path):
@@ -255,6 +268,32 @@ def test_new_training_contract_archives_an_old_completed_policy(tmp_path):
     assert not checkpoint.exists()
     assert len(list(model_dir.glob(
         "shin2026.incompatible-same-flight*.pt"))) == 1
+
+
+def test_unattributed_reward_trace_is_rotated_before_a_resume(tmp_path):
+    class TinyPolicy(torch.nn.Linear):
+        @property
+        def device(self):
+            return self.weight.device
+
+    model_dir = tmp_path / "models"
+    model_dir.mkdir()
+    trace = model_dir / "shin2026_reward_steps.jsonl"
+    trace.write_text(
+        '{"episode":674,"episode_complete":true}\n', encoding="utf-8")
+
+    history = train_live(
+        lambda: pytest.fail("zero-episode run must not open an environment"),
+        TinyPolicy(1, 1), "shin2026", [], model_dir,
+        config_hash="current-contract")
+
+    assert history == []
+    assert not trace.exists()
+    assert len(list(model_dir.glob(
+        "shin2026_reward_steps.unattributed*.jsonl"))) == 1
+    manifest = json.loads((
+        model_dir / "shin2026_reward_steps.manifest.json").read_text())
+    assert manifest["config_hash"] == "current-contract"
 
 
 def test_deadline_budget_rescales_a_compatible_curriculum_checkpoint(

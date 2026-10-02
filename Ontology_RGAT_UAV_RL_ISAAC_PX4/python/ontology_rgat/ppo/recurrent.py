@@ -9,11 +9,13 @@ import torch
 from torch import nn
 
 from ..benchmarks.shin2026 import ActorObservation
+from ..contracts import load_observation_registry
 from ..controllers import PLANAR_ACTION_DIM
 from ..estimation import RelativeStateAuxiliaryHead
 from ..perception import ShinKeypointEncoder, grayscale_image_tensor
 from ..pipelines import PipelineSpec, get_pipeline
 from .graph_state_encoder import GraphStateEncoder, graph_feature_tensor
+from .selective_graph_encoder import SelectiveGraphStateEncoder
 from .temporal_backbone import TemporalVisualBackbone
 
 
@@ -54,7 +56,10 @@ class PipelineActorCritic(nn.Module):
                  relative_state_scale=(3.0, 3.0, 8.0, 3.0, 3.0, 2.0),
                  pipeline: PipelineSpec | str = "shin_se",
                  graph_hidden_dim=32, graph_dim=32, graph_relation_dim=6,
-                 graph_heads=1, graph_seed=42):
+                 graph_heads=1, graph_seed=42,
+                 graph_pretrained_artifact=None, graph_gate_beta=.35,
+                 canonical_normalization_mean=None,
+                 canonical_normalization_std=None):
         super().__init__()
         self.pipeline_spec = (get_pipeline(pipeline) if isinstance(pipeline, str)
                               else pipeline)
@@ -74,6 +79,38 @@ class PipelineActorCritic(nn.Module):
         self.relative_state_head = (
             RelativeStateAuxiliaryHead(relative_state_scale)
             if self.pipeline_spec.state_estimation_enabled else None)
+        self.observation_registry = (
+            load_observation_registry()
+            if self.pipeline_spec.policy_state_mode in {
+                "canonical_vector", "selective_graph"} else None)
+        self.canonical_observation_dim = (
+            0 if self.observation_registry is None
+            else self.observation_registry.dimension)
+        if self.observation_registry is not None:
+            # O_t is produced by the shared, certified perception front end.
+            # Neither comparison arm may move that front end or the unused
+            # temporal legacy backbone through PPO.
+            for module in (self.encoder, self.temporal_backbone):
+                for parameter in module.parameters():
+                    parameter.requires_grad_(False)
+            mean = (np.zeros(self.canonical_observation_dim, dtype=np.float32)
+                    if canonical_normalization_mean is None
+                    else canonical_normalization_mean)
+            std = (np.ones(self.canonical_observation_dim, dtype=np.float32)
+                   if canonical_normalization_std is None
+                   else canonical_normalization_std)
+            mean = torch.as_tensor(mean, dtype=torch.float32).reshape(-1)
+            std = torch.as_tensor(std, dtype=torch.float32).reshape(-1)
+            if (mean.numel() != self.canonical_observation_dim
+                    or std.numel() != self.canonical_observation_dim
+                    or not torch.isfinite(mean).all()
+                    or not torch.isfinite(std).all() or (std <= 0).any()):
+                raise ValueError("canonical normalization is invalid")
+            self.register_buffer("canonical_normalization_mean", mean)
+            self.register_buffer("canonical_normalization_std", std)
+        else:
+            self.canonical_normalization_mean = None
+            self.canonical_normalization_std = None
 
         # Width of the graph branch. Known before the branch is built, so the
         # actor and the critic can be sized for it and still be constructed in
@@ -107,10 +144,19 @@ class PipelineActorCritic(nn.Module):
         # the arm that has one.
         critic_hidden_layer = nn.Linear(critic_hidden, critic_hidden)
         critic_output = nn.Linear(critic_hidden, 1)
-        actor_input = nn.Linear(
-            latent_dim - self.pipeline_spec.reserved_latent_dimensions
-            + 7 + self.graph_dim, actor_hidden)
-        critic_input = nn.Linear(13 + self.graph_dim, critic_hidden)
+        if self.pipeline_spec.policy_state_mode == "canonical_vector":
+            actor_input_width = self.canonical_observation_dim
+            critic_input_width = self.canonical_observation_dim + 6
+        elif self.pipeline_spec.policy_state_mode == "selective_graph":
+            actor_input_width = self.graph_dim
+            critic_input_width = self.graph_dim + 6
+        else:
+            actor_input_width = (
+                latent_dim - self.pipeline_spec.reserved_latent_dimensions
+                + 7 + self.graph_dim)
+            critic_input_width = 13 + self.graph_dim
+        actor_input = nn.Linear(actor_input_width, actor_hidden)
+        critic_input = nn.Linear(critic_input_width, critic_hidden)
 
         self.actor = nn.Sequential(actor_input, nn.Tanh(),
                                    actor_hidden_layer, nn.Tanh(), actor_output)
@@ -127,14 +173,31 @@ class PipelineActorCritic(nn.Module):
         # the same G_t, have the same architecture, and are trained by PPO.
         if self.pipeline_spec.graph_state_enabled:
             representation = self.pipeline_spec.graph_state_representation
-            self.policy_graph_encoder = GraphStateEncoder(
-                hidden_dim=graph_hidden_dim, graph_dim=self.graph_dim,
-                relation_dim=graph_relation_dim, heads=graph_heads,
-                representation=representation, seed=int(graph_seed))
-            self.value_graph_encoder = GraphStateEncoder(
-                hidden_dim=graph_hidden_dim, graph_dim=self.graph_dim,
-                relation_dim=graph_relation_dim, heads=graph_heads,
-                representation=representation, seed=int(graph_seed) + 1)
+            if representation == "selective_rgat":
+                common = dict(
+                    observation_dim=self.canonical_observation_dim,
+                    hidden_dim=graph_hidden_dim, graph_dim=self.graph_dim,
+                    relation_dim=graph_relation_dim, heads=graph_heads,
+                    beta=float(graph_gate_beta))
+                self.policy_graph_encoder = SelectiveGraphStateEncoder(
+                    **common, seed=int(graph_seed))
+                self.value_graph_encoder = SelectiveGraphStateEncoder(
+                    **common, seed=int(graph_seed) + 1)
+                if graph_pretrained_artifact is not None:
+                    expected = self.observation_registry.sha256
+                    self.policy_graph_encoder.load_pretrained_artifact(
+                        graph_pretrained_artifact, expected_registry_hash=expected)
+                    self.value_graph_encoder.load_pretrained_artifact(
+                        graph_pretrained_artifact, expected_registry_hash=expected)
+            else:
+                self.policy_graph_encoder = GraphStateEncoder(
+                    hidden_dim=graph_hidden_dim, graph_dim=self.graph_dim,
+                    relation_dim=graph_relation_dim, heads=graph_heads,
+                    representation=representation, seed=int(graph_seed))
+                self.value_graph_encoder = GraphStateEncoder(
+                    hidden_dim=graph_hidden_dim, graph_dim=self.graph_dim,
+                    relation_dim=graph_relation_dim, heads=graph_heads,
+                    representation=representation, seed=int(graph_seed) + 1)
         else:
             self.policy_graph_encoder = None
             self.value_graph_encoder = None
@@ -172,6 +235,7 @@ class PipelineActorCritic(nn.Module):
     def forward(self, images: torch.Tensor, proprioception: torch.Tensor,
                 *, true_relative_state: torch.Tensor | None = None,
                 graph_features: torch.Tensor | None = None,
+                observation_packet: torch.Tensor | None = None,
                 visual=None,
                 hidden=None, episode_start: torch.Tensor | None = None) -> RecurrentOutput:
         """One forward pass.
@@ -199,6 +263,25 @@ class PipelineActorCritic(nn.Module):
         relative_state = (None if self.relative_state_head is None
                           else self.relative_state_head(temporal.latent))
 
+        refactored = self.pipeline_spec.policy_state_mode in {
+            "canonical_vector", "selective_graph"}
+        if refactored:
+            if observation_packet is None:
+                raise ValueError("refactored pipeline requires canonical O_t")
+            if observation_packet.ndim == 2:
+                observation_packet = observation_packet[:, None]
+            if observation_packet.shape != (
+                    batch, steps, self.canonical_observation_dim):
+                raise ValueError(
+                    "canonical observation packet must have shape BxTxD")
+            normalized_packet = (
+                (observation_packet - self.canonical_normalization_mean)
+                / self.canonical_normalization_std)
+        elif observation_packet is not None:
+            raise ValueError("legacy pipeline must not receive canonical O_t")
+        else:
+            normalized_packet = None
+
         actor_graph = critic_graph = None
         if self.graph_state_enabled:
             if graph_features is None:
@@ -208,17 +291,28 @@ class PipelineActorCritic(nn.Module):
                 graph_features = graph_features[:, None]
             if graph_features.ndim != 4 or graph_features.shape[:2] != (batch, steps):
                 raise ValueError("graph features must have shape BxTxNxD")
-            actor_graph = self.policy_graph_encoder(graph_features)
-            critic_graph = self.value_graph_encoder(graph_features)
+            if self.pipeline_spec.policy_state_mode == "selective_graph":
+                actor_graph = self.policy_graph_encoder(
+                    graph_features, observation_packet)
+                critic_graph = self.value_graph_encoder(
+                    graph_features, observation_packet)
+            else:
+                actor_graph = self.policy_graph_encoder(graph_features)
+                critic_graph = self.value_graph_encoder(graph_features)
         elif graph_features is not None:
             raise ValueError(
                 "this pipeline does not declare the ontology graph state and "
                 "must not be handed one")
 
-        actor_parts = [temporal.latent[..., self.pipeline_spec.actor_latent_slice],
-                       proprioception]
-        if actor_graph is not None:
-            actor_parts.append(actor_graph)
+        if self.pipeline_spec.policy_state_mode == "canonical_vector":
+            actor_parts = [normalized_packet]
+        elif self.pipeline_spec.policy_state_mode == "selective_graph":
+            actor_parts = [actor_graph]
+        else:
+            actor_parts = [temporal.latent[..., self.pipeline_spec.actor_latent_slice],
+                           proprioception]
+            if actor_graph is not None:
+                actor_parts.append(actor_graph)
         mean = self.actor(torch.cat(actor_parts, -1))
         std = self.log_std.exp().expand_as(mean)
         value = None
@@ -227,9 +321,14 @@ class PipelineActorCritic(nn.Module):
                 true_relative_state = true_relative_state[:, None]
             if true_relative_state.shape != (batch, steps, 6):
                 raise ValueError("critic truth must have shape BxTx6")
-            critic_parts = [proprioception, true_relative_state]
-            if critic_graph is not None:
-                critic_parts.append(critic_graph)
+            if self.pipeline_spec.policy_state_mode == "canonical_vector":
+                critic_parts = [normalized_packet, true_relative_state]
+            elif self.pipeline_spec.policy_state_mode == "selective_graph":
+                critic_parts = [critic_graph, true_relative_state]
+            else:
+                critic_parts = [proprioception, true_relative_state]
+                if critic_graph is not None:
+                    critic_parts.append(critic_graph)
             value = self.critic(torch.cat(critic_parts, -1)).squeeze(-1)
         return RecurrentOutput(
             mean, std, value, relative_state, temporal.latent, temporal.hidden,
@@ -260,7 +359,7 @@ class StatefulPipelinePolicy:
 
     @torch.no_grad()
     def action(self, observation: ActorObservation, deterministic=False, *,
-               graph=None):
+               graph=None, observation_packet=None):
         image = grayscale_image_tensor(observation.image, device=self.model.device)
         proprio = torch.as_tensor(observation.proprioception[None],
                                   dtype=torch.float32, device=self.model.device)
@@ -272,6 +371,7 @@ class StatefulPipelinePolicy:
             graph_features = graph_feature_tensor(
                 graph, device=self.model.device)[:, None]
         result = self.model(image, proprio, graph_features=graph_features,
+                            observation_packet=observation_packet,
                             hidden=self.hidden)
         self.hidden = tuple(value.detach() for value in result.hidden)
         mean = result.action_mean[:, -1]
@@ -290,6 +390,7 @@ def recurrent_ppo_loss(model: PipelineActorCritic, batch: dict,
     output = model(batch["images"], batch["proprioception"],
                    true_relative_state=batch["true_relative_state"],
                    graph_features=batch.get("graph_features"),
+                   observation_packet=batch.get("observation_packet"),
                    hidden=batch.get("initial_hidden"),
                    episode_start=batch.get("episode_start"))
     log_prob = model.log_prob(batch["pre_squash_action"], batch["action"],

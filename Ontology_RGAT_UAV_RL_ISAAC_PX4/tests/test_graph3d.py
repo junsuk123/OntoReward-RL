@@ -17,7 +17,7 @@ from ontology_rgat.config import default_config
 from ontology_rgat.semantic import GOAL_NODE, SemanticState, build_ontology_graph
 from ontology_rgat.viz.dashboard import PAGE
 from ontology_rgat.viz.graph3d import (GraphPublisher, graph_payload, layer_of,
-                                       layout_3d)
+                                       layout_3d, sensor_ontology_provenance)
 from ontology_rgat.viz.live import LiveStore
 
 
@@ -102,6 +102,37 @@ def test_payload_carries_attention_when_a_model_is_given(graph):
     json.dumps(payload)
 
 
+def test_sensor_provenance_exposes_only_onboard_paths():
+    from ontology_rgat.perception.semantic_observation import SemanticObservation
+    from ontology_rgat.rgat.state_graph import build_state_graph
+
+    observation = SemanticObservation(
+        keypoint_confidence=.7, visible_keypoint_fraction=5 / 6,
+        image_alignment=.8, apparent_target_scale=.3,
+        image_plane_motion_safety=.75, scale_rate_safety=.9,
+        visibility_memory=.8, reacquisition_trend=.2,
+        vertical_motion_safety=.6, attitude_stability=.95,
+        battery_risk=.1, visual_loss_risk=.15,
+        centroid_xy=(-.2, .1), raw_scale=.08, visual_loss_duration_s=.3)
+    state_graph = build_state_graph(observation)
+    provenance = sensor_ontology_provenance(observation, state_graph)
+    assert provenance["format"] == "ontology-rgat-sensor-provenance-v1"
+    assert {source["id"] for source in provenance["sensors"]} == {
+        "landing_camera", "keypoint_encoder", "temporal_context",
+        "px4_odometry", "px4_imu", "battery_monitor",
+    }
+    targets = {(edge["source"], edge["target"])
+               for edge in provenance["connections"]
+               if edge["stage"] == "semantic_to_ontology"}
+    assert ("centroid_x", "AlignmentError") in targets
+    assert ("vertical_motion_safety", "DescentRate") in targets
+    assert ("raw_target_scale", "RelativeRange") in targets
+    assert ("keypoint_confidence", "PadVisibility") in targets
+    encoded = json.dumps(provenance).lower()
+    for forbidden in ("true_relative_state", "simulator_truth", "pad_position"):
+        assert forbidden not in encoded
+
+
 def test_store_keeps_parallel_graphs_without_losing_legacy_latest(graph):
     _, sem, g = graph
     store = LiveStore()
@@ -138,5 +169,11 @@ def test_publisher_throttles_and_can_be_forced(graph):
 def test_dashboard_page_renders_the_view_without_a_cdn():
     """The page must stay self-contained: no script or style is fetched."""
     assert "cv-graph3d" in PAGE and "graphDraw" in PAGE
+    assert "cv-rgat-flow" in PAGE and "rfDraw" in PAGE
+    assert "실시간 message-passing 신경망" in PAGE
+    assert "attention 미발행 · 구조 표시" in PAGE
+    assert "g3d-sensor-map" in PAGE and "graphSensorMap" in PAGE
+    assert "Sensor data → semantic/context → ontology node" in PAGE
+    assert "No simulator truth" in PAGE
     for pattern in ("http://", "https://", "//cdn", "<script src", "<link "):
         assert pattern not in PAGE, f"the dashboard reaches out for {pattern!r}"

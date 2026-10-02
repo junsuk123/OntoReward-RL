@@ -1,0 +1,42 @@
+{
+  "schema": "ontology_rgat.planar_causal_packet/2",
+  "clock": "monotonic_simulation_time_seconds",
+  "fields": [
+    {"name": "h", "size": 1, "source": "own_state_adapter", "normalization": "divide_by_8m"},
+    {"name": "vx", "size": 1, "source": "own_state_adapter", "normalization": "divide_by_4mps"},
+    {"name": "vz", "size": 1, "source": "own_state_adapter", "normalization": "divide_by_3mps"},
+    {"name": "sinTheta", "size": 1, "source": "own_state_adapter", "normalization": "identity"},
+    {"name": "cosTheta", "size": 1, "source": "own_state_adapter", "normalization": "identity"},
+    {"name": "pitchRate", "size": 1, "source": "own_state_adapter", "normalization": "divide_by_1.57079632679radps"},
+    {"name": "exEstimate", "size": 1, "source": "causal_pad_track", "normalization": "divide_by_12m"},
+    {"name": "relativeVxEstimate", "size": 1, "source": "causal_pad_track", "normalization": "divide_by_4mps"},
+    {"name": "padVxEstimate", "size": 1, "source": "causal_pad_track", "normalization": "divide_by_4mps"},
+    {"name": "padAxEstimate", "size": 1, "source": "causal_pad_track", "normalization": "divide_by_2mps2"},
+    {"name": "positionStd", "size": 1, "source": "causal_pad_track", "normalization": "bounded_x_over_1_plus_x"},
+    {"name": "velocityStd", "size": 1, "source": "causal_pad_track", "normalization": "bounded_x_over_1_plus_x"},
+    {"name": "accelerationStd", "size": 1, "source": "causal_pad_track", "normalization": "bounded_x_over_1_plus_x"},
+    {"name": "trackInitialized", "size": 1, "source": "causal_pad_track", "normalization": "binary"},
+    {"name": "detected", "size": 1, "source": "metric_marker_detector", "normalization": "binary"},
+    {"name": "measuredBearing", "size": 1, "source": "metric_marker_detector", "normalization": "divide_by_half_fov"},
+    {"name": "bearingValid", "size": 1, "source": "metric_marker_detector", "normalization": "binary"},
+    {"name": "detectionConfidence", "size": 1, "source": "metric_marker_detector", "normalization": "probability_0_1"},
+    {"name": "timeSinceLastDetection", "size": 1, "source": "causal_pad_track", "normalization": "divide_by_3s_clipped"},
+    {"name": "predictedBearing", "size": 1, "source": "causal_pad_track_projection", "normalization": "divide_by_half_fov"},
+    {"name": "predictedFovMargin", "size": 1, "source": "causal_pad_track_projection", "normalization": "divide_by_half_fov"},
+    {"name": "remainingMissionTime", "size": 1, "source": "public_mission_clock", "normalization": "fraction_0_1"},
+    {"name": "previousNormalizedActionX", "size": 1, "source": "policy_memory", "normalization": "identity"},
+    {"name": "previousNormalizedActionZ", "size": 1, "source": "policy_memory", "normalization": "identity"},
+    {"name": "landingInhibited", "size": 1, "source": "common_safety_supervisor", "normalization": "binary"},
+    {"name": "abortRequested", "size": 1, "source": "common_safety_supervisor", "normalization": "binary"}
+  ],
+  "forbidden_sources": [
+    "future_pad_command",
+    "phase_id",
+    "phase_switch_time",
+    "true_pad_acceleration",
+    "current_hidden_pad_state",
+    "episode_outcome",
+    "reward_value",
+    "teacher_action"
+  ]
+}

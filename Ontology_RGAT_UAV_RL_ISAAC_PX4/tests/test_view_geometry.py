@@ -46,3 +46,15 @@ def test_pair_camera_zoom_is_rotation_invariant_around_the_route():
         angles.append(angular_separation_deg(eye, uav, deck))
 
     assert max(angles) < 40.0
+
+
+def test_operator_camera_offset_is_a_true_vehicle_side_view():
+    # No along-road component: the eye stays beside the UGV rather than far
+    # behind the whole fleet. Rotating the route rotates the side view with it.
+    for heading in np.linspace(-math.pi, math.pi, 9):
+        offset = street_offset_enu([0.0, -12.0, 4.5], heading)
+        along = np.array([math.cos(heading), math.sin(heading), 0.0])
+        across = np.array([-along[1], along[0], 0.0])
+        assert np.dot(offset, along) == pytest.approx(0.0, abs=1e-10)
+        assert np.dot(offset, across) == pytest.approx(-12.0)
+        assert offset[2] == pytest.approx(4.5)

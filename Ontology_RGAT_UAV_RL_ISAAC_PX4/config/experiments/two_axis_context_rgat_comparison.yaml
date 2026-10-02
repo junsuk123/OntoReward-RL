@@ -1,0 +1,109 @@
+schema_version: two-axis-context-rgat-config/1
+experiment: two_axis_context_rgat_v1
+algorithm_version: two-axis-context-rgat-v1
+primary: true
+pipelines:
+  - ppo_vector_canonical
+  - ppo_semantic_flat
+  - ppo_ontology_rgat
+
+action:
+  dimension: 2
+  channels: [longitudinal_acceleration, vertical_acceleration]
+  max_acceleration_m_s2: [1.2, 2.0]
+  sampled_variable: gaussian_raw_command
+  normalized_mapping: tanh
+
+timing:
+  physics_dt_s: 0.01
+  policy_dt_s: 0.1
+  mission_duration_limit_s: 70.0
+  discount_time_constant_s: 70.0
+
+dynamics:
+  model: lagged_planar_pitch_thrust_v1
+  mass_kg: 1.5
+  gravity_m_s2: 9.81
+  pitch_limit_deg: 20.0
+  pitch_rate_limit_deg_s: 90.0
+  pitch_natural_frequency_rad_s: 10.0
+  pitch_damping_ratio: 1.0
+  thrust_time_constant_s: 0.05
+  max_thrust_weight_ratio: 1.6
+
+scenario:
+  trajectory: constant_speed_constant_acceleration_constant_speed
+  parameterization: duration
+  ranges:
+    v1_m_s: [0.5, 2.5]
+    a2_m_s2: [0.3, 1.5]
+    T1_s: [0.5, 4.0]
+    T2_s: [0.5, 4.0]
+    T3_s: [15.0, 55.0]
+    initial_relative_height_m: [4.0, 8.0]
+  max_final_pad_speed_m_s: 7.0
+  final_speed_margin_m_s: 0.5
+
+camera:
+  mount: body_fixed_downward
+  horizontal_fov_deg: 70.0
+  maximum_range_m: 30.0
+  bearing_noise_std_deg: 0.25
+  relative_position_noise_std_m: 0.03
+
+estimator:
+  model: causal_constant_acceleration_kalman_v1
+  process_acceleration_std_m_s2: 0.8
+  measurement_position_std_m: 0.05
+  recent_track_grace_s: 0.5
+  prolonged_loss_s: 3.0
+
+safety:
+  common_supervisor: braking_hold_envelope_v1
+  pad_half_width_m: 0.6
+  touchdown_horizontal_error_m: 0.35
+  touchdown_relative_speed_m_s: 0.35
+  touchdown_vertical_speed_m_s: 0.35
+  touchdown_pitch_deg: 5.0
+  touchdown_pitch_rate_deg_s: 10.0
+  minimum_abort_hold_height_m: 0.5
+  maximum_backup_duration_s: 5.0
+
+reward:
+  contract: progress_visibility_effort_terminal_v1
+  reference_duration_s: 70.0
+  horizontal_scale_m: 3.0
+  height_scale_m: 4.0
+  weights: {goal: 1.0, view: 0.1, control: 0.02}
+  terminal:
+    SUCCESS: 10.0
+    SAFE_ABORT: -3.0
+    TASK_TIMEOUT: -12.0
+    UNSAFE_CONTACT: -40.0
+    UNAUTHORIZED_CONTACT: -40.0
+    MISSED_PAD_CONTACT: -40.0
+    SAFETY_ENVELOPE_VIOLATION: -40.0
+
+observation:
+  registry: ../observation/causal_packet_v2.json
+  contract: canonical causal packet v2
+
+ontology:
+  schema: compact_landing_context_graph_v1
+  inverse_edges: false
+  encoder: two_layer_independent_actor_critic_rgat
+  hidden_dimension: 32
+
+ppo:
+  raw_action_probability: true
+  transformed_action_density: false
+  behavior_cloning: false
+  learned_reward_weights: false
+  potential_shaping: false
+
+legacy:
+  three_channel_tilt_action: disabled
+  fov_risk_reward: disabled
+  adaptive_reward_weights: disabled
+  selective_frozen_base: disabled
+  accept_legacy_checkpoints: false

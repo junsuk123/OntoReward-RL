@@ -24,6 +24,9 @@ def parse_args():
     parser.add_argument("--config", required=True)
     parser.add_argument("--headless", action="store_true")
     parser.add_argument("--parallel-pairs", type=int, default=1)
+    parser.add_argument(
+        "--viewport-pair-index", type=int,
+        help="physical UAV/UGV pair shown in the operator side view")
     return parser.parse_args()
 
 
@@ -42,6 +45,10 @@ ARGS = parse_args()
 if ARGS.parallel_pairs < 1 or ARGS.parallel_pairs > MAX_PARALLEL_PAIRS:
     raise SystemExit(
         f"--parallel-pairs must be between 1 and {MAX_PARALLEL_PAIRS}")
+if (ARGS.viewport_pair_index is not None
+        and not 0 <= ARGS.viewport_pair_index < ARGS.parallel_pairs):
+    raise SystemExit(
+        "--viewport-pair-index must identify one of the spawned parallel pairs")
 CONFIG_PATH = Path(ARGS.config).expanduser().resolve()
 WORKSPACE = CONFIG_PATH.parent.parent
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -1083,6 +1090,9 @@ class ViewportFollower:
         if self.focus not in ("uav", "pair", "group"):
             raise ValueError(
                 "isaac.viewport_follow.focus must be 'uav', 'pair' or 'group'")
+        self.pair_index = int(view.get("pair_index", 0))
+        if self.pair_index < 0:
+            raise ValueError("isaac.viewport_follow.pair_index must be non-negative")
         self.pair_span_m = float(view.get("pair_span_m", 7.0))
         if self.pair_span_m <= 0.0:
             raise ValueError("isaac.viewport_follow.pair_span_m must be positive")
@@ -2540,14 +2550,23 @@ class LandingWorld:
                         decks = [pair.deck.world_from_pad(np.zeros(3))
                                  for pair in pairs]
                         primary.overlay.update_many(tuple(zip(vehicles, decks)))
-                        if len(pairs) > 1:
+                        configured_pair = (ARGS.viewport_pair_index
+                                           if ARGS.viewport_pair_index is not None
+                                           else primary.viewport_follower.pair_index)
+                        if (len(pairs) > 1
+                                and primary.viewport_follower.focus == "group"):
                             primary.viewport_follower.update_group(
                                 vehicles, decks,
                                 [pair.deck.yaw for pair in pairs], primary.urban)
                         else:
+                            if not 0 <= configured_pair < len(pairs):
+                                raise RuntimeError(
+                                    "operator viewport pair index is outside the "
+                                    "spawned UAV/UGV pair range")
+                            view_pair = configured_pair
                             primary.viewport_follower.update(
-                                vehicles[0], primary.deck.yaw, primary.urban,
-                                deck_position=decks[0])
+                                vehicles[view_pair], pairs[view_pair].deck.yaw,
+                                primary.urban, deck_position=decks[view_pair])
         except Exception as exc:
             # Isaac's ROS bridge invalidates its context as soon as the process
             # receives the stack's shutdown signal. A publisher can race that

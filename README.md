@@ -1,5 +1,41 @@
 # Ontology-Graph State Representation for Vision-Based UAV Landing on a Moving Platform
 
+## Current primary experiment (2026-10-02)
+
+The current scientific contract is `two_axis_context_rgat_v1`. It compares
+three PPO policies on one reproducible planar environment and the same causal
+observation information:
+
+| Arm | Policy input |
+|---|---|
+| `ppo_vector_canonical` | canonical causal packet v2 |
+| `ppo_semantic_flat` | the context graph's node features flattened, without edges |
+| `ppo_ontology_rgat` | the identical node features with typed R-GAT message passing |
+
+Every arm samples exactly two raw Gaussian commands, mapped through `tanh` to
+longitudinal and vertical acceleration requests. Pitch is an actual vehicle
+state produced by the shared thrust/pitch inner loop; it is not an RL action.
+All arms share the CV-CA-CV pad trajectory, camera, causal tracker, safety
+supervisor, reward, termination rules, seeds, and PPO action likelihood.
+
+The executable contract is
+[`two_axis_context_rgat_comparison.yaml`](Ontology_RGAT_UAV_RL_ISAAC_PX4/config/experiments/two_axis_context_rgat_comparison.yaml).
+Run the bounded integration check with:
+
+```bash
+cd Ontology_RGAT_UAV_RL_ISAAC_PX4
+PYTHONPATH=python python python/run_two_axis_experiment.py --smoke --steps 32
+pytest -q tests/test_two_axis_context_experiment.py
+```
+
+No full multi-seed PPO study has been run by this refactor, so learned
+performance is not yet validated. The previous 3-channel, fixed/selective
+graph-state, FOV-risk reward, PBRS, and adaptive-reward experiments remain for
+provenance and reproduction only; their checkpoints fail the new signature.
+See [`TWO_AXIS_CONTEXT_RGAT_HANDOFF.md`](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/refactor/TWO_AXIS_CONTEXT_RGAT_HANDOFF.md).
+
+## Historical live-stack implementation
+
 이 저장소는 **온톨로지 상황 그래프를 강화학습 정책의 상태 표현으로 사용하는 방법**을
 제안하고, 그 표현 하나만을 실험 요인으로 갖는 통제 비교를 Isaac Sim / Pegasus /
 PX4 SITL 위에서 수행한다.

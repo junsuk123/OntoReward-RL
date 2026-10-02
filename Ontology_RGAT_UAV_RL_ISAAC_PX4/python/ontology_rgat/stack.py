@@ -192,6 +192,7 @@ class ExternalStack:
                  agent_timeout: float = 30.0, isaac_timeout: float = 600.0,
                  gateway_timeout: float = 60.0,
                  parallel_pairs: int = 1,
+                 viewport_pair_index: int | None = None,
                  startup_attempts: int = 3):
         self.root = Path(cfg.paths.root)
         if not (self.root / "scripts").is_dir():
@@ -202,6 +203,12 @@ class ExternalStack:
         self.parallel_pairs = int(parallel_pairs)
         if self.parallel_pairs < 1:
             raise StackError("parallel_pairs must be positive")
+        self.viewport_pair_index = (None if viewport_pair_index is None
+                                    else int(viewport_pair_index))
+        if (self.viewport_pair_index is not None
+                and not 0 <= self.viewport_pair_index < self.parallel_pairs):
+            raise StackError(
+                "viewport_pair_index must identify a spawned physical pair")
         self.config_path = (Path(config_path).expanduser().resolve()
                             if config_path is not None
                             else (self.root / "config" / "system.yaml").resolve())
@@ -280,11 +287,17 @@ class ExternalStack:
 
     def start_isaac(self) -> None:
         parallel_marker = f"--parallel-pairs {self.parallel_pairs}"
+        viewport_marker = (None if self.viewport_pair_index is None else
+                           f"--viewport-pair-index {self.viewport_pair_index}")
         if _process_running("landing_world.py"):
             if self.parallel_pairs > 1 and not _process_running(parallel_marker):
                 raise StackError(
                     "A single-pair Isaac world is already active. Let that run finish "
                     "before starting the requested multi-pair world.")
+            if viewport_marker and not _process_running(viewport_marker):
+                raise StackError(
+                    "Isaac Sim is already following a different operator-view "
+                    "pair. Let that run finish before starting this assignment.")
             if not self.headless and _process_running("landing_world.py --headless"):
                 raise StackError(
                     "Isaac Sim is already running in headless mode. Stop that process "
@@ -309,6 +322,9 @@ class ExternalStack:
                          str(self.config_path)]
         if self.parallel_pairs > 1:
             isaac_command += ["--parallel-pairs", str(self.parallel_pairs)]
+        if self.viewport_pair_index is not None:
+            isaac_command += ["--viewport-pair-index",
+                              str(self.viewport_pair_index)]
         log = self._launch(
             "isaac",
             isaac_command,

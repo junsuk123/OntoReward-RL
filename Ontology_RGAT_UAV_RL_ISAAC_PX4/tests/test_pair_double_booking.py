@@ -18,10 +18,24 @@ import pytest
 
 from ontology_rgat.bridge import BridgeError, GatewayTimeout, PX4Bridge
 from run_three_pipeline import (_balanced_training_pair_assignment,
+                                _proposed_view_pair,
                                 _reward_design_pair_indices,
                                 _training_pair_replicas)
 
 METHODS = ["shin_se_fixed", "shin_se_onto_rgat_recovery"]
+
+
+def test_isaac_side_view_follows_the_proposed_pair_after_counterbalancing():
+    expected = [2, 0]
+    for replicate, pair_index in enumerate(expected):
+        assignment, _ = _balanced_training_pair_assignment(
+            METHODS, 4, replicate)
+        assert _proposed_view_pair(METHODS, assignment) == pair_index
+
+    graph_state_methods = ["shin_se_fixed", "shin_se_onto_rgat_state"]
+    assignment, _ = _balanced_training_pair_assignment(
+        graph_state_methods, 2, 0)
+    assert _proposed_view_pair(graph_state_methods, assignment) == 1
 
 
 def test_reward_design_stays_off_every_replica_pair_of_the_early_arm():

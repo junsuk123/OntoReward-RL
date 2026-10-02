@@ -1652,6 +1652,20 @@ def _balanced_training_pair_assignment(pipelines, pair_count: int,
     return assignment, [name for name in pair_methods if name is not None]
 
 
+def _proposed_view_pair(pipelines, training_pair_for: dict[str, int]) -> int:
+    """Physical pair whose learned method carries the proposed graph state."""
+    graph_methods = [name for name in pipelines
+                     if get_pipeline(name).graph_state_enabled]
+    candidates = graph_methods or [name for name in pipelines
+                                   if get_pipeline(name).ontology_enabled]
+    if not candidates:
+        return int(training_pair_for[str(pipelines[0])])
+    primary = next((name for name in candidates
+                    if get_pipeline(name).graph_state_representation
+                    in {"ontology_rgat", "selective_rgat"}), candidates[0])
+    return int(training_pair_for[primary])
+
+
 def _adaptive_reward_settings(config, *, robust: bool = False) -> dict:
     """Resolve artifact settings, including the explicit robust live profile."""
     settings = deepcopy(dict(config.get("adaptive_reward_design") or {}))
@@ -3637,6 +3651,7 @@ def main(*, primary_only: bool = False):
         args.pipelines, args.parallel_pairs, args.training_replicate)
     training_pair_for, pair_training_methods = _balanced_training_pair_assignment(
         args.pipelines, args.parallel_pairs, args.training_replicate)
+    proposed_view_pair = _proposed_view_pair(args.pipelines, training_pair_for)
     ppo = dict(config.get("ppo") or {})
     # Reward weights are an experiment-level declaration, identical for every
     # arm. Carried on the ppo dict because that is what reaches ``train_live``.
@@ -3697,6 +3712,8 @@ def main(*, primary_only: bool = False):
     manifest["ppo_training_contract_id"] = training_contract_id
     manifest["parallel_execution"]["training_pair_assignment"] = {
         name: int(index) for name, index in training_pair_for.items()}
+    manifest["parallel_execution"]["isaac_operator_view_pair_index"] = (
+        proposed_view_pair)
     manifest["parallel_execution"]["assignment_rule"] = (
         "cyclic Latin-square counterbalance by training_replicate; final "
         "evaluation crosses every method over every physical pair")
@@ -3891,7 +3908,8 @@ def main(*, primary_only: bool = False):
                 headless=args.headless, config_path=args.system_config,
                 isaac_timeout=(args.isaac_timeout if args.isaac_timeout is not None
                                else (600.0 if args.headless else 1200.0)),
-                parallel_pairs=args.parallel_pairs)
+                parallel_pairs=args.parallel_pairs,
+                viewport_pair_index=proposed_view_pair)
             owned.start()
             stack_module.current(owned)
         with ExitStack() as camera_stack:

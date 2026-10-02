@@ -1,5 +1,14 @@
 # 구현 개요
 
+> **2026-10-02 현재 primary:** `config/experiments/two_axis_context_rgat_comparison.yaml`
+> 은 `ppo_vector_canonical`, `ppo_semantic_flat`, `ppo_ontology_rgat`을 같은
+> causal packet, 2채널 가속도 액션, CV-CA-CV 패드, 보상, 안전 감독기로
+> 비교한다. Pitch는 액션이 아니라 내부 루프가 만드는 물리 상태다.
+> 실행 코드는 `python/ontology_rgat/two_axis/`, 통합 명령은
+> `python/run_two_axis_experiment.py`, 계약 테스트는
+> `tests/test_two_axis_context_experiment.py`에 있다. 아래의 3채널/선택적 R-GAT
+> 설명은 재현과 Isaac/PX4 연결을 위한 legacy다.
+
 > **2026-09-29 선택적 R-GAT 리팩터링:** 새 breaking scientific contract는
 > `config/experiments/selective_rgat_three_arm.yaml`에 있다. 동일한 canonical
 > observation과 capture/distance 2항 보상을 쓰는 `ppo_vector_state`와,

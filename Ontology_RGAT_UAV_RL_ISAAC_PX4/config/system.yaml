@@ -34,14 +34,20 @@ parallel:
   # Operator-only settings for the shared two-pair stage. This block is
   # excluded from the scientific config hash and cannot invalidate a policy.
   operator_view:
-    # Operator-only overview. Actor cameras retain their scientific 512x320
-    # resolution; this window need not cost more pixels than both cameras.
-    viewport_resolution: [640, 360]
+    # Operator-only close side view. The experiment launcher overrides
+    # pair_index with the physical pair assigned to the proposed graph arm, so
+    # cyclic replicate counterbalancing does not make the camera follow the
+    # baseline. Actor cameras retain their scientific 512x320 resolution.
+    viewport_resolution: [960, 540]
     frame: street
-    offset_m: [-14.0, 4.5, 12.0]
-    focus: group
-    pair_span_m: 22.0
-    smoothing: 0.18
+    # [along road, across road, up]: zero along-road displacement makes this a
+    # true vehicle-side view instead of the old distant rear fleet overview.
+    offset_m: [0.0, -12.0, 4.5]
+    look_at_offset_enu_m: [0.0, 0.0, -0.35]
+    focus: pair
+    pair_index: 0
+    pair_span_m: 8.0
+    smoothing: 0.22
 
 px4:
   namespace: /fmu

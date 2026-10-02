@@ -1,0 +1,87 @@
+{
+  "schema": "two_axis_reward_audit/1",
+  "sha256": "f6ca824041fc995083bdf34a8e7429dd2e4d91db77f012fa9114daf342057f8f",
+  "trajectories": {
+    "appropriate abort under unrecoverable loss": {
+      "discounted_return": -2.8679737112345642,
+      "discounted_running_component": -0.030545725655573865,
+      "duration_s": 4.0,
+      "fixture_kind": "blind",
+      "terminal_payment_count": 1,
+      "terminal_reason": "SAFE_ABORT"
+    },
+    "fast impact": {
+      "discounted_return": -38.93550187757167,
+      "discounted_running_component": -0.006613883564121363,
+      "duration_s": 2.0,
+      "fixture_kind": "impact",
+      "terminal_payment_count": 1,
+      "terminal_reason": "UNSAFE_CONTACT"
+    },
+    "late impact": {
+      "discounted_return": -19.752980969466485,
+      "discounted_running_component": -0.1433207872607932,
+      "duration_s": 50.0,
+      "fixture_kind": "impact",
+      "terminal_payment_count": 1,
+      "terminal_reason": "UNSAFE_CONTACT"
+    },
+    "oscillatory approach": {
+      "discounted_return": -6.910826898929374,
+      "discounted_running_component": -0.1245216345350686,
+      "duration_s": 40.0,
+      "fixture_kind": "oscillatory",
+      "terminal_payment_count": 1,
+      "terminal_reason": "TASK_TIMEOUT"
+    },
+    "prohibited blind contact": {
+      "discounted_return": -34.79790023270457,
+      "discounted_running_component": -0.07321296308538018,
+      "duration_s": 10.0,
+      "fixture_kind": "blind",
+      "terminal_payment_count": 1,
+      "terminal_reason": "UNAUTHORIZED_CONTACT"
+    },
+    "recoverable short loss followed by landing": {
+      "discounted_return": 8.383571022681526,
+      "discounted_running_component": -0.05307714328225528,
+      "duration_s": 12.0,
+      "fixture_kind": "short_loss",
+      "terminal_payment_count": 1,
+      "terminal_reason": "SUCCESS"
+    },
+    "safe delayed landing": {
+      "discounted_return": 7.435202318477305,
+      "discounted_running_component": -0.09031367396499097,
+      "duration_s": 20.0,
+      "fixture_kind": "approach",
+      "terminal_payment_count": 1,
+      "terminal_reason": "SUCCESS"
+    },
+    "safe efficient landing": {
+      "discounted_return": 8.895030148527333,
+      "discounted_running_component": -0.03775247328940062,
+      "duration_s": 8.0,
+      "fixture_kind": "approach",
+      "terminal_payment_count": 1,
+      "terminal_reason": "SUCCESS"
+    },
+    "stable near-pad hovering until deadline": {
+      "discounted_return": -4.433309901600603,
+      "discounted_running_component": -0.012445596045604796,
+      "duration_s": 70.0,
+      "fixture_kind": "hover",
+      "terminal_payment_count": 1,
+      "terminal_reason": "TASK_TIMEOUT"
+    },
+    "unnecessary induced loss followed by abort": {
+      "discounted_return": -2.739229701892139,
+      "discounted_running_component": -0.05939491534711918,
+      "duration_s": 8.0,
+      "fixture_kind": "blind",
+      "terminal_payment_count": 1,
+      "terminal_reason": "SAFE_ABORT"
+    }
+  },
+  "warning": "deterministic design fixtures, not learned-policy performance"
+}

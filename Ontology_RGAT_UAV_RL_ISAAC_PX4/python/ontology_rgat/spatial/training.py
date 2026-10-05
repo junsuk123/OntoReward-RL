@@ -25,6 +25,21 @@ from ..two_axis.learning import collect_rollout
 from ..two_axis.pretraining import pretrain_causal_encoder
 from ..two_axis.relational import guard_relational_candidate
 from ..two_axis.artifacts import json_text
+from ..landing.packet import head_geometry
+
+
+def _graph_planes(config):
+    """One context plane per horizontal axis.
+
+    The unified contract derives this from its axes. The frozen ladder rungs
+    keep whatever shape their checkpoints were trained with: only v9/v10 ever
+    built two planes.
+    """
+    from .core import REFERENCE_SCHEMA
+
+    if config.schema == REFERENCE_SCHEMA:
+        return head_geometry(config.axes, extras=True).graph_planes
+    return 2 if config.reference_context else 1
 
 VALIDATION_SEEDS = (2000, 2001)
 TEST_SEEDS = (9000, 9001)
@@ -97,7 +112,7 @@ class SpatialAgent(nn.Module):
             descent_axis=2,
             initialization=initialization,
             minimum_log_std=-2.5 if config.direct_acceleration else -5.,
-            graph_planes=2 if config.reference_context else 1,
+            graph_planes=_graph_planes(config),
         )
         self.critic = ReferenceHead(
             mode,
@@ -108,7 +123,7 @@ class SpatialAgent(nn.Module):
             action_dim=3,
             descent_axis=2,
             initialization=initialization,
-            graph_planes=2 if config.reference_context else 1,
+            graph_planes=_graph_planes(config),
         )
         self._generator = torch.Generator(device=self.device).manual_seed(seed + 2)
 
@@ -236,6 +251,22 @@ def train_arm(
 ):
     if not 0 <= episodes_per_iteration <= 64:
         raise ValueError("episodes per iteration must be in [0,64]")
+    # The relation activation phase below builds a FRESH PPOTrainer, whose
+    # update counter restarts at zero, and PPOTrainer gates the actor on
+    # `updates > value_warmup_iterations`. With the shipped defaults
+    # (activation_iterations 2, value warmup 2) the actor is therefore never
+    # updated: only the critic readout moves, the actor readout stays exactly
+    # 0.0, every guard scale is rejected on residual norm, and the arm silently
+    # remains numerically identical to ppo_semantic_flat. Measured in
+    # results/spatial_fixed_nominal_20261005: actor_readout_norm 0.0 against
+    # critic_readout_norm 0.1396. The failure is invisible in the artifacts --
+    # it surfaces only as `accepted: false` with no reason attached.
+    if (mode == "ppo_ontology_rgat" and activation_iterations
+            and activation_iterations <= hyper.value_warmup_iterations):
+        raise ValueError(
+            f"relation activation would never update the actor: "
+            f"activation_iterations={activation_iterations} must exceed "
+            f"value_warmup_iterations={hyper.value_warmup_iterations}")
     output = Path(output)
     output.mkdir(parents=True, exist_ok=True)
     if any(output.glob("checkpoint_*.pt")):

@@ -17,7 +17,7 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "python"))
-from ontology_rgat.spatial.core import SpatialConfig
+from ontology_rgat.spatial.core import SpatialConfig, schema_for
 from ontology_rgat.spatial.environment import SpatialLandingEnv, IsaacBackend
 
 
@@ -114,7 +114,7 @@ def main():
     parser.add_argument("--start-stack", action="store_true",
                         help="Own a new stack; otherwise explicitly adopt the operator's stack")
     parser.add_argument("--reset-recoveries", type=int, choices=range(6), default=0)
-    parser.add_argument("--contract-version", choices=["5", "6", "7", "8", "9", "10"], default="5")
+    parser.add_argument("--contract-version", choices=["5", "6", "7", "8", "9", "10", "reference"], default="reference")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     if not 0 <= args.integral_gain <= 1:
@@ -124,7 +124,7 @@ def main():
             and 0 < args.optical_blackout_after_s < args.horizon):
         parser.error('diagnostic blackout time must be finite and inside the mission')
     cfg = replace(SpatialConfig(), horizon=args.horizon,
-                  schema=f"spatial-causal-rgat/{args.contract_version}")
+                  schema=schema_for(args.contract_version))
     args.output.mkdir(parents=True, exist_ok=True)
 
     def execute():

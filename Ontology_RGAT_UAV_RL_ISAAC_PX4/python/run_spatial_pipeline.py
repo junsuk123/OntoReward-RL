@@ -17,7 +17,7 @@ import multiprocessing
 import time
 import torch
 
-from ontology_rgat.spatial.core import SpatialConfig
+from ontology_rgat.spatial.core import SpatialConfig, schema_for
 from ontology_rgat.spatial.environment import SpatialLandingEnv, IsaacBackend
 from ontology_rgat.spatial.training import train_arm, load_agent, evaluate, TEST_SEEDS
 from ontology_rgat.spatial.runtime_contract import deployment_profile
@@ -174,7 +174,7 @@ def main():
         help="Explicit common optimizer/exploration settings; recorded per run",
     )
     parser.add_argument("--horizon", type=float, default=70.0)
-    parser.add_argument("--contract-version", choices=["3", "4", "5", "6", "7", "8", "9", "10"], default="5")
+    parser.add_argument("--contract-version", choices=["3", "4", "5", "6", "7", "8", "9", "10", "reference"], default="reference")
     parser.add_argument("--initialize-v4-weights", action="store_true",
                         help="Explicit v4 to v5 PPO transfer; eligibility is NOT transferred")
     parser.add_argument("--activation-iterations", type=int, default=2)
@@ -249,10 +249,10 @@ def main():
     ):
         parser.error("unique nonnegative seeds and positive episode budget required")
     torch.set_num_threads(1)
-    deployment = deployment_profile(f"spatial-causal-rgat/{args.contract_version}")
+    deployment = deployment_profile(schema_for(args.contract_version))
     cfg = replace(
         SpatialConfig(),
-        schema=f"spatial-causal-rgat/{args.contract_version}",
+        schema=schema_for(args.contract_version),
         horizon=args.horizon,
         isaac_profile_sha256=deployment["sha256"],
     )

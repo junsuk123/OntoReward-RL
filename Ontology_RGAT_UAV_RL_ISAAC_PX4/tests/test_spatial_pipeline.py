@@ -4,6 +4,7 @@ import copy
 import numpy as np
 import pytest
 import torch
+from ontology_rgat.two_axis.models_v28 import ReferenceHead
 from ontology_rgat.spatial.core import (
     SpatialConfig,
     Measurement,
@@ -45,6 +46,19 @@ def measured(t=0.0, position=(0.1, -0.2, 2.0), sample=1):
         0.0 if position is None else 0.9,
         sample,
     )
+
+
+#: The frozen v5 rung. The tests pinned to it exercise the 35-field packet, the
+#: decaying-acceleration estimator and the historical module-level
+#: safety_status/supervised_action helpers -- none of which the active contract
+#: uses, and the last of which it refuses outright. Naming the rung is what
+#: makes these contract tests instead of tests of whatever the default happens
+#: to be; that ambiguity is how the default moved without anyone noticing.
+LEGACY_SCHEMA = "spatial-causal-rgat/5"
+
+
+def legacy_config(**overrides):
+    return replace(SpatialConfig(), schema=LEGACY_SCHEMA, **overrides)
 
 
 @pytest.mark.parametrize('version',['5','9'])
@@ -128,7 +142,7 @@ def test_stale_isaac_source_is_rejected_before_any_reset(monkeypatch):
 
 
 def test_signed_packet_and_graph_represent_both_horizontal_axes():
-    cfg = SpatialConfig()
+    cfg = legacy_config()
     e = Estimator(cfg)
     e.update(measured())
     s = safety_status(e, cfg)
@@ -143,7 +157,7 @@ def test_signed_packet_and_graph_represent_both_horizontal_axes():
 
 
 def test_v5_visual_outage_decays_acceleration_and_brakes_own_xy_velocity():
-    cfg = SpatialConfig()
+    cfg = legacy_config()
     e = Estimator(cfg)
     e.update(measured())
     e.pad_a[:] = [1., -1., 0.]
@@ -163,7 +177,7 @@ def test_v5_visual_outage_decays_acceleration_and_brakes_own_xy_velocity():
 
 
 def test_v4_weight_transfer_requires_explicit_optin_and_new_nominal_completion(tmp_path):
-    new = replace(SpatialConfig(), horizon=1.)
+    new = replace(legacy_config(), horizon=1.)
     old = replace(new, schema="spatial-causal-rgat/4")
     source = tmp_path / "v4.pt"
     agent = SpatialAgent("ppo_semantic_flat", old, 102)
@@ -185,7 +199,7 @@ def test_v4_weight_transfer_requires_explicit_optin_and_new_nominal_completion(t
 
 
 def test_100hz_propagation_and_no_repeated_optical_assimilation():
-    cfg = SpatialConfig()
+    cfg = legacy_config()
     e = Estimator(cfg)
     e.update(measured())
     e.update(measured(0.1, sample=1))
@@ -198,7 +212,7 @@ def test_100hz_propagation_and_no_repeated_optical_assimilation():
 
 
 def test_missing_pose_does_not_become_zero_position_or_immediate_abort_terminal():
-    cfg = SpatialConfig()
+    cfg = legacy_config()
     e = Estimator(cfg)
     e.update(measured())
     for i in range(1, 35):
@@ -209,7 +223,7 @@ def test_missing_pose_does_not_become_zero_position_or_immediate_abort_terminal(
 
 @pytest.mark.parametrize("axis", [0, 1])
 def test_xy_safety_and_descent_gate_are_symmetric(axis):
-    cfg = SpatialConfig()
+    cfg = legacy_config()
     e = Estimator(cfg)
     r = np.array([0.0, 0.0, 0.6])
     r[axis] = 2.0
@@ -221,7 +235,7 @@ def test_xy_safety_and_descent_gate_are_symmetric(axis):
 
 
 def test_authorized_contact_is_reachable_and_unsafe_precedes_timeout():
-    cfg = SpatialConfig()
+    cfg = legacy_config()
     e = Estimator(cfg)
     e.update(measured(position=[0, 0, 0.13]))
     s = safety_status(e, cfg)
@@ -249,7 +263,7 @@ def test_authorized_contact_is_reachable_and_unsafe_precedes_timeout():
 
 
 def test_flat_and_graph_raw_initialization_and_spatial_vertical_gate():
-    cfg = SpatialConfig()
+    cfg = legacy_config()
     flat = SpatialAgent(POLICY_MODES[1], cfg, 10)
     graph = SpatialAgent(POLICY_MODES[2], cfg, 10)
     env = SpatialLandingEnv(cfg)
@@ -289,7 +303,7 @@ def test_3d_ppo_is_finite_and_checkpoint_reload_exact(tmp_path, mode):
 
 
 def test_terminal_potential_is_zero_and_reward_order():
-    cfg = SpatialConfig()
+    cfg = legacy_config()
     e = Estimator(cfg)
     e.update(measured())
     truth = Truth(np.array([0, 0, 2.0]), np.zeros(3), np.zeros(2), np.zeros(3), False)
@@ -384,7 +398,7 @@ def test_v3_checkpoint_is_not_silently_relabelled_as_optical_v4(tmp_path):
 
 
 def test_local_camera_runs_at_20hz_without_freshening_repeated_frames():
-    env = SpatialLandingEnv()
+    env = SpatialLandingEnv(legacy_config())
     env.reset(seed=44)
     backend = env.backend
     first = backend.measure()
@@ -397,7 +411,7 @@ def test_local_camera_runs_at_20hz_without_freshening_repeated_frames():
 
 
 def test_terminal_coast_is_bounded_by_last_optical_alignment_and_uncertainty():
-    cfg = SpatialConfig()
+    cfg = legacy_config()
     est = Estimator(cfg)
     est.update(
         replace(
@@ -568,18 +582,18 @@ def test_spatial_replay_success_does_not_promote_active_difficulty():
 
 
 
-def test_spatial_waiting_out_the_clock_is_never_worth_more_than_attempting():
-    """The coupling spatial was missing, which two_axis paid four revisions for.
+def test_attempting_outranks_waiting_on_the_measured_reward():
+    """Rank the arms by measuring returns, never by deriving a break-even.
 
-    An ordering assertion alone does not catch this: SUCCESS > TASK_TIMEOUT >
-    SAFE_ABORT > unsafe held throughout, while the DISCOUNTED values said the
-    opposite. With discount_tau == horizon a deadline terminal is worth 0.368 of
-    its face value and an early one 0.892, so TASK_TIMEOUT -12 cost an effective
-    -4.41 against an early UNSAFE -35.68 and SUCCESS +22.30, putting the
-    break-even at 53.9 % landing probability -- unreachable from zero skill, so
-    hovering to the deadline was dominant by construction. The 12-flight frozen
-    Isaac matrix in results/frozen_test_20261005 measured exactly that: zero
-    landings, and every TASK_TIMEOUT return beating every SAFE_ABORT return.
+    The derivation this replaces compared discounted TERMINAL values only and
+    concluded landing had to already succeed 53.9 % of the time to beat running
+    out the clock. That omitted the dense readiness/potential terms, which pay
+    an approaching arm a large positive running return, and it drove the
+    spatial table away from the 2D reference for nothing. Measured here on the
+    objective the trainer actually optimizes: an attempting controller beats
+    both passive arms by a wide margin under the shared reference table.
+
+    Diagnostic controller only -- never a teacher, a baseline or a PPO target.
     """
     import math
 
@@ -587,38 +601,99 @@ def test_spatial_waiting_out_the_clock_is_never_worth_more_than_attempting():
 
     cfg = SpatialConfig()
     table = Evaluator.BONUSES
-    # The horizon must outlast the mission, or WHEN an outcome lands dominates
-    # WHAT it was, and no terminal table can repair it.
-    assert cfg.discount_tau >= 3.0 * cfg.horizon
     assert (
         table["SUCCESS"] > table["TASK_TIMEOUT"] > table["SAFE_ABORT"]
         > table["UNSAFE_CONTACT"]
     )
-    # An unsafe outcome must be identified by status, never by matching its
-    # magnitude: SAFE_ABORT shares the old unsafe value of -40.
+    # An unsafe outcome is identified by status, never by matching a magnitude:
+    # a table revision once gave SAFE_ABORT the unsafe outcomes' own value.
     assert "SAFE_ABORT" not in Evaluator.UNSAFE_STATUSES
-    assert table["SAFE_ABORT"] == -40.0
 
-    early, late = math.exp(-8.0 / cfg.discount_tau), math.exp(
-        -cfg.horizon / cfg.discount_tau
-    )
-    waiting = table["TASK_TIMEOUT"] * late
-    failed = table["UNSAFE_CONTACT"] * early
-    break_even = (waiting - failed) / (table["SUCCESS"] * early - failed)
-    # A policy starting from zero landings has to be able to reach this.
-    assert 0.0 < break_even < 0.35
+    gains = dict(kp=2.0, kd=3.0, kz=2.0, vdes=0.2, align=0.3, vtol=0.15)
+    amax = np.asarray(cfg.max_acceleration)
 
-    # The same must hold on every curriculum rung, not only at nominal.
-    for difficulty in (0.0, 0.5, 1.0):
-        unsafe = (
-            Evaluator.NOMINAL_UNSAFE_PENALTY
-            if difficulty == 1
-            else (1 - difficulty) * cfg.curriculum.start_unsafe_contact_penalty
-            + Evaluator.NOMINAL_UNSAFE_PENALTY * difficulty
-        )
-        assert unsafe < table["SAFE_ABORT"]
-        rung = (waiting - unsafe * early) / (table["SUCCESS"] * early - unsafe * early)
-        assert 0.0 < rung < 0.35
+    def rollout(env, seed, arm):
+        env.reset(seed=seed)
+        reference = env.backend.velocity.copy()
+        total, start = 0.0, env.time
+        for _ in range(int(cfg.horizon / cfg.dt) + 2):
+            est = env.estimator
+            if cfg.direct_acceleration:
+                # The direct contract carries no integrated velocity target,
+                # so the reference is the measured velocity each step.
+                reference = env.backend.velocity.copy()
+            r, rv = est.r.copy(), est.rv.copy()
+            desired = np.asarray(est.pad_v, dtype=float).copy()
+            desired[:2] += -gains["kp"] * r[:2] - gains["kd"] * rv[:2]
+            if arm == "attempt":
+                aligned = (np.linalg.norm(r[:2]) < gains["align"]
+                           and np.linalg.norm(rv[:2]) < gains["vtol"])
+                desired[2] = -gains["vdes"] if aligned else gains["kz"] * (1.0 - r[2])
+            else:
+                desired[2] = gains["kz"] * (2.2 - r[2])
+            action = np.clip((desired - reference) / (0.6 * amax), -1, 1)
+            if arm == "zero":
+                action = np.zeros(3)
+            _, reward, done, _, info = env.step(action)
+            reference += np.asarray(info["applied_acceleration_m_s2"]) * cfg.dt
+            total += float(math.exp(-(env.time - start) / cfg.discount_tau) * reward)
+            if done:
+                return total, info["status"]
+        return total, "NO_TERMINAL"
+
+    seeds = range(3001, 3017)
+    returns, landings = {}, {}
+    for arm in ("attempt", "hold", "zero"):
+        env = SpatialLandingEnv(cfg)
+        rows = [rollout(env, seed, arm) for seed in seeds]
+        env.close()
+        returns[arm] = float(np.mean([value for value, _ in rows]))
+        landings[arm] = sum(status == "SUCCESS" for _, status in rows) / len(rows)
+
+    # The task admits landing at all -- if this fails, the ceiling moved and no
+    # reward conclusion below it is meaningful. The rate is contract-dependent
+    # (the same gains reach 86.7 % on the frozen v5 plant and 33.3 % on the
+    # active one), so this is a floor on feasibility, not a performance claim.
+    assert landings["attempt"] >= 0.25, landings
+    assert landings["hold"] == 0.0 and landings["zero"] == 0.0
+    # The claim is the RANKING, not a margin: waiting out the clock must never
+    # be worth more than attempting. Margins are contract-dependent (measured
+    # +20.3 vs -24.5 on the frozen v5 plant, +0.36 vs -4.11 on the active one),
+    # so pinning one would only invite recalibration whenever the plant moves.
+    assert returns["attempt"] > returns["hold"] > returns["zero"], returns
+
+
+def test_relation_activation_must_outlast_the_actor_value_warmup(tmp_path):
+    """The silent no-op that made the proposed arm identical to the baseline.
+
+    The activation phase constructs a fresh PPOTrainer, so its update counter
+    restarts at zero while the actor stays gated on
+    `updates > value_warmup_iterations`. At the shipped defaults
+    (activation_iterations 2, value warmup 2) the actor is never updated. The
+    critic readout trains normally, the actor readout keeps its exact 0.0
+    initialization, `relational_delta` therefore returns exact zeros, and every
+    guard scale is rejected on residual norm -- leaving ppo_ontology_rgat
+    numerically equal to ppo_semantic_flat with nothing in the artifacts naming
+    the cause. Measured in results/spatial_fixed_nominal_20261005:
+    actor_readout_norm 0.0 against critic_readout_norm 0.1396.
+    """
+    from ontology_rgat.spatial.training import train_arm
+    from ontology_rgat.two_axis.training import PPOHyperparameters
+
+    cfg = SpatialConfig()
+    blocked = PPOHyperparameters(iterations=4, value_warmup_iterations=2)
+    with pytest.raises(ValueError, match="never update the actor"):
+        train_arm("ppo_ontology_rgat", cfg, seed=5, hyper=blocked,
+                  output=tmp_path / "blocked", activation_iterations=2)
+    # Equal is still a no-op; the actor needs at least one ungated update.
+    with pytest.raises(ValueError, match="never update the actor"):
+        train_arm("ppo_ontology_rgat", cfg, seed=5, hyper=blocked,
+                  output=tmp_path / "equal", activation_iterations=1)
+    # The baseline arms never run an activation phase, so they are unaffected.
+    for arm in ("ppo_vector_canonical", "ppo_semantic_flat"):
+        head = ReferenceHead(arm, "actor", cfg.ontology, 5, packet_dim=len(cfg.packet_fields),
+                             action_dim=3, descent_axis=2)
+        assert not hasattr(head, "encoder")
 
 
 def test_spatial_selection_matches_reference_safety_weighting():

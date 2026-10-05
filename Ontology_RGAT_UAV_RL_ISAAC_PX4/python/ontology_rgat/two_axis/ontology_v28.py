@@ -12,6 +12,8 @@ import json
 import math
 import numpy as np
 
+from ..landing.plane_graph import (AxisContext, SharedContext, build_plane,
+                                   descent_eligibility)
 from .contracts import packet_fields, REFERENCE_SCALES
 from .ontology import DECLARED_EDGES, SEMANTIC_NODES
 
@@ -73,32 +75,38 @@ def build_context_graph(packet, registry, config) -> GroupedContextGraph:
     vx, vz, h = p["vx"] * 4, p["vz"] * 3, p["h"] * 8
     pv, pa = p["padVxEstimate"] * 4, p["padAxEstimate"] * 2
     half_fov = config.camera.fov_rad / 2
-    measured, bearing = p["measuredBearing"] * half_fov, p["predictedBearing"] * half_fov
-    margin = p["predictedFovMargin"] * half_fov
-    urgency = max(0, -p["predictedFovMargin"])
-    speed_risk, pos_risk = min(abs(rv) / 3, 1), min(abs(ex) / 3, 1)
-    attitude = min(abs(theta) / config.dynamics.pitch_limit_rad, 1)
-    rate = min(abs(p["pitchRate"] * math.radians(90)) / config.dynamics.pitch_rate_limit_rad_s, 1)
-    confidence = p["detectionConfidence"] * p["trackInitialized"]
-    eligibility = confidence * (1-pos_risk) * (1-speed_risk) * (1-attitude) * (1-rate) * (1-p["landingInhibited"])
-    recovery = min(1, max(1-p["detected"], age, urgency))
-    inhibit = max(p["landingInhibited"], p["abortRequested"], age, pos_u, vel_u)
-    correction = math.tanh(ex/3 + .5*rv/3)
-    # Own velocity reference scales are explicit simulation scales, not actuator limits.
-    rows = [
-        [p["detected"], measured, bearing, margin, p["bearingValid"], p["detectionConfidence"], age, bearing, urgency],
-        [min(abs(pv)/10,1), pv/10, min(abs(pa)/2,1), pa/2, p["trackInitialized"], confidence, max(vel_u,acc_u), pa/2, acc_u],
-        [min(h/8,1), vz/1.5, min(abs(vx)/10,1), vx/10, 1, 1, 0, vz/1.5, 0],
-        [attitude, theta/config.dynamics.pitch_limit_rad, rate, p["pitchRate"], 1, 1, 0, p["pitchRate"], attitude],
-        [pos_risk, ex/3, speed_risk, rv/3, p["trackInitialized"], confidence, max(pos_u,vel_u), rv/3, urgency],
-        [abs(correction), correction, speed_risk, -rv/3, p["trackInitialized"], confidence, max(pos_u,vel_u), pa/2, pos_risk],
-        [recovery, -np.sign(bearing)*recovery, urgency, margin/half_fov, p["trackInitialized"], confidence, max(age,pos_u), bearing/half_fov, recovery],
-        [eligibility, eligibility, 1-speed_risk, -speed_risk, p["trackInitialized"], confidence, max(pos_u,vel_u,age), vz/1.5, 1-eligibility],
-        [inhibit, p["abortRequested"], age, p["landingInhibited"], 1, 1, max(pos_u,vel_u,age), p["abortRequested"], inhibit],
-    ]
-    X = np.array([row + [p["remainingMissionTime"], 1, (i+1)/9] for i,row in enumerate(rows)], dtype=np.float32)
+    # The planar route has exactly one horizontal axis, so its joined risk and
+    # its per-axis risk are the same number. Keeping them distinct is what lets
+    # the 3D route reuse this definition unchanged.
+    pitch_rate = p["pitchRate"] * math.radians(90)
+    axis = AxisContext(
+        pad_velocity=pv, pad_acceleration=pa, own_velocity=vx,
+        relative_position=ex, relative_velocity=rv,
+        measured_bearing=p["measuredBearing"] * half_fov,
+        predicted_bearing=p["predictedBearing"] * half_fov,
+        fov_margin=p["predictedFovMargin"] * half_fov, half_fov=half_fov,
+        tilt=theta, tilt_rate=pitch_rate)
+    shared = SharedContext(
+        height=h, descent_rate=vz, detected=p["detected"],
+        bearing_valid=p["bearingValid"],
+        detection_confidence=p["detectionConfidence"],
+        track_initialized=p["trackInitialized"], age=age,
+        position_uncertainty=pos_u, velocity_uncertainty=vel_u,
+        acceleration_uncertainty=acc_u,
+        landing_inhibited=p["landingInhibited"],
+        abort_requested=p["abortRequested"],
+        remaining_time=p["remainingMissionTime"],
+        joint_position_risk=min(abs(ex) / 3, 1),
+        joint_speed_risk=min(abs(rv) / 3, 1),
+        tilt_limit=config.dynamics.pitch_limit_rad,
+        tilt_rate_limit=config.dynamics.pitch_rate_limit_rad_s,
+        tilt_rate_scale=math.radians(90))
+    attitude = min(abs(theta) / shared.tilt_limit, 1)
+    rate = min(abs(pitch_rate) / shared.tilt_rate_limit, 1)
+    X = build_plane(axis, shared,
+                    eligibility=descent_eligibility(shared, attitude, rate))
     indices = {name: i for i,name in enumerate(NODE_NAMES)}
-    return GroupedContextGraph(np.clip(X, -1, 1),
+    return GroupedContextGraph(X,
         np.array([indices[s] for s,_,_ in GRAPH_EDGES]),
         np.array([indices[d] for _,_,d in GRAPH_EDGES]),
         np.array([RELATION_NAMES.index(r) for _,r,_ in GRAPH_EDGES]), packet.registry_sha256)

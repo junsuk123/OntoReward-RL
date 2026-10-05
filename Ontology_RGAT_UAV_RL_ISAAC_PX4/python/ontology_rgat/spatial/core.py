@@ -11,7 +11,37 @@ import math
 import numpy as np
 
 from ..two_axis.config import GraphConfig, CurriculumConfig
+from ..landing.packet import (SPATIAL_AXES, field_names as reference_field_names,
+                              registry as reference_registry)
+from ..landing.terminal import (
+    REFERENCE_CURRICULUM_START_UNSAFE,
+    REFERENCE_DISCOUNT_TAU_S,
+    REFERENCE_MISSION_HORIZON_S,
+    REFERENCE_TERMINAL_REWARDS,
+    validate_curriculum_ramp,
+    validate_discount_horizon,
+    validate_terminal_ordering,
+)
 from ..two_axis.ontology_v28 import GRAPH_SCHEMA_HASH as TOPOLOGY_HASH
+
+
+#: The dimension-generic contract: the 2D reference packet with one more
+#: horizontal axis, the reference 9x12 plane per axis, and the v10 capability
+#: set (direct acceleration, ABG tracking, matched disturbances, capture-time
+#: optical alignment, reference supervisor). It is derived, not a ladder rung.
+REFERENCE_SCHEMA = "spatial-reference/1"
+
+
+def schema_for(contract_version):
+    """CLI contract selector -> schema string.
+
+    ``reference`` is the active, derived contract; the bare numbers are the
+    frozen historical rungs, kept so their checkpoints stay loadable.
+    """
+    version = str(contract_version)
+    if version in ("reference", REFERENCE_SCHEMA):
+        return REFERENCE_SCHEMA
+    return f"spatial-causal-rgat/{version}"
 
 
 FIELDS = tuple(
@@ -138,19 +168,17 @@ def camera_bearings(relative_enu, quaternion_wxyz, cfg):
 
 @dataclass(frozen=True)
 class SpatialConfig:
-    schema: str = "spatial-causal-rgat/5"
+    schema: str = REFERENCE_SCHEMA
     isaac_profile_sha256: str = ""
     dt: float = 0.1
     sensor_dt: float = 0.01
     camera_dt: float = 0.05
-    horizon: float = 70.0
-    # Five times the horizon, not one. At tau == horizon a terminal at the
-    # deadline is discounted to 0.368 of its value while an early one pays
-    # 0.892, so running out the clock is the cheapest failure available and no
-    # terminal table can fix it: the ordering demands |unsafe| > |timeout|, and
-    # the discount then makes the early failure cost more than the late one.
-    # Lengthening the horizon makes WHAT happened dominate WHEN.
-    discount_tau: float = 350.0
+    horizon: float = REFERENCE_MISSION_HORIZON_S
+    # Upstream's value, shared with the 2D route. It was briefly 350 on the
+    # argument that tau == horizon makes waiting dominant; measurement showed
+    # attempting wins under both settings (landing/terminal.py), and the
+    # divergence only cost 2D/3D comparability.
+    discount_tau: float = REFERENCE_DISCOUNT_TAU_S
     max_velocity: tuple = (10.0, 10.0, 5.0)
     max_acceleration: tuple = (2.5, 2.5, 2.0)
     pad_half_width: float = 0.5
@@ -171,14 +199,11 @@ class SpatialConfig:
             start_a2_range_m_s2=(0.03, 0.12),
             start_height_range_m=(0.2, 0.5),
             start_touchdown_vertical_speed_m_s=0.6,
-            # Must stay strictly below SAFE_ABORT (-40) at EVERY rung, or the
-            # easy end makes crashing cheaper than aborting and the arms learn
-            # to dive -- two_axis measured 92-98 % unsafe contact doing exactly
-            # that. The shared default of -20 inverted the ordering once
-            # SAFE_ABORT moved from -15 to -40. At -42 the discounted
-            # break-even runs 25.2 % -> 29.4 % -> 33.2 % across the ramp:
-            # monotone, reachable, and the safety preference is kept.
-            start_unsafe_contact_penalty=-42.0,
+            # Upstream primaryConfig.m. validate_curriculum_ramp pins it below
+            # SAFE_ABORT at every rung so the easy end cannot make crashing
+            # cheaper than aborting -- two_axis measured 92-98 % unsafe contact
+            # when that inverted.
+            start_unsafe_contact_penalty=REFERENCE_CURRICULUM_START_UNSAFE,
             promotion_landing_rate=0.1,
             promotion_window_episodes=18,
             scheduled_floor=True,
@@ -205,12 +230,20 @@ class SpatialConfig:
     def __post_init__(self):
         if (
             self.schema not in ("spatial-causal-rgat/3", "spatial-causal-rgat/4",
-                                "spatial-causal-rgat/5", "spatial-causal-rgat/6", "spatial-causal-rgat/7", "spatial-causal-rgat/8", "spatial-causal-rgat/9", "spatial-causal-rgat/10")
+                                "spatial-causal-rgat/5", "spatial-causal-rgat/6", "spatial-causal-rgat/7", "spatial-causal-rgat/8", "spatial-causal-rgat/9", "spatial-causal-rgat/10",
+                                REFERENCE_SCHEMA)
             or not 0 < self.sensor_dt <= self.dt <= 0.2
         ):
             raise ValueError("invalid spatial schema/timing")
         if self.horizon <= 0 or self.discount_tau <= 0:
             raise ValueError("positive spatial horizons required")
+        # The 3D route carried its own terminal table and ramp for a week and
+        # drifted away from the 2D reference unnoticed. These are the same
+        # load-time assertions the 2D config runs, on the same definitions.
+        validate_terminal_ordering(REFERENCE_TERMINAL_REWARDS)
+        validate_curriculum_ramp(
+            self.curriculum.start_unsafe_contact_penalty, REFERENCE_TERMINAL_REWARDS)
+        validate_discount_horizon(self.discount_tau, self.horizon)
         if not self.sensor_dt <= self.camera_dt <= 0.2:
             raise ValueError("camera sampling must match the spatial sensor profile")
 
@@ -227,7 +260,14 @@ class SpatialConfig:
         }
 
     @property
+    def axes(self):
+        """Horizontal axes of the task. The dimension IS this tuple."""
+        return SPATIAL_AXES
+
+    @property
     def registry_hash(self):
+        if self.schema == REFERENCE_SCHEMA:
+            return reference_registry(self.axes, extras=True)["sha256"]
         if self.reference_supervisor:
             return REGISTRY_HASH_V10
         if self.reference_context:
@@ -244,23 +284,23 @@ class SpatialConfig:
 
     @property
     def direct_acceleration(self):
-        return self.schema in ("spatial-causal-rgat/6", "spatial-causal-rgat/7", "spatial-causal-rgat/8", "spatial-causal-rgat/9", "spatial-causal-rgat/10")
+        return self.schema in ("spatial-causal-rgat/6", "spatial-causal-rgat/7", "spatial-causal-rgat/8", "spatial-causal-rgat/9", "spatial-causal-rgat/10", REFERENCE_SCHEMA)
 
     @property
     def reference_tracking(self):
-        return self.schema in ("spatial-causal-rgat/7", "spatial-causal-rgat/8", "spatial-causal-rgat/9", "spatial-causal-rgat/10")
+        return self.schema in ("spatial-causal-rgat/7", "spatial-causal-rgat/8", "spatial-causal-rgat/9", "spatial-causal-rgat/10", REFERENCE_SCHEMA)
 
     @property
     def matched_disturbances(self):
-        return self.schema in ("spatial-causal-rgat/8", "spatial-causal-rgat/9", "spatial-causal-rgat/10")
+        return self.schema in ("spatial-causal-rgat/8", "spatial-causal-rgat/9", "spatial-causal-rgat/10", REFERENCE_SCHEMA)
 
     @property
     def reference_context(self):
-        return self.schema in ("spatial-causal-rgat/9", "spatial-causal-rgat/10")
+        return self.schema in ("spatial-causal-rgat/9", "spatial-causal-rgat/10", REFERENCE_SCHEMA)
 
     @property
     def reference_supervisor(self):
-        return self.schema == "spatial-causal-rgat/10"
+        return self.schema in ("spatial-causal-rgat/10", REFERENCE_SCHEMA)
 
     @property
     def camera_transport_delay(self):
@@ -271,6 +311,8 @@ class SpatialConfig:
 
     @property
     def packet_fields(self):
+        if self.schema == REFERENCE_SCHEMA:
+            return reference_field_names(self.axes, extras=True)
         if self.reference_context:
             return FIELDS_V9
         if self.reference_tracking:
@@ -580,6 +622,18 @@ class Observation:
 
 
 def observation(est, safety, elapsed, cfg):
+    if cfg.schema == REFERENCE_SCHEMA:
+        # One derived field list, one normalization, one plane builder per
+        # axis -- see spatial/reference_contract.py and landing/packet.py.
+        from .context import axis_context_graphs
+        from .reference_contract import packet_values
+
+        values = packet_values(est, safety, elapsed, cfg)
+        X = axis_context_graphs(values, cfg)
+        if not np.isfinite(values).all() or not np.isfinite(X).all():
+            raise ValueError("nonfinite causal packet")
+        return Observation(Packet(values, cfg.registry_hash),
+                           Graph(X, cfg.registry_hash))
     m = est.own
     (bx, by), _ = camera_bearings(est.r, m.quaternion, cfg)
     margins = np.asarray(cfg.fov) / 2 - np.abs([bx, by])

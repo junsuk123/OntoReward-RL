@@ -1,0 +1,13 @@
+extends: spatial-isaac-system.yaml
+
+# Explicit direct-acceleration deployment, not a relabelled v5 checkpoint.
+# PX4's own causal hover-thrust estimator compensates actuator/mass mismatch.
+# No arming, estimator, failsafe or touchdown criteria are disabled.
+px4:
+  sitl_parameters:
+    MPC_USE_HTE: 1
+isaac:
+  viewport_follow:
+    # Spectator only: a landed/off-pad drone must not put the eye underground.
+    offset_m: [0.0, -8.0, 1.5]
+    look_at_offset_enu_m: [0.0, 0.0, -0.1]

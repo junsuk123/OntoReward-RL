@@ -1,0 +1,913 @@
+{
+  "superseded_on": "2026-10-04",
+  "current_report": "REFERENCE_V28_AUDIT_KO.md",
+  "historical_record": true,
+  "current_status": {
+    "reference_profile": "two_axis_reference_v28_active_port2",
+    "upstream_commit": "83f10d6c5d90fc9350d67af1f729f83fc49009f4",
+    "upstream_head_rechecked": "1bc69db080bf177d187a450ffc71072768d5dc1e",
+    "upstream_head_delta": "a233a88 and 1bc69db add/redesign ontologyRgatExplorer and docs only; algorithms, simulations and config unchanged from 83f10d6",
+    "upstream_relational_path": "active; scale 0.001; previous zero-contribution assessment corrected",
+    "python_relation_activation": "implemented; long learned-performance reproduction unverified",
+    "spatial_control_contract": "spatial-enu-net-acceleration-v1; user selected ax/ay/az",
+    "spatial_implementation": "spatial-causal-rgat/5: decaying target acceleration, XY abort braking, explicit v4 PPO weight transfer with new nominal eligibility; final armed/OFFBOARD policy gate fixed; learned landing and repeated-reset stability unverified",
+    "approved_training": {
+      "status": "bounded_training_stopped_acceptance_not_met",
+      "training_ended_utc": "2026-10-04T11:01:15Z",
+      "start_utc": "2026-10-04T09:07:01Z",
+      "deadline_utc": "2026-10-04T11:07:01Z",
+      "artifacts": "results/spatial_approved_20261004_2PY7qZ",
+      "teacher_or_cloning": false,
+      "nominal_criteria_relaxed": false
+    },
+    "approved_extension": {
+      "status": "completed_runs_acceptance_not_met",
+      "start_utc": "2026-10-04T11:13:29Z",
+      "deadline_utc": "2026-10-04T15:13:29Z",
+      "artifacts": "results/spatial_extension_20261004_TxwRik",
+      "scope": "repeat-reset stability, local-PX4 control/perception alignment, PPO and Isaac revalidation",
+      "local_training_guard_deadline_utc": "2026-10-04T14:55:00Z",
+      "local_wall_budget_reallocation": "results/spatial_extension_20261004_TxwRik/local_budget_reallocation.json",
+      "hardware_or_push": false
+    },
+    "approved_alignment_extension": {
+      "status": "running",
+      "user_authorization": "정합 수정·재검증에 4시간 추가",
+      "additional_window_start_utc": "2026-10-04T15:13:29Z",
+      "deadline_utc": "2026-10-04T19:13:29Z",
+      "artifacts": "results/spatial_alignment_20261005_gzhmiY",
+      "schema": "spatial-causal-rgat/9",
+      "scope": "paired reference context, causal capture-time optical alignment, matched local camera latency, two-seed three-arm PPO and actual Isaac revalidation",
+      "training_seeds": [
+        826,
+        827
+      ],
+      "iterations_per_arm_per_seed": 700,
+      "complete_episodes_per_iteration": 6,
+      "nominal_criteria_relaxed": false,
+      "disturbances_enabled": true,
+      "teacher_or_cloning": false,
+      "hardware_or_push": false,
+      "pre_edit_snapshot_sha256": "30f8836d689ee5c59e5e89fb5584ed3ed28f070d2504190ca6348aed4a0f8af4",
+      "local_training_source_sha256": "29435673fef756b6fbbcf93d7c885d7f24845f8de68e2a361b74911d7884410e",
+      "deployment_profile_sha256": "1fd86c5748150848d0f3ca648835cf1330fed8c8a9a4b26d9bc7731ffacb3434",
+      "active_training": "results/spatial_alignment_20261005_gzhmiY/v10-aligned",
+      "v9_training_status": "gracefully stopped to prioritize corrected v10; one completed vector seed826, incomplete six-row matrix; all partial evidence preserved",
+      "superseded_training": "v9-round1 interrupted with all nominal counts zero; no weights transferred, all records retained",
+      "shared_actual_scenario": "spatial_reference_cv_ca_cv",
+      "nominal_scenario_numerical_tests": "7 paired seeds, continuous position/velocity, both switches and t=70; passed",
+      "full_regression": {
+        "passed": 1296,
+        "skipped": 2,
+        "warnings": 15,
+        "seconds": 419.43,
+        "junit": "results/spatial_alignment_20261005_gzhmiY/pytest-v9-aligned.xml"
+      },
+      "subsequent_audit_tests": {
+        "passed": 76,
+        "seconds": 4.44,
+        "scope": "post-policy hold snapshot and actual acceptance /3; no numerical training changes"
+      },
+      "historical_hold_audit": "3 v8 frozen SAFE_ABORT snapshots verified; v9 diagnostic seeds 14005/14006 fail own horizontal hold speed despite confirmed cleanup",
+      "remaining_algorithmic_differences": "v10 restores structural supervisor/view features but is not formula-equivalent: accepted-confidence >=.25 is replaced by uncertainty thresholds; 1m stopping/corridor logic, near-field readiness, GAE .99 versus .95, reduced training/validation/pretraining budgets, initial/dropout distributions and plant/PX4 remain different. Matched-capacity learned performance is unverified.",
+      "v10_supervisor_candidate": {
+        "status": "local_training_and_frozen_holdout_complete_actual_ppo_pipeline_running",
+        "schema": "spatial-causal-rgat/10",
+        "training_seeds": [
+          828,
+          829
+        ],
+        "iterations": 500,
+        "complete_episodes_per_iteration": 6,
+        "training": "results/spatial_alignment_20261005_gzhmiY/v10-aligned",
+        "local_training_completed_utc": "2026-10-04T17:41:50Z",
+        "completed_runs": 6,
+        "training_episodes_per_run": 3000,
+        "nominal_training_episodes_per_run": 404,
+        "actor_update_iterations_per_run": 498,
+        "relation_selected_scales_by_seed": {
+          "828": 0.01,
+          "829": 0.005
+        },
+        "frozen_local_holdout": {
+          "report": "results/spatial_alignment_20261005_gzhmiY/v10-frozen-local-matrix.json",
+          "seed_range": [
+            9400,
+            9419
+          ],
+          "episodes_per_arm_across_two_training_seeds": 40,
+          "landings_vector_flat_graph": [
+            1,
+            0,
+            0
+          ],
+          "unsafe_vector_flat_graph": [
+            2,
+            3,
+            1
+          ],
+          "safe_aborts_vector_flat_graph": [
+            13,
+            7,
+            8
+          ],
+          "all_abort_terminal_snapshots_verified": true,
+          "checkpoint_selection": false,
+          "candidate_promoted": false
+        },
+        "actual_release": {
+          "status": "incomplete_prepolicy_identity_refusal_exit1",
+          "artifacts": "results/spatial_alignment_20261005_gzhmiY/v10-actual-release",
+          "completed_training_runs": 5,
+          "flights_completed": 21,
+          "confirmed_cleanups": 21,
+          "unsafe_training_outcomes": 1,
+          "actual_learned_landings": 0,
+          "completed_checkpoint_audit": "results/spatial_alignment_20261005_gzhmiY/v10-actual-checkpoints-original-5of6.json",
+          "started_utc": "2026-10-04T17:41:52Z",
+          "bounded_stop_request_utc": "2026-10-04T19:04:00Z",
+          "source_sha256": "a68dc010bfdc82ab9d31db4d5287fc138c5e2e410bebdea256aa5c37fffae5ae",
+          "planned_actual_flights": 36,
+          "fresh_stack_per_episode": true,
+          "frozen_test_seeds": [
+            16000,
+            16001
+          ],
+          "acceptance_claim": false
+        },
+        "actual_recovery": {
+          "status": "six_actual_training_runs_and_local_reload_complete_frozen_actual_running",
+          "artifacts": "results/spatial_alignment_20261005_gzhmiY/v10-actual-recovered",
+          "source_sha256": "081ccd3b1752f314ef9b0f6937e4f574a4adf50384732c697dfd8918a1b3b2b6",
+          "completed_runs_preserved_byte_for_byte": 5,
+          "exact_optimizer_resume": false,
+          "completed_actual_training_runs": 6,
+          "checkpoint_update_audit": "results/spatial_alignment_20261005_gzhmiY/v10-actual-checkpoints-complete.json",
+          "local_reload_episodes": 12,
+          "local_reload_landings": 0,
+          "local_reload_unsafe": 0,
+          "incomplete_graph_episodes_preserved": 1,
+          "additional_training_cost_episodes": 1,
+          "planned_remaining_actual_flights": 16,
+          "policy_failure_retry": false,
+          "frozen_test_seeds": [
+            16000,
+            16001
+          ],
+          "acceptance_claim": false
+        },
+        "source_sha256": "467d16a53d9a0e4e588eb46298f52933aaf13a6d1da5504320d2783293e1cc3f",
+        "focused_tests_passed": 91,
+        "full_suite": {
+          "passed": 1318,
+          "skipped": 2,
+          "warnings": 15,
+          "seconds": 535.65,
+          "junit": "results/spatial_alignment_20261005_gzhmiY/pytest-v10.xml"
+        },
+        "diagnostic_fault_test_passed_after_suite": 1,
+        "deployment_suite": {
+          "passed": 1326,
+          "skipped": 2,
+          "warnings": 15,
+          "seconds": 1077.18,
+          "junit": "results/spatial_alignment_20261005_gzhmiY/pytest-v10-deployment.xml",
+          "excludes": "subsequent bounded LAND retry fix; superseded by simulator_time_full_suite below"
+        },
+        "latest_cleanup_investigation": "results/spatial_alignment_20261005_gzhmiY/cleanup-investigation.json",
+        "land_retry_actual_probe": {
+          "seed": 14007,
+          "status": "SAFE_ABORT",
+          "cleanup_confirmed": true,
+          "cleanup_seconds": 21.17542471177876,
+          "terminal_hold_verified": false,
+          "learned_policy": false
+        },
+        "land_retry_full_suite": {
+          "passed": 1328,
+          "skipped": 2,
+          "warnings": 15,
+          "seconds": 1213.52,
+          "junit": "results/spatial_alignment_20261005_gzhmiY/pytest-v10-land-retry.xml",
+          "excludes": "subsequent simulator-time setpoint pacing; superseded by simulator_time_full_suite below"
+        },
+        "simulator_time_full_suite": {
+          "passed": 1336,
+          "skipped": 2,
+          "warnings": 15,
+          "seconds": 1466.6,
+          "junit": "results/spatial_alignment_20261005_gzhmiY/pytest-v10-sim-cadence.xml"
+        },
+        "paced_nominal_causal_probe": {
+          "seed": 14007,
+          "status": "SUCCESS",
+          "cleanup_confirmed": true,
+          "elapsed_s": 25.148001,
+          "cleanup_seconds": 8.177033,
+          "learned_policy": false,
+          "artifact": "results/spatial_alignment_20261005_gzhmiY/v10-paced-landing-probe"
+        },
+        "simulator_time_setpoint_pacing": {
+          "wall_flood_probe_hz_per_sim_second": 296.2085,
+          "paced_probe_hz_per_sim_second": 49.7382,
+          "nominal_policy_changed": false,
+          "seed14007_terminal_hold_verified": true,
+          "cleanup_confirmed": true,
+          "cleanup_seconds": 87.24136656010523,
+          "learned_policy": false,
+          "report": "results/spatial_alignment_20261005_gzhmiY/v10-sim-cadence-hold-audit.json"
+        },
+        "actual_causal_probe": {
+          "seed": 14007,
+          "status": "SUCCESS",
+          "cleanup_confirmed": true,
+          "elapsed_s": 27.6800013147,
+          "cleanup_seconds": 41.398739,
+          "learned_policy": false
+        },
+        "test_plan": "results/spatial_alignment_20261005_gzhmiY/v10-evaluation-plan.json",
+        "v9_checkpoints_reinterpreted": false,
+        "nominal_criteria_relaxed": false,
+        "disturbances_enabled": true,
+        "teacher_or_cloning": false
+      }
+    },
+    "verification": {
+      "full_suite_passed": 1358,
+      "full_suite_skipped": 2,
+      "full_suite_warnings": 15,
+      "focused_suite_passed": 79,
+      "focused_suite_scope": "episodic collection/normalization, spatial pipeline, reference alignment and acceptance; optical frame correction separately 33 passed",
+      "reference_active_3arm_smoke": "revalidated: 32 decisions per arm plus PPO minibatch; passed",
+      "relation_repair_persistence": "bounded synthetic timeout task; passed, not landing evidence",
+      "real_isaac_flight": "v10 original actual run stopped on pre-policy identity refusal after 21 flights/confirmed cleanups, five completed training summaries, no learned landing and one retained unsafe training outcome. Explicit recovery completed six actual training runs and 12 local reload tests (0 landing/0 unsafe); fixed actual test matrix running. Five runs copied byte-for-byte; incomplete graph829 repeated from original local source, not exact optimizer resume. Earlier v8 complete 15-flight evidence remains historical.",
+      "runtime_recheck_kst": "2026-10-04 23:37: separate idle side-view setup, armed=false, landed=true, estimator_valid=true; setup support is not a task landing; final-disarmed-view-state.json",
+      "revalidation_suite_time_s": 442.07,
+      "current_revalidation_junit": "results/spatial_alignment_20261005_gzhmiY/pytest-v10-identity-readiness.xml",
+      "previous_revalidation_junit": "results/spatial_extension_20261004_TxwRik/pytest-atomic-cleanup-release.xml",
+      "latest_full_suite_excludes": "No subsequent production code changes. Result-directory diagnostic helpers are separate from the regression suite; learned actual landing is independently gated.",
+      "runtime_identity_readiness_fix": {
+        "focused_passed": 79,
+        "focused_seconds": 2.61,
+        "full_passed": 1358,
+        "full_skipped": 2,
+        "full_warnings": 15,
+        "full_seconds": 442.07,
+        "known_mismatch_rejected_immediately": true,
+        "missing_clock_wait_limit_s": 30,
+        "read_only_before_reset_arm": true
+      },
+      "owned_child_reaping_fix": {
+        "focused_passed": 33,
+        "focused_seconds": 1.9,
+        "in_flight_actual_process_reloaded": false,
+        "numerical_policy_changed": false,
+        "full_passed": 1345,
+        "full_skipped": 2,
+        "full_warnings": 15,
+        "full_seconds": 349.33,
+        "disarmed_isaac_lifecycle_verification": "passed; v10-disarmed-reaping-probe; all 3 owned leaders reaped, stop 1.75283884s; no arm/reset/policy",
+        "full_junit": "results/spatial_alignment_20261005_gzhmiY/pytest-v10-owned-reaping.xml"
+      },
+      "skipped_tests_reason": "Two historical visual-servo teacher checks are incompatible with the configured legacy privileged_relative_state_velocity_pd_v4 teacher; no Isaac test was hidden by these skips.",
+      "frozen_extended_local_evaluation": {
+        "report": "results/spatial_extension_20261004_TxwRik/frozen-holdout-comparison.json",
+        "seed_range": [
+          9100,
+          9119
+        ],
+        "episodes_per_arm_per_candidate": 20,
+        "round1_landings_vector_flat_graph": [
+          0,
+          0,
+          0
+        ],
+        "round1_unsafe_vector_flat_graph": [
+          0,
+          0,
+          0
+        ],
+        "long_credit_landings_vector_flat_graph": [
+          0,
+          1,
+          0
+        ],
+        "long_credit_unsafe_vector_flat_graph": [
+          1,
+          2,
+          1
+        ],
+        "checkpoint_selection": false,
+        "candidate_promotion": false,
+        "performance_parity_claim": false
+      },
+      "cleanup_release_probe": {
+        "artifacts": "results/spatial_extension_20261004_TxwRik/v8-cleanup-release-probe",
+        "seed": 2001,
+        "diagnostic_horizon_s": 2.0,
+        "task_status": "TASK_TIMEOUT",
+        "stop_confirmed": true,
+        "cleanup_wall_seconds": 21.650592,
+        "learned_performance_claim": false
+      },
+      "actual_release_revalidation": {
+        "artifacts": "results/spatial_extension_20261004_TxwRik/v8-actual-release",
+        "status": "complete_execution_acceptance_not_met",
+        "source_sha256": "f272e1d0e6eaea41eaa1fa653a383bf7209a1f4bfcb8becb2e3219c541e3a5df",
+        "training_seed": 823,
+        "actual_ppo_episodes_per_arm": 2,
+        "value_warmup_iterations": 0,
+        "actual_validation_seeds": [
+          2000,
+          2001
+        ],
+        "frozen_actual_test_seeds": [
+          13000
+        ],
+        "cold_stack_per_episode": true,
+        "disturbances_enabled": true,
+        "ineligible_last_update_snapshot_is_deployable": false,
+        "actual_training_steps_vector_flat_graph": [
+          283,
+          819,
+          809
+        ],
+        "ppo_minibatches_vector_flat_graph": [
+          16,
+          26,
+          31
+        ],
+        "all_selected_weights_updated": true,
+        "checkpoint_audit": "results/spatial_extension_20261004_TxwRik/v8-actual-release-checkpoint-audit.json",
+        "actual_statuses_vector_flat_graph": [
+          "SAFE_ABORT",
+          "SAFE_ABORT",
+          "SAFE_ABORT"
+        ],
+        "actual_graph_mean_abs_relation_residual": [
+          0.012358948588371277,
+          0.0002065754379145801,
+          0.0005350276478566229
+        ],
+        "actual_flights_including_train_and_validation": 15,
+        "confirmed_cleanup": 15,
+        "failed_cleanup": 0,
+        "maximum_cleanup_wall_seconds": 38.13540928205475,
+        "scheduled_cold_isolations": 13,
+        "cold_isolation_wall_seconds": 1125.8797575607896,
+        "entry_recoveries_used": 0,
+        "complete_matrix": true,
+        "no_unsafe_test_outcomes": true,
+        "acceptance_passes": false,
+        "exit_code": 2,
+        "learned_performance_claim": false
+      },
+      "long_credit_revalidation": {
+        "artifacts": "results/spatial_extension_20261004_TxwRik/v8-long-credit",
+        "status": "complete",
+        "completed_nominal_episodes_per_arm": 1200,
+        "ppo_steps_vector_flat_graph": [
+          807960,
+          640871,
+          590175
+        ],
+        "graph_additional_activation_steps": 5120,
+        "graph_selected_scale": 0.05,
+        "local_test_seeds": [
+          9000,
+          9001
+        ],
+        "outcomes_vector": [
+          "TASK_TIMEOUT",
+          "TASK_TIMEOUT"
+        ],
+        "outcomes_flat": [
+          "TASK_TIMEOUT",
+          "SAFE_ABORT"
+        ],
+        "outcomes_graph": [
+          "TASK_TIMEOUT",
+          "TASK_TIMEOUT"
+        ],
+        "landings": 0,
+        "unsafe_outcomes": 0,
+        "graph_mean_abs_relational_residual": [
+          0.0029528646,
+          0.0011961277,
+          0.0010162978
+        ],
+        "performance_parity_claim": false
+      },
+      "v8_optical_ray_diagnostic": {
+        "artifacts": "results/spatial_extension_20261004_TxwRik/v8-imu-ray-feasibility",
+        "backend": "actual-isaac-px4",
+        "seeds": [
+          14002,
+          14003
+        ],
+        "outcomes": [
+          "SUCCESS",
+          "UNAUTHORIZED_CONTACT"
+        ],
+        "complete": true,
+        "cleanup_confirmed": true,
+        "disturbances_enabled": true,
+        "learned_policy": false,
+        "ppo_teacher": false,
+        "nominal_criteria_relaxed": false,
+        "learned_performance_claim": false
+      },
+      "spatial_v8_pipeline_validation": {
+        "artifacts": "results/spatial_extension_20261004_TxwRik/v8-round1",
+        "schema": "spatial-causal-rgat/8",
+        "training_seed": 823,
+        "iterations_per_arm": 800,
+        "ppo_decisions_per_arm": 1228800,
+        "completed_nominal_episodes_vector_flat_graph": [
+          238,
+          276,
+          256
+        ],
+        "graph_extra_relational_steps": 5120,
+        "graph_selected_scale": 0.1,
+        "local_test_seeds": [
+          9000,
+          9001
+        ],
+        "local_test_statuses_per_arm": [
+          "TASK_TIMEOUT",
+          "TASK_TIMEOUT"
+        ],
+        "actual_test_seeds": [
+          12000,
+          12001
+        ],
+        "actual_statuses_vector": [
+          "SAFE_ABORT",
+          "UNSAFE_CONTACT"
+        ],
+        "actual_statuses_flat": [
+          "SAFE_ABORT",
+          "SAFE_ABORT"
+        ],
+        "actual_statuses_graph": [
+          "SAFE_ABORT",
+          "SAFE_ABORT"
+        ],
+        "actual_graph_mean_abs_relational_residual": [
+          0.003815201111137867,
+          0.0021063322201371193,
+          0.00016884026990737766
+        ],
+        "owned_entry_recoveries_used": 1,
+        "recovery_seed": 12000,
+        "recovery_wall_seconds": 96.66412954870611,
+        "recovery_completed": true,
+        "recovery_was_rl_episode": false,
+        "cold_px4_state_paired": false,
+        "complete_matrix": true,
+        "landing_observed": false,
+        "no_unsafe_outcomes": false,
+        "acceptance_passes": false,
+        "performance_parity_claim": false,
+        "descriptive_report": "results/spatial_extension_20261004_TxwRik/v8-actual-descriptive.json"
+      },
+      "matlab_fixture_regeneration": "passed; JSON values equal to stored fixture",
+      "spatial_randomized_commands": 10000,
+      "real_evaluator_relation_probe": "64 PPO decisions, validation seeds 2000/2001, scale 0.75 accepted; both episodes SAFE_ABORT, not landing performance",
+      "overall_verdict": "v10 local six-run training and 120 frozen tests complete: vector/flat/graph landings 1/0/0, unsafe outcomes 2/3/1, nonzero graph outputs; not promoted. Actual pipeline interrupted pre-policy after 21 confirmed flight cleanups, preserving one unsafe training outcome. Explicit bounded recovery in progress. Proposed learned actual landing and whole-system acceptance remain unmet. No robustness or 2D performance-parity claim.",
+      "current_spatial_validation": "actual_release_revalidation (opt-in v8 candidate, not a default-contract promotion)",
+      "actual_ppo_update_probe": {
+        "artifacts": "results/spatial_approved_20261004_2PY7qZ/round10-actual-graph-probe",
+        "arm": "ppo_ontology_rgat",
+        "complete": true,
+        "environment_steps": 701,
+        "ppo_minibatches": 12,
+        "policy_updated": true,
+        "raw_actor_value_log_std_bitwise_preserved": true,
+        "actor_and_critic_relation_parameters_changed": true,
+        "validation_seeds": [
+          2000,
+          2001
+        ],
+        "actual_validation_statuses": [
+          "TASK_TIMEOUT",
+          "TASK_TIMEOUT"
+        ],
+        "reloaded_local_validation_statuses": [
+          "TASK_TIMEOUT",
+          "TASK_TIMEOUT"
+        ],
+        "updated_sha256": "7952452c88e59c2b59a0e278f4b61fb9ca682d9a487ecbdb025c1dc6cd6f69d5",
+        "mixed_into_primary_three_arm_comparison": false,
+        "performance_parity_claim": false
+      },
+      "final_flight_gate_fix": {
+        "reason": "disarmed setup could satisfy entry geometry after refused arming",
+        "excluded_run": "results/spatial_approved_20261004_2PY7qZ/round11-actual-graph-probe",
+        "fix": "armed entry gate; spatial armed+OFFBOARD reset/step guard; only fresh same-episode contact exception",
+        "focused_tests_passed": 114,
+        "live_disarmed_negative_test_passed": true,
+        "positive_full_horizon_rerun_after_fix": true,
+        "positive_rerun_artifacts": "results/spatial_extension_20261004_TxwRik/lifecycle-guard-v5",
+        "positive_rerun_seeds": [
+          2000,
+          2001
+        ],
+        "positive_rerun_statuses": [
+          "TASK_TIMEOUT",
+          "TASK_TIMEOUT"
+        ],
+        "positive_rerun_unsafe_rate": 0.0,
+        "full_regression_passed": 1198,
+        "full_regression_skipped": 2,
+        "final_code_archive_sha256": "60cbcfb201b4c4af57be5af69607b7554b08f364bc80fc2476f50b980dc236a0",
+        "repeat_reset_stability_verified": false,
+        "postflight_audit": "results/spatial_approved_20261004_2PY7qZ/final_postflight_audit.json",
+        "final_side_view": "results/spatial_approved_20261004_2PY7qZ/isaac-final-disarmed-side-view.png"
+      },
+      "spatial_v5_pipeline_validation": {
+        "artifacts": "results/spatial_approved_20261004_2PY7qZ/round9-v5",
+        "schema": "spatial-causal-rgat/5",
+        "source_training": "round8, same-arm PPO weights, explicit v4 to v5 migration; eligibility not transferred",
+        "training_seed": 820,
+        "source_iterations_per_arm": 400,
+        "source_decisions_per_iteration": 2048,
+        "new_iterations_per_arm": 200,
+        "new_decisions_per_iteration": 2048,
+        "new_completed_nominal_episodes_vector_flat_graph": [
+          423,
+          405,
+          424
+        ],
+        "new_train_only_successes_vector_flat_graph": [
+          9,
+          1,
+          0
+        ],
+        "graph_extra_relational_ppo_steps": 2560,
+        "graph_selected_scale": 0.1,
+        "local_test_seeds": [
+          9000,
+          9001
+        ],
+        "local_test_statuses_per_arm": [
+          "TASK_TIMEOUT",
+          "TASK_TIMEOUT"
+        ],
+        "actual_test_seeds": [
+          12000
+        ],
+        "mission_horizon_s": 70.0,
+        "actual_test_statuses_vector_flat_graph": [
+          "TASK_TIMEOUT",
+          "TASK_TIMEOUT",
+          "TASK_TIMEOUT"
+        ],
+        "actual_mean_returns_vector_flat_graph": [
+          -9.065199923478986,
+          -9.835621974852254,
+          -9.616125611858912
+        ],
+        "actual_decision_dt_mean_vector_flat_graph": [
+          0.10419048113925826,
+          0.10562896429312445,
+          0.1055843423643845
+        ],
+        "actual_graph_mean_abs_relational_residual": [
+          0.00228495174087584,
+          1.4684577763546258e-05,
+          0.0002692273701541126
+        ],
+        "complete_matrix": true,
+        "no_unsafe_outcomes_in_this_test": true,
+        "learned_landing_observed": false,
+        "acceptance_passes": false,
+        "actual_cli_exit_code": 2,
+        "performance_parity_claim": false,
+        "side_view_screenshot": "results/spatial_approved_20261004_2PY7qZ/isaac-proposed-final-side-view.png"
+      },
+      "spatial_pipeline_validation": {
+        "artifacts": "results/validation_spatial_20261004_3pQvUf",
+        "actual_pipeline": "spatial-actual-final",
+        "training_backend": "isaac-px4-spatial",
+        "mission_horizon_s": 0.8,
+        "ppo_steps_per_arm": 16,
+        "graph_pretraining_steps": 32,
+        "graph_activation_steps": 8,
+        "graph_activation_scale": 1.0,
+        "actual_test_mean_abs_relational_residual": [
+          0.00011334237206028774,
+          0.0011913697235286236,
+          0.002032318850979209
+        ],
+        "actual_test_statuses": [
+          "TASK_TIMEOUT",
+          "TASK_TIMEOUT",
+          "TASK_TIMEOUT"
+        ],
+        "complete_matrix": true,
+        "unsafe_observed_in_short_tests": false,
+        "learned_landing_observed": false,
+        "acceptance_passes": false,
+        "cli_exit_code": 2,
+        "diagnostic_landings": 2,
+        "diagnostic_is_ppo_teacher": false,
+        "invalid_stale_contact_run": "feasibility-isaac-coast; excluded, marked invalid",
+        "gateway_sync_check": "pass",
+        "fake_protocol_full_episode": "pass",
+        "reference_cli_fairness_after_fix": "pass",
+        "deployment_profile_sha256": "6d6d96bbebb2dc0be6b74ba253490e5754f85193a7ade19ec519060fb31af196"
+      },
+      "whole_pipeline_validation": {
+        "superseded_by": "spatial_pipeline_validation; below is the preserved pre-implementation audit",
+        "date_kst": "2026-10-04",
+        "artifacts": "/tmp/ugv-whole-pipeline-5UdeLI",
+        "nominal_reference_cli": "3 arms, seed 809, train/select/reload/40 validation + 40 test/aggregate passed",
+        "nominal_test_landings_per_arm": [
+          0,
+          0,
+          0
+        ],
+        "nominal_test_episodes_per_arm": 40,
+        "nominal_test_unsafe_per_arm_vector_flat_graph": [
+          14,
+          2,
+          2
+        ],
+        "nominal_graph_total_decisions": 56256,
+        "nominal_graph_activation_decisions": 51200,
+        "nominal_graph_selected_scale": 0.02,
+        "nominal_graph_test_mean_abs_raw_residual": [
+          0.00024384957321187535,
+          0.0036881891914555334
+        ],
+        "synthetic_all_cli": "completed; exit 0 despite fairness.passes=false due to per-arm hyperparameters",
+        "tuning_reproducibility": "failed: identical trial results, vector tie winner changes with workers 3 versus 1",
+        "source_ros_udp_loopback": "passed; isolated domain 187, mocked telemetry, real learner bridge/UDP/DDS, no PX4 or Isaac dynamics",
+        "source_ros_heartbeat_max_gap_s": 0.021549745928496122,
+        "legacy_fake_protocol": "failed at entry: truth offset 1.22065556 m exceeds 0.90 m tolerance",
+        "installed_gateway_sync": "failed --check; protocol.py and ros2_gateway.py differ from repository",
+        "isaac_flight_and_viewport": "not executed; spatial backend incomplete",
+        "production_code_or_runtime_modified": false
+      }
+    },
+    "isaac_integration_complete": false,
+    "isaac_integration_scope": "actual PPO/save/reload/fresh three-arm test executed with matched disturbances and 15 confirmed cold-run flight cleanups; proposed learned-landing acceptance and broad operational qualification remain unmet",
+    "learned_performance_verified": false,
+    "flight_processes_at_audit": null,
+    "gate_release_training": "historical v2.5: completed; all three final training windows had zero landings",
+    "isaac_pilot": "historical planar: stopped; evaluation has 11 PN / 10 vector / 10 graph rows, incomplete",
+    "frozen_isaac_test_12": {
+      "status": "complete_matrix_no_landing",
+      "date": "2026-10-05",
+      "artifacts": "results/frozen_test_20261005",
+      "scope": "the 12-run frozen-checkpoint Isaac matrix Codex left at 3/12; re-flown whole on one seed range",
+      "command": "run_spatial_pipeline.py --stage isaac --seeds 828 829 --contract-version 10 --horizon 70 --isaac-episodes 2 --isaac-seed-start 16000 --fresh-stack-per-episode --nominal-only --ppo-preset reference-v28-episodic --episodes-per-iteration 1 --gae-lambda 0.99",
+      "signature_verified_against": "v10-actual-recovered/plan.json (identical, config_sha256 b44195c7)",
+      "wall_clock_min": 27,
+      "budget_min": 90,
+      "outcomes": {
+        "SAFE_ABORT": 8,
+        "TASK_TIMEOUT": 4,
+        "SUCCESS": 0,
+        "unsafe": 0
+      },
+      "landing_rate_all_arms": 0.0,
+      "relation_residual_nonzero_only_for": "ppo_ontology_rgat (0.0048-0.0148); outcome identical to the zero-residual arms",
+      "return_ordering_observed": "TASK_TIMEOUT -8.20..-12.73 beats SAFE_ABORT -15.02..-15.49, as the terminal table dictates",
+      "acceptance": "isaac_acceptance.json passes=false; complete_matrix=true, all_episode_stops_confirmed=true",
+      "interpretation": "Does NOT measure the proposed model. The spatial contract deadlocks landing at p>53.9% (TASK_TIMEOUT -12 with discount_tau 70 == horizon 70); hovering/aborting is dominant by construction, so every arm scores the same. Fix the terminal table and tau before spending further Isaac wall-clock on arm comparison."
+    }
+  },
+  "schema": "two_axis_refactor_progress/1",
+  "date": "2026-10-03",
+  "experiment": "two_axis_context_rgat_v1",
+  "algorithm_version": "two-axis-context-rgat-v1",
+  "contract_revision": "planar-visibility-ppo-v2.5",
+  "performance_verified": false,
+  "corrections": [
+    {
+      "id": "authorized-touchdown-reachable",
+      "source_defect": "matlab-v2.5-#6/#9/#14",
+      "status": "implemented",
+      "evidence": "30/30 pre-change contacts had landing_inhibited=true; 22 were mechanically admissible and scored UNAUTHORIZED_CONTACT",
+      "test": "test_an_authorized_touchdown_is_reachable_at_all"
+    },
+    {
+      "id": "footprint-tight-approach-gate",
+      "source_defect": "matlab-v2.5-#14",
+      "status": "implemented",
+      "test": "test_touchdown_gate_tightens_with_the_observable_camera_footprint"
+    },
+    {
+      "id": "bounded-flare-commit",
+      "source_defect": "new-in-this-repo",
+      "status": "implemented",
+      "test": "test_flare_commit_is_bounded_and_cannot_outlive_the_abort_threshold"
+    },
+    {
+      "id": "bounded-abort-recovery",
+      "source_defect": "matlab-v2.5-#2",
+      "status": "implemented",
+      "test": "test_prolonged_loss_starts_a_bounded_recovery_rather_than_a_terminal_abort"
+    },
+    {
+      "id": "landing-gear-contact-plane",
+      "source_defect": "matlab-v2.5-#9",
+      "status": "implemented",
+      "test": "test_contact_uses_the_landing_gear_plane_with_a_ground_fallback"
+    },
+    {
+      "id": "pad-relative-hard-envelope",
+      "source_defect": "new-in-this-repo",
+      "status": "implemented",
+      "evidence": "7/24 PN episodes terminated as SAFETY_ENVELOPE_VIOLATION at 7-14 cm altitude while tracking to 2 cm",
+      "test": "test_hard_envelope_is_measured_against_the_pad_not_the_world_origin"
+    },
+    {
+      "id": "longitudinal-authority",
+      "source_defect": "matlab-v2.5-#7",
+      "status": "implemented",
+      "evidence": "ax_max 1.2 m/s^2 below the sampler's a2 maximum 1.5 m/s^2; 8/30 scenarios untrackable",
+      "test": "test_longitudinal_authority_exceeds_every_pad_acceleration_drawn"
+    },
+    {
+      "id": "terminal-ordering",
+      "source_defect": "matlab-v2.5-#13",
+      "status": "implemented",
+      "evidence": "shipped audit ranked induced abort -2.74 above deadline hover -4.43",
+      "test": "test_terminal_table_cannot_make_aborting_a_shortcut"
+    },
+    {
+      "id": "decoupled-goal-cost",
+      "source_defect": "matlab-v2.5-#10",
+      "status": "implemented",
+      "test": "test_goal_cost_keeps_a_horizontal_gradient_at_altitude"
+    },
+    {
+      "id": "readiness-difference-reward",
+      "source_defect": "matlab-v2.5-#3/#5",
+      "status": "implemented",
+      "test": "test_readiness_is_paid_as_a_difference_so_hovering_earns_nothing"
+    },
+    {
+      "id": "curriculum-and-checkpoint-eligibility",
+      "source_defect": "matlab-v2.5-#4/#11/#12",
+      "status": "implemented_untrained",
+      "note": "schedule, replay roles, promotion and eligibility are implemented and tested but have never driven a training run",
+      "test": "test_curriculum_difficulty_one_reproduces_the_nominal_contract_exactly, test_promotion_ignores_replays_and_reports_the_rates_separately"
+    },
+    {
+      "id": "pn-feasibility-reference",
+      "source_defect": "matlab-v2.5-#14",
+      "status": "implemented",
+      "test": "test_pn_comparator_is_feasible_and_is_never_a_teacher"
+    },
+    {
+      "id": "plateau-attribution",
+      "source_defect": "matlab-v2.5-#6",
+      "status": "implemented",
+      "test": "test_plateau_detector_attributes_the_chain_upstream"
+    },
+    {
+      "id": "estimator-gain-retune",
+      "source_defect": "matlab-v2.5-#8",
+      "status": "not_applicable",
+      "evidence": "sweep over q in [0.08,0.8] x r in {0.03,0.05} on recorded streams: shipped q=0.8 is at or near optimum on every axis; fresh-detection position RMSE 0.023 m against 0.03 m sensor noise; residual 0.33 m/s^2 acceleration error is a constant-acceleration model limit, not a gain fault"
+    },
+    {
+      "id": "ontology-structural-audit",
+      "source_defect": "matlab-v2.5-#5 (task 5)",
+      "status": "audited_no_change",
+      "evidence": "1430 graph samples: 0 dead nodes, all 9 semantic nodes 5-7 active channels, all 12 behaviour-case scores fire; only duplicate row is PolicyNode==ValueNode which is the intended two-query design; 4 hardcoded constant channels left in place because removing them churns GRAPH_SCHEMA_HASH with no measured benefit",
+      "test": "test_structural_graph_audit_finds_no_dead_semantic_node"
+    },
+    {
+      "id": "ppo-trainer-persistent-optimiser",
+      "source_defect": "found-building-the-pipeline",
+      "status": "implemented",
+      "evidence": "ppo_minibatch_update rebuilt Adam every call (moments discarded each iteration) and took one full-batch step, so the ratio was exactly 1 and the clip never engaged",
+      "test": "tests/test_two_axis_context_experiment.py (helper retained as a single-step probe); PPOTrainer used for real runs"
+    },
+    {
+      "id": "curriculum-start-inside-the-frame",
+      "source_defect": "found-running-the-pipeline",
+      "status": "implemented",
+      "evidence": "fixed 2 m start offset is 47-59 deg at a 1.2-2.5 m start against a 35 deg half-FOV: pad geometrically invisible at t=0 in 0/30 episodes; offset now min(2.0, 0.5*h), exactly 2.0 for every nominal height",
+      "test": "test_curriculum_start_keeps_the_pad_inside_the_frame_at_every_difficulty"
+    },
+    {
+      "id": "curriculum-easiness-axis-inverted",
+      "source_defect": "ported-prescription-was-wrong-here",
+      "status": "implemented",
+      "evidence": "PN 24 seeds/cell: nominal 0.42, low-altitude-only 0.04 (abort 0.92), slow-pad-only 0.71; footprint is 0.7*h so a lower approach shrinks the frame. Curriculum now interpolates pad kinematics at nominal altitude; ladder is PN 0.62 at d=0 vs 0.42 at d=1",
+      "test": "test_curriculum_difficulty_one_reproduces_the_nominal_contract_exactly"
+    },
+    {
+      "id": "terminal-table-exploration-deadlock",
+      "source_defect": "matlab-v2.5-#12 (start value too harsh)",
+      "status": "implemented",
+      "evidence": "break-even attempt probability (|TIMEOUT|+|unsafe|)/(SUCCESS+|unsafe|) = 0.43 at unsafe -40; PPO resolved it by hovering (97% TASK_TIMEOUT, 0 landings over 360 iterations). Curriculum unsafe now starts at -12 where break-even is 0 and ramps to -40; SAFE_ABORT -15 -> -22 for dense-term headroom",
+      "test": "test_terminal_table_cannot_make_aborting_a_shortcut"
+    },
+    {
+      "id": "readiness-zero-over-the-approach",
+      "source_defect": "found-running-the-pipeline",
+      "status": "implemented",
+      "evidence": "product of clipped gates, one clipping at terminal_descent_height 1.0 m, so readiness was exactly 0 above 1 m and the approach was unshaped; smooth 1/(1+(x/tol)^2) gates give 0.016 at 8 m rising monotonically to 1.0 at the gear plane",
+      "test": "test_readiness_is_paid_as_a_difference_so_hovering_earns_nothing"
+    },
+    {
+      "id": "exploration-scale-and-dropout",
+      "source_defect": "hypotheses-tested-and-rejected",
+      "status": "not_applicable",
+      "evidence": "initial_log_std sweep {-0.7,-1.2,-1.8,-2.5} left landings ~0 and worsened aborts; removing the 3.2 s sustained dropout entirely still gave 0 landings. Neither was changed."
+    }
+  ],
+  "measurements": {
+    "pn_validation": {
+      "seeds": "2000-2019",
+      "difficulty": 1.0,
+      "landing_rate": 0.75,
+      "safe_abort_rate": 0.1,
+      "task_timeout_rate": 0.1,
+      "unsafe_rate": 0.05,
+      "fov_capture_rate": 0.855,
+      "supervisor_intervention_rate": 0.085,
+      "plateau_rate": 0.05,
+      "mean_landing_time_s": 16.17,
+      "before_corrections_landing_rate": 0.0
+    },
+    "regression_tests": {
+      "two_axis_suite": "33 passed",
+      "full_repository_suite": "1080 passed, 2 skipped",
+      "baseline_before_changes": "1059 passed, 2 skipped"
+    },
+    "first_learned_results": {
+      "context": "250-iteration tuning runs, held-out tuning seeds, difficulty 1.0",
+      "ppo_semantic_flat_best": 0.167,
+      "ppo_vector_canonical_best": 0.125,
+      "note": "one eighth of the planned budget, high variance; evidence the pipeline learns, not an arm comparison"
+    }
+  },
+  "pending": [
+    "spatial terminal table/tau still carry the defect two_axis fixed (TASK_TIMEOUT -12, tau 70); landing break-even is p>53.9% - fix before any further Isaac arm comparison",
+    "full Isaac study (~25 h training + ~30 h evaluation) if the pilot moves",
+    "relation attention sparsity audit (needs a trained encoder)",
+    "paired cross-arm comparison on the six decks",
+    "full cause of the 2026-10-02 twenty-hour zero-output run"
+  ],
+  "restart": {
+    "date": "2026-10-03",
+    "stopped": "run_two_pipeline.py --mode full (PID 1714085) + Isaac Sim + 4x PX4 SITL + 4x ros2_gateway + MicroXRCEAgent",
+    "why": "20 h 18 m elapsed with zero artifacts: no file written anywhere in the project for 3 h, results/datastore WAL untouched since the run started (Oct 2 14:12), 10 restarts in 12 h",
+    "not_a_wedge": "UDP Recv-Q on 14650-14657 was transient (returned to 0 across samples), gateways draining, Isaac at 146% CPU; the stack was alive and communicating but committed no episode",
+    "root_cause": "not isolated; the process wrote no log and is now gone. Isolating it needs a fresh instrumented run with unbuffered stdout.",
+    "affected_by_v25_changes": false,
+    "note": "the stopped run used config/shin2026-planar-system.yaml and does not import two_axis; the V2.5 corrections neither caused nor fix it",
+    "verified_program_restarted": [
+      "cleared 21 __pycache__ trees and .pytest_cache",
+      "load_config() passes every V2.5 validator",
+      "pytest tests/ -> 1071 passed, 2 skipped",
+      "reward audit regenerated: SUCCESS > TASK_TIMEOUT > SAFE_ABORT > unsafe",
+      "scenario manifests regenerated (train/validation/test/stress)",
+      "smoke 48 steps + one PPO update on all three arms, ratio 1.0000",
+      "PN on 20 held-out validation seeds: landing 0.75",
+      "graph audit: 0 dead nodes over 1430 samples",
+      "curriculum difficulty 1.0 == nominal (scenario, safety, reward)"
+    ]
+  },
+  "isaac_transition": {
+    "date": "2026-10-03",
+    "backend": "Isaac Sim + PX4 SITL (run_three_pipeline via run.sh)",
+    "behavior_cloning": "disabled; the inherited teacher privileged_relative_state_velocity_pd_v4 reads simulator truth and is excluded by the experiment's constraints",
+    "v25_audit": {
+      "terminal_ordering": "already correct (+50 / -5 / -10)",
+      "exploration_deadlock": "absent; break-even attempt probability 0.083 vs 0.43 on the planar contract",
+      "dense_approach_shaping": "already present (lateral_progress difference term, weight 5.0)",
+      "actuation_authority": "adequate; 1.6 m/s vs deck capped at 1.0 m/s",
+      "authorized_touchdown": "reachable; privileged teacher lands ~1/3",
+      "curriculum_axis": "already platform motion, the axis the planar measurement independently identified"
+    },
+    "defect_found": {
+      "id": "curriculum-ladder-exceeds-budget",
+      "evidence": "80 performance-gated levels x 20-episode minimum = 1580 episodes against a 1000-episode budget; best reachable level 51/80 (c=0.633, deck motion 76%), realistic level near 1 (35%), while evaluation flies c=1.0 (100%)",
+      "impact": "both arms scored on a deck neither trained against, with nothing in the run reporting the gap",
+      "fix": "planar experiment declares curriculum.levels: 40 (780 episodes, ~220 episodes of headroom at nominal); paper's 80-level ladder untouched in the base config",
+      "guard": "assert_curriculum_reaches_nominal refuses combinations that cannot climb their ladder",
+      "tests": "tests/test_curriculum_reaches_nominal.py (4 tests)"
+    },
+    "bring_up_smoke": {
+      "result": "end to end with BC off: boot, keypoint fine-tune PCK@20 6.8%->89.2%, training flights both arms, checkpoint selection, evaluation, artifacts",
+      "throughput": "20 episodes/hour/pair, matching the documented figure",
+      "partial_explanation_of_2026_10_02_failure": "a ~4 minute silent CPU-bound keypoint fine-tune after the stack reports ready is indistinguishable from a hang; it does not account for 20 hours, so that run's full cause remains unexplained"
+    },
+    "pilot": {
+      "config": "config/experiments/planar_isaac_pilot_no_bc.yaml",
+      "budget": "150 episodes/arm, curriculum levels 7 (120 episodes, 30 headroom), evaluation 5 per deck",
+      "purpose": "does PPO move at all with BC off; answers nothing about the arms",
+      "status": "running"
+    }
+  }
+}

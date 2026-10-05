@@ -22,7 +22,7 @@ def camera_centered_hover_offset(
     mount = np.asarray(mount_translation_flu_m, dtype=float).reshape(-1)
     if (mount.shape != (3,) or not np.isfinite(mount).all()
             or not math.isfinite(altitude) or altitude <= 0.0
-            or not 0.0 < pitch < math.pi / 2.0):
+            or not 0.0 < pitch <= math.pi / 2.0):
         raise ValueError("camera-centred hover needs finite mount, altitude and 0--90 deg pitch")
     camera_height = altitude + float(mount[2])
     if camera_height <= 0.0:
@@ -73,7 +73,7 @@ def constrain_camera_visible_entry(
     if (offset.shape != (3,) or mount.shape != (3,)
             or not np.isfinite(offset).all() or not np.isfinite(mount).all()
             or not math.isfinite(yaw) or width < 2 or height < 2
-            or not 0.0 < hfov < math.pi or not 0.0 < pitch < math.pi / 2.0
+            or not 0.0 < hfov < math.pi or not 0.0 < pitch <= math.pi / 2.0
             or not 0.0 < fraction <= 1.0
             or not math.isfinite(target_radius) or target_radius < 0.0):
         raise ValueError("camera-visible entry configuration is invalid")
@@ -82,7 +82,10 @@ def constrain_camera_visible_entry(
         raise ValueError("camera-visible entry must remain above the deck")
     vfov = 2.0 * math.atan(math.tan(hfov / 2.0) * height / width)
     centre_distance = camera_height / math.tan(pitch)
-    near_angle = min(pitch + vfov / 2.0, math.radians(89.0))
+    # A nadir camera sees behind the body origin too. Clamping to 89 deg
+    # collapses its near half to zero and incorrectly projects every spatial
+    # initial condition onto the optical axis.
+    near_angle = min(pitch + vfov / 2.0, math.radians(179.0))
     far_angle = max(pitch - vfov / 2.0, math.radians(1.0))
     near_distance = camera_height / math.tan(near_angle)
     far_distance = camera_height / math.tan(far_angle)

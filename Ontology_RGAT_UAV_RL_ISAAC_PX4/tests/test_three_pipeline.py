@@ -2131,8 +2131,8 @@ def test_renaming_an_arm_does_not_invalidate_a_machine_day_of_training():
     assert hashed(base) != hashed(dict(base, pipelines=["a", "c"]))
 
 
-def test_bare_run_sh_runs_the_planar_three_arm_comparison():
-    """The zero-argument contract names the current headline experiment.
+def test_explicit_legacy_entry_preserves_the_planar_three_arm_comparison():
+    """The explicit legacy contract preserves the former headline experiment.
 
     ``./run.sh`` with no arguments is what "run the experiment" means to anyone
     reading the repository, so it has to select the comparison the paper
@@ -2145,7 +2145,7 @@ def test_bare_run_sh_runs_the_planar_three_arm_comparison():
     assert 'ROOT / "config/experiments/planar_three_arm_comparison.yaml"' in source
     assert '"planar_ontology_graph_state"' in source, (
         "--experiment must accept the experiment its default config declares")
-    launcher = (ROOT.parent / "run.sh").read_text(encoding="utf-8")
+    launcher = (ROOT / "scripts/run_isaac_legacy_entry.sh").read_text(encoding="utf-8")
     assert "planar_three_arm_comparison.yaml" in launcher, (
         "run.sh documents the zero-argument contract and must name the same file")
     # Both replaced designs stay reachable rather than being deleted.

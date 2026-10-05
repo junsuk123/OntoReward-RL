@@ -26,6 +26,7 @@ HOVER_POWER_W = 185.8         # what battery.BatteryModel derives from that conf
 LANDING_RESERVE_S = 2.5
 DECK_SPEED = 5.5              # m/s, a lorry moving with urban traffic
 DECK_OMEGA = 0.09
+TRUTH_OFFSET = (1.0, -0.7, 0.0)
 
 
 def deck_state(t: float) -> tuple[list[float], list[float], float]:
@@ -47,18 +48,29 @@ class Fake:
         self.initial_j = self.remaining_j
         self.power_w = 0.0
         self.last_burn = time.monotonic()
+        self.armed = True
 
     @property
     def t(self) -> float:
         return time.monotonic() - self.t0
 
     def reset(self, hover_seconds: float) -> None:
+        self.armed = True
         self.position = [0.9, -0.4, 4.2]
         self.velocity = [0.0, 0.0, -0.2]
         self.hover_seconds = hover_seconds
         self.initial_j = hover_seconds * HOVER_POWER_W
         self.remaining_j = self.initial_j
         self.last_burn = time.monotonic()
+
+    def goto(self, position, frame="pad") -> None:
+        """The real setup controller targets physical pose, not biased sensing."""
+        target = [float(x) for x in position]
+        if frame == "world":
+            pad, _, _ = deck_state(self.t)
+            target = [x - d for x, d in zip(target, pad)]
+        self.position = [x - bias for x, bias in zip(target, TRUTH_OFFSET)]
+        self.velocity = [0.0, 0.0, 0.0]
 
     def burn(self, collective: float) -> None:
         now = time.monotonic()
@@ -130,9 +142,7 @@ class Fake:
             # fake makes it differ from the reported state by a metre so that a
             # client which grades on the sensor is caught here.
             "truth": {"valid": True,
-                      "position": [self.position[0] + 1.0,
-                                   self.position[1] - 0.7,
-                                   self.position[2]],
+                      "position": [x + bias for x, bias in zip(self.position, TRUTH_OFFSET)],
                       "velocity": list(self.velocity),
                       # Attitude truth as well, so geometric pad-centre FOV is
                       # a pure simulator quantity rather than an
@@ -142,8 +152,8 @@ class Fake:
             "quaternion_wxyz": [1.0, 0.0, 0.0, 0.0],
             "angular_velocity": [0.0, 0.0, 0.0], "acceleration": [0.0, 0.0, 0.0],
             "wind": [1.0, 0.2, 0.0], "aero_force": [0.1, 0.0, 0.0],
-            "marker_quality": 0.8, "armed": True, "nav_state": 14,
-            "landed": False, "estimator_valid": True, "source": "fake",
+            "marker_quality": 0.8, "armed": self.armed, "nav_state": 14 if self.armed else 0,
+            "landed": not self.armed, "estimator_valid": True, "source": "fake",
             # Mirrors config/system.yaml so the MATLAB adapter can verify that the
             # gateway scales actions the way the policy assumes.
             "extra": {"control_mapping": {"hover_thrust": HOVER_THRUST,
@@ -180,15 +190,16 @@ def main():
             # Snapped to, so the check never waits on a climb. The request is a
             # pad-frame offset, and this fake already reports pad-relative
             # position, so the offset is the position.
-            fake.position = list(msg["position"])
-            fake.velocity = [0.0, 0.0, 0.0]
+            fake.goto(msg["position"], msg.get("frame", "world"))
             reply = {"v": 1, "type": "ack", "seq": tx_seq, "ack_seq": msg["seq"],
                      "time_ns": time.monotonic_ns(), "status": "goto_started",
                      "detail": {"position": fake.position,
                                 "frame": msg.get("frame", "world"),
                                 "yaw": msg.get("yaw", 0.0)}}
         elif kind == "reset":
-            hover_seconds = 18.0
+            # Enough for the complete 20 s protocol task, while still burning
+            # measurable energy; depletion is tested separately, not by luck.
+            hover_seconds = 30.0
             fake.reset(hover_seconds)
             pad_position, _, _ = deck_state(fake.t)
             offset = [0.5, -0.2, 4.0]
@@ -203,6 +214,8 @@ def main():
                                 "battery_hover_seconds": hover_seconds,
                                 "reseated_on_deck": False}}
         elif kind in {"arm", "disarm", "enable_offboard", "disable_offboard"}:
+            if kind == 'arm': fake.armed = True
+            if kind == 'disarm': fake.armed = False
             reply = {"v": 1, "type": "ack", "seq": tx_seq, "ack_seq": msg["seq"],
                      "time_ns": time.monotonic_ns(), "status": kind + "_complete"}
         else:

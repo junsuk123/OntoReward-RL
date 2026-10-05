@@ -1,13 +1,23 @@
 # 구현 개요
 
-> **2026-10-02 현재 primary:** `config/experiments/two_axis_context_rgat_comparison.yaml`
-> 은 `ppo_vector_canonical`, `ppo_semantic_flat`, `ppo_ontology_rgat`을 같은
-> causal packet, 2채널 가속도 액션, CV-CA-CV 패드, 보상, 안전 감독기로
-> 비교한다. Pitch는 액션이 아니라 내부 루프가 만드는 물리 상태다.
-> 실행 코드는 `python/ontology_rgat/two_axis/`, 통합 명령은
-> `python/run_two_axis_experiment.py`, 계약 테스트는
-> `tests/test_two_axis_context_experiment.py`에 있다. 아래의 3채널/선택적 R-GAT
-> 설명은 재현과 Isaac/PX4 연결을 위한 legacy다.
+2026-10-05 현재 reference primary는
+`config/experiments/two_axis_reference_v28_active.yaml`이다. 실제 공간 3축 통합은
+별도 `python/run_spatial_pipeline.py`이며 기본 계약 v5, opt-in 후보 v6–v10을 구분한다.
+아래의 과거 Shin/3채널/선택적 R-GAT 설명은 legacy 기록이다.
+
+| 현재 경로 | 주요 구현 | 판정 |
+|---|---|---|
+| 2D reference | `python/ontology_rgat/two_axis/`, `run_two_axis_pipeline.py` | v2.8 수식/계약 이식; MATLAB 성능 재현과 구분 |
+| Spatial causal | `python/ontology_rgat/spatial/`, `run_spatial_pipeline.py` | 세 arm PPO/저장/실제 Isaac 평가 연결; 학습 착륙 acceptance 미충족 |
+| Opt-in v9 | `spatial/context.py`, `estimation.py`, `scenarios.py`, `spatial-isaac-system-v9.yaml` | 축별 reference 9×12, capture-time 정합, 동일 CV–CA–CV, 외란 유지; 부분 학습 보존 후 v10 우선 검증 |
+| Opt-in v10 | `spatial/safety.py`, 동일 v9 Isaac profile | uncertainty trust/latch/정지거리/terminal corridor, 외란 backup, measured-view reward; 로컬/actual 학습 6개와 저장·로컬 재로딩 완료, actual 고정 시험 진행 중 |
+| 실제 bridge | `bridge.py`, `ros2_ws/src/ontology_rgat_px4/`, `isaac_sim/` | armed/OFFBOARD 입구, cold reset, terminal/cleanup 별도 기록 |
+
+현재 결과와 실행 한도는 [대조 보고서](docs/refactor/REFERENCE_V28_AUDIT_KO.md),
+명령·실패 복구는 [운영 안내](docs/OPERATIONS.md)를 따른다. unit test, 안전 종료,
+비학습 diagnostic 착륙을 learned-policy 성공으로 보고하지 않는다.
+
+## 과거 구현 설명 — 현재 primary와 구분
 
 > **2026-09-29 선택적 R-GAT 리팩터링:** 새 breaking scientific contract는
 > `config/experiments/selective_rgat_three_arm.yaml`에 있다. 동일한 canonical

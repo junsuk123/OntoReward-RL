@@ -50,6 +50,8 @@ def load_experiment(path: str | Path, seen=None) -> dict:
         if not parent_path.is_absolute():
             parent_path = path.parent / parent_path
         data = _merge(load_experiment(parent_path, visited), data)
+    if data.get("execution_status") == "control_boundary_only":
+        raise ValueError("spatial control boundary has no compatible live training backend yet")
     return data
 
 

@@ -1,82 +1,82 @@
 {
   "schema": "two_axis_reward_audit/1",
-  "sha256": "f6ca824041fc995083bdf34a8e7429dd2e4d91db77f012fa9114daf342057f8f",
+  "sha256": "0f03d5ed28172270008fd93ab712ad0702ba21024dd059c99491be01a3e9f1b8",
   "trajectories": {
     "appropriate abort under unrecoverable loss": {
-      "discounted_return": -2.8679737112345642,
-      "discounted_running_component": -0.030545725655573865,
+      "discounted_return": -39.64343599761835,
+      "discounted_running_component": -0.08667621594640391,
       "duration_s": 4.0,
       "fixture_kind": "blind",
       "terminal_payment_count": 1,
       "terminal_reason": "SAFE_ABORT"
     },
     "fast impact": {
-      "discounted_return": -38.93550187757167,
-      "discounted_running_component": -0.006613883564121363,
+      "discounted_return": -49.74024604796123,
+      "discounted_running_component": -0.010939216027645464,
       "duration_s": 2.0,
       "fixture_kind": "impact",
       "terminal_payment_count": 1,
       "terminal_reason": "UNSAFE_CONTACT"
     },
     "late impact": {
-      "discounted_return": -19.752980969466485,
-      "discounted_running_component": -0.1433207872607932,
+      "discounted_return": -43.63496109474235,
+      "discounted_running_component": -0.2786803679308755,
       "duration_s": 50.0,
       "fixture_kind": "impact",
       "terminal_payment_count": 1,
       "terminal_reason": "UNSAFE_CONTACT"
     },
     "oscillatory approach": {
-      "discounted_return": -6.910826898929374,
-      "discounted_running_component": -0.1245216345350686,
+      "discounted_return": -27.09907995407736,
+      "discounted_running_component": -0.33134127760566257,
       "duration_s": 40.0,
       "fixture_kind": "oscillatory",
       "terminal_payment_count": 1,
       "terminal_reason": "TASK_TIMEOUT"
     },
     "prohibited blind contact": {
-      "discounted_return": -34.79790023270457,
-      "discounted_running_component": -0.07321296308538018,
+      "discounted_return": -48.820376330061286,
+      "discounted_running_component": -0.21484726810495797,
       "duration_s": 10.0,
       "fixture_kind": "blind",
       "terminal_payment_count": 1,
       "terminal_reason": "UNAUTHORIZED_CONTACT"
     },
     "recoverable short loss followed by landing": {
-      "discounted_return": 8.383571022681526,
-      "discounted_running_component": -0.05307714328225528,
+      "discounted_return": 24.04376762222989,
+      "discounted_running_component": -0.12051999370765874,
       "duration_s": 12.0,
       "fixture_kind": "short_loss",
       "terminal_payment_count": 1,
       "terminal_reason": "SUCCESS"
     },
     "safe delayed landing": {
-      "discounted_return": 7.435202318477305,
-      "discounted_running_component": -0.09031367396499097,
+      "discounted_return": 23.38632847260412,
+      "discounted_running_component": -0.23189705278583253,
       "duration_s": 20.0,
       "fixture_kind": "approach",
       "terminal_payment_count": 1,
       "terminal_reason": "SUCCESS"
     },
     "safe efficient landing": {
-      "discounted_return": 8.895030148527333,
-      "discounted_running_component": -0.03775247328940062,
+      "discounted_return": 24.349179712854433,
+      "discounted_running_component": -0.09285529498185902,
       "duration_s": 8.0,
       "fixture_kind": "approach",
       "terminal_payment_count": 1,
       "terminal_reason": "SUCCESS"
     },
     "stable near-pad hovering until deadline": {
-      "discounted_return": -4.433309901600603,
-      "discounted_running_component": -0.012445596045604796,
+      "discounted_return": -24.598893861256713,
+      "discounted_running_component": -0.02995257412593534,
       "duration_s": 70.0,
       "fixture_kind": "hover",
       "terminal_payment_count": 1,
       "terminal_reason": "TASK_TIMEOUT"
     },
     "unnecessary induced loss followed by abort": {
-      "discounted_return": -2.739229701892139,
-      "discounted_running_component": -0.05939491534711918,
+      "discounted_return": -39.279623498091055,
+      "discounted_running_component": -0.17236748555298612,
       "duration_s": 8.0,
       "fixture_kind": "blind",
       "terminal_payment_count": 1,

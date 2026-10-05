@@ -20,6 +20,7 @@ from ontology_rgat_px4.protocol import (
 )
 from ontology_rgat_px4.udp_server import DatagramServer
 from ontology_rgat_px4.ros2_gateway import (ContinuousPx4Clock,
+                                            spatial_command_timestamp_us,
                                             action_age_seconds,
                                             advance_velocity_position_target,
                                             advance_pad_contact_latch,
@@ -27,6 +28,20 @@ from ontology_rgat_px4.ros2_gateway import (ContinuousPx4Clock,
                                             effective_px4_landed,
                                             failsafe_detail,
                                             offboard_recovery_allowed)
+
+
+def test_spatial_heartbeat_keeps_dds_offset_and_advances_only_simulation_time():
+    # 5 wall seconds at 0.1 RTF must advance the command by 0.5, not 5 s.
+    offset = 1_790_000_000_000_000
+    px4_us = 20_000_000
+    wire = px4_us + offset
+    stamp = spatial_command_timestamp_us(wire, 20., 20.5)
+    assert stamp - offset == 20_500_000
+    # A new time-sync offset is adopted on the very next odometry callback.
+    new_offset = offset + 4_500_000
+    stamp = spatial_command_timestamp_us(20_510_000 + new_offset, 20.51, 20.52)
+    assert stamp - new_offset == 20_520_000
+    assert spatial_command_timestamp_us(wire, 20., 19.99) == wire
 
 
 def test_failsafe_detail_classifies_only_benign_sitl_link_loss_as_recoverable():
@@ -306,6 +321,20 @@ def test_entry_gate_opens_on_geometry_alone_and_ignores_marker_quality(
     assert state["px4_time_us"] == 1_000_000
     # No detector diagnostic is printed any more: there is no detector.
     assert "ArUco" not in capsys.readouterr().out
+
+
+def test_spatial_entry_requires_offboard_for_the_complete_settle_streak(monkeypatch):
+    monkeypatch.setattr(bridge_module.time,"monotonic",_clock(.05))
+    monkeypatch.setattr(bridge_module.time,"sleep",lambda _:None)
+    entry=camera_centered_hover_offset(7.55)
+    states=iter([dict(armed=True,nav_state=nav,px4_time_us=500_000*i,
+        position=entry.tolist(),velocity=[0.,0.,0.],
+        quaternion_wxyz=[1.,0.,0.,0.],position_frame='pad')
+        for i,nav in enumerate([18,18,14,18,14,14])])
+    bridge=_entry_gate_bridge(states)
+    bridge.cfg.entry_require_offboard=True
+    result=bridge.wait_at_entry(entry)
+    assert result['nav_state']==14 and result['px4_time_us']==2_500_000
 
 
 def test_entry_gate_rejects_a_recent_marker_fix_outside_the_camera_frame(
@@ -788,6 +817,28 @@ def test_a_vehicle_that_never_arms_is_reported_as_an_arming_refusal(monkeypatch)
     bridge.transact = lambda *args, **kwargs: {}
     bridge.cfg.entry_timeout = 90.0
     bridge.cfg.entry_arm_grace = 20.0
+    with pytest.raises(EntryResetError, match="refused to arm"):
+        bridge.wait_at_entry(entry)
+
+
+def test_disarmed_setup_at_exact_entry_pose_cannot_pass_the_gate(monkeypatch):
+    monkeypatch.setattr(bridge_module.time, "monotonic", _clock())
+    monkeypatch.setattr(bridge_module.time, "sleep", lambda _s: None)
+    entry = camera_centered_hover_offset(7.55)
+
+    def states():
+        index = 0
+        while True:
+            index += 1
+            yield {"armed": False, "px4_time_us": 100_000 * index,
+                   "position": entry, "velocity": [0., 0., 0.],
+                   "quaternion_wxyz": [1., 0., 0., 0.],
+                   "position_frame": "pad",
+                   "extra": {"last_command": [400, 1]}}
+
+    bridge = _entry_gate_bridge(states())
+    bridge.transact = lambda *args, **kwargs: {}
+    bridge.cfg.entry_arm_grace = 2.0
     with pytest.raises(EntryResetError, match="refused to arm"):
         bridge.wait_at_entry(entry)
 

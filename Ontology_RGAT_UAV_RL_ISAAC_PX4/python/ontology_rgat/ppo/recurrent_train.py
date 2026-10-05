@@ -1150,13 +1150,11 @@ def collect_episode_resilient(env, model: PipelineActorCritic, method: str,
                 f"WARNING: [{method}] episode infrastructure failed ({exc}). Discarding "
                 f"the partial trajectory, restarting the owned stack, and "
                 f"retrying seed {int(seed)} ({next_attempt} of {recoveries}).")
-            restarted = recover()
-            # A peer may already have rebuilt the one shared Isaac world while
-            # this worker was in a UDP transaction.  Its interrupted trajectory
-            # is still discarded, but that collateral disconnect must not use
-            # up this method's own fault budget.
-            if restarted is not False:
-                attempt = next_attempt
+            recover()
+            # Every discarded attempt consumes the episode budget, including
+            # collateral peer restarts. Otherwise two unhealthy workers can
+            # alternate generations indefinitely without committing a sample.
+            attempt = next_attempt
     raise AssertionError("unreachable infrastructure-recovery state")
 
 

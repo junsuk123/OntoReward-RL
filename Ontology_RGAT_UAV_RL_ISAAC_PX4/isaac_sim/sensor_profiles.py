@@ -157,6 +157,13 @@ def validate_zed2i_mono(camera: dict[str, Any]) -> None:
 def validate_camera_profile(camera: dict[str, Any]) -> None:
     """Validate either the retained ZED profile or the benchmark profile."""
     model = str(camera.get("model", ZED2I_MONO_MODEL)).lower()
+    if model == 'spatial_nadir_aruco_v1':
+        if (tuple(camera.get('resolution', ())) != (640,480)
+                or float(camera.get('horizontal_fov_deg',0)) != 90.
+                or float(camera.get('pitch_down_deg',0)) != 90.
+                or not 0 < float(camera.get('rate_hz',0)) <= 100.):
+            raise ValueError('spatial nadir camera requires 640x480, 90deg HFOV/pitch and positive rate <=100Hz')
+        return
     if model == ZED2I_MONO_MODEL:
         validate_zed2i_mono(camera)
         return
@@ -170,3 +177,14 @@ def validate_camera_profile(camera: dict[str, Any]) -> None:
         raise ValueError("Shin-2026 camera pitch must be 60 degrees downward")
     if float(camera.get("rate_hz", 0.0)) <= 0.0:
         raise ValueError("Shin-2026 camera rate must be positive")
+def camera_frame_snapshot(camera, *, capture_aligned=False):
+    """Pair pixels with the timestamp from the SAME acquisition callback.
+
+    Camera.get_rgba() reads the annotator directly, which can be newer than
+    get_current_frame()['rendering_time'] at a limited acquisition frequency.
+    Never combine those two products in a timestamped optical solve.
+    """
+    if not capture_aligned:
+        return camera.get_rgba(), None
+    frame = camera.get_current_frame()
+    return frame.get('rgb'), frame.get('rendering_time')

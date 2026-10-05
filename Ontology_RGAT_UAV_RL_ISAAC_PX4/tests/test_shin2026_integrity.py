@@ -1602,8 +1602,10 @@ def test_the_headline_experiment_puts_the_ontology_in_the_state_not_the_reward()
     assert baseline["graph_state"] is False
 
 
-def test_the_launcher_takes_over_a_previous_run_instead_of_refusing():
-    launcher = (ROOT.parent / "run.sh").read_text(encoding="utf-8")
+def test_legacy_takeover_requires_an_explicit_request():
+    launcher = (ROOT / "scripts/run_isaac_legacy_entry.sh").read_text(encoding="utf-8")
+    assert "takeover=false" in launcher
+    assert '[[ "$argument" == "--takeover" ]] && takeover=true' in launcher
     # A new run must end the old one: two learners on one Isaac/PX4 resource
     # steal each other's UDP replies and resets.
     assert "stop_previous_flight_pipeline" in launcher

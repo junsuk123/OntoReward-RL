@@ -1,7 +1,8 @@
 schema_version: two-axis-context-rgat-config/1
 experiment: two_axis_context_rgat_v1
 algorithm_version: two-axis-context-rgat-v1
-primary: true
+# Historical v1 / Claude gate-release profile; v2.8 extends it explicitly.
+primary: false
 pipelines:
   - ppo_vector_canonical
   - ppo_semantic_flat
@@ -10,7 +11,10 @@ pipelines:
 action:
   dimension: 2
   channels: [longitudinal_acceleration, vertical_acceleration]
-  max_acceleration_m_s2: [1.2, 2.0]
+  # The longitudinal limit must exceed the largest pad acceleration the
+  # scenario sampler can draw (a2_m_s2 high = 1.5), otherwise some episodes are
+  # physically untrackable regardless of policy quality. Checked in _validate.
+  max_acceleration_m_s2: [2.5, 2.0]
   sampled_variable: gaussian_raw_command
   normalized_mapping: tanh
 
@@ -18,7 +22,9 @@ timing:
   physics_dt_s: 0.01
   policy_dt_s: 0.1
   mission_duration_limit_s: 70.0
-  discount_time_constant_s: 70.0
+  # Historical gate-release probe: exp(-70/350) = 0.8187 at the deadline.
+  # This changes credit assignment; it did not establish learned convergence.
+  discount_time_constant_s: 350.0
 
 dynamics:
   model: lagged_planar_pitch_thrust_v1
@@ -59,30 +65,97 @@ estimator:
   prolonged_loss_s: 3.0
 
 safety:
-  common_supervisor: braking_hold_envelope_v1
+  common_supervisor: braking_hold_recovery_envelope_v2
   pad_half_width_m: 0.6
+  # Landing-gear contact plane. Contact is interpolated at this height; the
+  # 0 m plane stays as a numerical fallback.
+  touchdown_height_m: 0.04
+  # Below this height the abort-hold margin is replaced by the stricter
+  # touchdown corridor, so an authorized landing is reachable at all.
+  terminal_descent_height_m: 1.0
+  terminal_descent_speed_margin: 1.5
+  # Flare commit. Below ~0.3 m the camera footprint is only centimetres wide,
+  # so the gate becomes unsatisfiable by geometry alone. Once it has held, the
+  # descent stays authorized for this window on the causal estimate. It is
+  # shorter than prolonged_loss_s, so a commit can never outlive the abort.
+  terminal_descent_commit_s: 1.5
   touchdown_horizontal_error_m: 0.35
   touchdown_relative_speed_m_s: 0.35
   touchdown_vertical_speed_m_s: 0.35
   touchdown_pitch_deg: 5.0
   touchdown_pitch_rate_deg_s: 10.0
   minimum_abort_hold_height_m: 0.5
+  # Bounded recovery: a latched abort is cleared if the pad is reacquired
+  # inside this window. SAFE_ABORT is emitted only once it expires.
   maximum_backup_duration_s: 5.0
 
 reward:
-  contract: progress_visibility_effort_terminal_v1
+  contract: progress_visibility_effort_readiness_terminal_v2
   reference_duration_s: 70.0
   horizontal_scale_m: 3.0
   height_scale_m: 4.0
-  weights: {goal: 1.0, view: 0.1, control: 0.02}
+  # Horizontal and vertical costs saturate separately before mixing, so a
+  # growing longitudinal error is not masked by the altitude term.
+  horizontal_priority: 0.65
+  # The dense terms must be large enough to steer exploration before any
+  # terminal is observed, and small enough that they cannot invert the outcome
+  # ranking. Their total (7.52) stays below the smallest adjacent terminal gap
+  # (TASK_TIMEOUT - SAFE_ABORT = 10), which _validate_terminal_ordering pins.
+  weights: {goal: 4.0, view: 0.5, control: 0.02, readiness: 3.0}
+  # Nominal terminal ordering holds. It does not prove every landing attempt
+  # beats hovering: outcomes, their timing, and readiness all affect return.
+  # The completed 800-iteration probe still collapsed to timeout; see audit.
   terminal:
-    SUCCESS: 10.0
-    SAFE_ABORT: -3.0
-    TASK_TIMEOUT: -12.0
-    UNSAFE_CONTACT: -40.0
-    UNAUTHORIZED_CONTACT: -40.0
-    MISSED_PAD_CONTACT: -40.0
-    SAFETY_ENVELOPE_VIOLATION: -40.0
+    SUCCESS: 25.0
+    SAFE_ABORT: -40.0
+    TASK_TIMEOUT: -30.0
+    UNSAFE_CONTACT: -50.0
+    UNAUTHORIZED_CONTACT: -50.0
+    MISSED_PAD_CONTACT: -50.0
+    SAFETY_ENVELOPE_VIOLATION: -50.0
+
+# Training-only difficulty schedule. Validation and test always run at
+# difficulty 1.0, i.e. exactly the nominal ranges declared above.
+curriculum:
+  # DISABLED 2026-10-04 for the gate-release probe. Measured, not assumed:
+  #   * The easy end is not easier. ppo_vector_canonical landed 0.342 at active
+  #     difficulty 0.1 and 0.33 at difficulty 1.0 in nominal validation, so the
+  #     schedule supplies no difficulty gradient at all.
+  #   * promotion_landing_rate 0.6 was therefore never reached in 800
+  #     iterations (1 promotion across 3 arms), pinning training near d=0.
+  #   * At d=0 the ramp prices UNSAFE at -32 against a -30 TASK_TIMEOUT, a
+  #     2-point gap, while scoring happens at d=1.0 where UNSAFE is -50. The
+  #     arms were trained under one objective and scored under another.
+  #   * checkpoint_is_eligible() requires difficulty >= 1.0, so with the
+  #     curriculum pinned near zero NO checkpoint was ever written
+  #     (selected_checkpoint: null on every arm) and a measured 33 % nominal
+  #     policy at it=600 was discarded.
+  # Disabling pins CurriculumScheduler to difficulty 1.0, which makes training
+  # and scoring the same objective and re-opens the checkpoint gate. The
+  # schedule below is retained verbatim so this is a one-line revert.
+  enabled: false
+  # The easy end slows the PAD, not the approach geometry. Lowering the start
+  # altitude was tried first and measured strictly harder: the camera footprint
+  # is 0.7*h, so at 1.2-2.5 m the pad leaves frame almost at once and the
+  # non-learned PN reference falls from 0.42 to 0.04 with a 0.92 abort rate,
+  # while slowing the pad raises it to 0.71. Height therefore stays nominal at
+  # every difficulty and only the pad kinematics interpolate.
+  start_v1_m_s: [0.3, 0.8]
+  start_a2_m_s2: [0.1, 0.4]
+  # Even the easiest episode must start before the pad acceleration event, so
+  # the policy cannot learn pure vertical descent on a constant-speed pad.
+  start_T1_s: [0.10, 0.30]
+  start_touchdown_relative_speed_m_s: 0.70
+  start_touchdown_vertical_speed_m_s: 0.70
+  # Preserved probe value, inactive while enabled=false. This is BELOW timeout
+  # but ABOVE safe abort (-40): re-enabling this exact ramp is invalid and now
+  # fails validation. The v2.8 profile supplies its own correctly ordered ramp.
+  start_unsafe_contact_penalty: -32.0
+  promotion_landing_rate: 0.6
+  promotion_window_episodes: 20
+  difficulty_step: 0.1
+  easy_replay_fraction: 0.1667
+  bridge_replay_fraction: 0.1667
 
 observation:
   registry: ../observation/causal_packet_v2.json

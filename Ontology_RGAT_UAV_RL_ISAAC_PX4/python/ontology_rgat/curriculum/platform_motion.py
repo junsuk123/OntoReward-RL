@@ -18,6 +18,52 @@ def fitted_update_interval(episodes: int, levels: int) -> int:
     return max(1, (count - 1) // (level_count - 1))
 
 
+def episodes_to_reach_nominal(levels: int, minimum_episodes_at_level: int,
+                              *, performance_gated: bool,
+                              episodes_per_update: int) -> int:
+    """Fewest training episodes in which the curriculum *can* reach ``c = 1``.
+
+    Under the performance gate a level costs at least
+    ``minimum_episodes_at_level`` episodes, so the whole ladder costs at least
+    ``(levels - 1) * minimum_episodes_at_level`` even for a policy that passes
+    every gate on its first assessment window. Under linear advancement the
+    cost is ``(levels - 1) * episodes_per_update``.
+    """
+    steps = max(0, int(levels) - 1)
+    per_step = (int(minimum_episodes_at_level) if performance_gated
+                else int(episodes_per_update))
+    return steps * per_step
+
+
+def assert_curriculum_reaches_nominal(levels: int, minimum_episodes_at_level: int,
+                                      *, performance_gated: bool,
+                                      episodes_per_update: int,
+                                      training_episodes: int) -> None:
+    """Refuse a ladder the training budget cannot climb.
+
+    Evaluation flies the full platform motion (``c = 1``). A ladder that the
+    budget cannot finish trains the policy on a slower deck than the one it is
+    scored on, and the gap is silent: nothing in the run reports that the
+    curriculum stalled below nominal.
+
+    The planar profile shipped with 80 performance-gated levels and a 1,000
+    episode budget, which needs 1,580 episodes at the 20-episode minimum. A
+    flawless policy reached level 51 of 80, i.e. 76% of the deck motion it was
+    then evaluated against; a realistic one sat near level 1, at 35%.
+    """
+    required = episodes_to_reach_nominal(
+        levels, minimum_episodes_at_level,
+        performance_gated=performance_gated,
+        episodes_per_update=episodes_per_update)
+    if required > int(training_episodes):
+        raise ValueError(
+            f"the platform-motion curriculum cannot reach nominal difficulty: "
+            f"{levels} levels need at least {required} episodes but the "
+            f"training budget is {training_episodes}. Reduce 'levels' to at "
+            f"most {1 + int(training_episodes) // max(1, int(minimum_episodes_at_level) if performance_gated else int(episodes_per_update))}, "
+            f"lower the per-level minimum, or raise the budget.")
+
+
 @dataclass
 class PlatformMotionCurriculum:
     levels: int = 80

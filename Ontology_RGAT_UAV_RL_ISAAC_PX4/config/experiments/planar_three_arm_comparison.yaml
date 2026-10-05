@@ -38,6 +38,27 @@ paired_seeds: true
 # holds no pair during training; it enters only at evaluation.
 pipelines: [shin_se_fixed, shin_se_onto_rgat_state]
 
+# Curriculum ladder re-fitted to this experiment's budget (2026-10-03).
+#
+# The inherited block is Shin et al. Fig. 3: 80 performance-gated levels. Under
+# the gate a level costs at least ``minimum_episodes_at_level`` = 20 episodes,
+# so climbing 80 levels costs at least 79 x 20 = 1,580 episodes. This
+# experiment's budget is training.episodes_full = 1,000.
+#
+# The ladder therefore could not be finished, and nothing reported that. A
+# policy that passed every gate on its first assessment window reached level 51
+# of 80 -- c = 0.633, i.e. 76% of the platform motion -- and a realistic one sat
+# near level 1 at 35%, while evaluation flies the full motion at c = 1.0. The
+# arms were being scored on a deck they had never trained against.
+#
+# 40 levels need 39 x 20 = 780 episodes, which fits the budget and leaves ~220
+# episodes of training at nominal difficulty rather than merely touching it on
+# the last episode. The gate itself is unchanged, and it is identical for both
+# arms. ``assert_curriculum_reaches_nominal`` now refuses any combination that
+# cannot climb its own ladder.
+curriculum:
+  levels: 40
+
 # The two declarations are deliberately identical everywhere except the last
 # two lines. In particular ``reward_mode`` is the same and no ontology term
 # appears on the reward side of either.

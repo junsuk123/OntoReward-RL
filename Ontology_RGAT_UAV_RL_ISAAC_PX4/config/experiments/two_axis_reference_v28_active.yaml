@@ -1,0 +1,11 @@
+# Guarded nonzero relation path. Python port, not a claim of MATLAB/Isaac parity.
+# Upstream current revision: 83f10d6 (2026-10-04); original fixture stays pinned.
+extends: two_axis_reference_v28.yaml
+experiment: two_axis_reference_v28_active_port2
+algorithm_version: two-axis-reference-v28-active-port2
+primary: true
+ontology:
+  relation_activation_enabled: true
+  activation_iterations: 25
+  # Explicit extra graph-only budget; MATLAB uses six full episodes instead.
+  activation_decisions: 2048

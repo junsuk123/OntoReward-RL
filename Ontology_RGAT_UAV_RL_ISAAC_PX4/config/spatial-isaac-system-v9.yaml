@@ -1,0 +1,12 @@
+extends: spatial-isaac-system-v6.yaml
+
+# Same force/torque/handover disturbances and flight safety as v8. Timestamp
+# rendered frames in simulation time; align only to received own EKF history.
+isaac:
+  spatial_optical_capture_timing: true
+benchmark:
+  spatial_scenario: spatial_reference_cv_ca_cv
+pad:
+  # The separate spatial scenario is analytic and never clamped into a
+  # stationary target at the legacy random-walk arena boundary.
+  mode: random_walk

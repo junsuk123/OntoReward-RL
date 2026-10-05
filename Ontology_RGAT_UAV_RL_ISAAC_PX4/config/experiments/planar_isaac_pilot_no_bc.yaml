@@ -1,0 +1,53 @@
+extends: planar_three_arm_comparison.yaml
+experiment: planar_isaac_pilot_no_bc
+
+# Mid-size learning pilot, 2026-10-03.
+#
+# WHAT THIS ANSWERS, AND WHAT IT DOES NOT
+# ---------------------------------------
+# The multi-day run is only worth starting if PPO moves at all on this stack
+# with behaviour cloning switched off. The pipeline has never been run that
+# way: the inherited config warm-starts from a privileged PD teacher, and its
+# own comments say an uncloned policy "spends its first episodes diverging".
+#
+# This pilot therefore asks one question -- does the training curve move --
+# and answers nothing about the arms. Its evaluation budget is far too small
+# to separate them, and ``publication_claim_allowed`` is false.
+#
+# BEHAVIOUR CLONING IS OFF
+# ------------------------
+# The inherited teacher ``privileged_relative_state_velocity_pd_v4`` reads the
+# simulator's true relative state. Imitation learning, a PN teacher and hidden
+# simulator state in a policy are all excluded by this experiment's own
+# constraints, so the demonstration pass is skipped entirely
+# (run_three_pipeline.py:1915).
+behavior_cloning:
+  enabled: false
+
+training:
+  # ~20 episodes per hour per pair, two pairs per arm, both arms in parallel:
+  # 150 episodes per arm is about 4 h of flying.
+  episodes_quick: 150
+  episodes_full: 150
+
+# The ladder is re-fitted AGAIN for this smaller budget. Under the performance
+# gate a level costs at least minimum_episodes_at_level = 20 episodes, so the
+# parent's 40 levels would need 780 and could not be climbed in 150 -- the
+# exact defect the parent fixes for the full budget. 7 levels need 6 x 20 =
+# 120, leaving 30 episodes of training at nominal platform motion.
+# assert_curriculum_reaches_nominal refuses anything that does not fit.
+curriculum:
+  levels: 7
+
+evaluation:
+  # Deliberately tiny: this pilot reads its answer from the training curve,
+  # not from a comparison. Five paired seeds per deck is a sanity check that
+  # evaluation runs at all, nothing more.
+  straight_8mps: 5
+  linear_acceleration_wave: 5
+  circle: 5
+  zigzag: 5
+  u_turn: 5
+  vertical_heave_boat: 5
+
+publication_claim_allowed: false

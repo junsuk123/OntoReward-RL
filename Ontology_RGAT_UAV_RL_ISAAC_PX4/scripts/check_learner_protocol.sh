@@ -65,7 +65,10 @@ finally:
     env.close()
 
 log = run_episode(PolicySpec("expert"), "manual", None, 7, cfg)
-assert log.metrics["steps"] == cfg.sim.max_steps, log.metrics["steps"]
+# A wall-paced fake does not deliver exactly dt between replies. The learner
+# correctly terminates on measured duration, not a fabricated step count.
+assert 0 < log.metrics["steps"] <= cfg.sim.max_steps, log.metrics
+assert log.metrics["status"] == "timeout", log.metrics
 assert log.metrics["duration_s"] > 0.9 * cfg.sim.max_time, log.metrics["duration_s"]
 print("LEARNER_PROTOCOL_INTEGRATION=PASS")
 PYEOF

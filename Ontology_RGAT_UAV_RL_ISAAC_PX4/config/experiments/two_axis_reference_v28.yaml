@@ -1,0 +1,74 @@
+# Python theory-alignment profile, NOT a claim of MATLAB/Isaac numerical parity.
+# Upstream: junsuk123/ugv_landing_2d_workspace @ 7efcc10995557bc8435304216ad2ced70ab1da00
+extends: two_axis_context_rgat_comparison.yaml
+schema_version: two-axis-context-rgat-config/2
+experiment: two_axis_reference_v28_port1
+algorithm_version: two-axis-reference-v28-port1
+primary: false
+timing:
+  sensor_dt_s: 0.01
+  discount_time_constant_s: 70.0
+dynamics:
+  clip_actual_pitch: false
+  thrust_integrator: euler
+scenario:
+  max_final_pad_speed_m_s: 10.0
+safety:
+  pad_half_width_m: 0.5
+  touchdown_horizontal_error_m: 0.5
+  touchdown_vertical_speed_m_s: 0.30
+  minimum_abort_hold_height_m: 1.0
+  maximum_backup_duration_s: 8.0
+camera:
+  horizontal_fov_deg: 50.0
+  maximum_range_m: 50.0
+  bearing_noise_std_deg: 0.15
+  relative_position_noise_std_m: 0.02
+  perturbation_profile: reference_mixture_v28
+estimator:
+  model: alpha_beta_gamma_v28
+  process_acceleration_std_m_s2: 1.5
+  measurement_position_std_m: 0.02
+  prediction_horizon_s: 0.5
+reward:
+  contract: bounded_cost_readiness_terminal_potential_v28
+  readiness_model: velocity_target_v28
+  readiness_height_m: 1.0
+  weights: {goal: 2.0, view: 1.0, control: 0.25, readiness: 8.0, potential: 2.0}
+  terminal:
+    SUCCESS: 25.0
+    SAFE_ABORT: -15.0
+    TASK_TIMEOUT: -12.0
+    UNSAFE_CONTACT: -40.0
+    UNAUTHORIZED_CONTACT: -40.0
+    MISSED_PAD_CONTACT: -40.0
+    SAFETY_ENVELOPE_VIOLATION: -40.0
+curriculum:
+  enabled: true
+  start_height_range_m: [0.05, 1.0]
+  start_unsafe_contact_penalty: -20.0
+  start_touchdown_vertical_speed_m_s: 0.60
+  promotion_landing_rate: 0.10
+  scheduled_floor: true
+  floor_start_fraction: 0.30
+  full_difficulty_fraction: 0.80
+ontology:
+  schema: compact_context_graph_v3_grouped
+  encoder: single_relation_layer_local_residual_raw_plus_groups
+  hidden_dimension: 8
+  policy_hidden_dimension: 48
+  relation_dimension: 4
+  adaptation_warmup_fraction: 0.90
+  freeze_static_backbone: true
+  preserve_raw_during_adaptation: true
+  selection_score_model: outcome_weighted_v28
+  selection_score_margin: 5.0
+  pretrain_episodes: 12
+  pretrain_decisions: 80
+  pretrain_epochs: 8
+observation:
+  registry: generated:ontology_rgat.two_axis.contracts.load_reference_registry
+  contract: canonical causal packet v3-v28 smooth normalization
+ppo:
+  # New version only: gamma * Phi(next) - Phi(previous), terminal Phi = 0.
+  potential_shaping: true

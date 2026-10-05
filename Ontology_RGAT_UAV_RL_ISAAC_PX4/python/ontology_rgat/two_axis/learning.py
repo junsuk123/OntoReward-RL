@@ -32,16 +32,27 @@ class Transition:
 
 
 def collect_rollout(agent: TwoAxisPPOAgent, env: TwoAxisLandingEnv, *,
-                    seed: int, decisions: int) -> list[Transition]:
+                    seed: int, decisions: int | None = None,
+                    episodes: int | None = None,
+                    max_episode_decisions: int | None = None) -> list[Transition]:
     """Collect sampled raw commands; never infer after a task terminal."""
-    if decisions <= 0:
+    if (decisions is None) == (episodes is None):
+        raise ValueError("choose exactly one rollout budget: decisions or episodes")
+    if decisions is not None and decisions <= 0:
         raise ValueError("rollout decisions must be positive")
+    if episodes is not None and (episodes <= 0 or max_episode_decisions is None
+                                 or max_episode_decisions <= 0):
+        raise ValueError("episodic rollout needs positive episodes and a per-episode bound")
     observation, _ = env.reset(seed=seed)
     transitions: list[Transition] = []
     episode_seed = int(seed)
-    while len(transitions) < decisions:
+    completed, episode_steps = 0, 0
+    def budget_remaining():
+        return completed < episodes if episodes is not None else len(transitions) < decisions
+    while budget_remaining():
         raw, normalized, logp, value = agent.act(observation)
         next_observation, reward, terminated, truncated, info = env.step(normalized)
+        episode_steps += 1
         transitions.append(Transition(
             observation=observation, raw_command=raw,
             normalized_command=normalized,
@@ -57,10 +68,14 @@ def collect_rollout(agent: TwoAxisPPOAgent, env: TwoAxisLandingEnv, *,
                           "reasons": info["safety_reasons"],
                           "abort_requested": info["abort_requested"]}))
         if terminated:
-            if len(transitions) < decisions:
+            completed += 1
+            episode_steps = 0
+            if budget_remaining():
                 episode_seed += 1
                 observation, _ = env.reset(seed=episode_seed)
             continue
+        if episodes is not None and episode_steps >= max_episode_decisions:
+            raise RuntimeError("episode exceeded collector bound without a task terminal")
         observation = next_observation
     last = transitions[-1]
     if not last.terminated:

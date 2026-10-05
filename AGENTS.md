@@ -5,6 +5,44 @@ The primary research configuration is
 The v1 config remains an explicit historical experiment; Isaac/PX4 remains
 `isaac-legacy`, not an implementation of the reference causal contract.
 
+- The dimension-generic contract lives in `python/ontology_rgat/landing/`, and
+  both routes instantiate it. `terminal.py` is the ONE terminal table,
+  discount horizon and curriculum ramp; `plane_graph.py` is the ONE nine-node,
+  twelve-channel plane, built once per horizontal axis; `packet.py` is the
+  field spec; `observation.py` is the one normalize/decode pair. Do not restate
+  a terminal magnitude, a packet scale or a context row anywhere else -- four
+  copies of the first and two of the second are what let 2D and 3D drift apart.
+  Cross-dimension invariants belong in `tests/test_dimension_parity.py`, which
+  loads both routes: a per-route test cannot see the drift by construction.
+- 2D and 3D must optimize the SAME objective, or the dimension study measures
+  nothing. Both now carry upstream's `SUCCESS 25 / SAFE_ABORT -15 /
+  TASK_TIMEOUT -12 / UNSAFE -40` with `discount_tau 70` and curriculum start
+  -20. The 2026-10-05 spatial revision to -30/-40/-50 with tau 350 is RETIRED:
+  measured over 60 seeds with only the table swapped, an attempting controller
+  returned +20.29 against a holding arm's -24.45 under the new table and +19.14
+  against -4.26 under this one, so attempting wins under both. The
+  "landing break-even p > 53.9 %" derivation that justified the change compared
+  discounted terminal values alone and omitted the dense readiness/potential
+  terms. Test the reward by measuring arms, never by deriving a break-even.
+- The spatial task is NOT infeasible. The recorded 23.3 % "oracle ceiling" was
+  one weak hand-tuned controller (P-only gain 0.65, no derivative term, descent
+  gated at 0.12 m, horizon 45). On `spatial-causal-rgat/5` over 200 nominal
+  seeds a PD on the estimator reaches 86.0 % and a truth-fed one 98.0 %. An
+  oracle figure is a ceiling only if its gains were actually swept, and it must
+  always be quoted WITH its contract: the same controller scores 86.7 % on v5
+  and 33.3 % on v10.
+- The active spatial contract is `spatial-reference/1` (`REFERENCE_SCHEMA`),
+  derived from the 2D reference rather than chosen from the ladder: 41 fields
+  (12 per-axis x 2 + 14 shared + 3 declared transport-delay extras), two
+  reference planes, and v10's capability set. It reproduces v10 exactly on 60
+  seeds. `spatial-causal-rgat/3..10` are frozen historical contracts; v5 in
+  particular is NOT a 3D version of the reference -- its graph fills the nine
+  rows positionally, it lacks predicted bearing/margin and acceleration
+  uncertainty, and its action is a velocity setpoint carrying a hidden
+  integrated velocity reference instead of applied net acceleration.
+- Record a behavioural snapshot before and after any contract-touching change:
+  `python tools/contract_snapshot.py --out before.json`, then `--compare`. The
+  2D reference port must come back byte-identical.
 - Preserve the two-axis reference oracle: longitudinal and vertical net
   acceleration. The user explicitly selected true spatial `(ax, ay, az)` for
   the new Isaac integration on 2026-10-04. That separate contract is world ENU,

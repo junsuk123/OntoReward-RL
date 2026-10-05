@@ -19,6 +19,7 @@ from .core import (
     camera_bearings,
 )
 from ..controllers.spatial_controller import SpatialAccelerationController
+from ..landing.terminal import REFERENCE_TERMINAL_REWARDS, UNSAFE_REASONS
 
 
 @dataclass(frozen=True)
@@ -31,33 +32,14 @@ class Truth:
 
 
 class Evaluator:
-    # Magnitudes account for DISCOUNTING, which the -12/-15 revision did not.
-    # With discount_tau == horizon a terminal at the deadline paid 0.368 of its
-    # value while an early one paid 0.892, so TASK_TIMEOUT -12 cost an effective
-    # -4.41 against SUCCESS +22.30 and UNSAFE -35.68: an attempt only beat
-    # running out the clock once the policy already landed 53.9 % of the time.
-    # Measured, not argued -- the 12-flight frozen Isaac matrix in
-    # results/frozen_test_20261005 returned SAFE_ABORT 8 / TASK_TIMEOUT 4 /
-    # SUCCESS 0, with every TASK_TIMEOUT return (-8.20..-12.73) beating every
-    # SAFE_ABORT return (-15.02..-15.49). two_axis hit this first and fixed it
-    # by moving the table AND the horizon together; spatial never got the fix.
-    # Ordering SUCCESS > TASK_TIMEOUT > SAFE_ABORT > unsafe is preserved.
-    NOMINAL_UNSAFE_PENALTY = -50.0
-    UNSAFE_STATUSES = frozenset({
-        "UNSAFE_CONTACT",
-        "UNAUTHORIZED_CONTACT",
-        "MISSED_PAD_CONTACT",
-        "SAFETY_ENVELOPE_VIOLATION",
-    })
-    BONUSES = {
-        "SUCCESS": 25.0,
-        "TASK_TIMEOUT": -30.0,
-        "SAFE_ABORT": -40.0,
-        "UNSAFE_CONTACT": NOMINAL_UNSAFE_PENALTY,
-        "UNAUTHORIZED_CONTACT": NOMINAL_UNSAFE_PENALTY,
-        "MISSED_PAD_CONTACT": NOMINAL_UNSAFE_PENALTY,
-        "SAFETY_ENVELOPE_VIOLATION": NOMINAL_UNSAFE_PENALTY,
-    }
+    # One table, shared with the 2D route and with upstream MATLAB. A 3D
+    # extension of a 2D task is only comparable to it if the objective is the
+    # same, so these are NOT redefined here -- see landing/terminal.py for the
+    # measurement that retired the separate spatial table.
+    UNSAFE_STATUSES = frozenset(UNSAFE_REASONS)
+    BONUSES = dict(REFERENCE_TERMINAL_REWARDS)
+    NOMINAL_UNSAFE_PENALTY = max(
+        REFERENCE_TERMINAL_REWARDS[name] for name in UNSAFE_REASONS)
 
     def __init__(self, cfg, *, unsafe_penalty=NOMINAL_UNSAFE_PENALTY):
         self.cfg = cfg

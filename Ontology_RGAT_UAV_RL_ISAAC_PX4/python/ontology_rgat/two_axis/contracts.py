@@ -13,6 +13,9 @@ from ..contracts.observation import (CausalObservationPacket,
                                      ObservationRegistry,
                                      load_observation_registry)
 from ..contracts.signature import CheckpointSignature
+from ..landing.packet import (MISSION_LIMIT as _MISSION_LIMIT,
+                              PLANAR_AXES as _PLANAR_AXES, UNSCALED as _UNSCALED,
+                              field_specs as _field_specs)
 from .config import DEFAULT_REGISTRY_PATH, ExperimentConfig
 from .dynamics import PlanarState
 from .estimation import TrackEstimate
@@ -23,11 +26,16 @@ def load_v2_registry() -> ObservationRegistry:
     return load_observation_registry(DEFAULT_REGISTRY_PATH)
 
 
-REFERENCE_SCALES = {"h": 8., "vx": 10., "vz": 1.5, "pitchRate": math.pi/2,
-    "exEstimate": 3., "relativeVxEstimate": 3., "padVxEstimate": 10.,
-    "padAxEstimate": 2., "positionStd": 5., "velocityStd": 5., "accelerationStd": 3.,
-    "measuredBearing": "half_fov", "predictedBearing": "half_fov",
-    "predictedFovMargin": "half_fov", "timeSinceLastDetection": "prolonged_loss"}
+#: Derived from the axis-generic field spec rather than restated, so the
+#: forward normalization here, its inverse in ontology_v28.build_context_graph
+#: and the 3D packet cannot disagree about a scale. The spec's 1-axis names are
+#: upstream's own, which is why this is a straight projection.
+#: remainingMissionTime is clipped against the mission limit rather than
+#: smooth-signed, so it is excluded here and handled by its caller.
+REFERENCE_SCALES = {
+    name: spec.scale for name, spec, _ in _field_specs(_PLANAR_AXES)
+    if spec.scale not in _UNSCALED and spec.scale != _MISSION_LIMIT
+}
 
 
 def normalize_reference_fields(raw, *, half_fov, prolonged_loss_s=3., mission_limit_s=70.):

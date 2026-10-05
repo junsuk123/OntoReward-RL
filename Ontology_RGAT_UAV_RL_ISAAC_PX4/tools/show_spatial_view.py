@@ -15,7 +15,7 @@ import time
 
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'python'))
-from ontology_rgat.spatial.core import SpatialConfig
+from ontology_rgat.spatial.core import SpatialConfig, schema_for
 from ontology_rgat.spatial.environment import IsaacBackend
 from ontology_rgat.spatial.runtime_contract import deployment_profile
 from ontology_rgat.two_axis.artifacts import json_text
@@ -36,11 +36,11 @@ def disarmed_view_snapshot(bridge):
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output',type=Path,required=True)
-    parser.add_argument('--contract-version',choices=['5','6','7','8','9','10'],default='5')
+    parser.add_argument('--contract-version',choices=['5','6','7','8','9','10', 'reference'], default='reference')
     parser.add_argument('--minutes',type=int,choices=range(1,241),default=60)
     args=parser.parse_args()
     args.output.mkdir(parents=True,exist_ok=False)
-    schema=f'spatial-causal-rgat/{args.contract_version}'
+    schema=schema_for(args.contract_version)
     cfg=replace(SpatialConfig(),schema=schema,
                 isaac_profile_sha256=deployment_profile(schema)['sha256'])
     stopped=False

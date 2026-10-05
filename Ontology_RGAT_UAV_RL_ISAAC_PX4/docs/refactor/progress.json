@@ -32,7 +32,7 @@
     },
     "approved_alignment_extension": {
       "status": "running",
-      "user_authorization": "정합 수정·재검증에 4시간 추가",
+      "user_authorization": "\uc815\ud569 \uc218\uc815\u00b7\uc7ac\uac80\uc99d\uc5d0 4\uc2dc\uac04 \ucd94\uac00",
       "additional_window_start_utc": "2026-10-04T15:13:29Z",
       "deadline_utc": "2026-10-04T19:13:29Z",
       "artifacts": "results/spatial_alignment_20261005_gzhmiY",
@@ -678,6 +678,78 @@
       "return_ordering_observed": "TASK_TIMEOUT -8.20..-12.73 beats SAFE_ABORT -15.02..-15.49, as the terminal table dictates",
       "acceptance": "isaac_acceptance.json passes=false; complete_matrix=true, all_episode_stops_confirmed=true",
       "interpretation": "Does NOT measure the proposed model. The spatial contract deadlocks landing at p>53.9% (TASK_TIMEOUT -12 with discount_tau 70 == horizon 70); hovering/aborting is dominant by construction, so every arm scores the same. Fix the terminal table and tau before spending further Isaac wall-clock on arm comparison."
+    },
+    "spatial_reward_fix_20261005": {
+      "status": "REVERTED",
+      "date": "2026-10-05",
+      "change": "TASK_TIMEOUT -12->-30, SAFE_ABORT -15->-40, unsafe -40->-50, discount_tau 70->350, curriculum start_unsafe_contact_penalty -20->-42",
+      "why": "spatial never received the fix two_axis made; with tau==horizon the landing break-even was p>53.9%, unreachable from zero skill, so hovering/aborting was dominant by construction",
+      "break_even": {
+        "before": 0.539,
+        "after_nominal": 0.332,
+        "after_by_rung": [
+          0.252,
+          0.294,
+          0.332
+        ]
+      },
+      "latent_bugs_fixed_in_passing": [
+        "Evaluator identified unsafe outcomes by matching the literal -40.0; moving SAFE_ABORT to -40 would have made an abort collect the unsafe penalty. Now an explicit UNSAFE_STATUSES set.",
+        "curriculum ramp start -20 sat above the new SAFE_ABORT -40, making crashing cheaper than aborting on easy rungs - the inversion two_axis measured as 92-98% diving."
+      ],
+      "new_guard": "tests/test_spatial_pipeline.py::test_spatial_waiting_out_the_clock_is_never_worth_more_than_attempting - spatial had an ORDERING test but no discounted break-even test, which is why the defect survived",
+      "retraining": {
+        "artifacts": [
+          "results/spatial_fixed_nominal_20261005",
+          "results/spatial_fixed_curriculum_20261005"
+        ],
+        "scope": "3 arms x 2 seeds x 2000 episodes, local backend, ~17 min",
+        "effect": "unsafe outcomes 0.53->0.00; envelope violations fell from 59-74% early to 0-6% late",
+        "landing_rate": 0.0,
+        "arm_separation": "none - nominal-only mean returns -40.26..-40.33 across all three arms"
+      },
+      "full_suite": "1359 passed / 2 skipped",
+      "reverted_because": "Measured, not derived: with only the terminal table swapped and everything else held, an attempting controller returned +20.29 against a holding arm's -24.45 under the new table and +19.14 against -4.26 under the pre-fix one. Attempting wins under BOTH, so the change was unnecessary. The 'break-even p > 53.9 %' derivation compared discounted terminal values alone and omitted the dense readiness/potential terms, which pay an approaching arm a large positive running return. Cost of the change: 3D optimized a different objective than the 2D reference, so no result transferred across dimensions.",
+      "now": "Both routes carry upstream MATLAB's SUCCESS 25 / SAFE_ABORT -15 / TASK_TIMEOUT -12 / UNSAFE -40 with discount_tau 70 and curriculum start -20, from the single definition in python/ontology_rgat/landing/terminal.py."
+    },
+    "spatial_oracle_ceiling_20261005": {
+      "status": "RETRACTED",
+      "date": "2026-10-05",
+      "retraction": "The 23.3 % figure was one hand-tuned controller's score, not a task ceiling.",
+      "remeasured": {
+        "contract": "spatial-causal-rgat/5",
+        "seeds": "3001-3200 (200 nominal)",
+        "estimator_fed_success": 0.86,
+        "truth_fed_success": 0.98,
+        "estimator_error_m": {
+          "mean": 0.023,
+          "p95_of_per_episode_max": 0.126
+        },
+        "controller": "PD on relative position/velocity toward pad velocity (kp 2.0, kd 3.0, kz 2.0), descend at 0.2 m/s once |r_xy|<0.3 and |rv_xy|<0.15"
+      },
+      "why_the_old_number_was_low": "tools/check_spatial_landing.py uses P-only gain 0.65 with NO derivative term, a 0.12 m descent gate (2.5x tighter) and --horizon 45. Adding a D term and loosening the gate moves it 23 % -> 86 % with nothing else changed.",
+      "contract_dependence": "The same controller scores 86.7 % on v5 and 33.3 % on v10/spatial-reference/1. Always quote an oracle figure WITH its contract.",
+      "consequence": "The three-arm comparison CAN be run on this task. The zero-landing PPO result has some other cause."
+    },
+    "action_frame_alignment_verified": {
+      "date": "2026-10-05",
+      "result": "clean",
+      "method": "per-axis constant-action calibration; +action increases that component of (own - pad) on all three axes",
+      "incidental": "zero action is NOT hover - the vehicle carries ~0.65 m/s initial velocity, which is why a zero-action 'hover baseline' crashes 53% of the time and must not be used as a reward baseline"
+    },
+    "dimension_generic_contract_20261005": {
+      "status": "applied",
+      "date": "2026-10-05",
+      "change": "2D and 3D now instantiate one axis-generic contract in python/ontology_rgat/landing/: terminal table, 9x12 plane graph (built once per horizontal axis), packet field spec and the normalize/decode pair.",
+      "derivation": "The 2D reference packet is 12 per-axis + 14 shared = 26, so the 3D packet is 12x2 + 14 = 38, plus 3 declared non-reference transport-delay extras = 41. The old ladder's 35/39/43/47 were accretion.",
+      "active_spatial_contract": "spatial-reference/1 (--contract-version reference); reproduces spatial-causal-rgat/10 exactly on 60 seeds (SUCCESS 20 / TASK_TIMEOUT 18 / UNSAFE 20 / SAFE_ABORT 2).",
+      "verification": "tools/contract_snapshot.py --compare showed the 2D reference port byte-identical through every step; tests/test_dimension_parity.py loads both routes.",
+      "v5_is_not_reference_faithful": [
+        "its 9x12 graph fills rows positionally (DroneTranslation's validity channel carried the remaining mission time)",
+        "no predictedBearing/predictedFovMargin (arrived at rung 6)",
+        "no accelerationStd (arrived at rung 7)",
+        "its action is a velocity setpoint carrying a hidden integrated velocity reference, while the 2D reference applies net acceleration directly"
+      ]
     }
   },
   "schema": "two_axis_refactor_progress/1",
@@ -852,7 +924,8 @@
     }
   },
   "pending": [
-    "spatial terminal table/tau still carry the defect two_axis fixed (TASK_TIMEOUT -12, tau 70); landing break-even is p>53.9% - fix before any further Isaac arm comparison",
+    "spatial PPO lands 0 % while a causal PD reaches 86 % on v5 and 33 % on the active contract: the gap is NOT the task, NOT the reward and NOT the oracle ceiling. Find it before spending more Isaac wall-clock.",
+    "optionally extract the frozen ladder (field tuples, registry hashes, legacy observation/graph bodies) out of spatial/core.py and spatial/context.py into an archive module; every call site now names its contract explicitly, so this is readability, not correctness.",
     "full Isaac study (~25 h training + ~30 h evaluation) if the pilot moves",
     "relation attention sparsity audit (needs a trained encoder)",
     "paired cross-arm comparison on the six decks",

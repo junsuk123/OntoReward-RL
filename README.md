@@ -34,6 +34,44 @@ cleanup을 확인했다. 최신 전체 회귀에 이 변경이 포함된다. 수
 중단됐고, 완료 5개를 그대로 보존하여 미완료 graph829만 명시적으로 재실행했다.
 현재 실제 고정 시험을 진행 중이며 whole-system acceptance를 통과한 것은 아니다.
 
+## 차원 일반화 계약 (2026-10-05)
+
+2D와 3D가 공유하는 과제 계약은 `python/ontology_rgat/landing/`에 한 벌로 있다.
+3D는 2D의 포크가 아니라 **수평축 개수만 다른 같은 계약**이다.
+
+| 모듈 | 단일 정의 | 이전 상태 |
+|---|---|---|
+| `landing/terminal.py` | terminal 보상표, `discount_tau`, curriculum ramp, 적재 시 불변식 | 4벌이 표류 |
+| `landing/plane_graph.py` | 9노드 12채널 평면, **수평축마다 한 번** 생성 | 2벌(2D/3D 독립) |
+| `landing/packet.py` | 필드 스펙. 2D = 축별 12 × 1 + 공유 14 = **26**, 3D = 12 × 2 + 14 = **38** (+ 선언된 비레퍼런스 추가 3 = 41) | 사다리 누적 35/39/43/47 |
+| `landing/observation.py` | `normalize`/`decode` 한 쌍 | 4벌(정방향 2, 역방향 2) |
+
+- 교차 차원 불변식은 `tests/test_dimension_parity.py`에 둔다. 경로별 테스트 파일은
+  구조상 괴리를 볼 수 없다 — 두 경로가 서로 다른 보상표를 최적화하던 동안에도
+  모든 파일이 green이었다.
+- `test_one_axis_spec_reproduces_the_reference_registry`가 1축 전개를 동결된 2D
+  레지스트리에 고정한다. 3D 패킷은 주장이 아니라 **검증된 유도 결과**다.
+- 계약을 건드리는 변경 전후로 `python tools/contract_snapshot.py --out before.json`,
+  `--compare before.json after.json`을 기록한다. 2D 포트는 바이트 동일해야 한다.
+
+활성 공간 계약은 `spatial-reference/1`(`--contract-version reference`)이다.
+41필드, 축별 reference 평면 2개, v10 기능집합이며 60시드에서 v10과 결과가 **완전히 동일**하다.
+`spatial-causal-rgat/3..10`은 동결된 역사적 계약으로 체크포인트 재로딩을 위해 남긴다.
+
+### 정정된 두 가지 기록
+
+- **공간 과제는 불가능하지 않다.** 기록돼 있던 "oracle 상한 23.3%"는 약한 수동 튜닝
+  컨트롤러 하나의 점수였다(P-only 0.65, D항 없음, 하강 게이트 0.12 m, horizon 45).
+  v5에서 200 nominal 시드 측정 시 추정기 기반 PD가 **86.0%**, truth 기반이 **98.0%**다.
+  oracle 수치는 게인을 실제로 쓸어본 경우에만 상한이며, **반드시 계약과 함께** 인용한다 —
+  같은 컨트롤러가 v5에서 86.7%, v10에서 33.3%다.
+- **보상은 병목이 아니었다.** 2026-10-05에 공간 terminal 표를 −30/−40/−50, tau 350으로
+  바꾼 근거인 "착륙 break-even p>53.9%" 유도는 할인된 terminal 값만 비교하고 dense
+  readiness/potential 항을 뺐다. 표만 바꿔 60시드 측정하면 시도 arm이 새 표에서 +20.29
+  (대기 −24.45), 옛 표에서 +19.14(대기 −4.26)로 **두 표 모두에서 시도가 이긴다.**
+  따라서 그 변경은 되돌렸고 2D/3D는 upstream의 `SUCCESS 25 / SAFE_ABORT −15 /
+  TASK_TIMEOUT −12 / UNSAFE −40`, `tau 70`을 공유한다. 보상은 유도하지 말고 arm을 측정한다.
+
 ## 실행 경로
 
 저장소 루트에서 실행한다. 인자 없는 실행은 도움말만 출력한다.

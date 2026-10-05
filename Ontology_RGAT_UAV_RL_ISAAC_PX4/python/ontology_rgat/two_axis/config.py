@@ -10,6 +10,14 @@ from typing import Any, Mapping
 
 import yaml
 
+from ..landing.terminal import (
+    REFERENCE_CURRICULUM_START_UNSAFE,
+    REFERENCE_TERMINAL_BONUS,
+    UNSAFE_REASONS,
+    validate_curriculum_ramp,
+    validate_terminal_ordering,
+)
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_CONFIG_PATH = PROJECT_ROOT / "config/experiments/two_axis_context_rgat_comparison.yaml"
@@ -113,13 +121,8 @@ class RewardConfig:
     readiness_model: str = "product_v25"
     readiness_height_m: float = 1.0
     potential_weight: float = 0.0
-    terminal_bonus: tuple[tuple[str, float], ...] = (
-        ("SUCCESS", 25.0), ("SAFE_ABORT", -15.0),
-        ("TASK_TIMEOUT", -12.0), ("UNSAFE_CONTACT", -40.0),
-        ("UNAUTHORIZED_CONTACT", -40.0),
-        ("MISSED_PAD_CONTACT", -40.0),
-        ("SAFETY_ENVELOPE_VIOLATION", -40.0),
-    )
+    # One definition, shared with the spatial route. See landing/terminal.py.
+    terminal_bonus: tuple[tuple[str, float], ...] = REFERENCE_TERMINAL_BONUS
 
     def bonus(self, reason: str | None) -> float:
         if reason is None:
@@ -128,8 +131,7 @@ class RewardConfig:
 
     @property
     def unsafe_reasons(self) -> tuple[str, ...]:
-        return ("UNSAFE_CONTACT", "UNAUTHORIZED_CONTACT",
-                "MISSED_PAD_CONTACT", "SAFETY_ENVELOPE_VIOLATION")
+        return UNSAFE_REASONS
 
 
 @dataclass(frozen=True)
@@ -142,7 +144,7 @@ class CurriculumConfig:
     start_T1_range_s: tuple[float, float] = (0.10, 0.30)
     start_touchdown_relative_speed_m_s: float = 0.70
     start_touchdown_vertical_speed_m_s: float = 0.70
-    start_unsafe_contact_penalty: float = -20.0
+    start_unsafe_contact_penalty: float = REFERENCE_CURRICULUM_START_UNSAFE
     promotion_landing_rate: float = 0.6
     promotion_window_episodes: int = 20
     difficulty_step: float = 0.1
@@ -426,25 +428,12 @@ def _validate(cfg: ExperimentConfig) -> None:
 
 
 def _validate_curriculum_ordering(cfg: ExperimentConfig) -> None:
-    """The outcome ranking must hold at every rung, not only at nominal.
-
-    The curriculum softens the unsafe penalty so a first landing attempt is
-    affordable. Softening it past TASK_TIMEOUT inverts the ranking on the easy
-    rungs -- crashing becomes cheaper than flying on -- and a policy trained
-    there learns to dive. Checking only the nominal table missed it.
-    """
+    """Load-time ramp invariant; the rule itself lives in landing/terminal.py
+    so the spatial route cannot drift away from it."""
     if not cfg.curriculum.enabled:
         return
-    table = dict(cfg.reward.terminal_bonus)
-    start = cfg.curriculum.start_unsafe_contact_penalty
-    if not start < table["SAFE_ABORT"]:
-        raise ValueError(
-            f"curriculum start_unsafe_contact_penalty ({start}) must stay below "
-            f"SAFE_ABORT ({table['SAFE_ABORT']}); otherwise an unsafe "
-            "contact outranks a safe abort on the easy rungs")
-    if start > max(table[name] for name in cfg.reward.unsafe_reasons):
-        return  # the ramp only ever tightens from here, which is the intent
-    raise ValueError("the unsafe ramp must start softer than its nominal value")
+    validate_curriculum_ramp(cfg.curriculum.start_unsafe_contact_penalty,
+                             cfg.reward.terminal_bonus)
 
 
 def _validate_actuation_authority(cfg: ExperimentConfig) -> None:
@@ -464,22 +453,8 @@ def _validate_actuation_authority(cfg: ExperimentConfig) -> None:
 
 
 def _validate_terminal_ordering(cfg: ExperimentConfig) -> None:
-    """SUCCESS > TASK_TIMEOUT > SAFE_ABORT > unsafe outcomes.
-
-    A controller that keeps the pad in view until the deadline must outrank one
-    that induces its own visual loss, otherwise aborting is a reward shortcut.
-    """
-    table = dict(cfg.reward.terminal_bonus)
-    unsafe = max(table[name] for name in cfg.reward.unsafe_reasons)
-    ordering = (("SUCCESS", table["SUCCESS"]),
-                ("TASK_TIMEOUT", table["TASK_TIMEOUT"]),
-                ("SAFE_ABORT", table["SAFE_ABORT"]),
-                ("unsafe_outcomes", unsafe))
-    for (left, lvalue), (right, rvalue) in zip(ordering, ordering[1:]):
-        if not lvalue > rvalue:
-            raise ValueError(
-                f"terminal reward ordering violated: {left} ({lvalue}) must "
-                f"rank above {right} ({rvalue})")
+    """Load-time outcome-ranking invariant; shared with the spatial route."""
+    validate_terminal_ordering(cfg.reward.terminal_bonus)
 
 
 def _validate_touchdown_reachability(cfg: ExperimentConfig) -> None:

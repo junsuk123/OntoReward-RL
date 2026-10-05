@@ -58,3 +58,18 @@ def test_operator_camera_offset_is_a_true_vehicle_side_view():
         assert np.dot(offset, along) == pytest.approx(0.0, abs=1e-10)
         assert np.dot(offset, across) == pytest.approx(-12.0)
         assert offset[2] == pytest.approx(4.5)
+
+
+def test_spatial_side_view_includes_vehicle_body_and_high_flying_drone():
+    import yaml
+    profile = yaml.safe_load((ROOT / "config/spatial-isaac-system.yaml").read_text())
+    view = profile["isaac"]["viewport_follow"]
+    deck = np.zeros(3)
+    for height in (.07, 2.5, 5., 15.):
+        drone = np.array([0., 0., height])
+        eye, target, _ = paired_view_pose(drone, deck, view["offset_m"],
+                                         view["pair_span_m"])
+        target += view["look_at_offset_enu_m"]
+        body_bottom = deck - [0., 0., .7]
+        for subject in (body_bottom, drone + [0., 0., .15]):
+            assert angular_separation_deg(eye, target, subject) < 14.

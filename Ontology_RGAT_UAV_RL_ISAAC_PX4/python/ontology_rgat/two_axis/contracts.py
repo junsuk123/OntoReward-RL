@@ -5,6 +5,7 @@ import hashlib
 import json
 import math
 from typing import Mapping
+from functools import lru_cache
 
 import numpy as np
 
@@ -22,6 +23,42 @@ def load_v2_registry() -> ObservationRegistry:
     return load_observation_registry(DEFAULT_REGISTRY_PATH)
 
 
+REFERENCE_SCALES = {"h": 8., "vx": 10., "vz": 1.5, "pitchRate": math.pi/2,
+    "exEstimate": 3., "relativeVxEstimate": 3., "padVxEstimate": 10.,
+    "padAxEstimate": 2., "positionStd": 5., "velocityStd": 5., "accelerationStd": 3.,
+    "measuredBearing": "half_fov", "predictedBearing": "half_fov",
+    "predictedFovMargin": "half_fov", "timeSinceLastDetection": "prolonged_loss"}
+
+
+def normalize_reference_fields(raw, *, half_fov, prolonged_loss_s=3., mission_limit_s=70.):
+    values = dict(raw)
+    for name, scale in REFERENCE_SCALES.items():
+        scale = half_fov if scale == "half_fov" else prolonged_loss_s if scale == "prolonged_loss" else scale
+        values[name] = float(raw[name])/(abs(float(raw[name]))+float(scale))
+    if "remainingMissionTime" in values:
+        values["remainingMissionTime"] = float(np.clip(raw["remainingMissionTime"]/mission_limit_s,0,1))
+    return values
+
+
+@lru_cache(maxsize=1)
+def load_reference_registry() -> ObservationRegistry:
+    """Same causal provenance/order, separately hashed v2.8 normalization."""
+    base = load_v2_registry()
+    fields = []
+    for field in base.fields:
+        value = dict(field)
+        name = value["name"]
+        if name in REFERENCE_SCALES:
+            value["normalization"] = f"signed_x_over_abs_x_plus_{REFERENCE_SCALES[name]}"
+        elif name == "remainingMissionTime":
+            value["normalization"] = "remaining_seconds_over_mission_limit"
+        fields.append(value)
+    payload = {"schema": "ontology_rgat.planar_causal_packet/3-v28",
+        "clock": base.clock, "fields": fields, "forbidden_sources": base.forbidden_sources}
+    digest = hashlib.sha256(json.dumps(payload,sort_keys=True,separators=(",", ":")).encode()).hexdigest()
+    return ObservationRegistry(payload["schema"], base.clock, tuple(fields),base.forbidden_sources,digest)
+
+
 def _bounded(value: float) -> float:
     value = max(0.0, float(value))
     return value / (1.0 + value)
@@ -31,19 +68,26 @@ def make_causal_packet(*, state: PlanarState, track: TrackEstimate,
                        measurement: PadMeasurement, previous_action: np.ndarray,
                        landing_inhibited: bool, abort_requested: bool,
                        mission_deadline_s: float, fov_rad: float,
+                       prediction_horizon_s: float = 0.0,
+                       reference_normalization: bool = False,
+                       mission_limit_s: float = 70.0, prolonged_loss_s: float = 3.0,
                        registry: ObservationRegistry | None = None
                        ) -> CausalObservationPacket:
     """Build policy input without accepting current pad truth as an argument."""
-    registry = registry or load_v2_registry()
+    registry = registry or (load_reference_registry() if reference_normalization else load_v2_registry())
     previous = np.asarray(previous_action, dtype=float).reshape(2)
     ex_est = track.pad_x_m - state.x_m if track.initialized else 0.0
     rel_v_est = track.pad_vx_m_s - state.vx_m_s if track.initialized else 0.0
     h = max(0.0, state.z_m)
-    depth = h * math.cos(state.theta_rad) - ex_est * math.sin(state.theta_rad)
-    lateral = ex_est * math.cos(state.theta_rad) + h * math.sin(state.theta_rad)
+    future_ex = ex_est + rel_v_est*prediction_horizon_s + .5*track.pad_ax_m_s2*prediction_horizon_s**2
+    future_theta = state.theta_rad + state.pitch_rate_rad_s*prediction_horizon_s
+    depth = h * math.cos(future_theta) - future_ex * math.sin(future_theta)
+    lateral = future_ex * math.cos(future_theta) + h * math.sin(future_theta)
     predicted_bearing = math.atan2(lateral, depth) if depth > 0.0 else 0.0
     half_fov = 0.5 * float(fov_rad)
     predicted_margin = half_fov - abs(predicted_bearing) if depth > 0.0 else -half_fov
+    if not track.initialized:
+        predicted_bearing = predicted_margin = 0.0
     age = track.time_since_detection_s
     if not np.isfinite(age):
         age = mission_deadline_s
@@ -75,6 +119,19 @@ def make_causal_packet(*, state: PlanarState, track: TrackEstimate,
         "landingInhibited": [float(landing_inhibited)],
         "abortRequested": [float(abort_requested)],
     }
+    if reference_normalization:
+        raw = {"h": h, "vx": state.vx_m_s, "vz": state.vz_m_s,
+            "pitchRate": state.pitch_rate_rad_s, "exEstimate": ex_est,
+            "relativeVxEstimate": rel_v_est, "padVxEstimate": track.pad_vx_m_s,
+            "padAxEstimate": track.pad_ax_m_s2, "positionStd": track.position_std_m,
+            "velocityStd": track.velocity_std_m_s, "accelerationStd": track.acceleration_std_m_s2,
+            "measuredBearing": measurement.bearing_rad if measurement.bearing_valid else 0.,
+            "predictedBearing": predicted_bearing, "predictedFovMargin": predicted_margin,
+            "timeSinceLastDetection": age}
+        for name,value in normalize_reference_fields(raw,half_fov=half_fov,
+                prolonged_loss_s=prolonged_loss_s,mission_limit_s=mission_limit_s).items():
+            fields[name] = [value]
+        fields["remainingMissionTime"] = [max(0.,mission_deadline_s-state.time_s)/mission_limit_s]
     return CausalObservationPacket.from_fields(
         fields, timestamp_s=state.time_s, registry=registry)
 
@@ -104,7 +161,8 @@ def _digest(value: object) -> str:
 def experiment_signature(config: ExperimentConfig, *, graph_schema_hash: str,
                          registry: ObservationRegistry | None = None
                          ) -> CheckpointSignature:
-    registry = registry or load_v2_registry()
+    registry = registry or (load_reference_registry()
+        if config.ontology.schema == "compact_context_graph_v3_grouped" else load_v2_registry())
     return CheckpointSignature(
         algorithm_version=config.algorithm_version,
         environment_config_hash=config.sha256,
@@ -114,8 +172,11 @@ def experiment_signature(config: ExperimentConfig, *, graph_schema_hash: str,
             "longitudinal_acceleration", "vertical_acceleration"),
             "limits": (config.dynamics.ax_max_m_s2, config.dynamics.az_max_m_s2)}),
         graph_schema_hash=graph_schema_hash,
-        pretrained_artifact_hash="none-end-to-end-ppo",
+        pretrained_artifact_hash=(_digest({"regime": "train-only-masked-same-time-v28",
+            "episodes": config.ontology.pretrain_episodes,
+            "epochs": config.ontology.pretrain_epochs}) if config.ontology.pretrain_episodes
+            else "none-end-to-end-ppo"),
         relation_partition_hash=graph_schema_hash,
         normalization_hash=registry.sha256,
-        seed_contract_hash=_digest("independent-scenario-sensor-policy-v1"),
+        seed_contract_hash=_digest("independent-scenario-sensor-policy-time-paired-v2"),
         training_budget_hash=_digest("caller-declared-environment-steps"))

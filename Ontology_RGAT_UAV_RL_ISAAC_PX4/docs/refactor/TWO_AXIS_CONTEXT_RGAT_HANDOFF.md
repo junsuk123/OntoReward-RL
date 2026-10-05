@@ -1,11 +1,22 @@
 # Two-axis context R-GAT refactor handoff
 
+> Historical v1 handoff. Superseded 2026-10-04 by
+> [REFERENCE_V28_AUDIT_KO.md](REFERENCE_V28_AUDIT_KO.md).
+> This file does not describe current reference defaults or Isaac parity.
+
 Date: 2026-10-02  
 Primary experiment: `two_axis_context_rgat_v1`  
 Algorithm version: `two-axis-context-rgat-v1`
 
 This document reports an implementation and bounded integration validation. It
 does not report PPO convergence, an ontology advantage, or real-flight safety.
+
+> **Superseded in part on 2026-10-03.** The environment contract was revised to
+> `planar-visibility-ppo-v2.5`. The supervisor, terminal table, goal cost,
+> action limit, hard envelope and contact plane described below have all
+> changed, and a training-only curriculum was added. Read
+> [`FINAL_REPORT.md`](FINAL_REPORT.md) first; the sections here describe the
+> structure that survived, not the constants.
 
 ## System contract
 

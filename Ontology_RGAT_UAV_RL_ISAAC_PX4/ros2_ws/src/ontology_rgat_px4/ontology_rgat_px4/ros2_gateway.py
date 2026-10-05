@@ -16,6 +16,8 @@ import numpy as np
 
 from .battery import BatteryModel
 from .config import GatewayConfig, load_gateway_config
+from .optical_geometry import imu_rotated_relative_position
+from .optical_timing import OwnStateHistory
 from .frames import (
     enu_to_ned,
     geodetic_to_enu,
@@ -39,6 +41,8 @@ from .protocol import (
     validate_action,
     validate_velocity_action,
     validate_velocity_extras,
+    validate_spatial_velocity_action,
+    validate_spatial_acceleration_action,
     validate_goto,
 )
 from .safety import SafetyGate
@@ -47,6 +51,73 @@ from .udp_server import DatagramServer
 # Standard gravity, used to turn a commanded longitudinal tilt into the
 # acceleration feed-forward PX4 realises it with.
 GRAVITY_M_S2 = 9.80665
+
+
+def spatial_command_timestamp_us(wire_timestamp_us, sim_anchor_s, sim_now_s):
+    """Keep PX4's current DDS wire-clock offset, advance only physics time.
+
+    PX4 serializes timestamps with +session.time_offset and deserializes with
+    -session.time_offset (Tools/msg/templates/ucdr). In slow rendered SITL the
+    offset changes far faster than its periodic time-sync filter can follow.
+    Wall-clock headers can therefore expire although the heartbeat is live.
+    The most recently received PX4 wire timestamp already has that offset.
+    This does not extend COM_OF_LOSS_T or hide an absent/invalid odometry feed.
+    """
+    return int(wire_timestamp_us) + int(round(
+        max(0.0, float(sim_now_s) - float(sim_anchor_s)) * 1e6))
+
+
+def setpoint_publication_due(target, sim_time_s, previous_sim_time_s, heartbeat_hz):
+    """Spatial SITL uses physical time; hardware/legacy keep their wall timer.
+
+    A 50 Hz wall timer became ~296 Hz of trajectory messages (plus mode
+    messages) per simulated second in the slow rendered transport probe.
+    PX4's lockstep DDS loop cannot consume an unbounded wall-time flood.
+    Never replay missed ticks or invent progress when physics is paused.
+    """
+    if target != "sitl" or sim_time_s is None:
+        return True
+    now = float(sim_time_s)
+    if not math.isfinite(now) or not math.isfinite(heartbeat_hz) or heartbeat_hz <= 0:
+        raise ValueError("finite simulation time and positive heartbeat required")
+    return (previous_sim_time_s is None or now < previous_sim_time_s
+            or now - previous_sim_time_s >= 1.0 / heartbeat_hz - 1e-6)
+
+
+def velocity_command_enu(command, yaw_rad, *, frame="body_heading"):
+    """Pure frame conversion used by both legacy and spatial setpoints."""
+    vx, vy, vz, _ = command
+    if frame == "enu":
+        return np.array([vx, vy, vz], dtype=float)
+    if frame != "body_heading":
+        raise ValueError("unsupported velocity command frame")
+    c, s = math.cos(yaw_rad), math.sin(yaw_rad)
+    return np.array([c*vx-s*vy, s*vx+c*vy, vz])
+
+
+def optical_board_pose_to_enu(position, board_quaternion, own_quaternion):
+    """Resolve the optical relative ray using the independent own IMU.
+
+    No simulator deck pose enters this boundary. Undo the PnP rotation before
+    rotating the measured relative vector into ENU, so planar PnP tilt error
+    does not masquerade as lateral displacement. The returned PnP attitude
+    is heading-aligned ONLY: its roll/pitch remain independent and are still
+    checked against the IMU by the pose gate.
+    """
+    q = np.asarray(board_quaternion, dtype=float)
+    own = np.asarray(own_quaternion, dtype=float)
+    if (q.shape != (4,) or own.shape != (4,) or not np.isfinite(q).all()
+            or not np.isfinite(own).all() or np.linalg.norm(q) < 1e-9
+            or np.linalg.norm(own) < 1e-9):
+        raise ValueError('finite nonzero optical and IMU quaternions required')
+    q = q / np.linalg.norm(q)
+    own = own / np.linalg.norm(own)
+    heading = yaw_from_quat_wxyz(own) - yaw_from_quat_wxyz(q)
+    relative_enu = imu_rotated_relative_position(position, q, own)
+    ch, sh = math.cos(heading/2), math.sin(heading/2)
+    w, qx, qy, qz = q
+    return relative_enu, np.array([
+        ch*w-sh*qz, ch*qx-sh*qy, ch*qy+sh*qx, ch*qz+sh*w])
 
 try:
     import rclpy
@@ -344,6 +415,21 @@ class ContinuousPx4Clock:
         return int(self.logical_time_us), False
 
 
+def px4_direct_acceleration_input(net_acceleration_enu):
+    """Invert this PX4 PositionControl::_accelerationControl thrust mapping.
+
+    PX4 generates tilt using g (not g+az) and subsequently scales vertical
+    thrust by g+az. Compensate XY so the realized steady vector is the requested
+    net acceleration. This is a deterministic actuator mapping, not guidance.
+    Gravity is added only inside PX4, never in the transmitted vertical value.
+    """
+    value = np.asarray(net_acceleration_enu, dtype=float).copy()
+    if value.shape != (3,) or not np.isfinite(value).all() or value[2] <= -GRAVITY_M_S2:
+        raise ValueError("finite net acceleration above free-fall is required")
+    value[:2] *= GRAVITY_M_S2/(GRAVITY_M_S2+value[2])
+    return value
+
+
 def bounded_position_update(reference, measurement, max_correction_m: float) -> np.ndarray:
     """Apply a finite optical correction without permitting a pose jump."""
     result = np.asarray(reference, dtype=float).copy()
@@ -523,6 +609,8 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             self._reply_owed_since: float | None = None
             self._odometry_seen = time.monotonic()
             self._odometry_count = 0
+            self._spatial_wire_clock_anchor = None
+            self._last_spatial_setpoint_sim_s = None
             self.cfg = cfg
             self.safety = safety
             self.sample = VehicleSample()
@@ -532,6 +620,8 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             # heading to hold. ``None`` restores the free-yaw behaviour every
             # earlier run had.
             self.velocity_tilt_rad = 0.0
+            self.velocity_frame = "body_heading"
+            self.velocity_acceleration_enu = None
             self.velocity_yaw_hold_rad: float | None = None
             self.velocity_position_target_enu: np.ndarray | None = None
             self.velocity_position_time_us = 0
@@ -558,6 +648,18 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             self.pending_reset_peer: tuple[str, int] | None = None
             self.pad_position_enu: np.ndarray | None = None
             self.pad_pose_time_ns = 0
+            self.optical_capture_time_s = None
+            self.optical_capture_own_position = None
+            self.optical_capture_own_quaternion = None
+            self.own_optical_history = OwnStateHistory()
+            self.spatial_sim_time_s = None
+            self.spatial_profile_sha256 = None
+            self.spatial_source_sha256 = None
+            self.spatial_clock_seen_ns = 0
+            self.spatial_episode_seed = -1
+            self.spatial_reset_seq = -1
+            self.spatial_episode_id = ''
+            self.optical_sequence = 0
             self.marker_pose_rejections = 0
             # Continuity across a camera/PX4 position handover; see
             # _blend_position_source.
@@ -683,6 +785,12 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                                      _topic(cfg, "out", "vehicle_thrust_setpoint"),
                                      self._on_thrust_setpoint, qos)
             sensor_qos = rclpy.qos.qos_profile_sensor_data
+            self.create_subscription(String, _landing_topic(
+                cfg, '/landing_uav0/simulation/clock', 'uav/simulation/clock'),
+                self._on_spatial_clock, sensor_qos)
+            self.create_subscription(String, _landing_topic(
+                cfg, '/landing_uav0/simulation/contact_event', 'uav/simulation/contact_event'),
+                self._on_spatial_contact_event, sensor_qos)
             # Policy-safe measurement. /environment/wind is simulator truth
             # and deliberately has no subscriber on the control path.
             self.create_subscription(Vector3Stamped, _landing_topic(
@@ -748,6 +856,15 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             return super().destroy_node()
 
         def _timestamp_us(self) -> int:
+            anchor = self._spatial_wire_clock_anchor
+            if cfg.target == "sitl" and anchor is not None:
+                wire_us, sim_s = anchor
+                # Freeze stale timestamps; never manufacture a fresh heartbeat
+                # from an odometry stream that has stopped publishing.
+                if time.monotonic() - self._odometry_seen > cfg.state_timeout_s:
+                    return wire_us
+                return spatial_command_timestamp_us(
+                    wire_us, sim_s, self.spatial_sim_time_s)
             return self.get_clock().now().nanoseconds // 1000
 
         @contextmanager
@@ -837,7 +954,7 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                 self.velocity_position_target_enu = None
                 self.velocity_position_time_us = 0
                 self.last_action_ns = now_ns()
-                self.last_action_px4_time_us = int(self.sample.px4_time_us)
+                self.last_action_px4_time_us = self._task_time_us()
                 self.last_command_seq = seq
                 self.pending_state_ack = seq
                 self.pending_state_peer = self.udp.peer
@@ -846,17 +963,37 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                 if not self.battery_armed:
                     self._arm_battery()
                 self._publish_flight_state()
-            elif kind == "velocity_action":
+            elif kind in {"velocity_action", "spatial_velocity_action", "spatial_acceleration_action"}:
                 first_policy_action = not bool(self.last_action_ns)
-                self.velocity_action = validate_velocity_action(msg)
-                (self.velocity_tilt_rad,
-                 self.velocity_yaw_hold_rad) = validate_velocity_extras(msg)
+                direct_acceleration = kind == "spatial_acceleration_action"
+                if kind in {"spatial_velocity_action", "spatial_acceleration_action"}:
+                    if cfg.target != "sitl":
+                        raise ProtocolError("spatial control is currently SITL-only")
+                    if direct_acceleration:
+                        acceleration, heading = validate_spatial_acceleration_action(msg)
+                        velocity = (0., 0., 0.)
+                    else:
+                        velocity, acceleration, heading = validate_spatial_velocity_action(msg)
+                    self.velocity_action = (*velocity, 0.0)
+                    self.velocity_tilt_rad = 0.0
+                    self.velocity_yaw_hold_rad = heading
+                    self.velocity_frame = "enu"
+                    self.velocity_acceleration_enu = acceleration
+                else:
+                    velocity = validate_velocity_action(msg)
+                    tilt, heading = validate_velocity_extras(msg)
+                    self.velocity_action = velocity
+                    self.velocity_tilt_rad = tilt
+                    self.velocity_yaw_hold_rad = heading
+                    self.velocity_frame = "body_heading"
+                    self.velocity_acceleration_enu = None
                 new_velocity_handover = (
                     self.command_interface != "velocity_yaw_rate"
                     or self.velocity_position_target_enu is None)
-                self.command_interface = "velocity_yaw_rate"
+                self.command_interface = ("spatial_acceleration" if direct_acceleration
+                                          else "velocity_yaw_rate")
                 self.last_action_ns = now_ns()
-                self.last_action_px4_time_us = int(self.sample.px4_time_us)
+                self.last_action_px4_time_us = self._task_time_us()
                 self.last_command_seq = seq
                 self.pending_state_ack = seq
                 self.pending_state_peer = self.udp.peer
@@ -866,7 +1003,10 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                 # handover, so the climb PX4 flew to get here is not charged to
                 # the policy.
                 self.goto_target_enu = None
-                if new_velocity_handover:
+                if direct_acceleration:
+                    self.velocity_position_target_enu = None
+                    self.velocity_position_time_us = 0
+                elif new_velocity_handover:
                     here = self.px4_world_position
                     if here is None:
                         candidate = np.asarray(
@@ -881,7 +1021,7 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                             self.sample.position_enu, dtype=float)
                     self.velocity_position_target_enu = np.asarray(
                         here, dtype=float).copy()
-                    self.velocity_position_time_us = int(self.sample.px4_time_us)
+                    self.velocity_position_time_us = self._task_time_us()
                 # Only rejections occurring after policy handover belong to
                 # this measured episode. Pre-arm transient rejections are not
                 # allowed to poison its health status.
@@ -893,6 +1033,10 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                 self._publish_flight_state()
             elif kind == "reset":
                 self.safety.require_reset()
+                self.spatial_episode_seed = int(msg.get('seed',0))
+                self.spatial_reset_seq = seq
+                self.spatial_episode_id = f'{now_ns()}-{seq}'
+                self.sample.extra.pop('truth_contact_event', None)
                 wind_scale = float(msg.get("wind_scale", 1.0))
                 if not math.isfinite(wind_scale) or not 0.0 <= wind_scale <= 4.0:
                     raise ProtocolError("wind_scale must be finite and in [0,4]")
@@ -954,6 +1098,7 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                         "reset while airborne; commanded landing instead of disarm")
                 req = String()
                 req.data = json.dumps({"v": cfg.protocol_version, "seq": seq,
+                                       "episode_id": self.spatial_episode_id,
                                        "seed": int(msg.get("seed", 0)),
                                        "wind_scale": wind_scale,
                                        "pad_scale": pad_scale,
@@ -1038,7 +1183,8 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                     # PX4 refuses to disarm in flight, and it is right to. End
                     # the episode with a landing so the vehicle is not left to
                     # the offboard-loss failsafe.
-                    self.goto_target_enu = None
+                    if not self._prepare_spatial_landing_hold():
+                        self.goto_target_enu = None
                     self._vehicle_command(VehicleCommand.VEHICLE_CMD_NAV_LAND)
                     self._send_ack(seq, "landing_requested")
             elif kind == "enable_offboard":
@@ -1054,6 +1200,10 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                 self.last_action_px4_time_us = 0
                 self.velocity_position_target_enu = None
                 self.velocity_position_time_us = 0
+                cleanup = self.sample.extra.get("spatial_cleanup_hold", {})
+                if cleanup.get("active"):
+                    self.goto_target_enu = None
+                    cleanup["active"] = False
                 self._send_ack(seq, "offboard_disabled")
             elif kind in {"hello", "state"}:
                 if kind == "hello":
@@ -1087,7 +1237,7 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             if self.last_action_ns:
                 age_s = action_age_seconds(
                     cfg.target, stamp, self.last_action_ns,
-                    int(self.sample.px4_time_us), self.last_action_px4_time_us)
+                    self._task_time_us(), self.last_action_px4_time_us)
                 timeout_s = (cfg.sitl_action_timeout_s
                              if cfg.target == "sitl" else cfg.action_timeout_s)
                 if age_s > timeout_s:
@@ -1122,8 +1272,22 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                     self.last_action_px4_time_us = 0
                     self.velocity_position_target_enu = None
                     self.velocity_position_time_us = 0
+            if self.last_action_ns or self.goto_target_enu is not None:
+                # Maintenance/deadman handling above must still run on wall
+                # time. Only continuous setpoint emission is paced by the
+                # actual spatial physics clock, including entry and cleanup.
+                if not setpoint_publication_due(cfg.target,self.spatial_sim_time_s,
+                        self._last_spatial_setpoint_sim_s,self.heartbeat_hz):
+                    return
+                if cfg.target == "sitl" and self.spatial_sim_time_s is not None:
+                    self._last_spatial_setpoint_sim_s = self.spatial_sim_time_s
+                    self.sample.extra["spatial_setpoint_clock"] = {
+                        "axis":"simulation", "max_hz":self.heartbeat_hz,
+                        "last_publish_sim_s":self.spatial_sim_time_s}
             if self.last_action_ns:
-                if self.command_interface == "velocity_yaw_rate":
+                if self.command_interface == "spatial_acceleration":
+                    self._publish_spatial_acceleration_setpoint()
+                elif self.command_interface == "velocity_yaw_rate":
                     self._publish_velocity_setpoint()
                 else:
                     self._publish_attitude_setpoint()
@@ -1145,6 +1309,39 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                         and self.prestream - self.last_mode_request_tick >= self.mode_request_period):
                     self._vehicle_command(VehicleCommand.VEHICLE_CMD_DO_SET_MODE, 1.0, 6.0)
                     self.last_mode_request_tick = self.prestream
+
+        def _prepare_spatial_landing_hold(self) -> bool:
+            """Replace direct acceleration BEFORE requesting post-policy LAND.
+
+            A delayed NAV_LAND/clock rebase must not leave the last constant
+            acceleration executing until the OFFBOARD-loss deadline. This is
+            cleanup only, using own EKF position, never a policy action/label.
+            Continue a position heartbeat until the learner observes the mode
+            change, but never request OFFBOARD again during landing.
+            """
+            if (cfg.target != "sitl" or self.command_interface != "spatial_acceleration"
+                    or self.sample.nav_state != self.offboard_nav_state):
+                return False
+            position = np.asarray(self.px4_world_position, dtype=float)
+            if position.shape != (3,) or not np.isfinite(position).all():
+                return False
+            self.last_action_ns = 0
+            self.last_action_px4_time_us = 0
+            self.velocity_acceleration_enu = None
+            self.velocity_position_target_enu = None
+            self.velocity_position_time_us = 0
+            self.goto_target_enu = position.copy()
+            self.goto_pad_relative = False
+            self.goto_yaw_enu = yaw_from_quat_wxyz(self.sample.quaternion_enu_flu_wxyz)
+            self.goto_deadline_ns = now_ns() + int(180.0e9)
+            self.offboard_enabled = False
+            self._publish_position_setpoint()
+            self._publish_flight_state()
+            self.sample.extra["spatial_cleanup_hold"] = {
+                "active": True, "own_position_enu_m": position.tolist(),
+                "policy_transition": False,
+            }
+            return True
 
         def _publish_offboard_mode(self, **active: bool) -> None:
             mode = OffboardControlMode()
@@ -1203,14 +1400,31 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             _set_if_present(sp, "reset_integral", False)
             self.attitude_pub.publish(sp)
 
+        def _publish_spatial_acceleration_setpoint(self) -> None:
+            """PX4 acceleration mode; no position/velocity PID feed-through."""
+            self._publish_offboard_mode(acceleration=True)
+            sp = TrajectorySetpoint()
+            sp.timestamp = self._timestamp_us()
+            sp.position = [float('nan')]*3
+            sp.velocity = [float('nan')]*3
+            sp.acceleration = enu_to_ned(px4_direct_acceleration_input(
+                self.velocity_acceleration_enu)).tolist()
+            sp.yaw = float(yaw_enu_to_ned(self.velocity_yaw_hold_rad))
+            sp.yawspeed = 0.
+            self.sample.extra["commanded_spatial_net_acceleration_enu_m_s2"] = list(
+                self.velocity_acceleration_enu)
+            self.sample.extra["spatial_actuation_contract"] = "spatial-enu-direct-net-acceleration-v2"
+            self.trajectory_pub.publish(sp)
+
         def _publish_velocity_setpoint(self) -> None:
             """Track velocity through a continuous, position-backed setpoint."""
             self._publish_offboard_mode(position=True, velocity=True)
             vx, vy, vz, yaw_rate = self.velocity_action
             yaw = yaw_from_quat_wxyz(self.sample.quaternion_enu_flu_wxyz)
             c, s = math.cos(yaw), math.sin(yaw)
-            velocity_enu = np.array([c * vx - s * vy, s * vx + c * vy, vz])
-            now_us = int(self.sample.px4_time_us)
+            velocity_enu = velocity_command_enu(
+                self.velocity_action, yaw, frame=self.velocity_frame)
+            now_us = self._task_time_us()
             if self.velocity_position_target_enu is None:
                 here = (self.px4_world_position if self.px4_world_position is not None
                         else np.asarray(self.sample.position_world_enu, dtype=float))
@@ -1247,7 +1461,13 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             # command cannot ask the airframe to invert itself.
             tilt = float(np.clip(self.velocity_tilt_rad,
                                  -PLANAR_TILT_LIMIT_RAD, PLANAR_TILT_LIMIT_RAD))
-            if abs(tilt) > 1e-9:
+            if self.velocity_acceleration_enu is not None:
+                # Net ENU acceleration is already physically bounded; do not
+                # rotate by vehicle yaw, add gravity, or add a tilt channel.
+                sp.acceleration = [float(value) for value in
+                                   enu_to_ned(self.velocity_acceleration_enu)]
+                self.sample.extra["commanded_longitudinal_tilt_rad"] = 0.0
+            elif abs(tilt) > 1e-9:
                 forward = GRAVITY_M_S2 * math.tan(tilt)
                 acceleration_enu = np.array([c * forward, s * forward, 0.0])
                 sp.acceleration = [float(value)
@@ -1256,6 +1476,10 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             else:
                 sp.acceleration = [float("nan")] * 3
                 self.sample.extra["commanded_longitudinal_tilt_rad"] = 0.0
+            self.sample.extra["velocity_command_frame"] = self.velocity_frame
+            self.sample.extra["commanded_spatial_net_acceleration_enu_m_s2"] = (
+                list(self.velocity_acceleration_enu)
+                if self.velocity_acceleration_enu is not None else None)
             # Heading. The planar envelope holds one absolute heading for the
             # whole episode; without it PX4 free-runs the yaw under a zero rate,
             # which drifts and breaks the "always aligned with the deck"
@@ -1318,6 +1542,9 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             self.last_velocity_ns = stamp
             self.sample.timestamp_ns = stamp
             raw_px4_time_us = int(msg.timestamp)
+            if cfg.target == "sitl" and self.spatial_sim_time_s is not None:
+                self._spatial_wire_clock_anchor = (
+                    raw_px4_time_us, self.spatial_sim_time_s)
             px4_time_us, clock_rebased = self.px4_clock.update(raw_px4_time_us)
             self.sample.px4_time_us = px4_time_us
             self.sample.extra["px4_clock_discontinuities"] = int(
@@ -1385,6 +1612,8 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             self._set_truth(position, velocity)
             self.sample.quaternion_enu_flu_wxyz = tuple(float(x) for x in q_enu)
             self.sample.angular_velocity_flu = tuple(float(x) for x in omega)
+            self.own_optical_history.append(self.spatial_sim_time_s,
+                estimated_position,estimated_velocity,q_enu)
             self.sample.acceleration_enu = tuple(float(x) for x in accel)
             self.sample.pad = self._pad_state(deck_fresh)
             self.sample.battery = self.battery.sample()
@@ -1434,6 +1663,14 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             self.sample.nav_state = int(msg.nav_state)
             armed_value = getattr(msg, "ARMING_STATE_ARMED", 2)
             self.sample.armed = int(msg.arming_state) == int(armed_value)
+            cleanup = self.sample.extra.get("spatial_cleanup_hold", {})
+            if cleanup.get("active") and (
+                    not self.sample.armed or self.sample.nav_state != self.offboard_nav_state):
+                # AUTO.LAND publishes into the same trajectory topic. A
+                # leftover external position hold would override its descent.
+                # Release locally even if the learner dies before disable.
+                self.goto_target_enu = None
+                cleanup["active"] = False
             self.sample.extra["pre_flight_checks_pass"] = bool(
                 getattr(msg, "pre_flight_checks_pass", False))
             self.px4_failsafe = bool(getattr(msg, "failsafe", False))
@@ -1452,7 +1689,8 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
         def _clock_skew_us(self) -> int | None:
             """Wall-clock minus PX4 time, the quantity uxrce_dds_client tracks.
 
-            The gateway stamps every setpoint from the wall clock, and PX4's
+            The legacy gateway stamps setpoints from the wall clock; the
+            spatial gateway anchors them to current PX4 wire time. PX4's
             uxrce_dds_client rewrites that into simulated time with the
             Timesync filter's offset before OffboardChecks compares it against
             hrt_absolute_time(). While the offset is right this difference is a
@@ -1543,6 +1781,8 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                     else:
                         self.velocity_action = (0.0, 0.0, 0.0, 0.0)
                         self.velocity_tilt_rad = 0.0
+                        self.velocity_acceleration_enu = None
+                        self.velocity_frame = "body_heading"
                     self._vehicle_command(
                         VehicleCommand.VEHICLE_CMD_COMPONENT_ARM_DISARM,
                         0.0, 21196.0)
@@ -1800,6 +2040,27 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             position = np.array(
                 [msg.pose.position.x, msg.pose.position.y, msg.pose.position.z], dtype=float
             )
+            o = msg.pose.orientation
+            marker_q = np.array([o.w, o.x, o.y, o.z], dtype=float)
+            capture = None
+            aligned = None
+            own_q = self.sample.quaternion_enu_flu_wxyz
+            if msg.header.frame_id.startswith('landing_board_capture_'):
+                capture = float(msg.header.stamp.sec)+1e-9*msg.header.stamp.nanosec
+                if self.optical_capture_time_s is not None and capture <= self.optical_capture_time_s:
+                    return  # one rendered frame is one sensor observation
+                aligned = self.own_optical_history.at(capture)
+                if aligned is None:
+                    self.sample.extra['marker_pose_valid'] = False
+                    return
+                own_q = aligned[2]
+            if msg.header.frame_id.startswith('landing_board_'):
+                try:
+                    position, marker_q = optical_board_pose_to_enu(
+                        position, marker_q, own_q)
+                except ValueError:
+                    self.sample.extra['marker_pose_valid'] = False
+                    return
             if np.isfinite(position).all():
                 stamp = now_ns()
                 # Planar PnP can occasionally choose a mirrored/remote branch
@@ -1836,9 +2097,7 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                 # this is a real sensor-consistency check rather than access to
                 # simulator truth.  Compare quaternions without assuming a
                 # sign, since q and -q represent the same rotation.
-                o = msg.pose.orientation
-                marker_q = np.array([o.w, o.x, o.y, o.z], dtype=float)
-                imu_q = np.asarray(self.sample.quaternion_enu_flu_wxyz, dtype=float)
+                imu_q = np.asarray(own_q, dtype=float)
                 attitude_innovation_deg = 180.0
                 if (np.isfinite(marker_q).all() and np.isfinite(imu_q).all()
                         and np.linalg.norm(marker_q) > 1e-9
@@ -1865,6 +2124,9 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                     return
                 self.pad_position_enu = position
                 self.pad_pose_time_ns = stamp
+                self.optical_capture_time_s = capture
+                self.optical_capture_own_position = None if aligned is None else aligned[0].tolist()
+                self.optical_capture_own_quaternion = None if aligned is None else aligned[2].tolist()
                 self.sample.extra["marker_pose_valid"] = True
                 self.sample.extra["marker_pose_rejected"] = False
                 self.sample.extra["marker_pose_rejections"] = self.marker_pose_rejections
@@ -2261,7 +2523,7 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             """Start the episode's energy budget at policy handover."""
             self.battery.reset(self.pending_battery_hover_s)
             self.battery_armed = True
-            self.battery_time_us = int(self.sample.px4_time_us)
+            self.battery_time_us = self._task_time_us()
             self.sample.battery = self.battery.sample()
 
         def _integrate_battery(self) -> None:
@@ -2269,11 +2531,12 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
 
             Wall time is the wrong clock: PX4 and Isaac run in lockstep, so a
             slow frame would otherwise bill the policy for the simulator's
-            stall. PX4's own timestamp is the simulator's clock.
+            stall. The spatial profile publishes Isaac's physics clock;
+            legacy profiles retain the rebased PX4 clock.
             """
             if not cfg.battery.enabled or not self.battery_armed:
                 return
-            now_us = int(self.sample.px4_time_us)
+            now_us = self._task_time_us()
             if now_us <= 0:
                 return
             if self.battery_time_us <= 0:
@@ -2323,10 +2586,68 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                            "ack_seq": ack_seq, "time_ns": now_ns(), "status": status,
                            "detail": detail}, peer=peer)
 
+        def _on_spatial_contact_event(self, msg) -> None:
+            try:
+                event = json.loads(msg.data)
+                if event.get('source') != 'physics-first-contact': return
+                if int(event['seed']) != self.spatial_episode_seed: return
+                if int(event['reset_seq']) != self.spatial_reset_seq: return
+                if event.get('episode_id') != self.spatial_episode_id: return
+                interval = float(event['contact_time_s'])-float(event['sample_time_s'])
+                if not 0 <= interval <= .02: return
+                for key,size in (('relative_position',3),('relative_velocity',3),
+                                 ('roll_pitch',2),('angular_rate',3)):
+                    value = np.asarray(event[key],dtype=float)
+                    if value.shape != (size,) or not np.isfinite(value).all(): return
+            except (ValueError,KeyError,TypeError):
+                return
+            # Isolated evaluator evidence, never fused into measurements.
+            self.sample.extra['truth_contact_event'] = event
+
+        def _task_time_us(self) -> int:
+            # PX4 message headers still use _timestamp_us(). This clock is
+            # solely for task integration and must agree with deck physics.
+            if cfg.target == 'sitl' and self.spatial_sim_time_s is not None:
+                return int(round(self.spatial_sim_time_s * 1e6))
+            return int(self.sample.px4_time_us)
+
+        def _on_spatial_clock(self, msg) -> None:
+            try:
+                payload = json.loads(msg.data)
+                value = float(payload['sim_time_s'])
+            except (ValueError, KeyError, TypeError):
+                return
+            if math.isfinite(value) and value >= 0:
+                self.spatial_sim_time_s = value
+                self.spatial_profile_sha256 = payload.get('profile_sha256')
+                self.spatial_source_sha256 = payload.get('source_sha256')
+                self.spatial_clock_seen_ns = now_ns()
+
         def _send_state(self, ack_seq: int,
                         peer: tuple[str, int] | None = None) -> None:
             self.tx_seq += 1
             stamp = now_ns()
+            self.sample.extra['spatial_clock'] = {
+                'sim_time_s': self.spatial_sim_time_s,
+                'profile_sha256': self.spatial_profile_sha256,
+                'source_sha256': self.spatial_source_sha256,
+                'valid': self.spatial_sim_time_s is not None and
+                         (stamp - self.spatial_clock_seen_ns) * 1e-9 <= cfg.state_timeout_s}
+            optical_valid = (self.pad_position_enu is not None and
+                             self.sample.extra.get('marker_pose_valid', False) and
+                             self.sample.marker_quality > 0 and
+                             (stamp - self.pad_pose_time_ns) * 1e-9 <= cfg.state_timeout_s)
+            self.sample.extra['optical_measurement'] = {
+                'frame': 'pad_enu', 'valid': bool(optical_valid),
+                'sample_id': int(self.pad_pose_time_ns),
+                'position_m': self.pad_position_enu.tolist() if optical_valid else None,
+                'confidence': float(self.sample.marker_quality) if optical_valid else 0.0}
+            if self.optical_capture_time_s is not None:
+                self.sample.extra['optical_measurement'].update(
+                    sample_id=int(round(self.optical_capture_time_s*1e9)),
+                    capture_time_s=self.optical_capture_time_s,
+                    own_position_at_capture_m=self.optical_capture_own_position,
+                    own_quaternion_at_capture_wxyz=self.optical_capture_own_quaternion)
             if ((stamp - self.sample.timestamp_ns) * 1e-9 > cfg.state_timeout_s):
                 self.sample.estimator_valid = False
             self._refresh_land_detector(stamp)

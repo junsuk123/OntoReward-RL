@@ -134,7 +134,7 @@ BENCHMARK_SCENARIOS = (
     "circle", "zigzag", "u_turn", "vertical_heave_boat",
     ESCAPE_BURST_SCENARIO, STRAIGHT_ESCAPE_BURST_SCENARIO,
     STRAIGHT_ESCAPE_BURST_TRACK_SCENARIO,
-) + SEGMENTED_CRUISE_SCENARIOS
+) + SEGMENTED_CRUISE_SCENARIOS + ('spatial_reference_cv_ca_cv',)
 # Scenarios whose shape is a fixed closed path rather than a fresh heading per
 # episode. They carry their phase across a reset instead of their heading, and
 # the arena's inward steering never applies to them: the path is bounded by
@@ -817,6 +817,8 @@ class PadTrajectory:
         self.t0 = 0.0
         self.yaw = 0.0
         self._yaw_initialised = False
+        self.spatial_motion = None
+        self.spatial_origin = None
         self.route = RoadRoute(cfg.route_size_m[0], cfg.route_size_m[1],
                                cfg.route_corner_radius_m)
         self.waypoint_route = (
@@ -898,6 +900,29 @@ class PadTrajectory:
         cfg = self.cfg
         if scenario not in BENCHMARK_SCENARIOS:
             raise ValueError(f"unknown benchmark platform scenario {scenario!r}")
+        if scenario == 'spatial_reference_cv_ca_cv':
+            from ontology_rgat.spatial.scenarios import sample_spatial_scenario
+            if cfg.mode != 'random_walk' or float(speed_scale) != 1.:
+                raise ValueError('spatial reference motion needs random_walk mode and nominal scale 1')
+            origin = (np.asarray(self.pose(sim_time)[0],dtype=float) if self._driven and cfg.route_start=='continue'
+                      else self.start+np.array([0.,0.,cfg.deck_height_m]))
+            self.spatial_motion = sample_spatial_scenario(seed)
+            self.spatial_origin = origin.copy()
+            self.benchmark_scenario = scenario
+            self.t0 = float(sim_time)
+            self.heading0 = self.yaw = self.spatial_motion.heading
+            self.speed = self.spatial_motion.v0
+            self._driven = self._yaw_initialised = True
+            self.escape_burst = None
+            self.escape_burst_armed = False
+            position,velocity = self.pose(sim_time)
+            return dict(mode=cfg.mode,speed_m_s=self.speed,speed_scale=1.,heading_rad=self.heading0,
+                        position_enu_m=position.tolist(),velocity_enu_m_s=velocity.tolist(),
+                        yaw_rad=self.yaw,route_start=cfg.route_start,arc_length_m=0.,lane_offset_m=0.,
+                        benchmark_scenario=scenario,escape_burst=None,
+                        spatial_motion=self.spatial_motion.manifest())
+        if self.spatial_motion is not None:
+            raise ValueError('switching a spatial trajectory to a legacy scenario requires a fresh stack')
         self.benchmark_scenario = scenario
         carried_waypoint = self._waypoint_progress(sim_time)
         # Where the lorry has got to so far -- along the road and across it --
@@ -1431,6 +1456,9 @@ class PadTrajectory:
         """Analytic deck position and velocity in world ENU."""
         cfg = self.cfg
         t = float(sim_time) - self.t0
+        if self.spatial_motion is not None:
+            offset,velocity = self.spatial_motion.state(t)
+            return self.spatial_origin+offset,velocity
         offset = np.zeros(3)
         velocity = np.zeros(3)
         if not cfg.is_static:

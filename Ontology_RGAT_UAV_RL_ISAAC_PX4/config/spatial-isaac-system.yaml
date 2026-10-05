@@ -1,0 +1,64 @@
+extends: shin2026-planar-system.yaml
+
+# Separate spatial causal integration profile. Never aliases a planar policy.
+system:
+  control_hz: 50.0
+  state_timeout_s: 2.0
+  sitl_action_timeout_s: 3.0
+benchmark:
+  planar_entry: false
+  initial_conditions:
+    relative_lateral_x_m: [-0.4, 0.4]
+    relative_lateral_y_m: [-0.4, 0.4]
+    relative_altitude_m: [2.0, 2.5]
+    platform_yaw_misalignment_deg: [-5.0, 5.0]
+isaac:
+  spatial_clock: true
+  # Shared scene illumination affects the real camera too; intentionally
+  # included in the deployment hash (not a hidden spectator-only override).
+  ambient_light_intensity: 500.0
+  hover_start_offset_pad_m: [0.0, 0.0, 2.5]
+  viewport_follow:
+    frame: street
+    offset_m: [0.0, -8.0, 0.0]
+    look_at_offset_enu_m: [0.0, 0.0, -0.35]
+    focus: pair
+    pair_index: 0
+    # Zoom out before a climbing vehicle leaves the GUI's vertical frustum.
+    # Spectator-only: excluded from the scientific deployment hash.
+    pair_span_m: 2.5
+    smoothing: 0.22
+vision:
+  mode: aruco
+  enabled: true
+  dictionary: DICT_4X4_50
+  pose_source_for_policy: true
+  board:
+    - {id: 10, side_m: 0.16, center_xy_m: [0.0, 0.0]}
+    - {id: 11, side_m: 0.22, center_xy_m: [-0.45, -0.30]}
+    - {id: 12, side_m: 0.22, center_xy_m: [-0.45, 0.30]}
+    - {id: 13, side_m: 0.22, center_xy_m: [0.45, -0.30]}
+    - {id: 14, side_m: 0.22, center_xy_m: [0.45, 0.30]}
+  camera:
+    model: spatial_nadir_aruco_v1
+    resolution: [640, 480]
+    horizontal_fov_deg: 90.0
+    pitch_down_deg: 90.0
+    rate_hz: 20.0
+parallel:
+  marker_dictionary: DICT_4X4_50
+  marker_id_stride: 0
+landing:
+  max_time_s: 70.0
+  world_xy_limit_m: 60.0
+
+px4:
+  sitl_parameters:
+    # The inherited planar speed limits otherwise silently clip spatial
+    # commands. Acceleration is additionally bounded jointly by the adapter.
+    MPC_XY_VEL_MAX: 10.0
+    MPC_Z_VEL_MAX_UP: 5.0
+    MPC_Z_VEL_MAX_DN: 5.0
+    MPC_ACC_HOR_MAX: 3.6
+    MPC_ACC_UP_MAX: 2.0
+    MPC_ACC_DOWN_MAX: 2.0

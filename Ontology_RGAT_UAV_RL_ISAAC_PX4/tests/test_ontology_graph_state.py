@@ -68,7 +68,11 @@ def test_the_schema_is_the_minimum_that_leaves_a_graph_to_reason_over():
     a different method.
     """
     graph = empty_state_graph()
-    assert len(STATE_NODE_NAMES) == 9
+    # The properties are what matter, not the node count: the schema grew from
+    # 9 to 10 when AttitudeStability was added in /2. Pinning the count made a
+    # correction to the ontology look like a regression.
+    assert len(STATE_NODE_NAMES) >= 9
+    assert len(set(STATE_NODE_NAMES)) == len(STATE_NODE_NAMES)
     assert len(STATE_RELATION_NAMES) == 4
     assert set(STATE_RELATION_NAMES) == {
         "degrades", "supports", "contributes", "self"}
@@ -82,6 +86,16 @@ def test_the_schema_is_the_minimum_that_leaves_a_graph_to_reason_over():
     direct = {name for name in STATE_RISK_NODES
               if STATE_GOAL_NODE in successors[name]}
     assert direct == {"MeasurementAge", "RelativeRange"}
+    # Every node that feeds the intermediate must be a touchdown precondition,
+    # and every declared precondition must feed it. Schema /1 multiplied only
+    # alignment, descent, range and visibility, leaving relative lateral
+    # motion and attitude -- three of the five criteria the landing profile
+    # declares -- out of the one node whose purpose is to say a touchdown is
+    # admissible. See test_touchdown_safety_covers_every_declared_criterion.
+    feeds_touchdown = {source for source, target, _ in STATE_GRAPH_EDGES
+                       if target == "TouchdownSafety"}
+    assert {"AlignmentError", "DescentRate", "RelativeRange", "TargetMotion",
+            "PadVisibility", "AttitudeStability"} <= feeds_touchdown
     assert "TouchdownSafety" in STATE_NODE_NAMES
     assert successors["TouchdownSafety"] == {STATE_GOAL_NODE}
 
@@ -557,3 +571,45 @@ def test_a_warm_start_without_situation_graphs_is_refused_not_guessed():
         np.stack([graph.X.T.astype(np.float32)] * count))
     metrics = behavior_clone(model, dataset, epochs=1)
     assert math.isfinite(metrics["action_loss_after"])
+
+
+def test_touchdown_safety_covers_every_declared_criterion():
+    """The intermediate node must not be true where a touchdown would fail.
+
+    ``config/shin2026-planar-system.yaml`` declares five touchdown criteria:
+    horizontal error, vertical speed, tilt, tilt rate and relative lateral
+    speed. Schema /1's product covered the first two plus range and
+    visibility; relative lateral motion and attitude reached no node at all,
+    so ``attitude_stability`` was computed by the perception front end and
+    discarded. ``TouchdownSafety`` could therefore read high in a state whose
+    contact would have been scored a failure.
+    """
+    import yaml
+    from ontology_rgat.rgat.state_graph import state_node_values, STATE_NODE_NAMES
+
+    profile = yaml.safe_load(
+        (ROOT / "config/shin2026-planar-system.yaml").read_text(encoding="utf-8"))
+    while "extends" in profile:  # criteria live in the base profile
+        parent = (ROOT / "config" / profile.pop("extends"))
+        base = yaml.safe_load(parent.read_text(encoding="utf-8"))
+        base.update({k: v for k, v in profile.items() if k != "landing"})
+        base["landing"] = {**(base.get("landing") or {}),
+                           **(profile.get("landing") or {})}
+        profile = base
+    criteria = profile["landing"]
+    for key in ("success_xy_m", "success_vz_m_s", "success_tilt_deg",
+                "success_rate_deg_s", "success_rel_speed_xy_m_s"):
+        assert key in criteria, f"{key} is declared and must be represented"
+
+    index = {name: i for i, name in enumerate(STATE_NODE_NAMES)}
+    settled = _observation()
+    base = state_node_values(settled)[index["TouchdownSafety"]]
+    assert base > 0.0
+
+    # Each precondition, degraded alone, must lower the conjunction.
+    from dataclasses import replace
+    for field, worse in (("attitude_stability", 0.1),
+                         ("image_plane_motion_safety", 0.1)):
+        degraded = replace(settled, **{field: worse})
+        value = state_node_values(degraded)[index["TouchdownSafety"]]
+        assert value < base, f"degrading {field} must lower TouchdownSafety"

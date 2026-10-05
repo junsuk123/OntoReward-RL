@@ -1,0 +1,44 @@
+extends: planar_three_arm_comparison.yaml
+experiment: planar_isaac_smoke_no_bc
+
+# Bounded bring-up check for the Isaac/PX4 stack, 2026-10-03.
+#
+# PURPOSE
+# -------
+# Answer two questions before any multi-day run is started:
+#
+#   1. does the stack actually fly episodes and persist them, or does it
+#      reproduce the 2026-10-02 failure in which it ran for 20 h with Isaac
+#      rendering, the gateways draining UDP and the orchestrator alive, while
+#      writing not one episode to results/datastore; and
+#   2. does it still come up with behaviour cloning switched off?
+#
+# This config makes no scientific claim. Its budgets are too small to train
+# anything and its results must never be reported.
+#
+# BEHAVIOUR CLONING IS OFF
+# ------------------------
+# The inherited block warm-starts PPO from
+# ``privileged_relative_state_velocity_pd_v4``, a PD controller that reads the
+# simulator's true relative state. That is imitation learning from a
+# privileged teacher, which the experiment's own constraints forbid: both
+# learned agents must start from a random initialisation, PN may not teach,
+# and hidden simulator state may not reach a policy. ``enabled: false`` is
+# honoured at run_three_pipeline.py:1915, which skips the demonstration pass
+# entirely.
+#
+# The inherited comments warn that an uncloned policy "spends its first
+# episodes diverging". That is expected here and is not what this run tests;
+# it tests only that episodes are produced and recorded.
+behavior_cloning:
+  enabled: false
+
+training:
+  episodes_quick: 2
+  episodes_full: 2
+
+evaluation:
+  episodes_quick: 1
+  episodes_full: 1
+
+publication_claim_allowed: false

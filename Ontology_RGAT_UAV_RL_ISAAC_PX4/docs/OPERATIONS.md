@@ -1,5 +1,129 @@
 # 운영: 실행 프로파일, 산출물, 상태 확인
 
+## 현재 진입점 (2026-10-05)
+
+공간 기본값은 v5, 현재 별도 검증 후보는 v10이다. 실제 v8 PPO 배관은 15회 종료 확인까지
+완료했으나 proposed learned landing이 없어 acceptance=false다. v10은 문맥/촬영 시각/
+감독기 정합 후 6개 로컬 학습·120회 고정 시험을 완료하고 실제 PPO·재로딩 평가 중이다.
+최신 판정은 [감사 보고서](refactor/REFERENCE_V28_AUDIT_KO.md)를
+따른다. 두 v10 광학 유실 진단의 terminal hold/cleanup 통과를 PPO 착륙으로 세지 않는다.
+
+앞선 실제 반복에서 arming 거절 상태의 setup hover가 entry geometry를 만족하는
+결함을 수정했다. 공용 entry는 armed를, spatial reset/정책 step은 armed+OFFBOARD를
+필수로 확인한다. 이를 충족하지 못한 실행은 인프라 실패로 제외하며 TIMEOUT이나
+학습 착륙 성공으로 세지 않는다. 새 gate 적용 후 70초 비행 두 번과 종료 확인은
+완료됐지만 모두 TIMEOUT이며, 광범위한 반복 reset 안정성은 아직 미검증이다.
+Preflight compass/accelerometer 경고가 있는 인스턴스에서 검사
+기준을 해제하지 말고, 소유권을 확인한 후 해당 스택의 복구·재검증을 수행한다.
+
+루트에서 `./run.sh`는 도움말, `./run.sh status`는 읽기 전용 점검,
+`./run.sh reference-smoke --ppo-minibatch`는 경량 수치 검증이다.
+`./run.sh reference --stage ...`만 새 v2.8 프로파일을 사용한다.
+이 프로파일은 아직 Isaac backend를 실행하지 않는다.
+
+현재 reference는 `two_axis_reference_v28_active.yaml`이다. 비활성 nominal graph가
+선택되면 관계 전용 PPO 25×2048 train decisions와 validation scale 검사 비용이
+추가되며 summary에 분리 기록된다. 원본 best checkpoint는 보존한다.
+`config/control/spatial_acceleration_v1.yaml`은 제어 경계 시험용이고 live 학습 실행용이 아니다.
+새 공간 실행은 아래처럼 별도로 요청한다. 최신 schema/profile hash가 다른
+체크포인트는 거절한다. 출력 디렉터리는 실험마다 새로 만들며 기존 파일을 덮어쓰지 않는다.
+
+```bash
+# 저장소 루트, 단기 배관 검사 (착륙 성능을 보장하지 않음)
+./run.sh spatial --stage train --output /tmp/new-spatial-run --seeds 811 \
+  --iterations 8 --decisions 512 --horizon 30
+./run.sh spatial --stage evaluate --output /tmp/new-spatial-run --seeds 811 --horizon 30
+# nominal 로컬 안전 preflight 후 실제 비행; 기존 스택은 명시적 --adopt-stack 필요
+./run.sh spatial --stage isaac --output /tmp/new-spatial-run --seeds 811 --horizon 30
+```
+
+학습 기본값은 `local-spatial`이며 `--training-backend isaac`를 명시하면
+사전학습 상태 수집·PPO rollout·validation·관계형 가드까지 실제 Isaac/PX4에서 실행한다.
+이때 curriculum은 끄고 모든 episode를 해당 공간 프로파일의 difficulty 1에서 실행한다.
+평가 backend는 `isaac-px4-spatial`이다. 초기화 전에 실행 중인 Isaac이 방송하는
+설정 해시와 현재 프로파일을 비교하므로 YAML만 수정하고 스택을 재사용할 수 없다.
+`isaac_acceptance.json`은 완전한 3-arm 행렬·unsafe=0·학습 착륙 관측을 요구하며,
+불충족하면 exit 2다. 진단 제어기의 착륙이나 종료 후 AUTO.LAND는 학습 착륙이 아니다.
+최신 실제 비행 증거와 남은 실패는 refactor audit에 별도로 기록한다.
+
+`--contract-version 6/7/8/9/10`은 실험 후보이며 기본값은 여전히 5다. v6는 독립적인
+가속도 OFFBOARD 계약, v7은 기준 ABG/불확실성/이전 명령 packet, v8은 공용 시드의
+외력·토크·초기 속도/각속도 외란을 로컬에도 적용한다. v8의 mass/inertia는 Iris USD의
+1.5 kg 및 `[.029125,.029125,.055225] kg m²`를 쓴다. 전체 PX4/렌더러 동등성을 뜻하지
+않으며 기존 2D/무외란 결과와 동일 실험으로 합치지 않는다.
+
+v9는 별도 `spatial-isaac-system-v9.yaml`을 사용한다. capture-time 필드가 없는
+gateway를 허용하지 않으므로, 소유한 이전 stack이 종료됐는지 확인하고
+`scripts/sync_gateway.sh`로 runtime mirror를 갱신한 후 새로 시작한다.
+47-field packet과 두 개의 9×12 reference context, 동일 시드 CV–CA–CV 및 로컬
+75ms 영상 지연이 계약에 포함된다. 외란/명목 contact 기준은 유지한다.
+`--stage train`은 학습만, `--stage evaluate`는 local reload 평가만 실행한다.
+`--stage all`에는 실제 Isaac도 포함되므로 다른 진단 flight와 동시에 시작하지 않는다.
+flight lock 거절을 우회하거나 상대 실행을 인계하지 않는다.
+
+Cold start에서 UDP listen은 Isaac clock 식별 정보 준비를 뜻하지 않는다. spatial backend는
+reset/arm 전 read-only state를 최대 30초 기다리며, 이미 보고된 profile/source hash 불일치는
+즉시 거절한다. 기다린 횟수·시간은 `runtime_identity_ready` event에 기록한다. 정보 미도착을
+RL 실패나 성공으로 세지 말고 원본 로그/미완료 checkpoint를 보존한다. 종료 시 stack은
+자신의 Popen 자식만 회수하며 leader 종료 후에도 살아 있는 process group을 확인한다.
+미완료 checkpoint는 nominal eligibility가 없고 optimizer snapshot이 아니므로 임의로
+`summary.json`을 만들거나 성공한 run처럼 재사용하지 않는다.
+
+v10은 동일 v9 Isaac YAML을 사용하지만 다른 checkpoint 서명이다. 공통 supervisor의
+trust/latch/제동/corridor 및 외란 중 own-position backup을 바꾸므로 v9 가중치를
+자동 이전하지 않는다. 기존 touchdown 기준/외란을 유지하고 새 학습·재검증이 필요하다.
+actual acceptance `/3`는 모든 episode의 stop 확인과 SAFE_ABORT의 별도 terminal
+hold snapshot을 요구한다. timeout 이름, setup의 landed 신호, cleanup AUTO.LAND를
+성공으로 해석하지 않는다. 단일 hold snapshot도 지속 안정성 증명은 아니다.
+
+`tools/check_spatial_landing.py --optical-blackout-after-s 2`는 명시적 진단 전용
+광학 입력 유실 시험이다. physics/own EKF/외란을 변경하지 않고 PPO teacher나
+학습 데이터로 사용하지 않는다. 이런 고장 주입 결과를 nominal PPO 성능과 합치지 않는다.
+
+소유한 스택에서만 `--reset-recoveries N`(0~5, 기본 0)을 명시할 수 있다. 정책 시작
+전 entry 실패만 run-wide 예산을 소비해 같은 seed로 재시도한다. 각 실패/재기동 시간은
+`reset_recovery.jsonl`에 기록하며 RL outcome으로 세지 않는다. `--adopt-stack`으로
+빌린 프로세스는 재기동하지 않는다. 정책 중 오류는 이 복구로 숨기지 않는다.
+지면 착지 후 자동 disarm이 꺼져 있어도, fresh landed 확인 뒤 일반 disarm을 보내고
+실제 armed=false까지 확인한다. 공중 강제 disarm으로 종료 기준을 충족시키지 않는다.
+재시도 소비량은 `reset_recovery.jsonl`에서 이어 받으므로 같은 output의 train/test
+스택을 다시 열어도 한도가 복원되지 않는다. 공간 진입 settle 전 구간에 OFFBOARD를
+요구한다. 최종 인계 guard의 실패도 정책 전 실패로만 기록하고, 정책 시작 후에는 이
+경로로 재시도하지 않는다.
+
+direct spatial 종료에서는 own-EKF 위치 제동을 먼저 시작하고 LAND를 요청한다.
+UDP ACK는 PX4의 LAND 수신 확인이 아니다. fresh armed/airborne/OFFBOARD 상태일 때만
+1초 간격으로 재요청하며, 모드 전환 후 멈추고 원래 cleanup deadline을 늘리지 않는다.
+공간 SITL의 연속 setpoint는 entry/cleanup까지 **물리 시계 기준 최대 50Hz**다.
+느린 렌더링에서 wall 50Hz를 그대로 보내면 PX4 lockstep 경로에 과도한 명령이 쌓인다.
+wall deadman/maintenance 및 hardware/legacy 동작은 별개이며, 멈춘 물리 시계에 가짜
+heartbeat를 생성하거나 밀린 ticks를 몰아서 보내지 않는다.
+
+모든 실제 실행을 마친 뒤 화면만 열려면 프로젝트 디렉터리에서 아래 명령을 실행한다.
+소유 stack/flight lock을 사용하고 타 실험을 인계하지 않으며, 비무장 telemetry만 조회한다.
+setup의 landed=true는 착륙 실적이 아니다.
+
+```bash
+PYTHONPATH=python python tools/show_spatial_view.py --contract-version 10 \
+  --minutes 60 --output /path/to/new-view
+```
+
+```bash
+# 매우 짧은 실제 PPO 배관 검사: 학습 성능/착륙률 측정용이 아님
+./run.sh spatial --stage all --training-backend isaac --output /tmp/new-isaac-smoke \
+  --seeds 816 --iterations 2 --decisions 8 --horizon 0.8 \
+  --activation-iterations 1 --activation-decisions 8 --isaac-episodes 1
+```
+
+0.8초 임무 시간으로 착륙 성공을 기대해서는 안 된다. 전체 실행이 정상이어도
+학습 착륙 미관측이면 acceptance는 false/exit 2를 유지한다. 장시간 학습은 별도 승인 후 실행한다.
+
+**아래는 기존 Isaac 운용 안내**다. 아래의 `./run.sh --...`는 이제
+`./run.sh isaac-legacy --...`로 읽어야 하며, 인자 없는 실행이 full을 시작한다는
+설명은 폐기됐다. 기존 스택 takeover도 기본 비활성화되었다. 의도적으로 이전
+비행을 종료할 때만 `--takeover`를 명시한다.
+[현재 안정성·미완료 항목](refactor/REFERENCE_V28_AUDIT_KO.md)을 확인한 뒤 실행한다.
+
 [문서 안내](README.md) · [제안 알고리즘](ONTOLOGY_RGAT_STATE.md) ·
 [평면 엔벨로프](PLANAR_ENVELOPE.md) · [아키텍처](ARCHITECTURE.md)
 
@@ -250,3 +374,112 @@ abort한 Kit은 버퍼에 남은 stdout을 버리기 때문에
 Kit 자신의 세션 로그(`~/.cache/packman/chk/kit-kernel/*/logs/Kit/*/*/kit_*.log`)에서
 assertion을 읽어 출력하고 그 경로를 함께 알려준다. 직전 시도의 로그는
 `isaac.previous.log`로 남는다.
+
+### Spatial 추가 학습과 출처 보존
+
+`run.sh spatial --stage train`의 `--evaluation-every N`은 nominal validation
+간격이다. `--ppo-preset reference-v28-scratch`는 세 arm 공통으로 epoch 8,
+actor LR 5e-4, entropy 0.0025, initial log-std -1.1을 사용한다. MATLAB과
+RNG/모든 학습 절차가 같다는 뜻은 아니다. 공간 정책의 raw MLP는 원본의
+zero bias, Gaussian fan-in scaling, 마지막 층 gain 0.1을 사용한다.
+기존 2D 호출의 기본 초기화는 바꾸지 않았다.
+이 preset에는 critic-only 2-iteration warmup도 포함된다. `--gae-lambda`의 기본은
+0.95이며 다른 값을 쓰면 원본과 다른 학습 요인이다. `--nominal-only`는 로컬 학습도
+난이도 1.0으로 고정한다(검증은 옵션과 무관하게 항상 1.0).
+기존 eligible actor/critic에서 fine-tuning할 때 `--value-warmup-iterations 0`처럼
+명시적으로 warmup을 바꿀 수 있다. 모든 arm에 공통 적용하고 plan/hyperparameters에
+기록하며, 생략하면 기존 preset 기본값을 유지한다.
+
+각 run의 `progress.json`은 매 iteration 원자적으로 갱신된다. 중단된 run의
+진행 기록을 완료된 `summary.json`이나 selectable checkpoint로 해석하지 않는다.
+`--initialize-from PREVIOUS_OUTPUT`은 동일 계약·arm·seed의 eligible PPO
+checkpoint로 **새 output**을 초기화한다. 원본 SHA-256을 기록하고 optimizer를
+새로 만든 fine-tuning이며, 정확한 optimizer-state resume나 교사 학습이 아니다.
+nominal 에피소드를 새로 완료해야 다시 checkpoint 선택이 가능하다.
+
+schema 3의 curriculum 승급·easy/bridge replay·속도 tolerance/unsafe penalty
+ramp는 로컬 학습 전용이다. validation/test/Isaac는 항상 난이도 1.0이다.
+초기 커리큘럼 SUCCESS를 정상 난이도의 학습 착륙으로 보고하지 않는다.
+
+`--curriculum-angular-scales 2 4`는 3D 탐색을 위한 **추가 실험 요인**이다.
+초기 학습 tilt/rate 허용치를 각각 2/4배로 시작하고 난이도와 함께 원래 값으로
+돌린다. reference MATLAB과 동일한 절차라고 주장하지 않는다. 난이도 1.0은
+옵션 유무에 관계없이 bitwise 같은 nominal 경로이며 Isaac 사용은 거절한다.
+`--workers 3`은 로컬 세 arm을 별도 프로세스로 실행한다. Isaac 병렬 비행은
+허용하지 않으며 interrupt는 해당 로컬 worker만 정리한다.
+
+`tools/evaluate_spatial_checkpoint.py`는 개별 eligible 체크포인트의 진단/validation용이다.
+기본 split은 validation `[2000,2001]`, 명시적 test는 `[12000,12001]`이며,
+단일 arm 결과를 complete matrix로 표시하지 않는다. 실제 Isaac 전에는 nominal
+로컬 unsafe preflight를 적용하고 snapshot SHA-256을 기록한다.
+`checkpoint_evaluated.pt`에 실제 평가 bytes를 보존하고 `status.json`은 실행 중/
+완료/중단을 구분한다. `--stage isaac`도 인프라 오류 시 `passes=false`의 불완전
+acceptance를 남기며 이전 통과 파일이 남아 있지 않게 한다.
+`--checkpoint-wait-seconds N`은 완료된 `summary.json`만 bounded 대기한다.
+먼저 완료된 arm부터 순서대로 평가할 수 있지만 매 arm의 nominal safety preflight는
+reset/arming 전에 수행한다. `progress.json`만 있는 미완료 arm은 배포하지 않는다.
+
+현재 기본 공간 계약은 v5다. v3/v4 재현은 `--contract-version 3|4`를 명시한다.
+v4 → v5 전이는 `--initialize-from OLD --initialize-v4-weights`로만 허용한다.
+같은 arm/seed/나머지 config를 요구하고, source/target 서명과 원본 SHA256을 기록한다.
+이전 eligible 상태는 승계하지 않으므로 v5 nominal 에피소드 완료·검증 전에는 비행하지 않는다.
+
+실제 실행 전 gateway mirror와 running world의 YAML/source SHA256이 일치해야 한다.
+Isaac 코드를 바꾼 뒤 실행 중인 이전 world를 adopt하면 arming 전에 실패한다.
+자신이 소유한 비행의 종료와 disarm을 확인한 다음 그 스택만 재시작한다.
+공간 경로는 PX4 wire timestamp/physics 경과를 사용하므로 앞선 역사적 legacy
+wall-clock 성능 문제와 분리해서 진단한다. safety timeout이나 preflight를 해제하지 않는다.
+
+공간 학습의 완결 에피소드 수집은 `--episodes-per-iteration 6`으로 명시한다.
+이때 `--decisions` 대신 에피소드 수가 주 rollout 예산이며, 실제 steps는 progress/
+summary에 누적 실측한다. `--ppo-preset reference-v28-episodic`은 upstream처럼
+전체 rollout advantage를 한 번 정규화한다. 기존 preset/decision-budget 결과를
+재해석하지 않는다. 세 arm의 동일 episode 수가 동일 decision 수라는 뜻은 아니다.
+관계 활성화의 추가 PPO steps와 사전학습은 별도로 보고한다.
+
+`--curriculum-loss-timeout-start 12`는 local training에서만 visual-loss abort
+시작을 12→3초로 줄인다. nominal/test/Isaac에서는 항상 원래 3초이며, 기록된
+커리큘럼 난이도 1에서 기존 cfg와 완전히 같아야 한다.
+
+완료 결과의 기술 통계는 다음처럼 새 파일에 저장한다. 이 도구는 체크포인트를
+선택하거나 시뮬레이션을 실행하지 않으며 기존 출력 파일을 덮어쓰지 않는다.
+
+```bash
+PYTHONPATH=python python tools/summarize_spatial_run.py \
+  --run /path/to/completed-run --backend isaac --output /path/to/new-report.json
+```
+
+실제 acceptance v2는 제안 R-GAT의 착륙·비영 관계 출력까지 요구한다. 적은 횟수의
+통과와 robustness/reference-parity 검증은 별개이며 보고서에 항상 구분한다.
+
+실제 비교의 PX4 EKF/HTE 이력을 분리하려면 `--fresh-stack-per-episode`를 명시한다.
+자신이 소유한 스택만 매 episode 경계에서 다시 시작하며 직전 flight stop 확인이
+필수다. `--adopt-stack`과 함께 사용할 수 없다. 예정된 분리는 실패 복구와 다르며
+`episode_isolation.jsonl`에 비용을 기록한다. `--reset-recoveries`는 여전히 별도의
+정책 전 인계 오류 예산이고, 같은 시드 재시도·0 transitions 원칙을 지킨다.
+
+실제 frozen 비교의 seed는 `--isaac-seed-start 13000 --isaac-episodes 2`처럼
+명시할 수 있다. 기본은 기존 `[12000,12001,...]`이며 모든 arm에 같은 범위를 쓴다.
+validation `[2000,2001]` 및 local test `[9000,9001]`는 변경하지 않는다. 평가 행에는
+실제 episode seeds, 평가 checkpoint SHA256 및 cold-stack 옵션을 함께 기록한다.
+새 범위를 사용했다는 사실만으로 multi-seed robustness가 증명되지는 않는다.
+
+Direct acceleration 종료는 먼저 자신의 EKF 위치로 임시 braking hold를 만들고
+NAV_LAND를 요청한다. PX4가 OFFBOARD를 벗어나면 gateway가 자체적으로 그 hold를
+해제하며, learner도 모드 전환 확인 뒤 스트림을 끈다. 마지막 가속도를 남겨둔 채
+먼저 heartbeat를 끊지 않는다. 공중 강제 disarm은 허용하지 않는다.
+`flight_terminal.jsonl`은 task terminal 직전 상태와 cleanup 확인 결과를 따로 보존한다.
+cleanup 실패는 성공/timeout 완료 에피소드로 승인되지 않는다.
+
+각 PPO update 직후의 `checkpoint_last_update.pt`는 검증 도중 장애 분석을 위한
+진단 파일이다. `eligible=false`, `phase=unvalidated_update_snapshot`이며 선택·배포
+후보가 아니다. optimizer 상태도 저장하지 않으므로 exact resume 파일로 쓰지 않는다.
+정상 validation/nominal eligibility를 통과한 best/final/relational 파일과 구분한다.
+
+고정된 단일 정책의 평가 전용 시드 확대는 `tools/evaluate_spatial_checkpoint.py`
+`--split test --test-seed-start 9100 --episodes 20 --backend local`로 실행한다.
+기존 `--checkpoint`, `--plan`, 새로운 `--output`도 필요하다. 실제 Isaac test의
+최소 시작 시드는 10000이며 validation 2000/2001은 이 옵션으로 바꾸지 못한다.
+평가 bytes snapshot/SHA256과 실제 시드 목록을 저장한다. 이 명령은 학습·수정·선택을
+하지 않고, 성공이 없거나 unsafe가 있으면 exit 2를 반환한다. 단일 정책 평가가
+전체 3-arm acceptance를 대신하지 않으며 추가 test로 후보를 사후 선택하지 않는다.

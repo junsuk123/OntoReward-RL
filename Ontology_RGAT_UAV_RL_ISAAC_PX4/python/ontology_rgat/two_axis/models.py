@@ -11,6 +11,7 @@ from torch import nn
 from ..rgat.layers import RelationalGraphAttention
 from ..rgat.topology import Topology
 from .contracts import load_v2_registry
+from .config import GraphConfig
 from .environment import ObservationBundle
 from .ontology import (FEATURE_CHANNELS, GRAPH_EDGES, NODE_NAMES, QUERY_NODES,
                        RELATION_NAMES, semantic_flat_features)
@@ -108,12 +109,16 @@ class _Representation(nn.Module):
 
 
 class TwoAxisActor(nn.Module):
-    def __init__(self, mode: PolicyMode, *, hidden: int = 32, seed: int = 42):
+    def __init__(self, mode: PolicyMode, *, hidden: int = 32, seed: int = 42,
+                 initial_log_std: float = -0.7):
         super().__init__()
         self.representation = _Representation(
             mode, role="actor", hidden=hidden, seed=seed)
         self.head = nn.Linear(hidden, 2)
-        self.log_std = nn.Parameter(torch.full((2,), -0.7))
+        # Shared across arms. This scale decides how far an untrained policy
+        # throws the pad out of a frame only 0.7*h wide, so it governs whether
+        # early episodes produce any landing signal at all.
+        self.log_std = nn.Parameter(torch.full((2,), float(initial_log_std)))
 
     def forward(self, packets: torch.Tensor,
                 graphs: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
@@ -141,12 +146,24 @@ class TwoAxisCritic(nn.Module):
 
 class TwoAxisPPOAgent(nn.Module):
     def __init__(self, mode: PolicyMode, *, hidden: int = 32, seed: int = 42,
-                 device: str | torch.device = "cpu"):
+                 device: str | torch.device = "cpu",
+                 initial_log_std: float = -0.7,
+                 graph_config: GraphConfig | None = None):
         super().__init__()
         torch.manual_seed(int(seed))
+        self.seed = int(seed)
+        if mode not in POLICY_MODES:
+            raise ValueError(f"unknown two-axis policy mode: {mode}")
         self.mode = mode
-        self.actor = TwoAxisActor(mode, hidden=hidden, seed=seed)
-        self.critic = TwoAxisCritic(mode, hidden=hidden, seed=seed + 1)
+        self.graph_config = graph_config or GraphConfig()
+        if self.graph_config.schema == "compact_context_graph_v3_grouped":
+            from .models_v28 import ReferenceHead
+            self.actor = ReferenceHead(mode, "actor", self.graph_config, seed, initial_log_std)
+            self.critic = ReferenceHead(mode, "critic", self.graph_config, seed)
+        else:
+            self.actor = TwoAxisActor(mode, hidden=hidden, seed=seed,
+                                      initial_log_std=initial_log_std)
+            self.critic = TwoAxisCritic(mode, hidden=hidden, seed=seed + 1)
         self.device = torch.device(device)
         self.to(self.device)
         self._generator = torch.Generator(device=self.device).manual_seed(seed + 2)
@@ -186,9 +203,15 @@ def observation_arrays(observations: list[ObservationBundle]
 
 
 def capacity_matched_mlp_hidden(mode: str, target_parameters: int,
-                                *, maximum_hidden: int = 256) -> tuple[int, int]:
+                                *, maximum_hidden: int = 256,
+                                graph_config: GraphConfig | None = None) -> tuple[int, int]:
     """Closest actor+critic parameter count for a vector/flat MLP control."""
-    if mode == "ppo_vector_canonical":
+    if graph_config and graph_config.schema == "compact_context_graph_v3_grouped":
+        if mode not in {"ppo_vector_canonical", "ppo_semantic_flat"}:
+            raise ValueError("capacity matching requires an MLP arm")
+        dimension = 26 if mode == "ppo_vector_canonical" else 108
+        count = lambda h: 2*h*h + (2*dimension+7)*h + 5
+    elif mode == "ppo_vector_canonical":
         # Two 3-layer representations plus 2-D actor/value heads and log std.
         count = lambda h: 4 * h * h + 61 * h + 5
     elif mode == "ppo_semantic_flat":

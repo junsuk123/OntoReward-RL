@@ -1,0 +1,17 @@
+# Control boundary only, intentionally outside runnable experiments/.
+# Historical boundary fixture; the separate runnable route is `run.sh spatial`.
+# Do NOT run with run_three_pipeline or load a planar checkpoint under this ID.
+experiment: spatial_causal_rgat_v1
+primary: false
+execution_status: control_boundary_only
+control:
+  action_contract: spatial-enu-net-acceleration-v1
+  frame: enu
+  action_names: [east_acceleration, north_acceleration, up_acceleration]
+  dt_seconds: 0.1
+  max_velocity_m_s: [3.0, 3.0, 1.5]
+  max_acceleration_m_s2: [2.0, 2.0, 1.0]
+  max_tilt_deg: 25.0
+  max_thrust_weight_ratio: 1.5
+  yaw_mode: own_heading_at_handover
+  attitude_mode: derived_by_px4

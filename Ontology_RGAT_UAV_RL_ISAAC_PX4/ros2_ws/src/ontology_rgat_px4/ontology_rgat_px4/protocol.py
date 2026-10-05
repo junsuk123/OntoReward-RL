@@ -31,6 +31,7 @@ BENCHMARK_SCENARIOS = {
     # the fastest segment of the fastest deck is 1.00 m/s
     # (isaac_sim/pad_motion.py, 2026-09-23).
     "segmented_cruise_slow", "segmented_cruise_medium", "segmented_cruise_fast",
+    "spatial_reference_cv_ca_cv",
 }
 
 
@@ -61,7 +62,7 @@ def decode(raw: bytes, expected_version: int = 1) -> dict[str, Any]:
     if msg.get("v") != expected_version:
         raise ProtocolError("protocol version mismatch")
     if msg.get("type") not in {
-        "hello", "state", "action", "velocity_action", "reset", "arm", "disarm",
+        "hello", "state", "action", "velocity_action", "spatial_velocity_action", "spatial_acceleration_action", "reset", "arm", "disarm",
         "goto", "enable_offboard", "disable_offboard", "error", "ack",
     }:
         raise ProtocolError("unknown message type")
@@ -94,6 +95,52 @@ def validate_velocity_action(msg: dict[str, Any]) -> tuple[float, float, float, 
     if any(abs(value) > limit for value, limit in zip(command, limits)):
         raise ProtocolError("velocity command exceeds protocol safety bounds")
     return command
+
+
+SPATIAL_ACTION_CONTRACT = "spatial-enu-net-acceleration-v1"
+SPATIAL_DIRECT_ACTION_CONTRACT = "spatial-enu-direct-net-acceleration-v2"
+
+
+def validate_spatial_acceleration_action(msg):
+    """Direct ENU net acceleration, with no hidden velocity/position target."""
+    if msg.get("action_contract") != SPATIAL_DIRECT_ACTION_CONTRACT:
+        raise ProtocolError("direct spatial acceleration requires its exact action contract")
+    if "velocity_enu_m_s" in msg or "position_enu_m" in msg:
+        raise ProtocolError("direct acceleration cannot include a position or velocity reference")
+    adapted = dict(msg, action_contract=SPATIAL_ACTION_CONTRACT,
+                   velocity_enu_m_s=[0., 0., 0.])
+    _, acceleration, yaw = validate_spatial_velocity_action(adapted)
+    return acceleration, yaw
+
+
+def validate_spatial_velocity_action(msg):
+    """Versioned world-ENU command; never reinterpret a planar 3-vector.
+
+    A distinct message type makes old gateways reject, not silently ignore,
+    the new acceleration field. Gravity is NOT included in the wire vector.
+    """
+    if msg.get("action_contract") != SPATIAL_ACTION_CONTRACT or msg.get("frame") != "enu":
+        raise ProtocolError("spatial action requires its exact ENU action contract")
+    if any(k in msg for k in ("tilt_rad", "action", "command", "yaw_rate")):
+        raise ProtocolError("legacy actions, independent tilt and yaw rate are not spatial inputs")
+    velocity = finite_vector(msg.get("velocity_enu_m_s", ()), 3, "ENU velocity")
+    acceleration = finite_vector(msg.get("acceleration_enu_m_s2", ()), 3, "ENU net acceleration")
+    if any(abs(v) > limit+1e-10 for v,limit in zip(velocity, (10.,10.,5.))):
+        raise ProtocolError("spatial velocity exceeds protocol safety bounds")
+    if any(abs(a) > limit+1e-10 for a,limit in zip(acceleration, (8.,8.,4.))):
+        raise ProtocolError("spatial acceleration exceeds protocol safety bounds")
+    try:
+        yaw = float(msg["yaw_rad"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ProtocolError("spatial action requires a numeric yaw hold") from exc
+    if not math.isfinite(yaw) or abs(yaw) > 4*math.pi:
+        raise ProtocolError("invalid spatial yaw hold")
+    fz = 9.80665 + acceleration[2]
+    horizontal = math.hypot(*acceleration[:2])
+    if (horizontal > fz*math.tan(PLANAR_TILT_LIMIT_RAD)+1e-10
+            or math.hypot(horizontal, fz) > 2*9.80665+1e-10):
+        raise ProtocolError("spatial resultant exceeds tilt/thrust safety bounds")
+    return velocity, acceleration, yaw
 
 
 # The reduced planar envelope adds two optional fields to the same message.

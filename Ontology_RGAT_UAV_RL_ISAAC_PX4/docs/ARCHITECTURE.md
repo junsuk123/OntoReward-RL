@@ -1,5 +1,108 @@
 # 아키텍처와 정보경계
 
+2026-10-04: 현재 실행은 `run.sh reference` → `run_two_axis_pipeline.py` →
+`two_axis/{environment,training,models_v28,ontology_v28}`와,
+`run.sh isaac-legacy` → 기존 `run_two_pipeline.py`로 분리된다.
+첫 경로는 causal actor/critic, 두 번째는 privileged training critic을 포함하는
+기존 Isaac 계약이다. 아래 상세는 **Isaac legacy 아키텍처**이며 새 reference와
+동등하지 않다. [최신 대조 보고서](refactor/REFERENCE_V28_AUDIT_KO.md)를 먼저 읽는다.
+
+추가: `two_axis/relational.py`는 raw 고정 PPO와 validation 성능/residual 가드로
+비영 관계 경로를 선택한다. 3D 통합은 사용자 선택에 따라 world ENU `(ax,ay,az)`로
+확정했다. `controllers/spatial_controller.py` → `bridge.step_spatial_velocity` →
+새 SITL gateway 메시지에 `spatial/{core,environment,training}`을 연결했다.
+35-field packet/9×12 graph, 20Hz optical/최대 10ms 추정 substep, 10Hz 정책,
+Isaac physics clock을 사용한다. 접촉 직전 truth snapshot은 평가기에만 전달된다.
+`run_spatial_pipeline.py`의 기본 학습은 로컬 공간 plant이며
+`--training-backend isaac`는 실제 PX4 데이터로 사전학습/PPO/validation을 수행한다.
+`--stage isaac`는 실제 Isaac/PX4 평가다. 아직 장시간 PPO 성능/2D parity 검증은 완료하지 않았다.
+legacy 3채널 checkpoint를 새 제어기에 연결해서는 안 된다.
+
+공간 기본 계약 v5는 reference의 1.5초 pad acceleration decay와 own velocity 기반
+수평 abort braking을 포함한다. v4의 무감쇠 시각 상실 예측/수직 전용 복구와 구분한다.
+카메라 pose·자체 EKF만 추정기에 들어가고, 진단 제어기의 행동은 PPO 학습에 쓰지 않는다.
+v4 가중치의 명시적 이전은 새 PPO 초기화이며, 새 nominal completion과 검증이 필요하다.
+실행 world의 YAML/source hash를 arming 전에 확인하고, 공간 SITL의 명령 timestamp는
+최신 PX4 DDS wire clock + Isaac physics 경과를 사용한다. legacy 설명의 wall/PX4
+시계 제약을 이 공간 경로에 그대로 적용해서는 안 된다.
+
+## Spatial 후보 v6–v8의 별도 계약
+
+아래 후보는 default v5를 통과된 모델로 대체한 것이 아니다. v6은 39-field,
+v7/v8은 43-field이며 graph는 동일한 9×12/26 typed edges/4 readouts다.
+
+```text
+측정: camera PnP + own PX4 EKF/IMU + 공개 physics clock
+  → 허용 필드 Measurement → causal ABG/uncertainty
+  → 공통 packet ─┬─ vector actor/critic
+                 └─ 9×12 contexts ─┬─ semantic-flat actor/critic
+                                    └─ raw bypass + R-GAT residual actor/critic
+  → [ax,ay,az] → 공통 안전 감독 → joint tilt/thrust limit
+  → Local reduced attitude/thrust plant 또는 PX4 acceleration-only OFFBOARD
+
+별도 simulator truth → reward / strict terminal evaluator / offline metrics
+                      (actor·critic·estimator·supervisor 입력에는 없음)
+```
+
+v6+의 wire는 `spatial_acceleration_action`이다. PX4 position/velocity setpoint는
+NaN이고 acceleration flag만 활성이다. PX4의 tilt 식에 맞춘 수평 `g/(g+az)` 보정,
+유도 roll/pitch, 유지 yaw를 사용하며 독립 tilt 행동은 없다. v7은 reference ABG와
+acceleration uncertainty/previous action을 추가한다. 같은 clock의 DDS 재수신은
+추정 갱신을 중복하지 않는다. 광학 상대벡터는 `R_IMU R_PnPᵀ p_PnP`로 변환하고
+독립 PnP 자세와 IMU의 일관성 검사는 유지한다.
+
+v8은 Isaac의 동일 seed 외력·토크·인계 충격 draw를 로컬에도 적용한다. PX4의
+HTE/servo와 실제 카메라를 정확히 재현하는 모델은 아니므로 이 차이는 별도로 남는다.
+물리 1.5 kg Iris 기준의 reduced dynamics이지 simulator-truth policy가 아니다.
+
+## Spatial opt-in v9 정합 후보
+
+기본 v5 및 v6–v8 checkpoint와 분리된 47-field packet이다. 실제 RGB와 capture time을
+동일 snapshot에서 읽고, 이미 수신한 own EKF history로 상대 pose의 시각/자세를 맞춘다.
+ABG innovation도 capture time에서 계산하며, out-of-order/중복/미래 영상은 검출 age를
+갱신하지 않는다. 촬영 시각/own-state 필드가 없는 gateway는 v9에서 명시적으로 거절한다.
+
+| 소비자 | 입력/처리 |
+|---|---|
+| vector | 공통 causal packet 47 fields |
+| semantic-flat | x/y 각각 9×12 reference context를 연결한 216 features |
+| R-GAT | flat과 동일한 raw bypass + 두 평면에서 공유하는 typed encoder |
+| residual readout | 평면별 4 groups → 8 values, actor/critic은 독립 |
+| 하강 residual gate | confidence와 joint position/speed/ENU tilt/rate evidence의 곱 |
+
+width 48의 actor+critic 파라미터는 vector 9,511 / flat 25,735 / R-GAT 27,439개다.
+width 51 flat은 27,649개이며 이 count만으로 capacity-matched 성능 검증을 주장하지 않는다.
+평면 단면 수식은 기존 reference와 수치 대조하며 hard supervisor는 바꾸지 않는다.
+
+local camera는 20Hz capture/75ms delivery delay이고 PnP/렌더링을 구현한 센서는 아니다.
+shared `spatial/scenarios.py`의 CV–CA–CV draw를 actual `PadTrajectory`도 사용한다.
+지연·문맥/궤적 정합을 PX4/카메라의 완전한 동등성이나 학습 성능 통과로 해석하지 않는다.
+
+별도 v10의 `spatial/safety.py`는 episode-owned uncertainty trust/abort latch와
+응답지연·외력 범위 기반 stopping margin, bounded terminal corridor를 공용으로 적용한다.
+abort 상태에서는 자체 EKF 위치 anchor에 대한 bounded hold가 모든 축을 소유한다.
+외란 중 drift 억제 목적의 명시적 backup이며 policy teacher/BC가 아니다. command tilt
+20°/hard 21°, 기존 touchdown 기준 유지, view reward의 captured measurement 사용도
+v10 서명에 포함된다. v9 checkpoint를 재라벨링하거나 학습 중인 v9를 수정하지 않는다.
+
+`spatial/auditing.py`는 terminal snapshot의 비접촉·clearance·자체 속도·tilt를
+사후 검사한다. policy/reward에는 전달하지 않는다. SAFE_ABORT label과 confirmed cleanup,
+실제로 정지한 hold snapshot은 서로 다른 증거이며 acceptance `/3`는 이를 구분한다.
+
+학습은 decision budget 또는 opt-in complete-episode budget을 명시하고 실제 steps를
+기록한다. 새 episodic preset은 전체 rollout advantage 정규화를 사용한다. 난이도·
+angular/loss-timeout 완화는 local training에만 존재하며 nominal/test에서는 사라진다.
+실제 flight는 armed+OFFBOARD 이후만 transition으로 수집한다. 종료 확인 후에만
+opt-in cold episode 분리를 허용하며, owned pre-entry 복구와 policy-time 실패는
+구분한다. `spatial/validation.py`는 제안 모델의 착륙·비영 관계 출력까지 검사하지만,
+작은 integration 표본으로 2D 성능 동등성이나 우월성을 판정하지 않는다.
+
+정책 종료 뒤의 안전 처리는 학습 행동과 분리된다. direct 경로는 자신의 EKF 위치로
+원자적 braking hold → NAV_LAND → OFFBOARD 이탈 시 hold 자동 해제 → 실제 disarm
+확인 순서를 쓴다. `flight_terminal.jsonl`은 과제 terminal과 종료 확인을 별도로 남긴다.
+이 절차의 착지는 과제 SUCCESS로 재분류하지 않는다. PPO update 직후 저장하는
+`checkpoint_last_update.pt`도 검증 전 진단용(eligible=false)이며 배포할 수 없다.
+
 [문서 안내](README.md) · [시스템 개요](SYSTEM_OVERVIEW.md) ·
 [제안 알고리즘](ONTOLOGY_RGAT_STATE.md) · [평면 엔벨로프](PLANAR_ENVELOPE.md) ·
 [운영](OPERATIONS.md)

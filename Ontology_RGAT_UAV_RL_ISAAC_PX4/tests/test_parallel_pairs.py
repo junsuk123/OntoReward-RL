@@ -100,8 +100,8 @@ def test_legacy_aruco_profile_still_separates_parallel_pairs_by_marker_id():
     assert [int(marker["id"]) for marker in system["vision"]["board"]] == original_ids
 
 
-def test_bare_repository_launcher_runs_the_full_reference_experiment():
-    """``./run.sh`` alone must be the experiment, not the preview of it.
+def test_explicit_legacy_launcher_keeps_its_profiles():
+    """The archived Isaac entry keeps its explicit full/preview profiles.
 
     The zero-argument path used to select ``--seminar-fast``, the profile
     marked ``publication_claim_allowed: false``. The command that reads as
@@ -109,7 +109,7 @@ def test_bare_repository_launcher_runs_the_full_reference_experiment():
     published, and a budget fix to the experiment config landed on a file
     that path never opens.
     """
-    launcher = (ROOT.parent / "run.sh").read_text(encoding="utf-8")
+    launcher = (ROOT / "scripts/run_isaac_legacy_entry.sh").read_text(encoding="utf-8")
 
     # Nothing may turn the preview on by itself; it is an explicit flag.
     assert "if [[ $# -eq 0 ]]" not in launcher

@@ -8,7 +8,7 @@ import math
 import numpy as np
 
 from .config import ExperimentConfig
-from .reward import compute_reward, discount_for_dt
+from .reward import compute_reward, discount_for_dt, goal_cost, landing_readiness
 from .safety import TerminalReason
 
 
@@ -29,7 +29,8 @@ FIXTURES = {
 def _state(kind: str, fraction: float, elapsed_s: float
            ) -> tuple[float, float, bool, float, np.ndarray]:
     if kind == "approach":
-        return 2.5 * (1 - fraction), 5.0 * (1 - fraction), True, 0.0, np.array([.2, -.2])
+        remaining = 1 - 3*fraction**2 + 2*fraction**3
+        return 2.5 * remaining, 5.0 * remaining, True, 0.0, np.array([.2, -.2])
     if kind == "hover":
         return .2, .5, True, 0.0, np.zeros(2)
     if kind == "blind":
@@ -54,17 +55,31 @@ def run_reward_audit(config: ExperimentConfig) -> dict:
         total = 0.0
         terminal_count = 0
         running_total = 0.0
+        prev_ex, prev_h, *_ = _state(kind, 0.0, 0.0)
+        previous_goal = goal_cost(prev_ex, prev_h, config.reward)
+        previous_readiness = landing_readiness(ex_true_m=prev_ex,
+            relative_speed_m_s=0, h_true_m=prev_h, pitch_rad=0,
+            safety=config.safety, reward_config=config.reward)
         while elapsed < duration - 1e-12:
             dt = min(dt_nominal, duration - elapsed)
             elapsed += dt
             fraction = elapsed / duration
             ex, h, visible, bearing, action = _state(kind, fraction, elapsed)
             reason = terminal if elapsed >= duration - 1e-12 else None
+            readiness = landing_readiness(ex_true_m=ex,
+                relative_speed_m_s=(ex-prev_ex)/dt, h_true_m=h, pitch_rad=0,
+                vertical_speed_m_s=(h-prev_h)/dt, safety=config.safety,
+                reward_config=config.reward)
             reward = compute_reward(
                 ex_true_m=ex, h_true_m=h, measured_bearing_rad=bearing,
                 bearing_valid=visible, normalized_policy_action=action,
                 fov_rad=config.camera.fov_rad, dt_s=dt,
-                terminal_reason=reason, config=config.reward)
+                terminal_reason=reason, config=config.reward,
+                previous_goal_cost=previous_goal,
+                discount_time_constant_s=config.timing.discount_time_constant_s,
+                readiness=readiness, previous_readiness=previous_readiness)
+            previous_goal, previous_readiness = reward.goal_cost, readiness
+            prev_ex, prev_h = ex, h
             total += discount * reward.total
             running_total += discount * reward.running
             terminal_count += int(reward.terminal != 0.0)

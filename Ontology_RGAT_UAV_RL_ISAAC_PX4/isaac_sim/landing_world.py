@@ -60,9 +60,13 @@ from ontology_rgat.initialization import (camera_centered_hover_offset,
                                           yaw_aligned_hover_offset)
 from ontology_rgat.benchmarks.randomization import (
     px4_gain_parameters, sample_domain_randomization)
+from ontology_rgat.spatial.runtime_contract import runtime_profile_hash, runtime_source_hash
 
 CONFIG = load_config(CONFIG_PATH)
+SPATIAL_PROFILE_HASH = runtime_profile_hash(CONFIG)
+SPATIAL_SOURCE_HASH = runtime_source_hash(WORKSPACE)
 from sensor_profiles import isaac_runtime_profile
+from prearm_support import leveling_torque
 
 RUNTIME = isaac_runtime_profile(CONFIG, ARGS.headless)
 
@@ -123,7 +127,7 @@ from pegasus.simulator.logic.vehicles.multirotor import Multirotor, MultirotorCo
 from isaacsim.core.api.materials import OmniPBR, PhysicsMaterial
 from isaacsim.sensors.physics import ContactSensor
 from isaacsim.sensors.camera import Camera
-from pxr import Gf, PhysxSchema, Sdf, Usd, UsdGeom, UsdPhysics, UsdShade
+from pxr import Gf, PhysxSchema, Sdf, Usd, UsdGeom, UsdLux, UsdPhysics, UsdShade
 
 from keypoint_geometry import CameraModel, project_landing_pad
 from landing_pad_visual import LandingPadVisual
@@ -387,6 +391,7 @@ class DownwardCamera:
             mount_translation_flu_m=tuple(float(v) for v in self.mount))
         self.camera = None
         self.raw_gray = None
+        self.capture_time_s = None
         # Set ONTOLOGY_RGAT_VISION_DEBUG_DIR to dump annotated frames; the only
         # way to tell "no image" from "no marker in it" is to look at one.
         self.debug_dir = os.environ.get("ONTOLOGY_RGAT_VISION_DEBUG_DIR", "")
@@ -490,7 +495,9 @@ class DownwardCamera:
             f"world_pose={self.camera.get_world_pose()}")
 
     def observe(self):
-        frame = self.camera.get_rgba()
+        from sensor_profiles import camera_frame_snapshot
+        frame,self.capture_time_s = camera_frame_snapshot(self.camera,
+            capture_aligned=bool(CONFIG['isaac'].get('spatial_optical_capture_timing',False)))
         if frame is None or frame.size == 0:
             if self.frames == 0:
                 carb.log_warn("Landing camera produced no frame; is rendering enabled?")
@@ -839,8 +846,13 @@ class LandingDeck:
         # kinematic rigid body, while retaining all visual meshes/transforms.
         for prim in Usd.PrimRange(root.GetPrim()):
             if prim.IsA(UsdPhysics.Joint):
-                prim.SetActive(False)
-                continue
+                # Imported URDF roots may be joints with link/mesh children.
+                # Deactivation removes the entire visual subtree, not merely
+                # the constraint. Keep transforms and disable physics only.
+                # PhysX still parses disabled joint body relationships and
+                # errors after their rigid-body APIs have been stripped.
+                # A visual-only reference needs no joint schema at all.
+                prim.SetTypeName('Xform')
             for api in (UsdPhysics.RigidBodyAPI, UsdPhysics.CollisionAPI,
                         UsdPhysics.MassAPI, UsdPhysics.ArticulationRootAPI):
                 if prim.HasAPI(api):
@@ -849,6 +861,13 @@ class LandingDeck:
                         PhysxSchema.PhysxArticulationAPI):
                 if prim.HasAPI(api):
                     prim.RemoveAPI(api)
+        mesh_count = sum(prim.IsA(UsdGeom.Mesh) for prim in
+                         Usd.PrimRange(root.GetPrim(), Usd.TraverseInstanceProxies()))
+        if not mesh_count:
+            root.GetPrim().SetActive(False)
+            carb.log_warn('[landing-pad] imported UGV has no active meshes; using fallback')
+            return False
+        print(f'[landing-pad] official UGV active visual meshes: {mesh_count}', flush=True)
         carb.log_info(
             f"[landing-pad] loaded official {self.cfg.vehicle_model} visual: {asset}")
         return True
@@ -1240,6 +1259,12 @@ class LandingWorld:
                 else:
                     carb.log_warn(f"World origin set to {where}.")
             UrbanScene(self.urban).spawn(self.world)
+            ambient = float(isaac_cfg.get('ambient_light_intensity', 0.0))
+            if ambient > 0:
+                light = UsdLux.DomeLight.Define(
+                    omni.usd.get_context().get_stage(), '/World/spatial_ambient_light')
+                light.CreateIntensityAttr(ambient)
+                light.CreateColorAttr(Gf.Vec3f(.85, .9, 1.0))
         else:
             self.timeline = shared.timeline
             self.pg = shared.pg
@@ -1426,6 +1451,19 @@ class LandingWorld:
         landing_topic = lambda legacy, relative: (
             f"{self.topic_root}/{relative}" if self.parallel else legacy)
         node = self.ros_backend.node
+        self.spatial_clock_pub = (node.create_publisher(
+            String, landing_topic('/landing_uav0/simulation/clock', 'uav/simulation/clock'), 10)
+            if bool(isaac_cfg.get('spatial_clock', False)) else None)
+        self._last_spatial_clock_s = -1.0
+        self.spatial_contact_pub = (node.create_publisher(
+            String, landing_topic('/landing_uav0/simulation/contact_event',
+                                  'uav/simulation/contact_event'), 10)
+            if self.spatial_clock_pub is not None else None)
+        self.spatial_previous_free = None
+        self.spatial_contact_event = None
+        self.spatial_episode_seed = -1
+        self.spatial_reset_seq = -1
+        self.spatial_episode_id = ''
         # Physics consumes /environment/wind truth.  The learner consumes only
         # the separately modelled UAV anemometer measurement on /sensors/wind.
         self.wind_pub = node.create_publisher(Vector3Stamped, ns + "/sensors/wind", 10)
@@ -1487,6 +1525,7 @@ class LandingWorld:
         # can hold a disarmed multirotor in the air, and dropping it for the
         # second PX4 spends arming is the takeoff this start exists to avoid.
         self.autopilot_flying = False
+        self.autopilot_armed = False
         self.hover_hold_release_started: float | None = None
         # Wind belongs to the measured landing episode. Applying it while PX4
         # spends tens of seconds booting on a 1.5 m deck can push the unpowered
@@ -1494,6 +1533,7 @@ class LandingWorld:
         # Keep the field and sensor alive, but apply aerodynamic force only
         # after the first policy action marks the true episode handover.
         self.policy_handover = False
+        self.has_policy_handover = False
         # Simulated time the policy took the vehicle over this episode; the
         # escape-burst scenario times its dash from here.
         self.policy_handover_sim_s = None
@@ -1603,6 +1643,7 @@ class LandingWorld:
             if scenario not in BENCHMARK_SCENARIOS:
                 raise ValueError(f"unknown benchmark scenario {scenario!r}")
             self.pending_reset = {"seq": int(req["seq"]), "seed": int(req.get("seed", 0)),
+                                  "episode_id": str(req.get('episode_id','')),
                                   "wind_scale": scale, "pad_scale": pad_scale,
                                   "initial_condition_scale": initial_condition_scale,
                                   "gnss_scale": gnss_scale,
@@ -1623,7 +1664,13 @@ class LandingWorld:
         original in-process simulator -- and flown by PX4 itself.
         """
         req, self.pending_reset = self.pending_reset, None
+        self.spatial_previous_free = None
+        self.spatial_contact_event = None
+        self.spatial_episode_seed = int(req['seed'])
+        self.spatial_reset_seq = int(req['seq'])
+        self.spatial_episode_id = req['episode_id']
         self.policy_handover = False
+        self.has_policy_handover = False
         # Simulated time the policy took the vehicle over this episode; the
         # escape-burst scenario times its dash from here.
         self.policy_handover_sim_s = None
@@ -1912,12 +1959,15 @@ class LandingWorld:
         previous_control = self.autopilot_flying
         previous_handover = self.policy_handover
         self.autopilot_flying = bool(flying and controlled)
+        self.autopilot_armed = flying
         self.px4_normalized_thrust = float(np.clip(px4_thrust, 0.0, 1.0))
         if self.autopilot_flying and not previous_control:
             self.hover_hold_release_started = float(self.world.current_time)
         elif not self.autopilot_flying:
             self.hover_hold_release_started = None
         self.policy_handover = bool(flying and handover)
+        if self.policy_handover:
+            self.has_policy_handover = True
         if self.policy_handover and not previous_handover:
             self.policy_handover_sim_s = float(self.world.current_time)
         if (self.policy_handover and not previous_handover
@@ -1969,6 +2019,17 @@ class LandingWorld:
         """
         if not self.start_airborne:
             return
+        # AUTO.LAND is armed but no longer under gateway OFFBOARD control.
+        # Treating that as pre-arm re-enables the hover support and prevents
+        # physical descent/disarm after an abort at altitude.
+        if (self.autopilot_armed and not self.autopilot_flying
+                and getattr(self, "has_policy_handover", True)):
+            return
+        # The pre-entry arm -> OFFBOARD interval is different from post-policy
+        # AUTO.LAND. An airborne benchmark start still needs setup support in
+        # that first interval; otherwise the body free-falls before OFFBOARD
+        # arrives. The per-reset latch above forbids re-enabling it during an
+        # abort/cleanup, even after the current handover flag has cleared.
         gain = 1.0
         emergency_target = None
         if self.autopilot_flying:
@@ -2022,20 +2083,70 @@ class LandingWorld:
         force_world = gain * self.hover_hold_mass_kg * accel
         force_body = Rotation.from_quat(state.attitude).inv().apply(force_world)
         self.vehicle.apply_force(force_body.tolist(), body_part="/body")
-        # And hold it level. A disarmed multirotor has no rotors to stabilise
-        # attitude, so over the twenty-odd seconds PX4 spends aligning its
-        # estimator it tips under any residual torque and trips the attitude
-        # check before it will arm. Pinning the body rate is enough: the vehicle
-        # spawns level and, with no rate, it stays there.
-        self.vehicle.set_angular_velocity(np.zeros(3))
+        if self.spatial_clock_pub is not None:
+            # A previous landing can leave the vehicle tilted. Zeroing rate
+            # cannot restore level and caused repeat-run arming failures.
+            # Physical setup torque is NEVER applied under PX4 control.
+            torque = leveling_torque(state.attitude, state.angular_velocity,
+                                      controlled=self.autopilot_armed)
+            if np.any(torque):
+                self.vehicle.apply_torque(torque.tolist(), body_part="/body")
+        else:
+            # Preserve the explicitly historical planar setup behavior.
+            self.vehicle.set_angular_velocity(np.zeros(3))
 
     def _advance_deck(self, dt: float) -> None:
+        # Public simulator time, independent of truth/labels and of PX4 DDS
+        # timesync. Spatial transitions use this same clock as deck/physics.
+        sim_s = float(self.world.current_time)
+        if self.spatial_clock_pub is not None and sim_s > self._last_spatial_clock_s:
+            clock_message = String()
+            clock_message.data = json.dumps({'sim_time_s': sim_s,
+                'profile_sha256': SPATIAL_PROFILE_HASH,
+                'source_sha256': SPATIAL_SOURCE_HASH})
+            self.spatial_clock_pub.publish(clock_message)
+            self._last_spatial_clock_s = sim_s
         self._maybe_trigger_escape_burst()
         self.deck.advance(self.world.current_time, dt)
         # After the deck, so the vehicle is held against the pose the deck has
         # this tick rather than the one it had last tick.
         self._hold_prearm_start(dt)
         self._report_deck_carry()
+        self._capture_spatial_contact()
+
+    def _capture_spatial_contact(self) -> None:
+        """Latch first physical contact with the immediately preceding state.
+
+        Evaluator-only: impact-induced angular velocity must not replace the
+        approach rate. No pose is projected or made safe by this snapshot.
+        """
+        if self.spatial_contact_pub is None or not self.policy_handover:
+            return
+        state = self.vehicle.state
+        contact, _ = self.deck.vehicle_contact(state.position)
+        now = float(self.world.current_time)
+        if contact and self.spatial_contact_event is None:
+            if self.spatial_previous_free is not None:
+                self.spatial_contact_event = dict(self.spatial_previous_free)
+                self.spatial_contact_event.update(contact_time_s=now,
+                    seed=self.spatial_episode_seed, reset_seq=self.spatial_reset_seq,
+                    episode_id=self.spatial_episode_id,
+                    source='physics-first-contact')
+                self._publish_spatial_contact_event()
+        elif not contact and self.spatial_contact_event is None:
+            angles = Rotation.from_quat(state.attitude).as_euler('xyz')
+            self.spatial_previous_free = {
+                'sample_time_s':now,
+                'relative_position':(np.asarray(state.position)-self.deck.position).tolist(),
+                'relative_velocity':(np.asarray(state.linear_velocity)-self.deck.velocity).tolist(),
+                'roll_pitch':angles[:2].tolist(),
+                'angular_rate':np.asarray(state.angular_velocity).tolist()}
+
+    def _publish_spatial_contact_event(self) -> None:
+        if self.spatial_contact_event is not None:
+            message = String()
+            message.data = json.dumps(self.spatial_contact_event)
+            self.spatial_contact_pub.publish(message)
 
     def _maybe_trigger_escape_burst(self) -> None:
         """Start the escape dash once the vehicle is following the deck.
@@ -2220,6 +2331,7 @@ class LandingWorld:
             self._publish_marker_proxy()
 
     def _publish_pad_contact(self) -> None:
+        self._publish_spatial_contact_event()
         contact, force = self.deck.vehicle_contact(self.vehicle.state.position)
         contact_msg = Bool()
         contact_msg.data = bool(contact)
@@ -2276,7 +2388,11 @@ class LandingWorld:
         # the relative velocity. The deck heading used for the rotation is the
         # one the rover broadcasts; a drone could equally recover it from its
         # own yaw and the yaw this solve already measures.
-        deck_yaw = Rotation.from_euler("z", self.deck.yaw)
+        spatial = self.spatial_clock_pub is not None
+        # Spatial camera output stays in its measured board frame. The gateway
+        # resolves ENU with the optical orientation and independent own IMU,
+        # never the simulated deck's perfect heading.
+        deck_yaw = Rotation.identity() if spatial else Rotation.from_euler("z", self.deck.yaw)
         position = deck_yaw.apply(np.asarray(observation.position_pad_enu, dtype=float))
         q = np.asarray(observation.quaternion_pad_flu_wxyz, dtype=float)
         attitude = deck_yaw * Rotation.from_quat([q[1], q[2], q[3], q[0]])
@@ -2284,7 +2400,16 @@ class LandingWorld:
 
         pose = PoseStamped()
         pose.header.stamp = stamp
-        pose.header.frame_id = f"landing_pad_{self.pair_index}"
+        pose.header.frame_id = f"landing_board_{self.pair_index}" if spatial else f"landing_pad_{self.pair_index}"
+        if spatial and CONFIG['isaac'].get('spatial_optical_capture_timing', False):
+            capture = self.camera.capture_time_s
+            if capture is None or not math.isfinite(float(capture)) or capture < 0:
+                return
+            # Actual renderer acquisition time, NOT detector publication time.
+            capture_ns = int(round(float(capture)*1e9))
+            pose.header.stamp.sec = capture_ns//1000000000
+            pose.header.stamp.nanosec = capture_ns%1000000000
+            pose.header.frame_id = f'landing_board_capture_{self.pair_index}'
         pose.pose.position.x = float(position[0])
         pose.pose.position.y = float(position[1])
         pose.pose.position.z = float(position[2])

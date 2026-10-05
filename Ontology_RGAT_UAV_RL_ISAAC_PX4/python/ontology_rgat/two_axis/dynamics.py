@@ -68,7 +68,8 @@ def realized_acceleration(state: PlanarState,
 
 
 def step_planar(state: PlanarState, request_m_s2: np.ndarray, dt_s: float,
-                config: DynamicsConfig, *, pitch_disturbance_rad_s2: float = 0.0
+                config: DynamicsConfig, *, pitch_disturbance_rad_s2: float = 0.0,
+                pitch_offset_rad: float = 0.0
                 ) -> PlanarState:
     """Advance actual attitude, thrust and translation by one physics step."""
     dt = float(dt_s)
@@ -82,13 +83,15 @@ def step_planar(state: PlanarState, request_m_s2: np.ndarray, dt_s: float,
     pitch_rate = float(np.clip(state.pitch_rate_rad_s + pitch_accel * dt,
                                -config.pitch_rate_limit_rad_s,
                                config.pitch_rate_limit_rad_s))
-    theta = state.theta_rad + pitch_rate * dt
-    if abs(theta) >= config.pitch_limit_rad:
+    theta = state.theta_rad + pitch_rate * dt + float(pitch_offset_rad)
+    if config.clip_actual_pitch and abs(theta) >= config.pitch_limit_rad:
         theta = float(np.clip(theta, -config.pitch_limit_rad, config.pitch_limit_rad))
         if np.sign(pitch_rate) == np.sign(theta):
             pitch_rate = 0.0
-    alpha = 1.0 - math.exp(-dt / config.thrust_time_constant_s)
-    thrust = state.thrust_n + alpha * (setpoint.thrust_n - state.thrust_n)
+    alpha = (dt/config.thrust_time_constant_s if config.thrust_integrator == "euler"
+             else 1.0-math.exp(-dt/config.thrust_time_constant_s))
+    thrust = float(np.clip(state.thrust_n + alpha * (setpoint.thrust_n - state.thrust_n),
+                          0, config.max_thrust_weight_ratio*config.mass_kg*config.gravity_m_s2))
     provisional = replace(state, theta_rad=theta,
                           pitch_rate_rad_s=pitch_rate, thrust_n=thrust)
     accel = realized_acceleration(provisional, config)

@@ -34,6 +34,35 @@ def project_pad(ex_m: float, h_m: float, theta_rad: float,
 @dataclass(frozen=True)
 class DropoutSchedule:
     intervals_s: tuple[tuple[float, float, str], ...] = ()
+    pitch_event: tuple[float, float, float] | None = None
+
+    def pitch_rate_at(self, time_s: float) -> float:
+        if self.pitch_event is None:
+            return 0.0
+        start,end,rate = self.pitch_event
+        return rate if start <= time_s < end else 0.0
+
+    @classmethod
+    def reference_mixture(cls, rng, duration, *, enabled=True):
+        """Upstream sampleEvents: 50% clean/25% short/25% sustained losses.
+
+        A separate 25% bounded pitch event is exogenous evaluator metadata,
+        never a policy feature. Every arm samples before its first decision.
+        """
+        if not enabled:
+            return cls()
+        intervals, pitch = (), None
+        draw = rng.random()
+        if draw >= .5:
+            start = float(rng.uniform(.5, max(.5, duration-5)))
+            length = float(rng.uniform(.2,.5) if draw < .75 else rng.uniform(3.5,5.))
+            cause = "short_detector_dropout" if draw < .75 else "sustained_detector_dropout"
+            intervals = ((start,min(start+length,duration),cause),)
+        if rng.random() < .25:
+            start = float(rng.uniform(.5,max(.5,duration-1)))
+            pitch = (start,min(start+float(rng.uniform(.15,.4)),duration),
+                     float(rng.uniform(-1,1)*math.radians(2)))
+        return cls(intervals,pitch)
 
     def cause_at(self, time_s: float) -> str | None:
         for start, end, cause in self.intervals_s:
@@ -75,15 +104,17 @@ def observe_pad(*, timestamp_s: float, ex_m: float, h_m: float,
                 dropout_schedule: DropoutSchedule = DropoutSchedule()
                 ) -> PadMeasurement:
     projection = project_pad(ex_m, h_m, theta_rad, config)
+    # Consume the same two draws at every sample, even when the pad is hidden.
+    # Otherwise different policies' visibility histories shift their streams
+    # and the supposedly paired sensor noise is no longer paired in time.
+    bearing_noise, position_noise = rng.standard_normal(2)
     cause = dropout_schedule.cause_at(timestamp_s)
     detected = projection.geometric_visible and cause is None
     if not detected:
         return PadMeasurement(float(timestamp_s), False, 0.0, False, 0.0,
                               False, 0.0, projection.geometric_visible, cause)
-    bearing = projection.bearing_rad + float(rng.normal(
-        0.0, config.bearing_noise_std_rad))
-    relative_x = ex_m + float(rng.normal(
-        0.0, config.relative_position_noise_std_m))
+    bearing = projection.bearing_rad + float(bearing_noise * config.bearing_noise_std_rad)
+    relative_x = ex_m + float(position_noise * config.relative_position_noise_std_m)
     normalized = abs(projection.bearing_rad) / (0.5 * config.fov_rad)
     confidence = float(np.clip(1.0 - 0.35 * normalized, 0.05, 1.0))
     return PadMeasurement(float(timestamp_s), True, bearing, True, relative_x,

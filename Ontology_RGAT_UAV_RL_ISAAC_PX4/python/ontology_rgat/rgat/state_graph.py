@@ -69,7 +69,7 @@ __all__ = [
 ]
 
 
-STATE_GRAPH_VERSION = "ontology_rgat.planar_situation_state/1"
+STATE_GRAPH_VERSION = "ontology_rgat.planar_situation_state/2"
 
 STATE_NODE_NAMES = (
     # Risk nodes: magnitude of an adverse quantity, in [0, 1).
@@ -79,8 +79,16 @@ STATE_NODE_NAMES = (
     "FOVMargin",
     "MeasurementAge",
     "RelativeRange",
-    # Support node.
+    # Support nodes.
     "PadVisibility",
+    # Attitude admissibility. ``success_tilt_deg`` and ``success_rate_deg_s``
+    # are two of the five declared touchdown criteria, and before schema /2
+    # no node carried either: ``attitude_stability`` was computed by the
+    # perception front end and then discarded. It is the vehicle's own IMU,
+    # which the baseline actor already receives through proprioception and its
+    # recurrence, so this restructures shared information rather than adding
+    # privileged information to one arm.
+    "AttitudeStability",
     # Intermediate node -- the whole reason a second stage exists.
     "TouchdownSafety",
     # Goal node. Always zero; see ``state_node_values``.
@@ -97,6 +105,9 @@ STATE_RISK_NODES = STATE_NODE_NAMES[:6]
 STATE_GRAPH_EDGES = (
     ("AlignmentError", "TouchdownSafety", "degrades"),
     ("DescentRate", "TouchdownSafety", "degrades"),
+    # ``success_rel_speed_xy_m_s``: relative lateral motion is a touchdown
+    # criterion, and TargetMotion previously reached only PadVisibility.
+    ("TargetMotion", "TouchdownSafety", "degrades"),
     ("FOVMargin", "PadVisibility", "degrades"),
     ("FOVMargin", "TouchdownSafety", "degrades"),
     ("TargetMotion", "PadVisibility", "degrades"),
@@ -105,6 +116,8 @@ STATE_GRAPH_EDGES = (
     ("RelativeRange", "TouchdownSafety", "degrades"),
     ("RelativeRange", "SafeLanding", "degrades"),
     ("PadVisibility", "TouchdownSafety", "supports"),
+    ("AttitudeStability", "TouchdownSafety", "supports"),
+    ("AttitudeStability", "SafeLanding", "contributes"),
     ("PadVisibility", "SafeLanding", "contributes"),
     ("TouchdownSafety", "SafeLanding", "contributes"),
 )
@@ -224,17 +237,28 @@ def state_node_values(observation, *, geometry: StateGraphGeometry | None = None
     measurement_age = float(np.clip(observation.visual_loss_risk, 0.0, 1.0))
     range_risk = _soft(distance, scales.range_m)
 
+    attitude_stability = float(np.clip(observation.attitude_stability, 0.0, 1.0))
+
     # The intermediate node is a product of the conditions a touchdown needs,
     # which is the form the original ontology used and the only place in this
     # schema where several risks are combined before the network sees them.
+    #
+    # Schema /2 completes the conjunction against the declared criteria. The
+    # profile names five -- success_xy_m, success_vz_m_s, success_tilt_deg,
+    # success_rate_deg_s and success_rel_speed_xy_m_s -- and /1 multiplied
+    # only the first two plus range and visibility. Relative lateral motion
+    # and attitude, three of the five, reached no node at all, so the node
+    # whose entire purpose is to say "a touchdown is admissible now" was true
+    # in states where a touchdown would have been scored a failure.
     touchdown_safety = float(np.clip(
         (1.0 - alignment_risk) * (1.0 - descent_risk)
-        * (1.0 - range_risk) * pad_visibility, 0.0, 1.0))
+        * (1.0 - range_risk) * (1.0 - target_motion)
+        * pad_visibility * attitude_stability, 0.0, 1.0))
 
     return np.asarray([
         alignment_risk, descent_risk, target_motion, fov_risk,
-        measurement_age, range_risk, pad_visibility, touchdown_safety,
-        0.0,
+        measurement_age, range_risk, pad_visibility, attitude_stability,
+        touchdown_safety, 0.0,
     ], dtype=np.float64)
 
 
@@ -274,6 +298,16 @@ def state_node_signs(observation, *, geometry: StateGraphGeometry | None = None,
         if abs(delta) > 1e-9:
             motion_sign = math.copysign(1.0, delta)
 
+    # Attitude: whether the airframe is settling towards the admissible
+    # cone or leaving it. Without a previous observation there is no rate to
+    # read, so the channel reports no direction rather than a guessed one.
+    attitude_sign = 0.0
+    if previous is not None:
+        change = (float(observation.attitude_stability)
+                  - float(previous.attitude_stability))
+        if abs(change) > 1e-9:
+            attitude_sign = math.copysign(1.0, change)
+
     trustworthy = (float(observation.visible_keypoint_fraction) >= 0.5
                    and float(observation.visual_loss_risk) <= 0.0)
     if committed:
@@ -289,6 +323,7 @@ def state_node_signs(observation, *, geometry: StateGraphGeometry | None = None,
         0.0,                  # MeasurementAge: elapsed time has no direction
         0.0,                  # RelativeRange: a distance has no direction
         visibility_sign,      # PadVisibility: tracking / searching / committed
+        attitude_sign,        # AttitudeStability: settling (+) or diverging (-)
         0.0,                  # TouchdownSafety: a product of magnitudes
         0.0,                  # SafeLanding: the goal node
     ], dtype=np.float64)

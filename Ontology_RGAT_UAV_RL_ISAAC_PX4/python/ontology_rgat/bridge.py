@@ -651,7 +651,7 @@ class PX4Bridge:
         # instant the deadline expires and still never have held the streak.
         # Record what actually blocked the streak instead.
         samples = 0
-        blocked = {"offset": 0, "speed": 0, "view": 0}
+        blocked = {"offset": 0, "speed": 0, "view": 0, "offboard": 0}
         worst = {"offset": 0.0, "speed": 0.0}
         longest_streak = 0.0
         # A vehicle that is neither closing the gap nor moving at all is not
@@ -869,7 +869,13 @@ class PX4Bridge:
                         "entry budget cannot change the outcome; rebuilding "
                         "the simulator is the only remedy and is started now "
                         "instead of after it expires.")
-            at_target = offset_ready and speed_ready and pad_ready
+            # Disarmed SITL setup support can already hold this exact pose.
+            # Geometry alone must never hand a refused arming to the learner.
+            offboard_ready = (not getattr(self.cfg, "entry_require_offboard", False)
+                              or state.get("nav_state") == 14)
+            if not offboard_ready:
+                blocked["offboard"] += 1
+            at_target = armed and offboard_ready and offset_ready and speed_ready and pad_ready
             if offset_ready and speed_ready and not pad_ready:
                 # Stable at the commanded offset with the deck out of frame.
                 if out_of_view_since is None:
@@ -1008,6 +1014,44 @@ class PX4Bridge:
         reply = self.transact("velocity_action", payload, ("state",))
         state = self.pace_to_control_period(
             self.validate_state_with_estimator_grace(reply))
+        self.last_state = state
+        return state
+
+    def step_spatial_velocity(self, command) -> dict[str, Any]:
+        """SITL spatial ENU boundary; incompatible with legacy planar inputs.
+
+        Deliberately uses a new message type: old gateways must reject it rather
+        than silently discard lateral acceleration or reinterpret az as tilt.
+        """
+        return self._step_spatial(command, acceleration_only=False)
+
+    def step_spatial_acceleration(self, command) -> dict[str, Any]:
+        """Explicit v2 direct acceleration; never alias a v1 velocity command."""
+        return self._step_spatial(command, acceleration_only=True)
+
+    def _step_spatial(self, command, *, acceleration_only):
+        from .controllers.spatial_controller import SpatialCommand
+        if not isinstance(command, SpatialCommand):
+            raise BridgeError("spatial control requires a typed SpatialCommand")
+        if command.acceleration_only != acceleration_only:
+            raise BridgeError("spatial actuation mode does not match the selected wire route")
+        velocity = np.asarray(command.velocity_enu_m_s, dtype=float)
+        acceleration = np.asarray(command.acceleration_enu_m_s2, dtype=float)
+        if (velocity.shape != (3,) or acceleration.shape != (3,)
+                or not np.isfinite(velocity).all() or not np.isfinite(acceleration).all()
+                or (not acceleration_only and np.any(np.abs(velocity) > np.array([10.,10.,5.])+1e-10))
+                or np.any(np.abs(acceleration) > np.array([8.,8.,4.])+1e-10)):
+            raise BridgeError("spatial command exceeds finite ENU protocol bounds")
+        yaw = float(command.yaw_enu_rad)
+        fz = 9.80665 + acceleration[2]
+        horizontal = float(np.linalg.norm(acceleration[:2]))
+        if (not math.isfinite(yaw) or abs(yaw) > 4*math.pi
+                or horizontal > fz*math.tan(math.radians(25.))+1e-10
+                or math.hypot(horizontal,fz) > 2*9.80665+1e-10):
+            raise BridgeError("spatial yaw or resultant tilt/thrust is outside bounds")
+        kind = "spatial_acceleration_action" if acceleration_only else "spatial_velocity_action"
+        reply = self.transact(kind, command.wire_payload(), ("state",))
+        state = self.pace_to_control_period(self.validate_state_with_estimator_grace(reply))
         self.last_state = state
         return state
 
@@ -1217,7 +1261,7 @@ class PX4Bridge:
                 self.disarm()
                 try:
                     state = self.get_state()
-                except PX4EstimatorInvalid:
+                except (PX4EstimatorInvalid, PX4Failsafe):
                     time.sleep(0.10)
                     continue
                 if not bool(state.get("armed", False)):
@@ -1228,17 +1272,67 @@ class PX4Bridge:
                     return True
                 time.sleep(0.20)
             return False
-        try:
-            self.disable_offboard()
-        except BridgeError:
-            pass
+        direct_spatial = bool(
+            str(getattr(getattr(self, "cfg", None), "target", "")).lower() == "sitl"
+            and extra.get("control_mapping", {}).get("interface") == "spatial_acceleration")
+        offboard_disabled = not direct_spatial
+        if offboard_disabled:
+            try:
+                self.disable_offboard()
+            except BridgeError:
+                pass
+        # Spatial gateway atomically replaces the last acceleration with an
+        # own-position brake/hold before requesting NAV_LAND. Do not cut its
+        # heartbeat until PX4 confirms leaving OFFBOARD (or disarms).
         self.disarm()
+        last_airborne_land_request = time.monotonic()
         deadline = time.monotonic() + float(
             timeout if timeout is not None else self.cfg.outcome_settle_timeout)
+        last_ground_disarm = -float("inf")
         while time.monotonic() < deadline:
-            state = self.get_state()
+            try:
+                state = self.get_state()
+            except (PX4EstimatorInvalid, PX4Failsafe):
+                # Stale odometry must not cancel an already requested landing.
+                # An armed OFFBOARD-loss failsafe also cannot cancel cleanup:
+                # validation still rejects it for RL, while this bounded loop
+                # waits for fresh, valid, landed AND disarmed confirmation.
+                # No stale state reaches a policy; cleanup waits boundedly for
+                # a fresh armed/landed confirmation after DDS reconnection.
+                time.sleep(0.05)
+                continue
+            if not offboard_disabled and (
+                    not bool(state.get("armed", False))
+                    or state.get("nav_state") not in (None, 14)):
+                try:
+                    self.disable_offboard()
+                    offboard_disabled = True
+                except BridgeError:
+                    pass
             if bool(state.get("landed", False)) and not bool(state.get("armed", False)):
                 return True
+            if (direct_spatial and not bool(state.get("landed", False))
+                    and bool(state.get("armed", False))
+                    and state.get("nav_state") == 14):
+                # The UDP ACK only confirms gateway receipt, not delivery
+                # of the one-shot DDS NAV_LAND to PX4. Keep the own-EKF
+                # braking heartbeat and retry the idempotent landing request
+                # until a FRESH status proves PX4 left OFFBOARD. Never issue
+                # an in-air force-disarm or extend this bounded deadline.
+                now = time.monotonic()
+                if now - last_airborne_land_request >= 1.0:
+                    self.disarm()
+                    last_airborne_land_request = now
+            if bool(state.get("landed", False)) and bool(state.get("armed", False)):
+                # The first in-air request was NAV_LAND, not a disarm. PX4
+                # may be configured not to auto-disarm on ordinary ground
+                # (outside the moving pad's SITL contact latch). Complete
+                # cleanup with a regular, guarded disarm only AFTER fresh
+                # land-detector confirmation. Never force-disarm in air.
+                now = time.monotonic()
+                if now - last_ground_disarm >= 0.5:
+                    self.disarm()
+                    last_ground_disarm = now
             time.sleep(0.05)
         return False
 

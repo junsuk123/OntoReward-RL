@@ -400,9 +400,9 @@ class ExternalStack:
     def restart_if_generation(self, observed_generation: int) -> bool:
         """Restart once when several pair workers observe the same stack fault.
 
-        Returns ``True`` only to the worker that performed the restart.  Other
-        pair workers reconnect to the new generation without spending one of
-        their own bounded recovery attempts on the same shared interruption.
+        Returns ``True`` only to the worker that performed the restart. Other
+        workers reuse that generation, but every discarded episode attempt
+        still consumes its caller's retry budget (including peer interruptions).
         """
         with self._restart_lock:
             if (self._shutdown_requested
@@ -469,7 +469,7 @@ class ExternalStack:
             entry = self.managed.pop()
             print(f"Stopping {entry['name']} (pid {entry['pid']}).")
             try:
-                self._kill_group(entry["pid"])
+                self._kill_group(entry["pid"], process=entry.get("process"))
             finally:
                 # Long experiments can cycle SITL many times. Keeping every
                 # old stdout handle open eventually exhausts the learner's file
@@ -560,21 +560,49 @@ class ExternalStack:
         return "\n".join(parts)
 
     @staticmethod
-    def _kill_group(pid: int) -> None:
+    def _kill_group(pid: int, *, process: subprocess.Popen | None = None) -> None:
         # A negative pid targets the process group created by start_new_session,
         # so Pegasus' PX4 child goes down with the simulator.
         # Let rclpy/Isaac close their contexts and publishers before escalating.
         # SIGTERM makes Isaac's bridge invalidate its context mid-frame, which
         # produces alarming RCLError tracebacks on every otherwise clean run.
+        if pid <= 1 or pid == os.getpgrp():
+            raise ValueError("refuse to stop a broad or current process group")
+        if process is not None and process.pid != pid:
+            raise ValueError("owned process must match its recorded process group")
+
+        def group_exists() -> bool:
+            # killpg(..., 0) also sees an unreaped zombie group leader. Poll
+            # OUR Popen so a clean exit is reaped instead of spending both
+            # ten-second escalation waits on an already stopped process.
+            # A reaped leader does NOT prove its PX4/other children exited:
+            # continue checking the whole owned group before returning.
+            if process is not None:
+                process.poll()
+            try:
+                os.killpg(pid, 0)
+            except ProcessLookupError:
+                return False
+            except PermissionError:
+                pass
+            return True
+
         for sig, patience in ((signal.SIGINT, 40), (signal.SIGTERM, 40),
                               (signal.SIGKILL, 0)):
+            if not group_exists():
+                return
             try:
                 os.killpg(pid, sig)
             except (ProcessLookupError, PermissionError):
                 return
             for _ in range(patience):
-                try:
-                    os.killpg(pid, 0)
-                except ProcessLookupError:
+                if not group_exists():
                     return
                 time.sleep(0.25)
+        if process is not None:
+            try:
+                process.wait(timeout=1.)
+            except subprocess.TimeoutExpired:
+                # Preserve the bounded stop contract even if the kernel
+                # cannot finish an uninterruptible child immediately.
+                pass

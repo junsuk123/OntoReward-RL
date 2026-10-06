@@ -114,7 +114,12 @@ def main():
     parser.add_argument("--start-stack", action="store_true",
                         help="Own a new stack; otherwise explicitly adopt the operator's stack")
     parser.add_argument("--reset-recoveries", type=int, choices=range(6), default=0)
-    parser.add_argument("--contract-version", choices=["5", "6", "7", "8", "9", "10", "reference"], default="reference")
+    # spatial-reference/1 is the superseded reference rung (one-sided vertical
+    # brake); it is selectable so the two rungs can be flown back to back.
+    parser.add_argument("--contract-version",
+                        choices=["5", "6", "7", "8", "9", "10",
+                                 "spatial-reference/1", "reference"],
+                        default="reference")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     if not 0 <= args.integral_gain <= 1:

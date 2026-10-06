@@ -1,0 +1,2551 @@
+{
+ "schema": "spatial-reference/3",
+ "seeds": [
+  6001,
+  6002,
+  6003,
+  6004,
+  6005,
+  6006,
+  6007,
+  6008,
+  6009,
+  6010,
+  6011,
+  6012
+ ],
+ "rows": [
+  {
+   "gains": {
+    "kp": 0.15,
+    "kd": 0.6,
+    "ki": 0.2,
+    "kz": 1.0,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.3
+   },
+   "land": 0.5833333333333334,
+   "unsafe": 0.16666666666666666,
+   "outcomes": {
+    "SUCCESS": 7,
+    "UNSAFE_CONTACT": 2,
+    "TASK_TIMEOUT": 3
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.15,
+    "kd": 0.6,
+    "ki": 0.2,
+    "kz": 0.7,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.3
+   },
+   "land": 0.5833333333333334,
+   "unsafe": 0.16666666666666666,
+   "outcomes": {
+    "SUCCESS": 7,
+    "UNSAFE_CONTACT": 2,
+    "TASK_TIMEOUT": 3
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.4,
+    "kd": 0.6,
+    "ki": 0.4,
+    "kz": 0.7,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.3
+   },
+   "land": 0.5833333333333334,
+   "unsafe": 0.16666666666666666,
+   "outcomes": {
+    "SUCCESS": 7,
+    "UNSAFE_CONTACT": 2,
+    "TASK_TIMEOUT": 3
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.25,
+    "kd": 0.6,
+    "ki": 0.2,
+    "kz": 0.7,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.3
+   },
+   "land": 0.5833333333333334,
+   "unsafe": 0.25,
+   "outcomes": {
+    "SUCCESS": 7,
+    "UNSAFE_CONTACT": 2,
+    "UNAUTHORIZED_CONTACT": 1,
+    "TASK_TIMEOUT": 2
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.25,
+    "kd": 0.6,
+    "ki": 0.2,
+    "kz": 1.0,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.3
+   },
+   "land": 0.5833333333333334,
+   "unsafe": 0.25,
+   "outcomes": {
+    "SUCCESS": 7,
+    "UNSAFE_CONTACT": 3,
+    "TASK_TIMEOUT": 2
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.25,
+    "kd": 0.6,
+    "ki": 0.4,
+    "kz": 0.7,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.3
+   },
+   "land": 0.5833333333333334,
+   "unsafe": 0.25,
+   "outcomes": {
+    "SUCCESS": 7,
+    "UNSAFE_CONTACT": 2,
+    "TASK_TIMEOUT": 2,
+    "UNAUTHORIZED_CONTACT": 1
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.25,
+    "kd": 0.6,
+    "ki": 0.4,
+    "kz": 1.0,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.3
+   },
+   "land": 0.5833333333333334,
+   "unsafe": 0.25,
+   "outcomes": {
+    "UNSAFE_CONTACT": 3,
+    "SUCCESS": 7,
+    "TASK_TIMEOUT": 2
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.15,
+    "kd": 0.6,
+    "ki": 0.4,
+    "kz": 1.0,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.3
+   },
+   "land": 0.5,
+   "unsafe": 0.16666666666666666,
+   "outcomes": {
+    "SUCCESS": 6,
+    "UNSAFE_CONTACT": 1,
+    "TASK_TIMEOUT": 4,
+    "MISSED_PAD_CONTACT": 1
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.15,
+    "kd": 0.6,
+    "ki": 0.4,
+    "kz": 0.7,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.3
+   },
+   "land": 0.5,
+   "unsafe": 0.16666666666666666,
+   "outcomes": {
+    "SUCCESS": 6,
+    "UNSAFE_CONTACT": 1,
+    "TASK_TIMEOUT": 4,
+    "MISSED_PAD_CONTACT": 1
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.4,
+    "kd": 0.6,
+    "ki": 0.2,
+    "kz": 1.0,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.3
+   },
+   "land": 0.5,
+   "unsafe": 0.25,
+   "outcomes": {
+    "SUCCESS": 6,
+    "UNAUTHORIZED_CONTACT": 1,
+    "TASK_TIMEOUT": 3,
+    "UNSAFE_CONTACT": 2
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.4,
+    "kd": 0.6,
+    "ki": 0.4,
+    "kz": 1.0,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.3
+   },
+   "land": 0.5,
+   "unsafe": 0.3333333333333333,
+   "outcomes": {
+    "UNSAFE_CONTACT": 2,
+    "SUCCESS": 6,
+    "UNAUTHORIZED_CONTACT": 2,
+    "TASK_TIMEOUT": 2
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.4,
+    "kd": 0.6,
+    "ki": 0.2,
+    "kz": 0.7,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.3
+   },
+   "land": 0.3333333333333333,
+   "unsafe": 0.4166666666666667,
+   "outcomes": {
+    "SUCCESS": 4,
+    "UNAUTHORIZED_CONTACT": 4,
+    "TASK_TIMEOUT": 3,
+    "UNSAFE_CONTACT": 1
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.15,
+    "kd": 0.6,
+    "ki": 0.0,
+    "kz": 1.0,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.3
+   },
+   "land": 0.0,
+   "unsafe": 0.0,
+   "outcomes": {
+    "SAFE_ABORT": 7,
+    "TASK_TIMEOUT": 5
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.15,
+    "kd": 0.6,
+    "ki": 0.0,
+    "kz": 0.7,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.3
+   },
+   "land": 0.0,
+   "unsafe": 0.0,
+   "outcomes": {
+    "SAFE_ABORT": 6,
+    "TASK_TIMEOUT": 6
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.15,
+    "kd": 0.6,
+    "ki": 0.0,
+    "kz": 1.0,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.2
+   },
+   "land": 0.0,
+   "unsafe": 0.0,
+   "outcomes": {
+    "SAFE_ABORT": 4,
+    "TASK_TIMEOUT": 8
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.15,
+    "kd": 0.9,
+    "ki": 0.0,
+    "kz": 1.0,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.3
+   },
+   "land": 0.0,
+   "unsafe": 0.0,
+   "outcomes": {
+    "SAFE_ABORT": 4,
+    "TASK_TIMEOUT": 8
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.15,
+    "kd": 0.9,
+    "ki": 0.0,
+    "kz": 0.7,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.2
+   },
+   "land": 0.0,
+   "unsafe": 0.0,
+   "outcomes": {
+    "SAFE_ABORT": 3,
+    "TASK_TIMEOUT": 9
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.15,
+    "kd": 0.9,
+    "ki": 0.0,
+    "kz": 1.0,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.2
+   },
+   "land": 0.0,
+   "unsafe": 0.0,
+   "outcomes": {
+    "SAFE_ABORT": 3,
+    "TASK_TIMEOUT": 9
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.15,
+    "kd": 0.6,
+    "ki": 0.0,
+    "kz": 0.7,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.2
+   },
+   "land": 0.0,
+   "unsafe": 0.0,
+   "outcomes": {
+    "SAFE_ABORT": 3,
+    "TASK_TIMEOUT": 9
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.15,
+    "kd": 1.3,
+    "ki": 0.0,
+    "kz": 0.7,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.2
+   },
+   "land": 0.0,
+   "unsafe": 0.0,
+   "outcomes": {
+    "SAFE_ABORT": 5,
+    "TASK_TIMEOUT": 7
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.15,
+    "kd": 1.3,
+    "ki": 0.0,
+    "kz": 0.7,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.3
+   },
+   "land": 0.0,
+   "unsafe": 0.0,
+   "outcomes": {
+    "SAFE_ABORT": 5,
+    "TASK_TIMEOUT": 7
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.15,
+    "kd": 1.3,
+    "ki": 0.0,
+    "kz": 1.0,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.3
+   },
+   "land": 0.0,
+   "unsafe": 0.0,
+   "outcomes": {
+    "SAFE_ABORT": 5,
+    "TASK_TIMEOUT": 7
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.15,
+    "kd": 1.3,
+    "ki": 0.0,
+    "kz": 1.0,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.2
+   },
+   "land": 0.0,
+   "unsafe": 0.0,
+   "outcomes": {
+    "SAFE_ABORT": 5,
+    "TASK_TIMEOUT": 7
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.15,
+    "kd": 1.8,
+    "ki": 0.0,
+    "kz": 0.7,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.3
+   },
+   "land": 0.0,
+   "unsafe": 0.0,
+   "outcomes": {
+    "SAFE_ABORT": 5,
+    "TASK_TIMEOUT": 7
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.25,
+    "kd": 0.6,
+    "ki": 0.0,
+    "kz": 0.7,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.3
+   },
+   "land": 0.0,
+   "unsafe": 0.0,
+   "outcomes": {
+    "SAFE_ABORT": 4,
+    "TASK_TIMEOUT": 8
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.15,
+    "kd": 1.8,
+    "ki": 0.0,
+    "kz": 0.7,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.2
+   },
+   "land": 0.0,
+   "unsafe": 0.0,
+   "outcomes": {
+    "SAFE_ABORT": 5,
+    "TASK_TIMEOUT": 7
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.15,
+    "kd": 1.8,
+    "ki": 0.0,
+    "kz": 1.0,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.3
+   },
+   "land": 0.0,
+   "unsafe": 0.0,
+   "outcomes": {
+    "SAFE_ABORT": 7,
+    "TASK_TIMEOUT": 5
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.25,
+    "kd": 0.6,
+    "ki": 0.0,
+    "kz": 1.0,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.2
+   },
+   "land": 0.0,
+   "unsafe": 0.0,
+   "outcomes": {
+    "SAFE_ABORT": 3,
+    "TASK_TIMEOUT": 9
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.25,
+    "kd": 0.6,
+    "ki": 0.0,
+    "kz": 0.7,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.2
+   },
+   "land": 0.0,
+   "unsafe": 0.0,
+   "outcomes": {
+    "SAFE_ABORT": 3,
+    "TASK_TIMEOUT": 9
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.15,
+    "kd": 1.8,
+    "ki": 0.0,
+    "kz": 1.0,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.2
+   },
+   "land": 0.0,
+   "unsafe": 0.0,
+   "outcomes": {
+    "SAFE_ABORT": 6,
+    "TASK_TIMEOUT": 6
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.25,
+    "kd": 0.9,
+    "ki": 0.0,
+    "kz": 0.7,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.2
+   },
+   "land": 0.0,
+   "unsafe": 0.0,
+   "outcomes": {
+    "SAFE_ABORT": 3,
+    "TASK_TIMEOUT": 9
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.25,
+    "kd": 0.9,
+    "ki": 0.0,
+    "kz": 1.0,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.2
+   },
+   "land": 0.0,
+   "unsafe": 0.0,
+   "outcomes": {
+    "SAFE_ABORT": 3,
+    "TASK_TIMEOUT": 9
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.25,
+    "kd": 1.3,
+    "ki": 0.0,
+    "kz": 0.7,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.3
+   },
+   "land": 0.0,
+   "unsafe": 0.0,
+   "outcomes": {
+    "SAFE_ABORT": 3,
+    "TASK_TIMEOUT": 9
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.25,
+    "kd": 1.3,
+    "ki": 0.0,
+    "kz": 1.0,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.3
+   },
+   "land": 0.0,
+   "unsafe": 0.0,
+   "outcomes": {
+    "SAFE_ABORT": 3,
+    "TASK_TIMEOUT": 9
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.25,
+    "kd": 1.3,
+    "ki": 0.0,
+    "kz": 1.0,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.2
+   },
+   "land": 0.0,
+   "unsafe": 0.0,
+   "outcomes": {
+    "SAFE_ABORT": 3,
+    "TASK_TIMEOUT": 9
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.25,
+    "kd": 1.8,
+    "ki": 0.0,
+    "kz": 0.7,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.3
+   },
+   "land": 0.0,
+   "unsafe": 0.0,
+   "outcomes": {
+    "SAFE_ABORT": 3,
+    "TASK_TIMEOUT": 9
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.25,
+    "kd": 1.3,
+    "ki": 0.0,
+    "kz": 0.7,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.2
+   },
+   "land": 0.0,
+   "unsafe": 0.0,
+   "outcomes": {
+    "SAFE_ABORT": 3,
+    "TASK_TIMEOUT": 9
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.25,
+    "kd": 1.8,
+    "ki": 0.0,
+    "kz": 0.7,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.2
+   },
+   "land": 0.0,
+   "unsafe": 0.0,
+   "outcomes": {
+    "SAFE_ABORT": 3,
+    "TASK_TIMEOUT": 9
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.25,
+    "kd": 1.8,
+    "ki": 0.0,
+    "kz": 1.0,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.2
+   },
+   "land": 0.0,
+   "unsafe": 0.0,
+   "outcomes": {
+    "SAFE_ABORT": 3,
+    "TASK_TIMEOUT": 9
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.25,
+    "kd": 1.8,
+    "ki": 0.0,
+    "kz": 1.0,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.3
+   },
+   "land": 0.0,
+   "unsafe": 0.0,
+   "outcomes": {
+    "SAFE_ABORT": 3,
+    "TASK_TIMEOUT": 9
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.4,
+    "kd": 0.6,
+    "ki": 0.0,
+    "kz": 0.7,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.2
+   },
+   "land": 0.0,
+   "unsafe": 0.0,
+   "outcomes": {
+    "SAFE_ABORT": 3,
+    "TASK_TIMEOUT": 9
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.4,
+    "kd": 0.9,
+    "ki": 0.0,
+    "kz": 1.0,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.2
+   },
+   "land": 0.0,
+   "unsafe": 0.0,
+   "outcomes": {
+    "SAFE_ABORT": 3,
+    "TASK_TIMEOUT": 9
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.4,
+    "kd": 0.9,
+    "ki": 0.0,
+    "kz": 0.7,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.2
+   },
+   "land": 0.0,
+   "unsafe": 0.0,
+   "outcomes": {
+    "SAFE_ABORT": 3,
+    "TASK_TIMEOUT": 9
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.4,
+    "kd": 1.3,
+    "ki": 0.0,
+    "kz": 1.0,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.3
+   },
+   "land": 0.0,
+   "unsafe": 0.0,
+   "outcomes": {
+    "SAFE_ABORT": 3,
+    "TASK_TIMEOUT": 9
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.4,
+    "kd": 1.3,
+    "ki": 0.0,
+    "kz": 0.7,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.2
+   },
+   "land": 0.0,
+   "unsafe": 0.0,
+   "outcomes": {
+    "SAFE_ABORT": 3,
+    "TASK_TIMEOUT": 9
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.4,
+    "kd": 1.3,
+    "ki": 0.0,
+    "kz": 1.0,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.2
+   },
+   "land": 0.0,
+   "unsafe": 0.0,
+   "outcomes": {
+    "SAFE_ABORT": 3,
+    "TASK_TIMEOUT": 9
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.4,
+    "kd": 1.3,
+    "ki": 0.0,
+    "kz": 0.7,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.3
+   },
+   "land": 0.0,
+   "unsafe": 0.0,
+   "outcomes": {
+    "SAFE_ABORT": 3,
+    "TASK_TIMEOUT": 9
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.4,
+    "kd": 1.8,
+    "ki": 0.0,
+    "kz": 0.7,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.3
+   },
+   "land": 0.0,
+   "unsafe": 0.0,
+   "outcomes": {
+    "SAFE_ABORT": 3,
+    "TASK_TIMEOUT": 9
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.4,
+    "kd": 1.8,
+    "ki": 0.0,
+    "kz": 1.0,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.2
+   },
+   "land": 0.0,
+   "unsafe": 0.0,
+   "outcomes": {
+    "SAFE_ABORT": 3,
+    "TASK_TIMEOUT": 9
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.4,
+    "kd": 1.8,
+    "ki": 0.0,
+    "kz": 0.7,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.2
+   },
+   "land": 0.0,
+   "unsafe": 0.0,
+   "outcomes": {
+    "SAFE_ABORT": 3,
+    "TASK_TIMEOUT": 9
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.4,
+    "kd": 1.8,
+    "ki": 0.0,
+    "kz": 1.0,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.3
+   },
+   "land": 0.0,
+   "unsafe": 0.0,
+   "outcomes": {
+    "SAFE_ABORT": 3,
+    "TASK_TIMEOUT": 9
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.15,
+    "kd": 0.9,
+    "ki": 0.0,
+    "kz": 0.7,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.3
+   },
+   "land": 0.0,
+   "unsafe": 0.08333333333333333,
+   "outcomes": {
+    "SAFE_ABORT": 3,
+    "MISSED_PAD_CONTACT": 1,
+    "TASK_TIMEOUT": 8
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.15,
+    "kd": 1.8,
+    "ki": 0.4,
+    "kz": 1.0,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.2
+   },
+   "land": 0.0,
+   "unsafe": 0.08333333333333333,
+   "outcomes": {
+    "UNSAFE_CONTACT": 1,
+    "TASK_TIMEOUT": 9,
+    "SAFE_ABORT": 2
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.25,
+    "kd": 0.6,
+    "ki": 0.0,
+    "kz": 1.0,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.3
+   },
+   "land": 0.0,
+   "unsafe": 0.08333333333333333,
+   "outcomes": {
+    "UNAUTHORIZED_CONTACT": 1,
+    "SAFE_ABORT": 3,
+    "TASK_TIMEOUT": 8
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.25,
+    "kd": 0.9,
+    "ki": 0.0,
+    "kz": 0.7,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.3
+   },
+   "land": 0.0,
+   "unsafe": 0.08333333333333333,
+   "outcomes": {
+    "SAFE_ABORT": 3,
+    "UNSAFE_CONTACT": 1,
+    "TASK_TIMEOUT": 8
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.25,
+    "kd": 1.8,
+    "ki": 0.4,
+    "kz": 0.7,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.3
+   },
+   "land": 0.0,
+   "unsafe": 0.08333333333333333,
+   "outcomes": {
+    "UNSAFE_CONTACT": 1,
+    "TASK_TIMEOUT": 9,
+    "SAFE_ABORT": 2
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.4,
+    "kd": 0.6,
+    "ki": 0.0,
+    "kz": 1.0,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.2
+   },
+   "land": 0.0,
+   "unsafe": 0.08333333333333333,
+   "outcomes": {
+    "UNSAFE_CONTACT": 1,
+    "TASK_TIMEOUT": 9,
+    "SAFE_ABORT": 2
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.15,
+    "kd": 0.6,
+    "ki": 0.4,
+    "kz": 1.0,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.2
+   },
+   "land": 0.0,
+   "unsafe": 0.16666666666666666,
+   "outcomes": {
+    "UNSAFE_CONTACT": 1,
+    "TASK_TIMEOUT": 9,
+    "MISSED_PAD_CONTACT": 1,
+    "SAFE_ABORT": 1
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.15,
+    "kd": 0.9,
+    "ki": 0.4,
+    "kz": 0.7,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.2
+   },
+   "land": 0.0,
+   "unsafe": 0.16666666666666666,
+   "outcomes": {
+    "UNSAFE_CONTACT": 1,
+    "TASK_TIMEOUT": 9,
+    "MISSED_PAD_CONTACT": 1,
+    "SAFE_ABORT": 1
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.15,
+    "kd": 1.3,
+    "ki": 0.2,
+    "kz": 1.0,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.2
+   },
+   "land": 0.0,
+   "unsafe": 0.16666666666666666,
+   "outcomes": {
+    "UNSAFE_CONTACT": 2,
+    "TASK_TIMEOUT": 9,
+    "SAFE_ABORT": 1
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.15,
+    "kd": 1.3,
+    "ki": 0.4,
+    "kz": 0.7,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.2
+   },
+   "land": 0.0,
+   "unsafe": 0.16666666666666666,
+   "outcomes": {
+    "UNSAFE_CONTACT": 1,
+    "TASK_TIMEOUT": 9,
+    "MISSED_PAD_CONTACT": 1,
+    "SAFE_ABORT": 1
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.15,
+    "kd": 1.8,
+    "ki": 0.2,
+    "kz": 1.0,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.2
+   },
+   "land": 0.0,
+   "unsafe": 0.16666666666666666,
+   "outcomes": {
+    "UNSAFE_CONTACT": 2,
+    "TASK_TIMEOUT": 9,
+    "SAFE_ABORT": 1
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.15,
+    "kd": 1.8,
+    "ki": 0.4,
+    "kz": 0.7,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.2
+   },
+   "land": 0.0,
+   "unsafe": 0.16666666666666666,
+   "outcomes": {
+    "UNSAFE_CONTACT": 1,
+    "TASK_TIMEOUT": 9,
+    "MISSED_PAD_CONTACT": 1,
+    "SAFE_ABORT": 1
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.15,
+    "kd": 1.8,
+    "ki": 0.4,
+    "kz": 0.7,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.3
+   },
+   "land": 0.0,
+   "unsafe": 0.16666666666666666,
+   "outcomes": {
+    "UNSAFE_CONTACT": 1,
+    "TASK_TIMEOUT": 9,
+    "MISSED_PAD_CONTACT": 1,
+    "SAFE_ABORT": 1
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.15,
+    "kd": 1.8,
+    "ki": 0.4,
+    "kz": 1.0,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.3
+   },
+   "land": 0.0,
+   "unsafe": 0.16666666666666666,
+   "outcomes": {
+    "UNSAFE_CONTACT": 1,
+    "TASK_TIMEOUT": 9,
+    "MISSED_PAD_CONTACT": 1,
+    "SAFE_ABORT": 1
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.15,
+    "kd": 1.3,
+    "ki": 0.4,
+    "kz": 1.0,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.2
+   },
+   "land": 0.0,
+   "unsafe": 0.16666666666666666,
+   "outcomes": {
+    "UNSAFE_CONTACT": 2,
+    "TASK_TIMEOUT": 9,
+    "SAFE_ABORT": 1
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.25,
+    "kd": 0.6,
+    "ki": 0.2,
+    "kz": 0.7,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.2
+   },
+   "land": 0.0,
+   "unsafe": 0.16666666666666666,
+   "outcomes": {
+    "UNSAFE_CONTACT": 2,
+    "TASK_TIMEOUT": 9,
+    "SAFE_ABORT": 1
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.25,
+    "kd": 0.9,
+    "ki": 0.4,
+    "kz": 0.7,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.2
+   },
+   "land": 0.0,
+   "unsafe": 0.16666666666666666,
+   "outcomes": {
+    "UNSAFE_CONTACT": 1,
+    "TASK_TIMEOUT": 9,
+    "MISSED_PAD_CONTACT": 1,
+    "SAFE_ABORT": 1
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.25,
+    "kd": 0.6,
+    "ki": 0.4,
+    "kz": 0.7,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.2
+   },
+   "land": 0.0,
+   "unsafe": 0.16666666666666666,
+   "outcomes": {
+    "UNSAFE_CONTACT": 2,
+    "TASK_TIMEOUT": 9,
+    "SAFE_ABORT": 1
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.25,
+    "kd": 1.3,
+    "ki": 0.2,
+    "kz": 1.0,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.2
+   },
+   "land": 0.0,
+   "unsafe": 0.16666666666666666,
+   "outcomes": {
+    "UNSAFE_CONTACT": 2,
+    "TASK_TIMEOUT": 9,
+    "SAFE_ABORT": 1
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.25,
+    "kd": 0.9,
+    "ki": 0.0,
+    "kz": 1.0,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.3
+   },
+   "land": 0.0,
+   "unsafe": 0.16666666666666666,
+   "outcomes": {
+    "MISSED_PAD_CONTACT": 1,
+    "SAFE_ABORT": 2,
+    "UNSAFE_CONTACT": 1,
+    "TASK_TIMEOUT": 8
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.25,
+    "kd": 1.3,
+    "ki": 0.4,
+    "kz": 0.7,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.3
+   },
+   "land": 0.0,
+   "unsafe": 0.16666666666666666,
+   "outcomes": {
+    "UNSAFE_CONTACT": 2,
+    "TASK_TIMEOUT": 9,
+    "SAFE_ABORT": 1
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.25,
+    "kd": 1.3,
+    "ki": 0.4,
+    "kz": 1.0,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.3
+   },
+   "land": 0.0,
+   "unsafe": 0.16666666666666666,
+   "outcomes": {
+    "UNSAFE_CONTACT": 2,
+    "TASK_TIMEOUT": 9,
+    "SAFE_ABORT": 1
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.25,
+    "kd": 1.3,
+    "ki": 0.4,
+    "kz": 1.0,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.2
+   },
+   "land": 0.0,
+   "unsafe": 0.16666666666666666,
+   "outcomes": {
+    "UNSAFE_CONTACT": 2,
+    "TASK_TIMEOUT": 9,
+    "SAFE_ABORT": 1
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.25,
+    "kd": 1.8,
+    "ki": 0.2,
+    "kz": 0.7,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.2
+   },
+   "land": 0.0,
+   "unsafe": 0.16666666666666666,
+   "outcomes": {
+    "UNSAFE_CONTACT": 2,
+    "TASK_TIMEOUT": 9,
+    "SAFE_ABORT": 1
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.25,
+    "kd": 1.8,
+    "ki": 0.4,
+    "kz": 0.7,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.2
+   },
+   "land": 0.0,
+   "unsafe": 0.16666666666666666,
+   "outcomes": {
+    "UNSAFE_CONTACT": 2,
+    "TASK_TIMEOUT": 9,
+    "SAFE_ABORT": 1
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.25,
+    "kd": 1.8,
+    "ki": 0.4,
+    "kz": 1.0,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.2
+   },
+   "land": 0.0,
+   "unsafe": 0.16666666666666666,
+   "outcomes": {
+    "UNSAFE_CONTACT": 2,
+    "TASK_TIMEOUT": 9,
+    "SAFE_ABORT": 1
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.4,
+    "kd": 0.6,
+    "ki": 0.2,
+    "kz": 1.0,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.2
+   },
+   "land": 0.0,
+   "unsafe": 0.16666666666666666,
+   "outcomes": {
+    "UNSAFE_CONTACT": 2,
+    "TASK_TIMEOUT": 9,
+    "SAFE_ABORT": 1
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.25,
+    "kd": 1.8,
+    "ki": 0.4,
+    "kz": 1.0,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.3
+   },
+   "land": 0.0,
+   "unsafe": 0.16666666666666666,
+   "outcomes": {
+    "UNSAFE_CONTACT": 1,
+    "TASK_TIMEOUT": 9,
+    "MISSED_PAD_CONTACT": 1,
+    "SAFE_ABORT": 1
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.4,
+    "kd": 0.9,
+    "ki": 0.0,
+    "kz": 0.7,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.3
+   },
+   "land": 0.0,
+   "unsafe": 0.16666666666666666,
+   "outcomes": {
+    "UNSAFE_CONTACT": 2,
+    "SAFE_ABORT": 2,
+    "TASK_TIMEOUT": 8
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.4,
+    "kd": 0.6,
+    "ki": 0.0,
+    "kz": 0.7,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.3
+   },
+   "land": 0.0,
+   "unsafe": 0.16666666666666666,
+   "outcomes": {
+    "UNSAFE_CONTACT": 1,
+    "TASK_TIMEOUT": 9,
+    "SAFE_ABORT": 1,
+    "UNAUTHORIZED_CONTACT": 1
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.4,
+    "kd": 0.9,
+    "ki": 0.0,
+    "kz": 1.0,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.3
+   },
+   "land": 0.0,
+   "unsafe": 0.16666666666666666,
+   "outcomes": {
+    "UNSAFE_CONTACT": 2,
+    "TASK_TIMEOUT": 9,
+    "SAFE_ABORT": 1
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.4,
+    "kd": 0.9,
+    "ki": 0.4,
+    "kz": 0.7,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.2
+   },
+   "land": 0.0,
+   "unsafe": 0.16666666666666666,
+   "outcomes": {
+    "UNSAFE_CONTACT": 2,
+    "TASK_TIMEOUT": 9,
+    "SAFE_ABORT": 1
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.4,
+    "kd": 1.3,
+    "ki": 0.2,
+    "kz": 1.0,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.2
+   },
+   "land": 0.0,
+   "unsafe": 0.16666666666666666,
+   "outcomes": {
+    "UNSAFE_CONTACT": 2,
+    "TASK_TIMEOUT": 9,
+    "SAFE_ABORT": 1
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.4,
+    "kd": 1.8,
+    "ki": 0.4,
+    "kz": 0.7,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.2
+   },
+   "land": 0.0,
+   "unsafe": 0.16666666666666666,
+   "outcomes": {
+    "UNSAFE_CONTACT": 2,
+    "TASK_TIMEOUT": 9,
+    "SAFE_ABORT": 1
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.4,
+    "kd": 1.8,
+    "ki": 0.4,
+    "kz": 1.0,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.3
+   },
+   "land": 0.0,
+   "unsafe": 0.16666666666666666,
+   "outcomes": {
+    "UNSAFE_CONTACT": 2,
+    "TASK_TIMEOUT": 9,
+    "SAFE_ABORT": 1
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.15,
+    "kd": 0.6,
+    "ki": 0.2,
+    "kz": 0.7,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.2
+   },
+   "land": 0.0,
+   "unsafe": 0.25,
+   "outcomes": {
+    "UNSAFE_CONTACT": 3,
+    "TASK_TIMEOUT": 9
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.15,
+    "kd": 0.6,
+    "ki": 0.2,
+    "kz": 1.0,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.2
+   },
+   "land": 0.0,
+   "unsafe": 0.25,
+   "outcomes": {
+    "UNSAFE_CONTACT": 3,
+    "TASK_TIMEOUT": 9
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.15,
+    "kd": 0.6,
+    "ki": 0.4,
+    "kz": 0.7,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.2
+   },
+   "land": 0.0,
+   "unsafe": 0.25,
+   "outcomes": {
+    "UNSAFE_CONTACT": 1,
+    "TASK_TIMEOUT": 9,
+    "MISSED_PAD_CONTACT": 2
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.15,
+    "kd": 0.9,
+    "ki": 0.2,
+    "kz": 0.7,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.3
+   },
+   "land": 0.0,
+   "unsafe": 0.25,
+   "outcomes": {
+    "UNSAFE_CONTACT": 3,
+    "SAFE_ABORT": 1,
+    "TASK_TIMEOUT": 8
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.15,
+    "kd": 0.9,
+    "ki": 0.2,
+    "kz": 0.7,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.2
+   },
+   "land": 0.0,
+   "unsafe": 0.25,
+   "outcomes": {
+    "UNSAFE_CONTACT": 2,
+    "TASK_TIMEOUT": 9,
+    "MISSED_PAD_CONTACT": 1
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.15,
+    "kd": 0.9,
+    "ki": 0.4,
+    "kz": 1.0,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.2
+   },
+   "land": 0.0,
+   "unsafe": 0.25,
+   "outcomes": {
+    "UNSAFE_CONTACT": 2,
+    "TASK_TIMEOUT": 9,
+    "MISSED_PAD_CONTACT": 1
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.15,
+    "kd": 0.9,
+    "ki": 0.4,
+    "kz": 1.0,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.3
+   },
+   "land": 0.0,
+   "unsafe": 0.25,
+   "outcomes": {
+    "UNSAFE_CONTACT": 2,
+    "SAFE_ABORT": 1,
+    "TASK_TIMEOUT": 8,
+    "MISSED_PAD_CONTACT": 1
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.15,
+    "kd": 1.3,
+    "ki": 0.2,
+    "kz": 0.7,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.2
+   },
+   "land": 0.0,
+   "unsafe": 0.25,
+   "outcomes": {
+    "UNSAFE_CONTACT": 3,
+    "TASK_TIMEOUT": 9
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.15,
+    "kd": 0.9,
+    "ki": 0.2,
+    "kz": 1.0,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.2
+   },
+   "land": 0.0,
+   "unsafe": 0.25,
+   "outcomes": {
+    "UNSAFE_CONTACT": 3,
+    "TASK_TIMEOUT": 9
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.15,
+    "kd": 0.9,
+    "ki": 0.2,
+    "kz": 1.0,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.3
+   },
+   "land": 0.0,
+   "unsafe": 0.25,
+   "outcomes": {
+    "UNSAFE_CONTACT": 2,
+    "SAFE_ABORT": 1,
+    "MISSED_PAD_CONTACT": 1,
+    "TASK_TIMEOUT": 8
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.15,
+    "kd": 1.3,
+    "ki": 0.2,
+    "kz": 0.7,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.3
+   },
+   "land": 0.0,
+   "unsafe": 0.25,
+   "outcomes": {
+    "UNSAFE_CONTACT": 3,
+    "TASK_TIMEOUT": 9
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.15,
+    "kd": 0.9,
+    "ki": 0.4,
+    "kz": 0.7,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.3
+   },
+   "land": 0.0,
+   "unsafe": 0.25,
+   "outcomes": {
+    "UNSAFE_CONTACT": 2,
+    "SAFE_ABORT": 1,
+    "TASK_TIMEOUT": 8,
+    "MISSED_PAD_CONTACT": 1
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.15,
+    "kd": 1.3,
+    "ki": 0.4,
+    "kz": 0.7,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.3
+   },
+   "land": 0.0,
+   "unsafe": 0.25,
+   "outcomes": {
+    "UNSAFE_CONTACT": 3,
+    "TASK_TIMEOUT": 9
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.15,
+    "kd": 1.3,
+    "ki": 0.2,
+    "kz": 1.0,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.3
+   },
+   "land": 0.0,
+   "unsafe": 0.25,
+   "outcomes": {
+    "UNSAFE_CONTACT": 3,
+    "TASK_TIMEOUT": 9
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.15,
+    "kd": 1.3,
+    "ki": 0.4,
+    "kz": 1.0,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.3
+   },
+   "land": 0.0,
+   "unsafe": 0.25,
+   "outcomes": {
+    "UNSAFE_CONTACT": 3,
+    "TASK_TIMEOUT": 9
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.15,
+    "kd": 1.8,
+    "ki": 0.2,
+    "kz": 0.7,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.3
+   },
+   "land": 0.0,
+   "unsafe": 0.25,
+   "outcomes": {
+    "UNSAFE_CONTACT": 3,
+    "TASK_TIMEOUT": 9
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.15,
+    "kd": 1.8,
+    "ki": 0.2,
+    "kz": 1.0,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.3
+   },
+   "land": 0.0,
+   "unsafe": 0.25,
+   "outcomes": {
+    "UNSAFE_CONTACT": 2,
+    "TASK_TIMEOUT": 9,
+    "MISSED_PAD_CONTACT": 1
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.25,
+    "kd": 0.6,
+    "ki": 0.2,
+    "kz": 1.0,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.2
+   },
+   "land": 0.0,
+   "unsafe": 0.25,
+   "outcomes": {
+    "UNSAFE_CONTACT": 3,
+    "TASK_TIMEOUT": 9
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.25,
+    "kd": 0.6,
+    "ki": 0.4,
+    "kz": 1.0,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.2
+   },
+   "land": 0.0,
+   "unsafe": 0.25,
+   "outcomes": {
+    "UNSAFE_CONTACT": 2,
+    "TASK_TIMEOUT": 9,
+    "MISSED_PAD_CONTACT": 1
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.15,
+    "kd": 1.8,
+    "ki": 0.2,
+    "kz": 0.7,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.2
+   },
+   "land": 0.0,
+   "unsafe": 0.25,
+   "outcomes": {
+    "UNSAFE_CONTACT": 3,
+    "TASK_TIMEOUT": 9
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.25,
+    "kd": 0.9,
+    "ki": 0.2,
+    "kz": 1.0,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.2
+   },
+   "land": 0.0,
+   "unsafe": 0.25,
+   "outcomes": {
+    "UNSAFE_CONTACT": 3,
+    "TASK_TIMEOUT": 9
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.25,
+    "kd": 0.9,
+    "ki": 0.2,
+    "kz": 0.7,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.2
+   },
+   "land": 0.0,
+   "unsafe": 0.25,
+   "outcomes": {
+    "UNSAFE_CONTACT": 3,
+    "TASK_TIMEOUT": 9
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.25,
+    "kd": 0.9,
+    "ki": 0.4,
+    "kz": 0.7,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.3
+   },
+   "land": 0.0,
+   "unsafe": 0.25,
+   "outcomes": {
+    "UNSAFE_CONTACT": 3,
+    "SAFE_ABORT": 1,
+    "TASK_TIMEOUT": 8
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.25,
+    "kd": 0.9,
+    "ki": 0.2,
+    "kz": 1.0,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.3
+   },
+   "land": 0.0,
+   "unsafe": 0.25,
+   "outcomes": {
+    "UNSAFE_CONTACT": 2,
+    "TASK_TIMEOUT": 9,
+    "MISSED_PAD_CONTACT": 1
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.25,
+    "kd": 0.9,
+    "ki": 0.4,
+    "kz": 1.0,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.3
+   },
+   "land": 0.0,
+   "unsafe": 0.25,
+   "outcomes": {
+    "UNSAFE_CONTACT": 3,
+    "SAFE_ABORT": 1,
+    "TASK_TIMEOUT": 8
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.25,
+    "kd": 0.9,
+    "ki": 0.4,
+    "kz": 1.0,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.2
+   },
+   "land": 0.0,
+   "unsafe": 0.25,
+   "outcomes": {
+    "UNSAFE_CONTACT": 3,
+    "TASK_TIMEOUT": 9
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.25,
+    "kd": 1.3,
+    "ki": 0.2,
+    "kz": 0.7,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.3
+   },
+   "land": 0.0,
+   "unsafe": 0.25,
+   "outcomes": {
+    "UNSAFE_CONTACT": 3,
+    "TASK_TIMEOUT": 9
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.25,
+    "kd": 1.3,
+    "ki": 0.2,
+    "kz": 1.0,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.3
+   },
+   "land": 0.0,
+   "unsafe": 0.25,
+   "outcomes": {
+    "UNSAFE_CONTACT": 3,
+    "TASK_TIMEOUT": 9
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.25,
+    "kd": 1.3,
+    "ki": 0.2,
+    "kz": 0.7,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.2
+   },
+   "land": 0.0,
+   "unsafe": 0.25,
+   "outcomes": {
+    "UNSAFE_CONTACT": 3,
+    "TASK_TIMEOUT": 9
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.25,
+    "kd": 1.3,
+    "ki": 0.4,
+    "kz": 0.7,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.2
+   },
+   "land": 0.0,
+   "unsafe": 0.25,
+   "outcomes": {
+    "UNSAFE_CONTACT": 2,
+    "TASK_TIMEOUT": 9,
+    "MISSED_PAD_CONTACT": 1
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.25,
+    "kd": 1.8,
+    "ki": 0.2,
+    "kz": 1.0,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.2
+   },
+   "land": 0.0,
+   "unsafe": 0.25,
+   "outcomes": {
+    "UNSAFE_CONTACT": 3,
+    "TASK_TIMEOUT": 9
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.25,
+    "kd": 1.8,
+    "ki": 0.2,
+    "kz": 1.0,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.3
+   },
+   "land": 0.0,
+   "unsafe": 0.25,
+   "outcomes": {
+    "UNSAFE_CONTACT": 3,
+    "TASK_TIMEOUT": 9
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.25,
+    "kd": 1.8,
+    "ki": 0.2,
+    "kz": 0.7,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.3
+   },
+   "land": 0.0,
+   "unsafe": 0.25,
+   "outcomes": {
+    "UNSAFE_CONTACT": 3,
+    "TASK_TIMEOUT": 9
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.4,
+    "kd": 0.6,
+    "ki": 0.2,
+    "kz": 0.7,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.2
+   },
+   "land": 0.0,
+   "unsafe": 0.25,
+   "outcomes": {
+    "UNSAFE_CONTACT": 3,
+    "TASK_TIMEOUT": 9
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.4,
+    "kd": 0.6,
+    "ki": 0.0,
+    "kz": 1.0,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.3
+   },
+   "land": 0.0,
+   "unsafe": 0.25,
+   "outcomes": {
+    "UNAUTHORIZED_CONTACT": 2,
+    "TASK_TIMEOUT": 9,
+    "UNSAFE_CONTACT": 1
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.4,
+    "kd": 0.6,
+    "ki": 0.4,
+    "kz": 0.7,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.2
+   },
+   "land": 0.0,
+   "unsafe": 0.25,
+   "outcomes": {
+    "UNSAFE_CONTACT": 3,
+    "TASK_TIMEOUT": 9
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.4,
+    "kd": 0.6,
+    "ki": 0.4,
+    "kz": 1.0,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.2
+   },
+   "land": 0.0,
+   "unsafe": 0.25,
+   "outcomes": {
+    "UNSAFE_CONTACT": 3,
+    "TASK_TIMEOUT": 9
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.4,
+    "kd": 0.9,
+    "ki": 0.2,
+    "kz": 0.7,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.3
+   },
+   "land": 0.0,
+   "unsafe": 0.25,
+   "outcomes": {
+    "UNSAFE_CONTACT": 3,
+    "SAFE_ABORT": 1,
+    "TASK_TIMEOUT": 8
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.4,
+    "kd": 0.9,
+    "ki": 0.2,
+    "kz": 0.7,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.2
+   },
+   "land": 0.0,
+   "unsafe": 0.25,
+   "outcomes": {
+    "UNSAFE_CONTACT": 3,
+    "TASK_TIMEOUT": 9
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.4,
+    "kd": 0.9,
+    "ki": 0.2,
+    "kz": 1.0,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.3
+   },
+   "land": 0.0,
+   "unsafe": 0.25,
+   "outcomes": {
+    "UNSAFE_CONTACT": 3,
+    "TASK_TIMEOUT": 9
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.4,
+    "kd": 0.9,
+    "ki": 0.4,
+    "kz": 0.7,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.3
+   },
+   "land": 0.0,
+   "unsafe": 0.25,
+   "outcomes": {
+    "UNSAFE_CONTACT": 3,
+    "TASK_TIMEOUT": 9
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.4,
+    "kd": 1.3,
+    "ki": 0.2,
+    "kz": 0.7,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.3
+   },
+   "land": 0.0,
+   "unsafe": 0.25,
+   "outcomes": {
+    "UNSAFE_CONTACT": 3,
+    "TASK_TIMEOUT": 9
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.4,
+    "kd": 1.3,
+    "ki": 0.2,
+    "kz": 0.7,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.2
+   },
+   "land": 0.0,
+   "unsafe": 0.25,
+   "outcomes": {
+    "UNSAFE_CONTACT": 3,
+    "TASK_TIMEOUT": 9
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.4,
+    "kd": 0.9,
+    "ki": 0.2,
+    "kz": 1.0,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.2
+   },
+   "land": 0.0,
+   "unsafe": 0.25,
+   "outcomes": {
+    "UNSAFE_CONTACT": 3,
+    "TASK_TIMEOUT": 9
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.4,
+    "kd": 1.3,
+    "ki": 0.2,
+    "kz": 1.0,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.3
+   },
+   "land": 0.0,
+   "unsafe": 0.25,
+   "outcomes": {
+    "UNSAFE_CONTACT": 3,
+    "TASK_TIMEOUT": 9
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.4,
+    "kd": 0.9,
+    "ki": 0.4,
+    "kz": 1.0,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.3
+   },
+   "land": 0.0,
+   "unsafe": 0.25,
+   "outcomes": {
+    "UNSAFE_CONTACT": 3,
+    "TASK_TIMEOUT": 9
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.4,
+    "kd": 0.9,
+    "ki": 0.4,
+    "kz": 1.0,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.2
+   },
+   "land": 0.0,
+   "unsafe": 0.25,
+   "outcomes": {
+    "UNSAFE_CONTACT": 3,
+    "TASK_TIMEOUT": 9
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.4,
+    "kd": 1.3,
+    "ki": 0.4,
+    "kz": 1.0,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.3
+   },
+   "land": 0.0,
+   "unsafe": 0.25,
+   "outcomes": {
+    "UNSAFE_CONTACT": 3,
+    "TASK_TIMEOUT": 9
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.4,
+    "kd": 1.3,
+    "ki": 0.4,
+    "kz": 0.7,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.2
+   },
+   "land": 0.0,
+   "unsafe": 0.25,
+   "outcomes": {
+    "UNSAFE_CONTACT": 3,
+    "TASK_TIMEOUT": 9
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.4,
+    "kd": 1.3,
+    "ki": 0.4,
+    "kz": 1.0,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.2
+   },
+   "land": 0.0,
+   "unsafe": 0.25,
+   "outcomes": {
+    "UNSAFE_CONTACT": 2,
+    "TASK_TIMEOUT": 9,
+    "MISSED_PAD_CONTACT": 1
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.4,
+    "kd": 1.3,
+    "ki": 0.4,
+    "kz": 0.7,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.3
+   },
+   "land": 0.0,
+   "unsafe": 0.25,
+   "outcomes": {
+    "UNSAFE_CONTACT": 3,
+    "TASK_TIMEOUT": 9
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.4,
+    "kd": 1.8,
+    "ki": 0.2,
+    "kz": 1.0,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.2
+   },
+   "land": 0.0,
+   "unsafe": 0.25,
+   "outcomes": {
+    "UNSAFE_CONTACT": 3,
+    "TASK_TIMEOUT": 9
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.4,
+    "kd": 1.8,
+    "ki": 0.4,
+    "kz": 0.7,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.3
+   },
+   "land": 0.0,
+   "unsafe": 0.25,
+   "outcomes": {
+    "UNSAFE_CONTACT": 3,
+    "TASK_TIMEOUT": 9
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.4,
+    "kd": 1.8,
+    "ki": 0.2,
+    "kz": 0.7,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.2
+   },
+   "land": 0.0,
+   "unsafe": 0.25,
+   "outcomes": {
+    "UNSAFE_CONTACT": 3,
+    "TASK_TIMEOUT": 9
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.4,
+    "kd": 1.8,
+    "ki": 0.2,
+    "kz": 0.7,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.3
+   },
+   "land": 0.0,
+   "unsafe": 0.25,
+   "outcomes": {
+    "UNSAFE_CONTACT": 3,
+    "TASK_TIMEOUT": 9
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.4,
+    "kd": 1.8,
+    "ki": 0.2,
+    "kz": 1.0,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.3
+   },
+   "land": 0.0,
+   "unsafe": 0.25,
+   "outcomes": {
+    "UNSAFE_CONTACT": 3,
+    "TASK_TIMEOUT": 9
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.4,
+    "kd": 1.8,
+    "ki": 0.4,
+    "kz": 1.0,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.2
+   },
+   "land": 0.0,
+   "unsafe": 0.25,
+   "outcomes": {
+    "UNSAFE_CONTACT": 2,
+    "TASK_TIMEOUT": 9,
+    "MISSED_PAD_CONTACT": 1
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.25,
+    "kd": 0.9,
+    "ki": 0.2,
+    "kz": 0.7,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.3
+   },
+   "land": 0.0,
+   "unsafe": 0.3333333333333333,
+   "outcomes": {
+    "UNSAFE_CONTACT": 4,
+    "TASK_TIMEOUT": 8
+   }
+  }
+ ]
+}

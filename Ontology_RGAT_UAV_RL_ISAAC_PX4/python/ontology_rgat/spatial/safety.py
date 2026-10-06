@@ -44,8 +44,12 @@ class ReferenceSpatialSupervisor:
             self.hold_position = None
             self.gate_satisfied_at_s = None
             reasons.append('track_reacquired')
-        height = float(est.r[2])
-        footprint = max(height-.16,0.)*min(np.tan(np.asarray(cfg.fov)/2))
+        # Gate, corridor and stopping margin are heights above the stock-gear
+        # touchdown, so the /4 legs shift the body figure, not the law. The
+        # camera footprint is a body quantity: the mount is 0.16 m below the
+        # body whatever the gear.
+        height = float(est.r[2]) - cfg.landing_gear_extension_m
+        footprint = max(float(est.r[2])-.16,0.)*min(np.tan(np.asarray(cfg.fov)/2))
         gate_width = min(cfg.pad_half_width,footprint)
         gate = (trustworthy and 0 < height <= 1. and settled
                 and np.linalg.norm(est.r[:2]) <= gate_width
@@ -60,7 +64,7 @@ class ReferenceSpatialSupervisor:
                      and np.linalg.norm(est.rv[:2]) <= 1.5*cfg.touchdown_xy_speed)
         self.terminal_descent = bool(not self.abort_latched and (gate or committed))
         downward = max(0.,-float(own.own_velocity[2]))
-        delay = THRUST_TAU+2/ATTITUDE_OMEGA
+        delay = THRUST_TAU+2/cfg.attitude_omega+cfg.actuation_delay_s
         # Available NET acceleration is constrained by the shared adapter,
         # not the larger unconstrained rotor thrust capacity.
         force_acceleration_bound = math.sqrt(3)*.75/IRIS_MASS_KG
@@ -87,9 +91,21 @@ class ReferenceSpatialSupervisor:
         limits = np.asarray(cfg.max_acceleration)
         applied = np.clip(requested,-1.,1.)*limits
         downward = max(0.,-float(est.own.own_velocity[2]))
-        delay = THRUST_TAU+2/ATTITUDE_OMEGA
-        if safety.inhibited and applied[2] < 0:
-            applied[2] = min(limits[2],downward/delay)
+        delay = THRUST_TAU+2/cfg.attitude_omega+cfg.actuation_delay_s
+        if safety.inhibited:
+            if cfg.vertical_inhibit_holds:
+                # Hold the vertical RATE. Rewriting only the negative command
+                # (the /1 law below) brakes a descent with up to full upward
+                # authority and lets every positive command through, and this
+                # plant has no restoring force on altitude -- so zero-mean
+                # exploration integrates upward. See
+                # SpatialConfig.vertical_inhibit_holds for the measurement.
+                # Descent stays forbidden either way; what is removed is the
+                # free climb, not the inhibit.
+                applied[2] = float(np.clip(
+                    -float(est.own.own_velocity[2])/delay,-limits[2],limits[2]))
+            elif applied[2] < 0:
+                applied[2] = min(limits[2],downward/delay)
         if self.terminal_descent:
             # Same reference margin; mechanical SUCCESS still uses the
             # unchanged stricter nominal limit, never this approach margin.

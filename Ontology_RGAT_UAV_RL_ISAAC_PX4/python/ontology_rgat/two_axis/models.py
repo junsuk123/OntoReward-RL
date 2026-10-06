@@ -129,8 +129,20 @@ class TwoAxisActor(nn.Module):
     @staticmethod
     def raw_log_probability(raw: torch.Tensor, mu: torch.Tensor,
                             std: torch.Tensor) -> torch.Tensor:
-        return (-0.5 * (((raw - mu) / std) ** 2
-                        + 2.0 * torch.log(std) + math.log(2.0 * math.pi))).sum(-1)
+        return TwoAxisActor.raw_log_probability_axes(raw, mu, std).sum(-1)
+
+    @staticmethod
+    def raw_log_probability_axes(raw: torch.Tensor, mu: torch.Tensor,
+                                 std: torch.Tensor) -> torch.Tensor:
+        """The same density, kept factorized so single axes can be dropped.
+
+        The policy is a diagonal Gaussian, so the joint log-density is the sum
+        of the per-axis terms. Summing early throws away the only structure
+        that lets the actor objective ignore one axis the supervisor replaced
+        while keeping the axes it actually executed.
+        """
+        return -0.5 * (((raw - mu) / std) ** 2
+                       + 2.0 * torch.log(std) + math.log(2.0 * math.pi))
 
 
 class TwoAxisCritic(nn.Module):
@@ -221,3 +233,21 @@ def capacity_matched_mlp_hidden(mode: str, target_parameters: int,
     hidden = min(range(1, maximum_hidden + 1),
                  key=lambda h: abs(count(h) - int(target_parameters)))
     return hidden, count(hidden)
+
+
+def log_probability_axes(agent, observation, raw) -> np.ndarray:
+    """Per-axis log-density of `raw` under `agent`'s CURRENT policy.
+
+    A module function, not a method: the spatial route's `SpatialAgent` is a
+    separate class from `TwoAxisPPOAgent` and both only share `.tensors()` and
+    `.actor`. Collection stores this so a masked importance ratio can drop the
+    same axes from numerator and denominator; a ratio with a masked numerator
+    over a full-sum denominator is not a probability ratio at all.
+    """
+    with torch.no_grad():
+        packets, graphs = agent.tensors(observation)
+        mu, std = agent.actor(packets, graphs)
+        axes = TwoAxisActor.raw_log_probability_axes(
+            torch.as_tensor(raw, dtype=mu.dtype, device=mu.device).unsqueeze(0),
+            mu, std)
+    return axes[0].cpu().numpy()

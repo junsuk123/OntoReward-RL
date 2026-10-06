@@ -174,9 +174,22 @@ def main():
         help="Explicit common optimizer/exploration settings; recorded per run",
     )
     parser.add_argument("--horizon", type=float, default=70.0)
-    parser.add_argument("--contract-version", choices=["3", "4", "5", "6", "7", "8", "9", "10", "reference"], default="reference")
+    parser.add_argument("--contract-version",
+                        choices=["3", "4", "5", "6", "7", "8", "9", "10",
+                                 "spatial-reference/1", "spatial-reference/2", "reference"],
+                        default="reference")
     parser.add_argument("--initialize-v4-weights", action="store_true",
                         help="Explicit v4 to v5 PPO transfer; eligibility is NOT transferred")
+    # The proposed arm differs from ppo_semantic_flat by exactly one term, and
+    # that term is frozen with a zero-initialised readout for the first
+    # `adaptation_warmup_fraction` of the budget. At the shipped 0.90 it is
+    # trainable for the last 10 % of iterations, and a run that stops early
+    # never activates it at all -- measured 2026-10-05, the two arms were
+    # numerically identical for 8607/8607 iterations of spatial_long_nominal.
+    # Exposed so the staged schedule can be swept instead of edited.
+    parser.add_argument("--adaptation-warmup-fraction", type=float, default=None,
+                        help="override ontology.adaptation_warmup_fraction; "
+                             "lower gives the relational path more of the budget")
     parser.add_argument("--activation-iterations", type=int, default=2)
     parser.add_argument("--activation-decisions", type=int, default=128)
     parser.add_argument("--isaac-episodes", type=int, default=1)
@@ -208,6 +221,38 @@ def main():
         "--initialize-from",
         type=Path,
         help="Fine-tune eligible same-contract checkpoints in a NEW output",
+    )
+    # PPO regresses on the action the policy PROPOSED. The supervisor replaces
+    # axes independently, so a per-step flag is the wrong granularity; see
+    # tests/test_per_axis_intervention_masking.py. Opt-in: every recorded
+    # result predates it.
+    parser.add_argument(
+        "--intervention-masking",
+        choices=["none", "per_axis"],
+        default="none",
+        help="drop supervisor-replaced AXES from the actor objective",
+    )
+    # A clone whose MEAN lands 95.8 % lands 0.0 % sampled at the shipped
+    # sigma 0.333, so no PPO batch contains a success to learn from.
+    parser.add_argument(
+        "--final-log-std", type=float, default=None,
+        help="anneal the exploration ceiling down to this log_std",
+    )
+    parser.add_argument(
+        "--log-std-anneal-fraction", type=float, default=0.5,
+        help="fraction of the run spent annealing before the floor is held",
+    )
+    parser.add_argument(
+        "--state-dependent-log-std", action="store_true",
+        help="let the actor set exploration per state instead of one global sigma",
+    )
+    # The shipped early stop checks target_kl one minibatch late, so the first
+    # actor step of every iteration is unconstrained; at small sigma that one
+    # step is several sigmas wide (PPOHyperparameters.enforce_target_kl).
+    parser.add_argument(
+        "--enforce-target-kl", action="store_true",
+        help="revert any actor step whose measured KL exceeds the target and "
+             "adapt the actor learning rate to the trust region",
     )
     args = parser.parse_args()
     if args.value_warmup_iterations is not None and args.value_warmup_iterations < 0:
@@ -256,6 +301,12 @@ def main():
         horizon=args.horizon,
         isaac_profile_sha256=deployment["sha256"],
     )
+    if args.adaptation_warmup_fraction is not None:
+        if not 0.0 <= args.adaptation_warmup_fraction < 1.0:
+            parser.error("adaptation warmup fraction must be in [0,1)")
+        cfg = replace(cfg, ontology=replace(
+            cfg.ontology,
+            adaptation_warmup_fraction=args.adaptation_warmup_fraction))
     output = args.output
     output.mkdir(parents=True, exist_ok=True)
     plan = {
@@ -273,6 +324,10 @@ def main():
         "initialize_from": str(args.initialize_from.resolve())
         if args.initialize_from
         else None,
+        "intervention_masking": args.intervention_masking,
+        "final_log_std": args.final_log_std,
+        "log_std_anneal_fraction": args.log_std_anneal_fraction,
+        "state_dependent_log_std": args.state_dependent_log_std,
         "nominal_only": args.nominal_only,
         "gae_lambda": args.gae_lambda,
         "value_warmup_iterations_override": args.value_warmup_iterations,
@@ -319,6 +374,10 @@ def main():
             gae_lambda=args.gae_lambda,
             advantage_normalization=("rollout" if args.ppo_preset == "reference-v28-episodic"
                                      else "minibatch"),
+            intervention_masking=args.intervention_masking,
+            final_log_std=args.final_log_std,
+            log_std_anneal_fraction=args.log_std_anneal_fraction,
+            enforce_target_kl=args.enforce_target_kl,
             **preset,
         )
 
@@ -360,6 +419,7 @@ def main():
                             activation_decisions=args.activation_decisions,
                             episodes_per_iteration=args.episodes_per_iteration,
                             curriculum_loss_timeout_start=args.curriculum_loss_timeout_start,
+                            state_dependent_log_std=args.state_dependent_log_std,
                             initial_checkpoint=initial_checkpoint,
                             allow_v4_initialization=args.initialize_v4_weights,
                             curriculum_angular_scales=tuple(
@@ -417,7 +477,7 @@ def main():
                 trace_path = output / f"{backend}_{mode}_seed{seed}.jsonl"
                 with trace_path.open("x") as trace:
 
-                    def record(arm, episode, step, action, info):
+                    def record(arm, episode, step, action, info, packet=None):
                         trace.write(
                             json_text(
                                 {
@@ -425,6 +485,7 @@ def main():
                                     "seed": episode,
                                     "step": step,
                                     "action": action.tolist(),
+                                    "packet": packet,
                                     "info": info,
                                 }
                             )

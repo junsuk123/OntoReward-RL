@@ -1,0 +1,18 @@
+{
+  "complete_matrix": true,
+  "common_contract": true,
+  "paired_episode_seeds": true,
+  "outcome_rates_consistent": true,
+  "no_unsafe_outcomes": true,
+  "all_episode_stops_confirmed": true,
+  "all_abort_terminal_holds_verified": true,
+  "landing_observed": false,
+  "proposed_landing_observed": false,
+  "proposed_relation_active": true,
+  "backend": "actual-isaac-px4",
+  "performance_parity_claim": false,
+  "state": "completed",
+  "acceptance_version": "spatial-actual-integration/3",
+  "note": "Small integration sample; hold checks are terminal snapshots, not sustained stability or superiority.",
+  "passes": false
+}

@@ -103,6 +103,15 @@ FIELD_SPECS: tuple[FieldSpec, ...] = (
     _axis("estimatedBearing", "estimatedBearing", HALF_FOV,
           "causal_pad_track_projection", reference=False),
     _shared("opticalTransportAge", 1.0, "metric_marker_detector", reference=False),
+    # 3D samples a per-episode external force of up to 0.75 N per axis
+    # (0.5 m/s^2 against a 2.5 m/s^2 authority) that the planar task has no
+    # counterpart for. The causal observer in Estimator recovers it from own
+    # state alone -- measured mean error 0.030 m/s^2 against a true magnitude
+    # of 0.490, correlation 0.998-0.999 per axis -- so it is an observable
+    # quantity, not a privileged one.
+    _axis("disturbanceEstimate", "disturbanceEstimate", 1.0,
+          "own_state_adapter", reference=False),
+    _shared("disturbanceEstimateZ", 1.0, "own_state_adapter", reference=False),
 )
 
 #: ENU horizontal axes. One axis is the planar reference task, two is spatial.

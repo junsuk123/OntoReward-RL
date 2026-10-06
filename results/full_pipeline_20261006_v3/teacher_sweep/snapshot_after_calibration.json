@@ -1,0 +1,233 @@
+{
+ "steps_per_episode": 40,
+ "seeds": [
+  3001,
+  3002,
+  3003,
+  3004,
+  3005,
+  3006,
+  3007,
+  3008
+ ],
+ "action_script": "0.6*sin(0.21*step + 1.7*axis + 0.3), clipped",
+ "contracts": [
+  {
+   "route": "two_axis",
+   "config": "config/experiments/two_axis_reference_v28_active.yaml",
+   "registry_sha256": "06bf5165bb3386fa250cb24313780b847e982bca106b2ff3709aa2e42dba5497",
+   "terminal_table": {
+    "MISSED_PAD_CONTACT": -40.0,
+    "SAFETY_ENVELOPE_VIOLATION": -40.0,
+    "SAFE_ABORT": -15.0,
+    "SUCCESS": 25.0,
+    "TASK_TIMEOUT": -12.0,
+    "UNAUTHORIZED_CONTACT": -40.0,
+    "UNSAFE_CONTACT": -40.0
+   },
+   "discount_time_constant_s": 70.0,
+   "curriculum_start_unsafe": -20.0,
+   "episodes": [
+    {
+     "seed": 3001,
+     "steps": 40,
+     "status": "RUNNING",
+     "packet_digest": "e08b1f44d0870359",
+     "graph_digest": "ade88f63384e110c",
+     "reward_digest": "38976c2acf04b791",
+     "reward_sum": -0.43757393
+    },
+    {
+     "seed": 3002,
+     "steps": 40,
+     "status": "RUNNING",
+     "packet_digest": "3872924281ac3ffc",
+     "graph_digest": "d32b287850982ce8",
+     "reward_digest": "1f6691d66e8f25e0",
+     "reward_sum": -0.4373596
+    },
+    {
+     "seed": 3003,
+     "steps": 40,
+     "status": "RUNNING",
+     "packet_digest": "fc4df056e2107f51",
+     "graph_digest": "cb3e8da0d9e00344",
+     "reward_digest": "2af2c33cec85657c",
+     "reward_sum": -0.477138656
+    },
+    {
+     "seed": 3004,
+     "steps": 40,
+     "status": "RUNNING",
+     "packet_digest": "042b7ae50b4bc8e0",
+     "graph_digest": "6b01422d51595a7b",
+     "reward_digest": "da55280f13b7edd9",
+     "reward_sum": -0.301833766
+    },
+    {
+     "seed": 3005,
+     "steps": 40,
+     "status": "RUNNING",
+     "packet_digest": "917d72644985ccba",
+     "graph_digest": "90f4f7f12759d510",
+     "reward_digest": "4c3b5e9213e01625",
+     "reward_sum": -0.152687093
+    },
+    {
+     "seed": 3006,
+     "steps": 40,
+     "status": "RUNNING",
+     "packet_digest": "47fedfcfc8cff810",
+     "graph_digest": "0880d75c0d380a17",
+     "reward_digest": "acf5f2796d94edf5",
+     "reward_sum": -0.425587257
+    },
+    {
+     "seed": 3007,
+     "steps": 40,
+     "status": "RUNNING",
+     "packet_digest": "b61ebc2854b8818a",
+     "graph_digest": "ebf048853f8d3270",
+     "reward_digest": "30b7f2ca81f1e62c",
+     "reward_sum": -0.361318908
+    },
+    {
+     "seed": 3008,
+     "steps": 40,
+     "status": "RUNNING",
+     "packet_digest": "f1c3be09b5d88147",
+     "graph_digest": "ef42d858ed1450c0",
+     "reward_digest": "5506062742c52efb",
+     "reward_sum": -0.15102846
+    }
+   ]
+  },
+  {
+   "route": "spatial",
+   "schema": "spatial-causal-rgat/5",
+   "registry_sha256": "5c43f9cf98d1d1c91bd20c34d2116aab1cb15c2d8eaa301f5da522e0941f34b0",
+   "packet_fields": [
+    "rx",
+    "ry",
+    "rz",
+    "rvx",
+    "rvy",
+    "rvz",
+    "pvx",
+    "pvy",
+    "pvz",
+    "pax",
+    "pay",
+    "paz",
+    "vx",
+    "vy",
+    "vz",
+    "qw",
+    "qx",
+    "qy",
+    "qz",
+    "wx",
+    "wy",
+    "wz",
+    "bx",
+    "by",
+    "mx",
+    "my",
+    "detected",
+    "confidence",
+    "age",
+    "initialized",
+    "posstd",
+    "velstd",
+    "remaining",
+    "inhibited",
+    "abort"
+   ],
+   "terminal_table": {
+    "MISSED_PAD_CONTACT": -40.0,
+    "SAFETY_ENVELOPE_VIOLATION": -40.0,
+    "SAFE_ABORT": -15.0,
+    "SUCCESS": 25.0,
+    "TASK_TIMEOUT": -12.0,
+    "UNAUTHORIZED_CONTACT": -40.0,
+    "UNSAFE_CONTACT": -40.0
+   },
+   "discount_time_constant_s": 70.0,
+   "curriculum_start_unsafe": -20.0,
+   "episodes": [
+    {
+     "seed": 3001,
+     "steps": 40,
+     "status": "RUNNING",
+     "packet_digest": "96eb2bc76471872b",
+     "graph_digest": "effaae825497d7b8",
+     "reward_digest": "b15c8bdadae9d606",
+     "reward_sum": 0.025942687
+    },
+    {
+     "seed": 3002,
+     "steps": 40,
+     "status": "RUNNING",
+     "packet_digest": "eeb6b7b38dd098f1",
+     "graph_digest": "78ce49b476073788",
+     "reward_digest": "720a45936b8d6119",
+     "reward_sum": -0.177514042
+    },
+    {
+     "seed": 3003,
+     "steps": 40,
+     "status": "RUNNING",
+     "packet_digest": "13cc9bed05656613",
+     "graph_digest": "98a39b869c5b5daf",
+     "reward_digest": "f65852f91e864994",
+     "reward_sum": -0.066439635
+    },
+    {
+     "seed": 3004,
+     "steps": 40,
+     "status": "RUNNING",
+     "packet_digest": "32324b7a44af4feb",
+     "graph_digest": "7798069a142e2765",
+     "reward_digest": "563406913fa0c095",
+     "reward_sum": -0.235730574
+    },
+    {
+     "seed": 3005,
+     "steps": 40,
+     "status": "RUNNING",
+     "packet_digest": "78ed633c54840fa3",
+     "graph_digest": "3886e7f133af87a9",
+     "reward_digest": "722d0f7c705a026c",
+     "reward_sum": -0.338687099
+    },
+    {
+     "seed": 3006,
+     "steps": 40,
+     "status": "RUNNING",
+     "packet_digest": "5eea454af31d2f73",
+     "graph_digest": "b23e202cd0ccfd59",
+     "reward_digest": "1db8edca293961cc",
+     "reward_sum": 0.056765969
+    },
+    {
+     "seed": 3007,
+     "steps": 40,
+     "status": "RUNNING",
+     "packet_digest": "b8a6476816a1522c",
+     "graph_digest": "f952b39c34c0c70d",
+     "reward_digest": "854df6814252ee5b",
+     "reward_sum": -0.05225687
+    },
+    {
+     "seed": 3008,
+     "steps": 40,
+     "status": "RUNNING",
+     "packet_digest": "b1efd178e914498d",
+     "graph_digest": "5c2b0fdd64e3f242",
+     "reward_digest": "92c79bb4fb101806",
+     "reward_sum": -0.063300552
+    }
+   ]
+  }
+ ]
+}

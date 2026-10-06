@@ -1,0 +1,95 @@
+{
+  "audit": "exploration-sigma-ladder/1",
+  "contract": {
+    "schema": "spatial-reference/3",
+    "packet_registry": "b5ec469ce76fa6d3b98337b8e97ec79895db6c3a97d3991c3e87bf94417977ba",
+    "action": "spatial-enu-direct-net-acceleration-v2",
+    "config_sha256": "8b102acab1ff3192566e82d56be61f58634b051fa1d000c19944385376e01ab6"
+  },
+  "checkpoint": "results/full_pipeline_20261006_v3/clone_plain/runs/ppo_ontology_rgat__seed829/checkpoint_cloned.pt",
+  "seeds": [
+    7001,
+    7002,
+    7003,
+    7004,
+    7005,
+    7006,
+    7007,
+    7008,
+    7009,
+    7010,
+    7011,
+    7012
+  ],
+  "rows": [
+    {
+      "sigma": "deterministic",
+      "landing_rate": 0.3333333333333333,
+      "outcomes": {
+        "SUCCESS": 4,
+        "UNAUTHORIZED_CONTACT": 6,
+        "SAFE_ABORT": 1,
+        "TASK_TIMEOUT": 1
+      },
+      "mean_return": -8.97,
+      "body_rate_within_limit": 0.8548,
+      "tilt_within_limit": 0.8959,
+      "corridor_armed": 0.4539,
+      "stopping_margin_inhibit": 0.1413,
+      "intervened": 0.1557,
+      "lateral_acceleration_step_change_m_s2": 0.1499
+    },
+    {
+      "sigma": 0.333,
+      "landing_rate": 0.0,
+      "outcomes": {
+        "UNSAFE_CONTACT": 3,
+        "TASK_TIMEOUT": 6,
+        "SAFE_ABORT": 3
+      },
+      "mean_return": -19.823,
+      "body_rate_within_limit": 0.1117,
+      "tilt_within_limit": 0.3839,
+      "corridor_armed": 0.0048,
+      "stopping_margin_inhibit": 0.3188,
+      "intervened": 0.3272,
+      "lateral_acceleration_step_change_m_s2": 1.3674
+    },
+    {
+      "sigma": 0.082,
+      "landing_rate": 0.16666666666666666,
+      "outcomes": {
+        "SUCCESS": 2,
+        "TASK_TIMEOUT": 5,
+        "UNSAFE_CONTACT": 3,
+        "SAFE_ABORT": 1,
+        "UNAUTHORIZED_CONTACT": 1
+      },
+      "mean_return": -12.847,
+      "body_rate_within_limit": 0.5196,
+      "tilt_within_limit": 0.8344,
+      "corridor_armed": 0.2026,
+      "stopping_margin_inhibit": 0.266,
+      "intervened": 0.2759,
+      "lateral_acceleration_step_change_m_s2": 0.446
+    },
+    {
+      "sigma": 0.03,
+      "landing_rate": 0.4166666666666667,
+      "outcomes": {
+        "SUCCESS": 5,
+        "SAFE_ABORT": 1,
+        "UNAUTHORIZED_CONTACT": 4,
+        "UNSAFE_CONTACT": 1,
+        "TASK_TIMEOUT": 1
+      },
+      "mean_return": -3.954,
+      "body_rate_within_limit": 0.8068,
+      "tilt_within_limit": 0.8694,
+      "corridor_armed": 0.473,
+      "stopping_margin_inhibit": 0.1618,
+      "intervened": 0.1873,
+      "lateral_acceleration_step_change_m_s2": 0.2383
+    }
+  ]
+}

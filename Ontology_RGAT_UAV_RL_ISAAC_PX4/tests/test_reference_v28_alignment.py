@@ -198,10 +198,38 @@ def test_explicit_legacy_adapter_preserves_requested_units():
         px4_gateway_command(np.ones(2),cfg.dynamics,controller=controller)
 
 
-def test_help_does_not_launch_or_take_over_a_flight():
-    result = subprocess.run(["bash",str(ROOT.parent/"run.sh")],capture_output=True,text=True,timeout=5)
-    assert result.returncode == 0 and "reference-smoke" in result.stdout
-    assert "Stopping" not in result.stdout
+def test_run_sh_never_reaches_a_flight_stack_without_being_asked():
+    """Bare `run.sh` now TRAINS, but it must still never acquire a stack.
+
+    The previous guard asserted bare `run.sh` was help and ran it with a 5 s
+    timeout. Once the bare route started the pipeline that assertion made the
+    test itself launch a behaviour-cloning job, which outlived the SIGKILL and
+    ran to completion in the background. So this never invokes the working
+    route: it reads the plan with --dry-run, and checks the routing table for
+    the flight entries rather than executing them.
+    """
+    script = ROOT.parent / "run.sh"
+    help_text = subprocess.run(["bash", str(script), "--help"],
+                               capture_output=True, text=True, timeout=30)
+    assert help_text.returncode == 0 and "reference-smoke" in help_text.stdout
+    assert "Stopping" not in help_text.stdout
+    # The bare route is named, and says plainly that it is long-running.
+    assert "TRAINS" in help_text.stdout
+
+    plan = subprocess.run(["bash", str(script), "all", "--dry-run"],
+                          capture_output=True, text=True, timeout=120)
+    assert plan.returncode == 0, plan.stdout + plan.stderr
+    assert "Isaac/PX4 : off" in plan.stdout
+    # A dry run plans only; it must not have taken the lock or made a root.
+    assert "clone" not in plan.stdout.lower().replace("isaac/px4", "")
+
+    # Isaac stays behind its own explicit routes, and takeover stays opt-in.
+    body = script.read_text()
+    isaac = body[body.index("isaac-legacy)"):]
+    assert "--takeover" not in body.split("case")[0]
+    assert "run_isaac_legacy_entry.sh" in isaac
+    for route in ("reference-smoke)", "status)", "--help|-h)"):
+        assert route in body
 
 
 def test_fairness_is_derived_not_assumed():

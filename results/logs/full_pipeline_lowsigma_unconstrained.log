@@ -1,0 +1,9 @@
+run root : /home/j/SynologyDrive/junsuk/학술대회/CICS2026/Ontology_RGAT_UAV_RL_ISAAC_PX4/results/full_pipeline_20261006_lowsigma
+cells    : low_sigma, low_sigma_masked
+arms     : 3   seeds: 828 829   iterations: 200   workers: 6
+Isaac/PX4 : off (pass --isaac to fly the cells that qualify)
+
+[clone:plain] already complete, skipping
+[train:low_sigma] --final-log-std -3.5 --log-std-anneal-fraction 0.02
+  $ /usr/bin/python3 /home/j/SynologyDrive/junsuk/학술대회/CICS2026/Ontology_RGAT_UAV_RL_ISAAC_PX4/Ontology_RGAT_UAV_RL_ISAAC_PX4/python/run_spatial_pipeline.py --stage train --output /home/j/SynologyDrive/junsuk/학술대회/CICS2026/Ontology_RGAT_UAV_RL_ISAAC_PX4/results/full_pipeline_20261006_lowsigma/low_sigma --initialize-from /home/j/SynologyDrive/junsuk/학술대회/CICS2026/Ontology_RGAT_UAV_RL_ISAAC_PX4/results/full_pipeline_20261006_lowsigma/clone_plain --seeds 828 829 --iterations 200 --episodes-per-iteration 12 --evaluation-every 20 --ppo-preset reference-v28-episodic --activation-iterations 25 --activation-decisions 2048 --workers 6 --final-log-std -3.5 --log-std-anneal-fraction 0.02
+    log -> /home/j/SynologyDrive/junsuk/학술대회/CICS2026/Ontology_RGAT_UAV_RL_ISAAC_PX4/results/logs/full_train_low_sigma.log

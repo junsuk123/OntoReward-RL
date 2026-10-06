@@ -51,6 +51,53 @@ REFERENCE_MISSION_HORIZON_S = 70.0
 #: ``cfg.rl.unsafePenaltyCurriculumStart`` in primaryConfig.m.
 REFERENCE_CURRICULUM_START_UNSAFE = -20.0
 
+#: Price of sustained body rate, paid in the RUNNING term of both routes.
+#:
+#: Angular rate already appears in ``readiness``, but readiness is paid as a
+#: difference, so its sum telescopes to the endpoint and a vehicle that spins
+#: for the whole approach pays nothing for it. That is not academic: the 3D
+#: terminal-descent corridor arms only while ``|w_xy| <= touchdown_rate``, and
+#: on the run1 checkpoints the rate condition -- not tilt -- is what fails.
+#: The quantity is ``(|w_xy| / touchdown_rate)^2``, the supervisor's own
+#: settled test, so a vehicle sitting exactly on its rate limit pays 1.0 in
+#: either dimension. Measured over four nominal episodes per arm with the
+#: deterministic action that evaluation uses:
+#:
+#: ====================  ==========  ===============  =============
+#: controller            mean spin   corridor armed   lands
+#: ====================  ==========  ===============  =============
+#: ppo_vector_canonical       21.74            0.0 %        0 %
+#: ppo_ontology_rgat           8.22           29.3 %        0 %
+#: diagnostic PD               3.74           77.7 %    25-35 %
+#: ppo_semantic_flat           0.38           75.4 %        0 %
+#: ====================  ==========  ===============  =============
+#:
+#: `semantic_flat` is already smoother than the controller that lands, so this
+#: price is not a complete explanation of the training failure and must not be
+#: presented as one. Over a 70 s episode the term costs ``weight * mean_spin``.
+#: Both routes read this constant; a dimension study needs one objective.
+#:
+#: DEFAULT 0.0, because weight 1.0 was trained and measured and lost. Over
+#: 2 seeds x 3 arms x 200 iterations against the identical run at weight 0:
+#:
+#: * it did what it targeted -- ``ppo_vector_canonical`` went from 0.0 % to
+#:   92-98 % of in-band steps inside the body-rate limit and 0.0 % to 84-85 %
+#:   corridor arming, beating the controller that lands, and training SUCCESS
+#:   rose 1/14400 to 23/14400 (22 of them that arm)
+#: * held-out landing stayed 0.0 % in all six runs
+#: * it bought the rate with TILT: ``ppo_ontology_rgat`` seed 828 went from
+#:   79.9 % to 17.5 % inside the tilt limit, median tilt 3.25 -> 14.23 deg
+#:   against a 5 deg limit, because holding a large steady attitude is the
+#:   cheapest way to stop rotating
+#: * SAFE_ABORT rose 26.70 % to 43.57 % while TASK_TIMEOUT fell 69.18 % to
+#:   52.25 %, i.e. DOWN the terminal ordering
+#:
+#: Priced alone it leaks into tilt. Raise it only together with a tilt term,
+#: and only with a trained comparison; ``roll_pitch`` has the same telescoping
+#: problem and is the obvious companion. At 0.0 both routes are byte-identical
+#: to the upstream port, which ``tools/contract_snapshot.py`` requires.
+REFERENCE_SPIN_WEIGHT = 0.0
+
 #: Identified by status, never by magnitude. A table revision once gave
 #: SAFE_ABORT the unsafe outcomes' value, and every call site that matched the
 #: literal -40.0 silently reclassified aborts as crashes.

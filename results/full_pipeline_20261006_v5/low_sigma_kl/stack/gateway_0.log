@@ -1,0 +1,18 @@
+[INFO] [1791270932.536777597] [ontology_rgat_px4_gateway_0]: gateway target=sitl, UDP=127.0.0.1:14650, PX4 namespace=/fmu, arm_allowed=True, offboard_allowed=True, heartbeat=50 Hz, pad_motion=random_walk, gnss=off, battery=on (hover 186 W)
+[INFO] [1791270932.538690357] [ontology_rgat_px4_gateway_0]: PX4 local frame is at world ENU (0.0, -0.0, 2.87) m; deck poses will be brought into it.
+[WARN] [1791270933.398513033] [ontology_rgat_px4_gateway_0]: XRCE-DDS rebased the PX4 timestamp (raw delta -0.018 s); continuing on the monotonic simulated-time axis
+[WARN] [1791270934.402221319] [ontology_rgat_px4_gateway_0]: XRCE-DDS rebased the PX4 timestamp (raw delta -0.018 s); continuing on the monotonic simulated-time axis
+[WARN] [1791270935.408890267] [ontology_rgat_px4_gateway_0]: XRCE-DDS rebased the PX4 timestamp (raw delta -0.017 s); continuing on the monotonic simulated-time axis
+[WARN] [1791270997.817790385] [ontology_rgat_px4_gateway_0]: PX4 rejected command 400 with result 1 (reason 0)
+[INFO] [1791271025.074084904] [ontology_rgat_px4_gateway_0]: physical pad touchdown: OFFBOARD hold retained until SITL force-disarm confirmation (truth pad xyz=-0.12,0.11,0.33)
+[WARN] [1791271025.339847145] [ontology_rgat_px4_gateway_0]: PX4 rejected command 400 with result 1 (reason 0)
+[INFO] [1791271051.811491247] [ontology_rgat_px4_gateway_0]: physical pad touchdown: OFFBOARD hold retained until SITL force-disarm confirmation (truth pad xyz=-0.10,-0.04,0.32)
+[INFO] [1791271087.524099337] [ontology_rgat_px4_gateway_0]: physical pad touchdown: OFFBOARD hold retained until SITL force-disarm confirmation (truth pad xyz=-0.14,0.19,0.36)
+[WARN] [1791271087.782462216] [ontology_rgat_px4_gateway_0]: PX4 rejected command 400 with result 1 (reason 0)
+[INFO] [1791271120.511894242] [ontology_rgat_px4_gateway_0]: physical pad touchdown: OFFBOARD hold retained until SITL force-disarm confirmation (truth pad xyz=-0.07,0.13,0.33)
+[INFO] [1791271147.693910193] [ontology_rgat_px4_gateway_0]: physical pad touchdown: OFFBOARD hold retained until SITL force-disarm confirmation (truth pad xyz=-0.09,0.06,0.33)
+[WARN] [1791271147.960714289] [ontology_rgat_px4_gateway_0]: PX4 rejected command 400 with result 1 (reason 0)
+[INFO] [1791271174.396151979] [ontology_rgat_px4_gateway_0]: physical pad touchdown: OFFBOARD hold retained until SITL force-disarm confirmation (truth pad xyz=-0.17,0.12,0.34)
+[WARN] [1791271209.687448878] [ontology_rgat_px4_gateway_0]: PX4 rejected command 400 with result 1 (reason 0)
+[INFO] [1791271241.937840656] [ontology_rgat_px4_gateway_0]: physical pad touchdown: OFFBOARD hold retained until SITL force-disarm confirmation (truth pad xyz=-0.26,0.09,0.36)
+[INFO] [1791271311.969737852] [ontology_rgat_px4_gateway_0]: physical pad touchdown: OFFBOARD hold retained until SITL force-disarm confirmation (truth pad xyz=-0.54,0.14,0.34)

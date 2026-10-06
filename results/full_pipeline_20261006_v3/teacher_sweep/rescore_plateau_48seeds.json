@@ -1,0 +1,246 @@
+{
+ "schema": "spatial-reference/3",
+ "seeds": [
+  7001,
+  7002,
+  7003,
+  7004,
+  7005,
+  7006,
+  7007,
+  7008,
+  7009,
+  7010,
+  7011,
+  7012,
+  7013,
+  7014,
+  7015,
+  7016,
+  7017,
+  7018,
+  7019,
+  7020,
+  7021,
+  7022,
+  7023,
+  7024,
+  7025,
+  7026,
+  7027,
+  7028,
+  7029,
+  7030,
+  7031,
+  7032,
+  7033,
+  7034,
+  7035,
+  7036,
+  7037,
+  7038,
+  7039,
+  7040,
+  7041,
+  7042,
+  7043,
+  7044,
+  7045,
+  7046,
+  7047,
+  7048
+ ],
+ "rows": [
+  {
+   "gains": {
+    "kp": 0.4,
+    "kd": 0.3,
+    "ki": 0.1,
+    "kz": 1.0,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.3
+   },
+   "land": 0.8541666666666666,
+   "unsafe": 0.0,
+   "outcomes": {
+    "SUCCESS": 41,
+    "TASK_TIMEOUT": 5,
+    "SAFE_ABORT": 2
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.4,
+    "kd": 0.45,
+    "ki": 0.2,
+    "kz": 1.0,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.3
+   },
+   "land": 0.8333333333333334,
+   "unsafe": 0.0,
+   "outcomes": {
+    "SUCCESS": 40,
+    "TASK_TIMEOUT": 6,
+    "SAFE_ABORT": 2
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.4,
+    "kd": 0.3,
+    "ki": 0.2,
+    "kz": 1.0,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.3
+   },
+   "land": 0.8333333333333334,
+   "unsafe": 0.020833333333333332,
+   "outcomes": {
+    "SUCCESS": 40,
+    "TASK_TIMEOUT": 5,
+    "SAFE_ABORT": 2,
+    "UNSAFE_CONTACT": 1
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.4,
+    "kd": 0.2,
+    "ki": 0.1,
+    "kz": 1.0,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.3
+   },
+   "land": 0.8125,
+   "unsafe": 0.041666666666666664,
+   "outcomes": {
+    "SUCCESS": 39,
+    "TASK_TIMEOUT": 5,
+    "UNAUTHORIZED_CONTACT": 2,
+    "SAFE_ABORT": 2
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.25,
+    "kd": 0.3,
+    "ki": 0.4,
+    "kz": 1.0,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.3
+   },
+   "land": 0.8125,
+   "unsafe": 0.041666666666666664,
+   "outcomes": {
+    "SUCCESS": 39,
+    "UNAUTHORIZED_CONTACT": 2,
+    "TASK_TIMEOUT": 5,
+    "SAFE_ABORT": 2
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.25,
+    "kd": 0.2,
+    "ki": 0.1,
+    "kz": 1.0,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.3
+   },
+   "land": 0.7708333333333334,
+   "unsafe": 0.08333333333333333,
+   "outcomes": {
+    "SUCCESS": 37,
+    "UNAUTHORIZED_CONTACT": 4,
+    "TASK_TIMEOUT": 5,
+    "SAFE_ABORT": 2
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.25,
+    "kd": 0.45,
+    "ki": 0.2,
+    "kz": 1.0,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.3
+   },
+   "land": 0.75,
+   "unsafe": 0.10416666666666667,
+   "outcomes": {
+    "SUCCESS": 36,
+    "TASK_TIMEOUT": 5,
+    "MISSED_PAD_CONTACT": 1,
+    "UNAUTHORIZED_CONTACT": 4,
+    "SAFE_ABORT": 2
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.25,
+    "kd": 0.3,
+    "ki": 0.2,
+    "kz": 1.0,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.3
+   },
+   "land": 0.7291666666666666,
+   "unsafe": 0.10416666666666667,
+   "outcomes": {
+    "SUCCESS": 35,
+    "TASK_TIMEOUT": 6,
+    "UNSAFE_CONTACT": 2,
+    "UNAUTHORIZED_CONTACT": 3,
+    "SAFE_ABORT": 2
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.25,
+    "kd": 0.2,
+    "ki": 0.2,
+    "kz": 1.0,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.3
+   },
+   "land": 0.7083333333333334,
+   "unsafe": 0.14583333333333334,
+   "outcomes": {
+    "SUCCESS": 34,
+    "UNAUTHORIZED_CONTACT": 6,
+    "TASK_TIMEOUT": 5,
+    "SAFE_ABORT": 2,
+    "UNSAFE_CONTACT": 1
+   }
+  },
+  {
+   "gains": {
+    "kp": 0.1,
+    "kd": 0.2,
+    "ki": 0.1,
+    "kz": 1.0,
+    "vdes": 0.15,
+    "align": 0.15,
+    "anorm": 0.3
+   },
+   "land": 0.5625,
+   "unsafe": 0.10416666666666667,
+   "outcomes": {
+    "SUCCESS": 27,
+    "SAFE_ABORT": 6,
+    "TASK_TIMEOUT": 10,
+    "UNAUTHORIZED_CONTACT": 5
+   }
+  }
+ ]
+}

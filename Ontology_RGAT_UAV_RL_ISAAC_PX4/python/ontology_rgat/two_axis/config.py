@@ -12,6 +12,7 @@ import yaml
 
 from ..landing.terminal import (
     REFERENCE_CURRICULUM_START_UNSAFE,
+    REFERENCE_SPIN_WEIGHT,
     REFERENCE_TERMINAL_BONUS,
     UNSAFE_REASONS,
     validate_curriculum_ramp,
@@ -122,6 +123,7 @@ class RewardConfig:
     readiness_height_m: float = 1.0
     potential_weight: float = 0.0
     # One definition, shared with the spatial route. See landing/terminal.py.
+    spin_weight: float = REFERENCE_SPIN_WEIGHT
     terminal_bonus: tuple[tuple[str, float], ...] = REFERENCE_TERMINAL_BONUS
 
     def bonus(self, reason: str | None) -> float:

@@ -1,0 +1,7 @@
+[INFO] [1791254308.025882925] [ontology_rgat_px4_gateway_0]: gateway target=sitl, UDP=127.0.0.1:14650, PX4 namespace=/fmu, arm_allowed=True, offboard_allowed=True, heartbeat=50 Hz, pad_motion=random_walk, gnss=off, battery=on (hover 186 W)
+[INFO] [1791254308.030709872] [ontology_rgat_px4_gateway_0]: PX4 local frame is at world ENU (0.0, 0.0, 2.87) m; deck poses will be brought into it.
+[WARN] [1791254617.686393240] [ontology_rgat_px4_gateway_0]: PX4 rejected command 400 with result 1 (reason 0)
+[WARN] [1791254664.128011100] [ontology_rgat_px4_gateway_0]: PX4 rejected command 400 with result 1 (reason 0)
+[WARN] [1791254709.056814220] [ontology_rgat_px4_gateway_0]: PX4 rejected command 400 with result 1 (reason 0)
+[WARN] [1791254760.586020987] [ontology_rgat_px4_gateway_0]: PX4 rejected command 400 with result 1 (reason 0)
+[WARN] [1791254812.441627515] [ontology_rgat_px4_gateway_0]: PX4 rejected command 400 with result 1 (reason 0)

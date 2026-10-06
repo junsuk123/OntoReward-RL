@@ -258,6 +258,8 @@ class TwoAxisLandingEnv:
             dt_s=elapsed, terminal_reason=terminal, config=self.stage.reward,
             readiness=readiness, previous_readiness=self._previous_readiness,
             previous_goal_cost=self._previous_goal_cost,
+            pitch_rate_rad_s=self.state.pitch_rate_rad_s,
+            touchdown_pitch_rate_rad_s=self.config.safety.touchdown_pitch_rate_rad_s,
             discount_time_constant_s=self.config.timing.discount_time_constant_s)
         self._previous_readiness = readiness
         self._previous_goal_cost = reward.goal_cost

@@ -609,33 +609,38 @@ def test_attempting_outranks_waiting_on_the_measured_reward():
     # a table revision once gave SAFE_ABORT the unsafe outcomes' own value.
     assert "SAFE_ABORT" not in Evaluator.UNSAFE_STATUSES
 
-    gains = dict(kp=2.0, kd=3.0, kz=2.0, vdes=0.2, align=0.3, vtol=0.15)
-    amax = np.asarray(cfg.max_acceleration)
+    # The attempting arm is the rung's own swept teacher (per-rung gains in
+    # tools/clone_spatial_teacher.py), not a fixed PD: a controller tuned on
+    # the instant /2 plant lands 0 of 16 on the delayed rungs, which says
+    # nothing about the reward. The hold arm shares its lateral law and holds
+    # 2.2 m instead of descending.
+    import sys
+    from pathlib import Path as _Path
+    sys.path.insert(0, str(_Path(__file__).resolve().parents[1]))
+    from tools.clone_spatial_teacher import teacher_action, teacher_gains
+
+    gains = teacher_gains(cfg)
+    limits = gains["anorm"] * np.asarray(cfg.max_acceleration)
 
     def rollout(env, seed, arm):
         env.reset(seed=seed)
-        reference = env.backend.velocity.copy()
+        integral = np.zeros(2)
         total, start = 0.0, env.time
         for _ in range(int(cfg.horizon / cfg.dt) + 2):
-            est = env.estimator
-            if cfg.direct_acceleration:
-                # The direct contract carries no integrated velocity target,
-                # so the reference is the measured velocity each step.
-                reference = env.backend.velocity.copy()
-            r, rv = est.r.copy(), est.rv.copy()
-            desired = np.asarray(est.pad_v, dtype=float).copy()
-            desired[:2] += -gains["kp"] * r[:2] - gains["kd"] * rv[:2]
             if arm == "attempt":
-                aligned = (np.linalg.norm(r[:2]) < gains["align"]
-                           and np.linalg.norm(rv[:2]) < gains["vtol"])
-                desired[2] = -gains["vdes"] if aligned else gains["kz"] * (1.0 - r[2])
-            else:
+                action = teacher_action(env, cfg, integral)
+            elif arm == "hold":
+                est = env.estimator
+                r, rv = est.r.copy(), est.rv.copy()
+                integral[:] = np.clip(integral + cfg.dt * r[:2], -3.0, 3.0)
+                desired = np.asarray(est.pad_v, dtype=float).copy()
+                desired[:2] += (-gains["kp"] * r[:2] - gains["kd"] * rv[:2]
+                                - gains["ki"] * integral)
                 desired[2] = gains["kz"] * (2.2 - r[2])
-            action = np.clip((desired - reference) / (0.6 * amax), -1, 1)
-            if arm == "zero":
+                action = np.clip((desired - env.backend.velocity) / limits, -1.0, 1.0)
+            else:
                 action = np.zeros(3)
             _, reward, done, _, info = env.step(action)
-            reference += np.asarray(info["applied_acceleration_m_s2"]) * cfg.dt
             total += float(math.exp(-(env.time - start) / cfg.discount_tau) * reward)
             if done:
                 return total, info["status"]

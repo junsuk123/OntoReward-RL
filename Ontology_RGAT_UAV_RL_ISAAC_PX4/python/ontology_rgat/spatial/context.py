@@ -109,6 +109,7 @@ def axis_context_graphs(values, cfg):
     import math
 
     from ..landing import observation as packet_io
+    from ..landing.ontology import SPATIAL_EXTENSIONS
     from ..landing.packet import SPATIAL_AXES
 
     half = {axis: float(np.asarray(cfg.fov)[index] / 2)
@@ -136,7 +137,13 @@ def axis_context_graphs(values, cfg):
         joint_speed_risk=min(math.hypot(
             *(p[f"relativeVelocity_{a}"] for a in SPATIAL_AXES)) / 3.0, 1.0),
         tilt_limit=TILT_LIMIT_RAD, tilt_rate_limit=TILT_RATE_LIMIT_RAD_S,
-        tilt_rate_scale=TILT_RATE_LIMIT_RAD_S)
+        tilt_rate_scale=TILT_RATE_LIMIT_RAD_S,
+        # Extension context: phenomena the planar task does not contain.
+        disturbance_vertical=p["disturbanceEstimateZ"],
+        transport_age=p["opticalTransportAge"],
+        acceleration_limit=float(np.asarray(cfg.max_acceleration)[:2].max()),
+        vertical_acceleration_limit=float(np.asarray(cfg.max_acceleration)[2]),
+        policy_dt=cfg.dt)
     eligibility = descent_eligibility(
         shared,
         min(float(np.linalg.norm(tilts)) / TILT_LIMIT_RAD, 1.0),
@@ -151,6 +158,8 @@ def axis_context_graphs(values, cfg):
         predicted_bearing=p[f"predictedBearing_{axis}"],
         fov_margin=p[f"predictedFovMargin_{axis}"], half_fov=half[axis],
         tilt=tilts[index], tilt_rate=rates[index],
-    ), shared, eligibility=eligibility)
+        disturbance=p[f"disturbanceEstimate_{axis}"],
+        estimated_bearing=p[f"estimatedBearing_{axis}"],
+    ), shared, eligibility=eligibility, extensions=SPATIAL_EXTENSIONS)
         for index, axis in enumerate(SPATIAL_AXES)]
     return np.asarray(planes, dtype=np.float32)

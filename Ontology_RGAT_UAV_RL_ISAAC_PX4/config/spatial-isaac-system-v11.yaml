@@ -1,0 +1,52 @@
+# spatial-reference/4: the Isaac-calibrated vehicle.
+#
+# Extends v9 (capture-time-aligned optics, direct acceleration, seeded
+# disturbances) with two geometric changes measured on the first learned-policy
+# Isaac flights of 2026-10-06, both of which landed 0 of 22 episodes:
+#
+# * Landing gear. The camera is mounted 0.16 m below the body and the stock
+#   Iris touched down with its body 0.12 m above the deck, so at contact the
+#   camera was 0.04 m BELOW the pad surface and the markers left the frame
+#   before touchdown. Four legs extend 0.18 m below the stock gear: the body
+#   rests at 0.30 m and the camera at 0.14 m above the pad. The local plant's
+#   touchdown height (SpatialConfig.touchdown_height) carries the same 0.18 m.
+# * A 17-tag board at three scales in place of five tags at two. The 0.26 m
+#   corners carry the approach (33 px at 2.5 m), the 0.14 m mid-ring the
+#   descent, and the 0.08 m centre tag with eight 0.05 m neighbours the last
+#   0.3 m: at the 0.14 m camera height the centre tag is ~180 px wide and its
+#   padded quad (0.107 m) fits the 0.21 m vertical footprint. Quads never
+#   overlap (padded sides are 4/3 of the tag side) and every tag sits on the
+#   deck. Ids are unique within DICT_4X4_50; parallel pairs add their stride.
+extends: spatial-isaac-system-v9.yaml
+vehicle:
+  landing_gear:
+    extension_m: 0.18
+    leg_radius_m: 0.012
+    # Body-frame FLU footprint of the four legs, under the arms and outside
+    # the camera's 90 x 74 degree frustum at every height along the leg.
+    leg_xy_flu_m: [[0.16, 0.16], [0.16, -0.16], [-0.16, 0.16], [-0.16, -0.16]]
+    stock_gear_bottom_body_z_m: -0.12
+    mass_per_leg_kg: 0.02
+vision:
+  board:
+    # centre, 0.08 m: the touchdown anchor
+    - {id: 10, side_m: 0.08, center_xy_m: [0.0, 0.0]}
+    # inner cluster, 0.05 m: one of these is in frame when the centre is not
+    - {id: 19, side_m: 0.05, center_xy_m: [0.14, 0.14]}
+    - {id: 20, side_m: 0.05, center_xy_m: [0.14, -0.14]}
+    - {id: 21, side_m: 0.05, center_xy_m: [-0.14, 0.14]}
+    - {id: 22, side_m: 0.05, center_xy_m: [-0.14, -0.14]}
+    - {id: 23, side_m: 0.05, center_xy_m: [0.14, 0.0]}
+    - {id: 24, side_m: 0.05, center_xy_m: [-0.14, 0.0]}
+    - {id: 25, side_m: 0.05, center_xy_m: [0.0, 0.14]}
+    - {id: 26, side_m: 0.05, center_xy_m: [0.0, -0.14]}
+    # mid ring, 0.14 m: the descent
+    - {id: 15, side_m: 0.14, center_xy_m: [0.40, 0.0]}
+    - {id: 16, side_m: 0.14, center_xy_m: [-0.40, 0.0]}
+    - {id: 17, side_m: 0.14, center_xy_m: [0.0, 0.40]}
+    - {id: 18, side_m: 0.14, center_xy_m: [0.0, -0.40]}
+    # corners, 0.26 m: the approach
+    - {id: 11, side_m: 0.26, center_xy_m: [-0.50, -0.50]}
+    - {id: 12, side_m: 0.26, center_xy_m: [-0.50, 0.50]}
+    - {id: 13, side_m: 0.26, center_xy_m: [0.50, -0.50]}
+    - {id: 14, side_m: 0.26, center_xy_m: [0.50, 0.50]}

@@ -1,0 +1,35 @@
+run root : /home/j/SynologyDrive/junsuk/학술대회/CICS2026/Ontology_RGAT_UAV_RL_ISAAC_PX4/results/full_pipeline_20261006_v5
+cells    : low_sigma_kl
+arms     : 3   seeds: 828 829   iterations: 200   workers: 6
+Isaac/PX4 : ON -- will start a stack and fly eligible cells
+
+[clone:plain] behaviour-cloning the teacher
+  $ /usr/bin/python3 /home/j/SynologyDrive/junsuk/학술대회/CICS2026/Ontology_RGAT_UAV_RL_ISAAC_PX4/Ontology_RGAT_UAV_RL_ISAAC_PX4/tools/clone_spatial_teacher.py --output /home/j/SynologyDrive/junsuk/학술대회/CICS2026/Ontology_RGAT_UAV_RL_ISAAC_PX4/results/full_pipeline_20261006_v5/clone_plain --seeds 828 829
+    log -> /home/j/SynologyDrive/junsuk/학술대회/CICS2026/Ontology_RGAT_UAV_RL_ISAAC_PX4/results/logs/full_clone_plain.log
+[train:low_sigma_kl] --final-log-std -3.5 --log-std-anneal-fraction 0.02 --enforce-target-kl
+  $ /usr/bin/python3 /home/j/SynologyDrive/junsuk/학술대회/CICS2026/Ontology_RGAT_UAV_RL_ISAAC_PX4/Ontology_RGAT_UAV_RL_ISAAC_PX4/python/run_spatial_pipeline.py --stage train --output /home/j/SynologyDrive/junsuk/학술대회/CICS2026/Ontology_RGAT_UAV_RL_ISAAC_PX4/results/full_pipeline_20261006_v5/low_sigma_kl --initialize-from /home/j/SynologyDrive/junsuk/학술대회/CICS2026/Ontology_RGAT_UAV_RL_ISAAC_PX4/results/full_pipeline_20261006_v5/clone_plain --seeds 828 829 --iterations 200 --episodes-per-iteration 12 --evaluation-every 20 --ppo-preset reference-v28-episodic --activation-iterations 25 --activation-decisions 2048 --workers 6 --final-log-std -3.5 --log-std-anneal-fraction 0.02 --enforce-target-kl
+    log -> /home/j/SynologyDrive/junsuk/학술대회/CICS2026/Ontology_RGAT_UAV_RL_ISAAC_PX4/results/logs/full_train_low_sigma_kl.log
+  $ /usr/bin/python3 /home/j/SynologyDrive/junsuk/학술대회/CICS2026/Ontology_RGAT_UAV_RL_ISAAC_PX4/Ontology_RGAT_UAV_RL_ISAAC_PX4/tools/compare_spatial_arms.py /home/j/SynologyDrive/junsuk/학술대회/CICS2026/Ontology_RGAT_UAV_RL_ISAAC_PX4/results/full_pipeline_20261006_v5/clone_plain /home/j/SynologyDrive/junsuk/학술대회/CICS2026/Ontology_RGAT_UAV_RL_ISAAC_PX4/results/full_pipeline_20261006_v5/low_sigma_kl --seeds 4100 4148 --report /home/j/SynologyDrive/junsuk/학술대회/CICS2026/Ontology_RGAT_UAV_RL_ISAAC_PX4/results/full_pipeline_20261006_v5/held_out.json
+    log -> /home/j/SynologyDrive/junsuk/학술대회/CICS2026/Ontology_RGAT_UAV_RL_ISAAC_PX4/results/logs/full_held_out.log
+[isaac:low_sigma_kl] flying 6 run(s)
+  $ /usr/bin/python3 /home/j/SynologyDrive/junsuk/학술대회/CICS2026/Ontology_RGAT_UAV_RL_ISAAC_PX4/Ontology_RGAT_UAV_RL_ISAAC_PX4/python/run_spatial_pipeline.py --stage isaac --output /home/j/SynologyDrive/junsuk/학술대회/CICS2026/Ontology_RGAT_UAV_RL_ISAAC_PX4/results/full_pipeline_20261006_v5/low_sigma_kl --seeds 828 829 --workers 1 --isaac-episodes 2
+    log -> /home/j/SynologyDrive/junsuk/학술대회/CICS2026/Ontology_RGAT_UAV_RL_ISAAC_PX4/results/logs/full_isaac_low_sigma_kl.log
+[isaac:low_sigma_kl] acceptance FAILED (read isaac_acceptance.json)
+    ppo_vector_canonical   seed828 SAFETY_ENVELOPE_VIOLATION SAFE_ABORT
+    ppo_semantic_flat      seed828 SUCCESS SUCCESS
+    ppo_ontology_rgat      seed828 SUCCESS SUCCESS
+    ppo_vector_canonical   seed829 SUCCESS SUCCESS
+    ppo_semantic_flat      seed829 SAFE_ABORT SUCCESS
+    ppo_ontology_rgat      seed829 UNSAFE_CONTACT SUCCESS
+
+held-out landing on 48 seeds 4100-4147, deterministic; 'relation' is whether the proposed arm's relational path was live in the deployed checkpoint
+
+cell                 run                             BC start  after PPO  unsafe   return  train SUCCESS  relation
+low_sigma_kl         ppo_ontology_rgat__seed828         62.5%      83.3%   16.7%    19.29   1572/2400         live
+low_sigma_kl         ppo_ontology_rgat__seed829         81.2%      89.6%   10.4%    23.61   1465/2400         live
+low_sigma_kl         ppo_semantic_flat__seed828         62.5%      91.7%    8.3%    25.42   1664/2400            -
+low_sigma_kl         ppo_semantic_flat__seed829         83.3%      97.9%    0.0%    29.68   1570/2400            -
+low_sigma_kl         ppo_vector_canonical__seed828      58.3%      72.9%   27.1%    12.62   1488/2400            -
+low_sigma_kl         ppo_vector_canonical__seed829      81.2%      95.8%    4.2%    28.09   1613/2400            -
+
+wrote /home/j/SynologyDrive/junsuk/학술대회/CICS2026/Ontology_RGAT_UAV_RL_ISAAC_PX4/results/full_pipeline_20261006_v5/summary.json

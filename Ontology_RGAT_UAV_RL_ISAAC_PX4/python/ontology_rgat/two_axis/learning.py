@@ -8,7 +8,8 @@ import numpy as np
 import torch
 
 from .environment import ObservationBundle, TwoAxisLandingEnv
-from .models import TwoAxisActor, TwoAxisPPOAgent, observation_arrays
+from .models import (TwoAxisActor, TwoAxisPPOAgent, observation_arrays,
+                     log_probability_axes)
 from .reward import discount_for_dt
 
 
@@ -29,12 +30,36 @@ class Transition:
     dt_s: float
     safety_flags: dict[str, Any]
     next_value: float = 0.0
+    #: Per-axis log-density under the policy that proposed `raw_command`.
+    old_log_probability_axes: np.ndarray | None = None
+    #: 1.0 where the supervisor let this axis through, 0.0 where it replaced it.
+    executed_axes: np.ndarray | None = None
+
+
+def executed_axis_mask(requested, applied, *, tolerance=1e-6):
+    """Which axes of the proposal actually reached the plant.
+
+    PPO regresses on `raw_command`, the action the policy PROPOSED. The
+    supervisor rewrites axes independently -- the vertical hold touches only
+    the vertical one -- so a per-STEP flag either keeps a step whose vertical
+    command was replaced or discards one whose horizontal commands ran. This
+    is the per-axis form; `safety_flags["intervened"]` is the step-level flag
+    that nothing reads.
+    """
+    requested = np.asarray(requested, dtype=float)
+    applied = np.asarray(applied, dtype=float)
+    if requested.shape != applied.shape:
+        raise ValueError("requested and applied acceleration must share a shape")
+    scale = np.maximum(np.abs(requested), np.abs(applied))
+    return (np.abs(applied - requested)
+            <= tolerance + 1e-3 * scale).astype(float)
 
 
 def collect_rollout(agent: TwoAxisPPOAgent, env: TwoAxisLandingEnv, *,
                     seed: int, decisions: int | None = None,
                     episodes: int | None = None,
-                    max_episode_decisions: int | None = None) -> list[Transition]:
+                    max_episode_decisions: int | None = None,
+                    per_axis_evidence: bool = False) -> list[Transition]:
     """Collect sampled raw commands; never infer after a task terminal."""
     if (decisions is None) == (episodes is None):
         raise ValueError("choose exactly one rollout budget: decisions or episodes")
@@ -67,6 +92,14 @@ def collect_rollout(agent: TwoAxisPPOAgent, env: TwoAxisLandingEnv, *,
             safety_flags={"intervened": info["safety_intervened"],
                           "reasons": info["safety_reasons"],
                           "abort_requested": info["abort_requested"]}))
+        if per_axis_evidence:
+            # One extra actor forward per step, so it is opt-in: the default
+            # objective never reads these fields.
+            transitions[-1].old_log_probability_axes = log_probability_axes(
+                agent, transitions[-1].observation, transitions[-1].raw_command)
+            transitions[-1].executed_axes = executed_axis_mask(
+                transitions[-1].requested_acceleration_m_s2,
+                transitions[-1].applied_acceleration_m_s2)
         if terminated:
             completed += 1
             episode_steps = 0

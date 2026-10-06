@@ -1,0 +1,691 @@
+{
+  "signature": {
+    "schema": "spatial-reference/3",
+    "packet_registry": "b5ec469ce76fa6d3b98337b8e97ec79895db6c3a97d3991c3e87bf94417977ba",
+    "action": "spatial-enu-direct-net-acceleration-v2",
+    "config_sha256": "8b102acab1ff3192566e82d56be61f58634b051fa1d000c19944385376e01ab6"
+  },
+  "config": {
+    "schema": "spatial-reference/3",
+    "isaac_profile_sha256": "1fd86c5748150848d0f3ca648835cf1330fed8c8a9a4b26d9bc7731ffacb3434",
+    "dt": 0.1,
+    "sensor_dt": 0.01,
+    "camera_dt": 0.05,
+    "horizon": 70.0,
+    "discount_tau": 70.0,
+    "max_velocity": [
+      10.0,
+      10.0,
+      5.0
+    ],
+    "max_acceleration": [
+      2.5,
+      2.5,
+      2.0
+    ],
+    "pad_half_width": 0.5,
+    "contact_height": 0.12,
+    "touchdown_xy_speed": 0.35,
+    "touchdown_z_speed": 0.3,
+    "touchdown_tilt": 0.08726646259971647,
+    "touchdown_rate": 0.17453292519943295,
+    "fov": [
+      1.5707963267948966,
+      1.2870022175865687
+    ],
+    "loss_timeout": 3.0,
+    "recovery_timeout": 8.0,
+    "initial_height": [
+      2.0,
+      2.5
+    ],
+    "initial_xy": 0.4,
+    "level_ground_pad": true,
+    "curriculum": {
+      "enabled": true,
+      "start_v1_range_m_s": [
+        0.045,
+        0.12
+      ],
+      "start_a2_range_m_s2": [
+        0.03,
+        0.12
+      ],
+      "start_T1_range_s": [
+        0.1,
+        0.3
+      ],
+      "start_touchdown_relative_speed_m_s": 0.7,
+      "start_touchdown_vertical_speed_m_s": 0.6,
+      "start_unsafe_contact_penalty": -20.0,
+      "promotion_landing_rate": 0.1,
+      "promotion_window_episodes": 18,
+      "difficulty_step": 0.1,
+      "easy_replay_fraction": 0.16666666666666666,
+      "bridge_replay_fraction": 0.16666666666666666,
+      "start_height_range_m": [
+        0.2,
+        0.5
+      ],
+      "floor_start_fraction": 0.3,
+      "full_difficulty_fraction": 0.8,
+      "scheduled_floor": true
+    },
+    "ontology": {
+      "schema": "compact_context_graph_v3_grouped",
+      "hidden_dimension": 8,
+      "policy_hidden_dimension": 48,
+      "relation_dimension": 4,
+      "adaptation_warmup_fraction": 0.9,
+      "freeze_static_backbone": true,
+      "preserve_raw_during_adaptation": true,
+      "selection_score_margin": 5.0,
+      "selection_score_model": "outcome_weighted_v28",
+      "pretrain_episodes": 4,
+      "pretrain_decisions": 32,
+      "pretrain_epochs": 4,
+      "relation_activation_enabled": true,
+      "activation_iterations": 25,
+      "activation_decisions": 2048
+    }
+  },
+  "training_seeds": [
+    828,
+    829
+  ],
+  "deployment": {
+    "path": "/home/j/SynologyDrive/junsuk/\ud559\uc220\ub300\ud68c/CICS2026/Ontology_RGAT_UAV_RL_ISAAC_PX4/Ontology_RGAT_UAV_RL_ISAAC_PX4/config/spatial-isaac-system-v9.yaml",
+    "sha256": "1fd86c5748150848d0f3ca648835cf1330fed8c8a9a4b26d9bc7731ffacb3434",
+    "resolved_scientific_configuration": {
+      "system": {
+        "protocol_version": 1,
+        "control_hz": 50.0,
+        "state_timeout_s": 2.0,
+        "action_timeout_s": 0.25,
+        "sitl_action_timeout_s": 3.0,
+        "target": "sitl"
+      },
+      "network": {
+        "bind_host": "127.0.0.1",
+        "matlab_host": "127.0.0.1",
+        "gateway_port": 14650,
+        "matlab_port": 14651
+      },
+      "parallel": {
+        "pair_offsets_enu_m": [
+          [
+            0.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            80.0,
+            0.0
+          ],
+          [
+            0.0,
+            -80.0,
+            0.0
+          ],
+          [
+            0.0,
+            160.0,
+            0.0
+          ],
+          [
+            0.0,
+            -160.0,
+            0.0
+          ],
+          [
+            0.0,
+            240.0,
+            0.0
+          ],
+          [
+            0.0,
+            -240.0,
+            0.0
+          ],
+          [
+            0.0,
+            320.0,
+            0.0
+          ]
+        ],
+        "route_phase_fractions": [
+          0.0,
+          0.125,
+          0.25,
+          0.375,
+          0.5,
+          0.625,
+          0.75,
+          0.875
+        ],
+        "marker_dictionary": "DICT_4X4_50",
+        "marker_id_stride": 0
+      },
+      "px4": {
+        "namespace": "/fmu",
+        "target_system": 1,
+        "target_component": 1,
+        "source_system": 42,
+        "source_component": 191,
+        "hover_thrust": 0.58,
+        "collective_span": 0.85,
+        "max_roll_pitch_deg": 28.0,
+        "max_yaw_rate_deg_s": 90.0,
+        "offboard_prestream_count": 20,
+        "estimator_warmup_s": 3.0,
+        "sitl_parameters": {
+          "COM_RC_IN_MODE": 4,
+          "COM_RCL_EXCEPT": 4,
+          "COM_OF_LOSS_T": 30.0,
+          "COM_OBL_RC_ACT": 5,
+          "FD_FAIL_R": 85,
+          "FD_FAIL_P": 85,
+          "CBRK_FLIGHTTERM": 121212,
+          "MPC_THR_HOVER": 0.58,
+          "MPC_USE_HTE": 1,
+          "MPC_XY_VEL_MAX": 10.0,
+          "MPC_Z_VEL_MAX_UP": 5.0,
+          "MPC_Z_VEL_MAX_DN": 5.0,
+          "MPC_ACC_HOR_MAX": 3.6,
+          "MPC_ACC_UP_MAX": 2.0,
+          "MPC_ACC_DOWN_MAX": 2.0,
+          "SIM_BAT_MIN_PCT": 100.0
+        }
+      },
+      "isaac": {
+        "vehicle_id": 0,
+        "namespace": "landing_uav",
+        "physics_dt": 0.004,
+        "rendering_dt": 0.0333333333,
+        "environment": "Flat Plane",
+        "robot_asset": "Iris",
+        "spawn_position_enu_m": [
+          0.0,
+          0.0,
+          0.09
+        ],
+        "start_airborne": true,
+        "hover_start_offset_pad_m": [
+          0.0,
+          0.0,
+          2.5
+        ],
+        "airborne_hold_release_s": 6.0,
+        "px4_autolaunch": true,
+        "px4_dir": "external/PX4-Autopilot",
+        "px4_vehicle_model": "gazebo-classic_iris",
+        "mavlink_connection_type": "tcpin",
+        "mavlink_connection_ip": "localhost",
+        "mavlink_connection_baseport": 4560,
+        "lockstep": true,
+        "center_hover_on_landing_camera": true,
+        "gui_rendering_dt": 0.05,
+        "gui_viewport_resolution": [
+          960,
+          540
+        ],
+        "startup_rendering_dt": 0.5,
+        "startup_max_sim_s": 30.0,
+        "max_sim_speed_ratio": null,
+        "spatial_clock": true,
+        "ambient_light_intensity": 500.0,
+        "spatial_optical_capture_timing": true
+      },
+      "landing": {
+        "ground_z_m": 0.08,
+        "max_time_s": 70.0,
+        "world_xy_limit_m": 60.0,
+        "max_altitude_m": 18.0,
+        "crash_tilt_deg": 75.0,
+        "success_xy_m": 0.35,
+        "success_vz_m_s": 0.55,
+        "success_tilt_deg": 10.0,
+        "success_rate_deg_s": 45.0,
+        "success_rel_speed_xy_m_s": 0.45,
+        "world_radius_m": 800.0
+      },
+      "wind": {
+        "enabled": false,
+        "sensor": {
+          "enabled": true,
+          "seed": 83,
+          "noise_std_m_s": [
+            0.12,
+            0.12,
+            0.08
+          ],
+          "bias_std_m_s": [
+            0.06,
+            0.06,
+            0.04
+          ],
+          "time_constant_s": 0.15,
+          "max_speed_m_s": 25.0
+        },
+        "air_density_kg_m3": 1.225,
+        "drag_area_m2": [
+          0.055,
+          0.055,
+          0.085
+        ],
+        "drag_coefficient": [
+          1.0,
+          1.0,
+          1.2
+        ],
+        "mean_enu_m_s": [
+          2.6,
+          1.1,
+          0.0
+        ],
+        "turbulence_m_s": 1.05,
+        "seed": 49,
+        "gusts": [
+          {
+            "t0_s": 4.0,
+            "sigma_s": 0.8,
+            "vector_enu_m_s": [
+              2.4,
+              -1.2,
+              1.1
+            ]
+          },
+          {
+            "t0_s": 7.2,
+            "sigma_s": 0.55,
+            "vector_enu_m_s": [
+              -1.8,
+              2.1,
+              -1.4
+            ]
+          },
+          {
+            "t0_s": 10.0,
+            "sigma_s": 0.45,
+            "vector_enu_m_s": [
+              1.2,
+              -1.6,
+              1.6
+            ]
+          },
+          {
+            "t0_s": 14.5,
+            "sigma_s": 0.7,
+            "vector_enu_m_s": [
+              -2.2,
+              -0.9,
+              1.2
+            ]
+          }
+        ],
+        "canyon": {
+          "enabled": true,
+          "along_gain": 1.25,
+          "cross_gain": 0.35,
+          "open_sky_blend": true
+        }
+      },
+      "pad": {
+        "motion": "random_walk",
+        "deck_size_m": [
+          1.5,
+          1.5
+        ],
+        "deck_height_m": 0.42,
+        "contact_material": {
+          "static_friction": 2.0,
+          "dynamic_friction": 1.6,
+          "restitution": 0.0,
+          "contact_min_force_n": 0.25
+        },
+        "start_position_enu_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "speed_range_m_s": [
+          0.25,
+          0.6
+        ],
+        "stop_interval_s": 11.0,
+        "stop_sigma_s": 1.7,
+        "stop_depth_range": [
+          0.35,
+          1.0
+        ],
+        "lane_wander_m": 0.18,
+        "lane_wander_hz": 0.09,
+        "lane_change_probability": 0.5,
+        "route_start": "continue",
+        "heading_follows_velocity": true,
+        "yaw_rate_limit_deg_s": 90.0,
+        "arena_radius_m": 400.0,
+        "broadcast_track_tau_s": 1.0,
+        "entry_track_tau_s": 2.5,
+        "carrier": "ugv",
+        "vehicle_model": "agilex_ranger_mini_v3",
+        "vehicle_visual_usd": "assets/ranger_mini_v3/ranger_mini_v3.usd",
+        "vehicle_dimensions_m": [
+          0.72,
+          0.5,
+          0.345
+        ],
+        "vehicle_mass_kg": 75.0,
+        "vehicle_payload_kg": 120.0,
+        "vehicle_max_speed_m_s": 1.0,
+        "vehicle_visual_origin_from_road_m": [
+          0.0,
+          0.0,
+          0.31
+        ],
+        "escape_burst_trigger": "following",
+        "waypoint_loop": true,
+        "waypoint_ramp_s": 4.0,
+        "route_waypoints_enu_m": null,
+        "speed_step_perturbation_m_s": [
+          -0.5,
+          0.5
+        ],
+        "yaw_rate_step_perturbation_deg_s": [
+          -3.0,
+          3.0
+        ],
+        "motion_update_dt_s": 0.1,
+        "benchmark_speed_scale": 0.125,
+        "benchmark_circle_radius_m": 3.6,
+        "segmented_cruise_speed_scale": 0.142857142857,
+        "segmented_cruise_heading_deg": 0.0,
+        "segmented_cruise_leg_m": 150.0,
+        "mode": "random_walk"
+      },
+      "urban": {
+        "enabled": false,
+        "seed": 7,
+        "source": "synthetic",
+        "extract": "seoul-myeongdong",
+        "origin": {
+          "latitude": 37.5503,
+          "longitude": 127.0736,
+          "altitude": 30.0
+        },
+        "map_heading_deg": 0.0,
+        "import_radius_m": 160.0,
+        "route_clearance_m": 9.0,
+        "block_size_m": [
+          90.0,
+          60.0
+        ],
+        "corner_radius_m": 12.0,
+        "road_half_width_m": 7.0,
+        "sidewalk_m": 2.5,
+        "lane_width_m": 3.3,
+        "height_range_m": [
+          12.0,
+          36.0
+        ],
+        "facade_depth_m": 14.0,
+        "facade_segment_m": 18.0,
+        "cross_street_gap_m": 16.0,
+        "mid_block_gap": true,
+        "outer_rows": 1,
+        "row_spacing_m": 4.0
+      },
+      "gnss": {
+        "enabled": false,
+        "model": "ublox_zed_f9p_05b",
+        "correction_mode": "rtk_fixed",
+        "constellations": [
+          "GPS",
+          "GLONASS",
+          "Galileo",
+          "BeiDou"
+        ],
+        "rtk_convergence_s": 10.0,
+        "rtk_quality_threshold": 0.65,
+        "rtk_horizontal_accuracy_m": 0.01,
+        "rtk_vertical_accuracy_m": 0.01,
+        "inject_into_px4": true,
+        "update_rate_hz": 5.0,
+        "eph_floor_m": 0.01,
+        "epv_floor_m": 0.01,
+        "dr_enter_quality": 0.45,
+        "dr_exit_quality": 0.65,
+        "recovery_epochs": 5,
+        "bootstrap_s": 15.0,
+        "seed": 17,
+        "n_satellites": 24,
+        "elevation_mask_deg": 7.0,
+        "nlos_tracking_probability": 0.55,
+        "max_excess_path_m": 45.0,
+        "multipath_sigma_m": 0.5,
+        "multipath_tau_s": 6.0,
+        "thermal_sigma_m": 0.6,
+        "cn0_zenith_db": 48.0,
+        "cn0_elevation_db": 12.0,
+        "cn0_sigma_db": 2.0,
+        "nlos_cn0_penalty_db": 9.0,
+        "cn0_detection_margin_db": 4.0,
+        "map_aided_nlos_mitigation": true,
+        "nlos_sigma_scale": 10.0,
+        "cn0_weight": 0.85,
+        "vertical_blend": 0.15,
+        "velocity_error_scale": 0.01,
+        "hdop_scale": 2.5,
+        "sigma_floor_m": 1.5,
+        "sigma_scale_m": 10.0,
+        "outage_drift_m_s": 0.8
+      },
+      "imu": {
+        "model": "vectornav_vn100",
+        "hardware_output_rate_hz": 800.0,
+        "attitude_output_rate_hz": 400.0,
+        "simulation_update_rate_hz": 250.0,
+        "seed": 101,
+        "gyroscope": {
+          "measurement_range_rad_s": 34.90658504,
+          "noise_density_rad_s_sqrt_hz": 6.108652e-05,
+          "bias_stability_rad_s": 2.424068e-05,
+          "bias_correlation_time_s": "1.0e9",
+          "random_walk_rad_s_sqrt_s": 0.0
+        },
+        "accelerometer": {
+          "measurement_range_m_s2": 156.9064,
+          "noise_density_m_s2_sqrt_hz": 0.001372931,
+          "bias_stability_m_s2": 0.000392266,
+          "bias_correlation_time_s": "1.0e9",
+          "random_walk_m_s2_sqrt_s": 0.0
+        }
+      },
+      "battery": {
+        "enabled": true,
+        "capacity_mah": 3500,
+        "nominal_voltage_v": 11.1,
+        "vehicle_mass_kg": 1.5,
+        "rotor_count": 4,
+        "rotor_radius_m": 0.13,
+        "air_density_kg_m3": 1.225,
+        "hover_efficiency": 0.45,
+        "avionics_power_w": 12.0,
+        "episode_hover_seconds_range": [
+          9.0,
+          55.0
+        ],
+        "landing_reserve_s": 2.5,
+        "depleted_fraction": 0.0,
+        "prefer_px4_telemetry_on_hardware": true
+      },
+      "vision": {
+        "mode": "aruco",
+        "dictionary": "DICT_4X4_50",
+        "pose_source_for_policy": true,
+        "handover_tau_s": 0.6,
+        "pose_max_step_m": 0.75,
+        "pose_reacquire_error_m": 2.0,
+        "fusion_max_correction_m": 0.5,
+        "camera": {
+          "model": "spatial_nadir_aruco_v1",
+          "eye": "left",
+          "lens_focal_length_mm": 2.1,
+          "sensor": "1/3-inch_4MP",
+          "shutter": "rolling",
+          "resolution": [
+            640,
+            480
+          ],
+          "horizontal_fov_deg": 90.0,
+          "vertical_fov_deg": 70.0,
+          "rate_hz": 20.0,
+          "mount_translation_flu_m": [
+            0.0,
+            0.0,
+            -0.16
+          ],
+          "clipping_range_m": [
+            0.02,
+            60.0
+          ],
+          "pitch_down_deg": 90.0,
+          "entry_visible_footprint_fraction": 0.65
+        },
+        "board": [
+          {
+            "id": 10,
+            "side_m": 0.16,
+            "center_xy_m": [
+              0.0,
+              0.0
+            ]
+          },
+          {
+            "id": 11,
+            "side_m": 0.22,
+            "center_xy_m": [
+              -0.45,
+              -0.3
+            ]
+          },
+          {
+            "id": 12,
+            "side_m": 0.22,
+            "center_xy_m": [
+              -0.45,
+              0.3
+            ]
+          },
+          {
+            "id": 13,
+            "side_m": 0.22,
+            "center_xy_m": [
+              0.45,
+              -0.3
+            ]
+          },
+          {
+            "id": 14,
+            "side_m": 0.22,
+            "center_xy_m": [
+              0.45,
+              0.3
+            ]
+          }
+        ],
+        "quality_reprojection_px": 3.0,
+        "quality_full_scale_px": 120.0,
+        "max_range_m": 9.0,
+        "tilt_scale_deg": 32.0,
+        "xy_scale_m": 2.0,
+        "landing_pad": {
+          "layout": "hexagonal",
+          "landmark_radius_m": 0.52,
+          "landmark_diameter_m": 0.22,
+          "texture_pixels": 2048
+        },
+        "enabled": true
+      },
+      "metasejong": {
+        "enabled": false,
+        "scenario": "gwanggaeto",
+        "asset_root": "external/metasejong/resources/models",
+        "scale": 0.01,
+        "prim_path": "/World/metasejong",
+        "hide_vegetation": true
+      },
+      "benchmark": {
+        "profile": "shin2026",
+        "initial_condition_curriculum_min_scale": 0.0,
+        "entry_speed_tolerance_m_s": 1.0,
+        "entry_settle_s": 1.0,
+        "gateway_timeout_s": 20.0,
+        "setup_timeout_s": 480.0,
+        "reset_recoveries": 12,
+        "entry_sim_budget_s": 60.0,
+        "entry_timeout_s": 1200.0,
+        "entry_arm_grace_s": 25.0,
+        "entry_view_retries": 2,
+        "entry_view_margin": 0.85,
+        "initial_conditions": {
+          "relative_altitude_m": [
+            2.0,
+            2.5
+          ],
+          "relative_lateral_x_m": [
+            -0.4,
+            0.4
+          ],
+          "relative_lateral_y_m": [
+            -0.4,
+            0.4
+          ],
+          "platform_yaw_misalignment_deg": [
+            -5.0,
+            5.0
+          ],
+          "relative_longitudinal_m": [
+            -1.5,
+            1.5
+          ]
+        },
+        "planar_entry": false,
+        "spatial_scenario": "spatial_reference_cv_ca_cv"
+      },
+      "domain_randomization": {
+        "enabled": true,
+        "px4_nominal_gains": {
+          "MPC_XY_VEL_P_ACC": 1.8,
+          "MPC_Z_VEL_P_ACC": 4.0,
+          "MC_ROLL_P": 6.5,
+          "MC_PITCH_P": 6.5,
+          "MC_YAW_P": 2.8
+        }
+      }
+    },
+    "world_source_sha256": "eb07ad9fcde432670278f7ce1d59562345bdb9029252ba1888c8790016325e3f"
+  },
+  "training_backend": "local",
+  "fresh_stack_per_episode": false,
+  "ppo_preset": "reference-v28-episodic",
+  "episodes_per_iteration": 12,
+  "curriculum_loss_timeout_start": null,
+  "curriculum_angular_scales": [
+    1.0,
+    1.0
+  ],
+  "workers": 6,
+  "initialize_from": "/home/j/SynologyDrive/junsuk/\ud559\uc220\ub300\ud68c/CICS2026/Ontology_RGAT_UAV_RL_ISAAC_PX4/results/full_pipeline_20261006_v3/clone_plain",
+  "intervention_masking": "none",
+  "final_log_std": -3.5,
+  "log_std_anneal_fraction": 0.02,
+  "state_dependent_log_std": false,
+  "nominal_only": false,
+  "gae_lambda": 0.95,
+  "value_warmup_iterations_override": null,
+  "initialize_v4_weights": false,
+  "publication_claim_allowed": false,
+  "note": "spatial integration profile, not reference performance parity"
+}

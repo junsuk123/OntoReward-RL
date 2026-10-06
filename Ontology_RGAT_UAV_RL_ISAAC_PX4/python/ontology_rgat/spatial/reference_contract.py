@@ -95,6 +95,7 @@ def raw_fields(est, safety, elapsed, cfg) -> dict[str, float]:
         "landingInhibited": float(safety.inhibited),
         "abortRequested": float(safety.abort),
         "opticalTransportAge": transport_age,
+        "disturbanceEstimateZ": float(est.disturbance[2]),
     }
     for index, axis in enumerate(SPATIAL_AXES):
         raw.update({
@@ -114,6 +115,7 @@ def raw_fields(est, safety, elapsed, cfg) -> dict[str, float]:
             f"previousAction_{axis}": float(
                 np.clip(est.previous_action[index], -1, 1)),
             f"estimatedBearing_{axis}": float(sign[index] * estimated[index]),
+            f"disturbanceEstimate_{axis}": float(est.disturbance[index]),
         })
     return raw
 

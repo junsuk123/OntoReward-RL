@@ -1,0 +1,28 @@
+run root : /home/j/SynologyDrive/junsuk/학술대회/CICS2026/Ontology_RGAT_UAV_RL_ISAAC_PX4/results/full_pipeline_20261006_lowsigma_kl
+cells    : low_sigma_kl, low_sigma_kl_masked
+arms     : 3   seeds: 828 829   iterations: 200   workers: 6
+Isaac/PX4 : off (pass --isaac to fly the cells that qualify)
+
+[clone:plain] already complete, skipping
+[train:low_sigma_kl] --final-log-std -3.5 --log-std-anneal-fraction 0.02 --enforce-target-kl
+  $ /usr/bin/python3 /home/j/SynologyDrive/junsuk/학술대회/CICS2026/Ontology_RGAT_UAV_RL_ISAAC_PX4/Ontology_RGAT_UAV_RL_ISAAC_PX4/python/run_spatial_pipeline.py --stage train --output /home/j/SynologyDrive/junsuk/학술대회/CICS2026/Ontology_RGAT_UAV_RL_ISAAC_PX4/results/full_pipeline_20261006_lowsigma_kl/low_sigma_kl --initialize-from /home/j/SynologyDrive/junsuk/학술대회/CICS2026/Ontology_RGAT_UAV_RL_ISAAC_PX4/results/full_pipeline_20261006_lowsigma_kl/clone_plain --seeds 828 829 --iterations 200 --episodes-per-iteration 12 --evaluation-every 20 --ppo-preset reference-v28-episodic --activation-iterations 25 --activation-decisions 2048 --workers 6 --final-log-std -3.5 --log-std-anneal-fraction 0.02 --enforce-target-kl
+    log -> /home/j/SynologyDrive/junsuk/학술대회/CICS2026/Ontology_RGAT_UAV_RL_ISAAC_PX4/results/logs/full_train_low_sigma_kl.log
+[train:low_sigma_kl_masked] --final-log-std -3.5 --log-std-anneal-fraction 0.02 --enforce-target-kl --intervention-masking per_axis
+  $ /usr/bin/python3 /home/j/SynologyDrive/junsuk/학술대회/CICS2026/Ontology_RGAT_UAV_RL_ISAAC_PX4/Ontology_RGAT_UAV_RL_ISAAC_PX4/python/run_spatial_pipeline.py --stage train --output /home/j/SynologyDrive/junsuk/학술대회/CICS2026/Ontology_RGAT_UAV_RL_ISAAC_PX4/results/full_pipeline_20261006_lowsigma_kl/low_sigma_kl_masked --initialize-from /home/j/SynologyDrive/junsuk/학술대회/CICS2026/Ontology_RGAT_UAV_RL_ISAAC_PX4/results/full_pipeline_20261006_lowsigma_kl/clone_plain --seeds 828 829 --iterations 200 --episodes-per-iteration 12 --evaluation-every 20 --ppo-preset reference-v28-episodic --activation-iterations 25 --activation-decisions 2048 --workers 6 --final-log-std -3.5 --log-std-anneal-fraction 0.02 --enforce-target-kl --intervention-masking per_axis
+    log -> /home/j/SynologyDrive/junsuk/학술대회/CICS2026/Ontology_RGAT_UAV_RL_ISAAC_PX4/results/logs/full_train_low_sigma_kl_masked.log
+
+cell           run                             BC start  after PPO   return  train SUCCESS
+low_sigma_kl   ppo_ontology_rgat__seed828         62.5%     100.0%    30.21   1678/2400   
+low_sigma_kl   ppo_ontology_rgat__seed829         62.5%     100.0%    29.72   1756/2400   
+low_sigma_kl   ppo_semantic_flat__seed828         50.0%      50.0%    -3.36   1845/2400   
+low_sigma_kl   ppo_semantic_flat__seed829         70.8%     100.0%    30.50   1787/2400   
+low_sigma_kl   ppo_vector_canonical__seed828      12.5%       0.0%    -8.70    314/2400   
+low_sigma_kl   ppo_vector_canonical__seed829      16.7%     100.0%    31.39   1404/2400   
+low_sigma_kl_masked ppo_ontology_rgat__seed828         62.5%     100.0%    30.84   1795/2400   
+low_sigma_kl_masked ppo_ontology_rgat__seed829         62.5%     100.0%    30.76   1667/2400   
+low_sigma_kl_masked ppo_semantic_flat__seed828         50.0%     100.0%    30.54   1856/2400   
+low_sigma_kl_masked ppo_semantic_flat__seed829         70.8%     100.0%    31.06   1783/2400   
+low_sigma_kl_masked ppo_vector_canonical__seed828      12.5%     100.0%    30.99    790/2400   
+low_sigma_kl_masked ppo_vector_canonical__seed829      16.7%       0.0%   -35.55   1105/2400   
+
+wrote /home/j/SynologyDrive/junsuk/학술대회/CICS2026/Ontology_RGAT_UAV_RL_ISAAC_PX4/results/full_pipeline_20261006_lowsigma_kl/summary.json

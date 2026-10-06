@@ -1,0 +1,16 @@
+[compare] ppo_ontology_rgat      seed828 landing_rate=0.729 unsafe_rate=0.125 safe_abort_rate=0.021 task_timeout_rate=0.125 mean_return=16.760
+[compare] ppo_ontology_rgat      seed829 landing_rate=0.542 unsafe_rate=0.167 safe_abort_rate=0.104 task_timeout_rate=0.188 mean_return=7.795
+[compare] ppo_semantic_flat      seed828 landing_rate=0.521 unsafe_rate=0.229 safe_abort_rate=0.125 task_timeout_rate=0.125 mean_return=4.718
+[compare] ppo_semantic_flat      seed829 landing_rate=0.562 unsafe_rate=0.167 safe_abort_rate=0.083 task_timeout_rate=0.188 mean_return=8.504
+[compare] ppo_vector_canonical   seed828 landing_rate=0.167 unsafe_rate=0.333 safe_abort_rate=0.229 task_timeout_rate=0.271 mean_return=-13.581
+[compare] ppo_vector_canonical   seed829 landing_rate=0.062 unsafe_rate=0.292 safe_abort_rate=0.146 task_timeout_rate=0.500 mean_return=-15.140
+
+=== pooled over 48 held-out episodes per run ===
+arm                      runs   landing_rate    unsafe_rate safe_abort_rate task_timeout_rate    mean_return
+ppo_vector_canonical        2   0.115+-0.052   0.312+-0.021   0.188+-0.042   0.385+-0.115 -14.361+-0.780
+ppo_semantic_flat           2   0.542+-0.021   0.198+-0.031   0.104+-0.021   0.156+-0.031   6.611+-1.893
+ppo_ontology_rgat           2   0.635+-0.094   0.146+-0.021   0.062+-0.042   0.156+-0.031  12.278+-4.483
+
+mean +- population sd ACROSS TRAINING SEEDS. Read the sd before the mean: on two seeds it swamped every between-arm difference.
+
+wrote results/full_pipeline_20261006_lowsigma_kl/held_out_clone_plain.json

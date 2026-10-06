@@ -1,0 +1,12 @@
+run root : /home/j/SynologyDrive/junsuk/학술대회/CICS2026/Ontology_RGAT_UAV_RL_ISAAC_PX4/results/full_pipeline_20261006
+cells    : baseline, masking, anneal, state_sigma, combined
+arms     : 3   seeds: 828 829   iterations: 200   workers: 6
+Isaac/PX4 is excluded; run ./run.sh spatial --stage isaac deliberately.
+
+[clone:plain] already complete, skipping
+[clone:state] behaviour-cloning the teacher
+  $ /usr/bin/python3 /home/j/SynologyDrive/junsuk/학술대회/CICS2026/Ontology_RGAT_UAV_RL_ISAAC_PX4/Ontology_RGAT_UAV_RL_ISAAC_PX4/tools/clone_spatial_teacher.py --output /home/j/SynologyDrive/junsuk/학술대회/CICS2026/Ontology_RGAT_UAV_RL_ISAAC_PX4/results/full_pipeline_20261006/clone_state --seeds 828 829 --state-dependent-log-std
+    log -> /home/j/SynologyDrive/junsuk/학술대회/CICS2026/Ontology_RGAT_UAV_RL_ISAAC_PX4/results/logs/full_clone_state.log
+[train:baseline] (shipped settings)
+  $ /usr/bin/python3 /home/j/SynologyDrive/junsuk/학술대회/CICS2026/Ontology_RGAT_UAV_RL_ISAAC_PX4/Ontology_RGAT_UAV_RL_ISAAC_PX4/python/run_spatial_pipeline.py --stage train --output /home/j/SynologyDrive/junsuk/학술대회/CICS2026/Ontology_RGAT_UAV_RL_ISAAC_PX4/results/full_pipeline_20261006/baseline --initialize-from /home/j/SynologyDrive/junsuk/학술대회/CICS2026/Ontology_RGAT_UAV_RL_ISAAC_PX4/results/full_pipeline_20261006/clone_plain --seeds 828 829 --iterations 200 --episodes-per-iteration 12 --ppo-preset reference-v28-episodic --activation-iterations 25 --activation-decisions 2048 --workers 6
+    log -> /home/j/SynologyDrive/junsuk/학술대회/CICS2026/Ontology_RGAT_UAV_RL_ISAAC_PX4/results/logs/full_train_baseline.log

@@ -29,18 +29,114 @@ from ..two_axis.ontology_v28 import GRAPH_SCHEMA_HASH as TOPOLOGY_HASH
 #: horizontal axis, the reference 9x12 plane per axis, and the v10 capability
 #: set (direct acceleration, ABG tracking, matched disturbances, capture-time
 #: optical alignment, reference supervisor). It is derived, not a ladder rung.
-REFERENCE_SCHEMA = "spatial-reference/1"
+#:
+#: /2 differs from /1 in exactly one law: while descent is inhibited the
+#: supervisor holds the vertical rate instead of braking a descent one-sidedly.
+#: Observation, packet, graph, reward and every capability are identical, so /1
+#: stays loadable and comparable -- see ``vertical_inhibit_holds``.
+#: /3 differs from /2 in exactly one law: the local plant applies a command
+#: only after ``REFERENCE_ACTUATION_DELAY_S`` of actuation latency, and the
+#: supervisor's stopping margin counts that latency. Measured 2026-10-06 from
+#: the first learned-policy Isaac flight (12 episodes, 0 landings, pad lost
+#: within ~1 s): a joint impulse-response fit of ground-truth lateral
+#: acceleration against the commanded one gives Isaac/PX4 h = [-0.02, 0.74,
+#: 0.24, -0.01] over 0.1 s lags -- nothing in the step the command is issued
+#: -- where the /2 plant gives [0.44, 0.15, 0.18, -0.04], i.e. responds inside
+#: the same step. Policies tuned on /2 therefore over-command in Isaac, tilt
+#: to 18-21 deg and lose the pad from the camera. With one step of latency the
+#: local fit becomes [0.04, 0.36, 0.24, 0.14]. Observation, packet, graph,
+#: reward and every capability are identical to /2, so /1 and /2 checkpoints
+#: stay loadable under their own schema; only ``config_sha256`` differs.
+#: /4 is the Isaac-calibrated vehicle, in three measured parts, each with its
+#: own tool and number (2026-10-06, after the first two learned-policy Isaac
+#: flights landed 0 of 22 episodes while the same checkpoints landed locally):
+#:
+#: * attitude bandwidth 14 rad/s: replaying the recorded Isaac commands through
+#:   the delayed local plant and comparing the velocity response after large
+#:   command changes (tools/audit_actuation_response.py, 146 events over 21
+#:   episodes) gives Isaac [0.34, 1.09, 1.65, 1.80] against 10 rad/s
+#:   [0.25, 0.75, 1.24, 1.49] (error 0.286) and 14 rad/s [0.41, 1.05, 1.55,
+#:   1.68] (error 0.084); 20 rad/s and above overshoot. The /3 flight still
+#:   limit-cycled laterally with the 10 rad/s policy.
+#: * landing gear 0.18 m: the camera sits 0.16 m below the body and the body
+#:   touched down at 0.12 m, so the camera was 0.04 m BELOW the pad surface at
+#:   contact and lost the markers before touchdown; with the gear it stays
+#:   0.14 m above the pad, where the centre marker of the v11 board fills
+#:   ~180 px of a 640 px frame. Touchdown is at ``touchdown_height``.
+#: * the v11 marker board (config/spatial-isaac-system-v11.yaml): 17 ArUco
+#:   tags at three scales, 0.26 m corners for approach, 0.14 m mid-ring, and
+#:   0.08/0.05 m centre cluster for the last 0.3 m, in place of five.
+#:
+#: Packet, graph, ontology, reward and every capability are identical to /3,
+#: so /1-/3 checkpoints load under their own schema; only ``config_sha256``
+#: and the deployment profile differ.
+#: /5 is /4 plus one law, the OPTICAL REALISM of the local sensor: the pad is
+#: detected when at least one tag of the deployed board (read from the
+#: deployment profile) projects fully inside the frame at a decodable size,
+#: and ``detectionConfidence`` is the detector's own quality metric -- the
+#: largest seen tag's pixel side over 120 px, times a sharpness term, times
+#: 0.85 when a single tag braces the solve -- with a 5 % frame-miss rate.
+#: Measured 2026-10-06 on the third Isaac flight (12 episodes, 0 landings, 0
+#: unsafe, detection 100 % for 70 s, estimate error 5-13 cm): the one packet
+#: channel that differed between Isaac and the local replay of the SAME
+#: checkpoint on the SAME seeds by more than its own spread was
+#: ``detectionConfidence``, a constant 0.98 locally and 0.22-0.58 in Isaac,
+#: falling with camera depth exactly as the tag-size formula predicts (0.22 at
+#: 1.8-2.6 m, 0.45 at 0.8-1.1 m, 0.58 at 0.2-0.5 m). A channel that never
+#: varied in training is an untrained direction of the policy, and in Isaac
+#: it moved every step; the policy's lateral commands were 2.5x larger and 5x
+#: jerkier than locally, the tilt stayed above the 5 deg corridor gate and
+#: the supervisor held the descent for 70 s. The estimator never reads the
+#: confidence, so this law changes what the policy sees and nothing else.
+#: /6 is /5 plus one law, the attitude servo's DAMPING. Identified 2026-10-06
+#: from the tilt traces of all four Isaac flights (46 episodes, 1360 steps):
+#: simulating the local second-order servo on the recorded commanded attitude
+#: and minimising the RMS tilt error gives a plateau at omega 9-10 rad/s,
+#: zeta 0.65-0.7, 0.10-0.12 s input delay (2.43 deg) against 2.91 deg for the
+#: /4-/5 servo (14 rad/s, zeta 1) and 2.73 deg for /3's (10, 1). The velocity
+#: reversal estimator (225 events) ranks the same (10, 0.7) a close second to
+#: (14, 1) -- error 0.080 against 0.035 -- so both estimators admit it, and
+#: only zeta < 1 reproduces what ended the fourth flight's one envelope
+#: violation: a command reversal from +8.5 to -15 deg of roll that the PX4
+#: vehicle overshot to -21.2 deg at 107 deg/s. A critically damped local
+#: servo never overshoots, so no policy trained on it could learn that
+#: margin. Steady-state tilt gain is 0.90-1.02, i.e. there is no gain error
+#: to model. Packet, graph, reward and capabilities are identical to /5.
+REFERENCE_SCHEMAS = ("spatial-reference/1", "spatial-reference/2",
+                     "spatial-reference/3", "spatial-reference/4",
+                     "spatial-reference/5", "spatial-reference/6")
+REFERENCE_SCHEMA = REFERENCE_SCHEMAS[-1]
+#: /6 attitude servo: natural frequency (rad/s) and damping ratio.
+REFERENCE_ATTITUDE_SERVO_6 = (10.0, 0.7)
+#: Isaac detector quality constants (isaac_sim/marker_vision.py) and the
+#: sharpness the third flight measured (reprojection ~1.0-1.2 px of 3 px).
+REFERENCE_OPTICAL_FULL_SCALE_PX = 120.0
+REFERENCE_OPTICAL_SHARPNESS = (0.65, 0.08)
+REFERENCE_OPTICAL_MIN_TAG_PX = 12.0
+REFERENCE_OPTICAL_MISS_PROBABILITY = 0.05
+REFERENCE_OPTICAL_IMAGE_PX = (640, 480)
+#: Isaac/PX4 command-to-response latency the /3 and /4 plants reproduce, s.
+REFERENCE_ACTUATION_DELAY_S = 0.10
+#: /4 attitude servo bandwidth, rad/s (the /1-/3 plant uses dynamics.ATTITUDE_OMEGA).
+REFERENCE_ATTITUDE_OMEGA_RAD_S = 14.0
+#: /4 landing-gear extension below the stock Iris gear, metres.
+REFERENCE_LANDING_GEAR_EXTENSION_M = 0.18
 
 
 def schema_for(contract_version):
     """CLI contract selector -> schema string.
 
     ``reference`` is the active, derived contract; the bare numbers are the
-    frozen historical rungs, kept so their checkpoints stay loadable.
+    frozen historical rungs, kept so their checkpoints stay loadable. A
+    superseded reference rung is selectable by its full schema string, which is
+    how ``spatial-reference/1`` -- the one-sided vertical brake -- stays
+    reachable for reproducing anything trained before 2026-10-05.
     """
     version = str(contract_version)
-    if version in ("reference", REFERENCE_SCHEMA):
+    if version == "reference":
         return REFERENCE_SCHEMA
+    if version in REFERENCE_SCHEMAS:
+        return version
     return f"spatial-causal-rgat/{version}"
 
 
@@ -231,7 +327,7 @@ class SpatialConfig:
         if (
             self.schema not in ("spatial-causal-rgat/3", "spatial-causal-rgat/4",
                                 "spatial-causal-rgat/5", "spatial-causal-rgat/6", "spatial-causal-rgat/7", "spatial-causal-rgat/8", "spatial-causal-rgat/9", "spatial-causal-rgat/10",
-                                REFERENCE_SCHEMA)
+                                *REFERENCE_SCHEMAS)
             or not 0 < self.sensor_dt <= self.dt <= 0.2
         ):
             raise ValueError("invalid spatial schema/timing")
@@ -266,7 +362,7 @@ class SpatialConfig:
 
     @property
     def registry_hash(self):
-        if self.schema == REFERENCE_SCHEMA:
+        if self.schema in REFERENCE_SCHEMAS:
             return reference_registry(self.axes, extras=True)["sha256"]
         if self.reference_supervisor:
             return REGISTRY_HASH_V10
@@ -284,23 +380,94 @@ class SpatialConfig:
 
     @property
     def direct_acceleration(self):
-        return self.schema in ("spatial-causal-rgat/6", "spatial-causal-rgat/7", "spatial-causal-rgat/8", "spatial-causal-rgat/9", "spatial-causal-rgat/10", REFERENCE_SCHEMA)
+        return self.schema in ("spatial-causal-rgat/6", "spatial-causal-rgat/7", "spatial-causal-rgat/8", "spatial-causal-rgat/9", "spatial-causal-rgat/10", *REFERENCE_SCHEMAS)
 
     @property
     def reference_tracking(self):
-        return self.schema in ("spatial-causal-rgat/7", "spatial-causal-rgat/8", "spatial-causal-rgat/9", "spatial-causal-rgat/10", REFERENCE_SCHEMA)
+        return self.schema in ("spatial-causal-rgat/7", "spatial-causal-rgat/8", "spatial-causal-rgat/9", "spatial-causal-rgat/10", *REFERENCE_SCHEMAS)
 
     @property
     def matched_disturbances(self):
-        return self.schema in ("spatial-causal-rgat/8", "spatial-causal-rgat/9", "spatial-causal-rgat/10", REFERENCE_SCHEMA)
+        return self.schema in ("spatial-causal-rgat/8", "spatial-causal-rgat/9", "spatial-causal-rgat/10", *REFERENCE_SCHEMAS)
 
     @property
     def reference_context(self):
-        return self.schema in ("spatial-causal-rgat/9", "spatial-causal-rgat/10", REFERENCE_SCHEMA)
+        return self.schema in ("spatial-causal-rgat/9", "spatial-causal-rgat/10", *REFERENCE_SCHEMAS)
 
     @property
     def reference_supervisor(self):
-        return self.schema in ("spatial-causal-rgat/10", REFERENCE_SCHEMA)
+        return self.schema in ("spatial-causal-rgat/10", *REFERENCE_SCHEMAS)
+
+    @property
+    def vertical_inhibit_holds(self):
+        """Does the inhibited supervisor HOLD the vertical rate, or only brake a descent?
+
+        /1 and every ladder rung rewrite the vertical command only when it is
+        negative: a descending vehicle is braked with up to full upward
+        authority, an ascending one passes through untouched. The
+        direct-acceleration plant has no restoring force on altitude, so that
+        asymmetry is a ratchet. Measured on a fresh policy at the easiest
+        curriculum rung, a requested -0.065 m/s^2 came out as an applied
+        +0.082, the median climb was +19.71 m and 27 of 40 episodes ended on
+        the 20 m ceiling; holding the rate instead gives +0.70 m and 0 of 40.
+
+        The swept oracle never meets this -- it is inside the terminal-descent
+        corridor on 64 % of its steps -- so no ceiling measurement can see it,
+        which is why it survived a 96-cell gain sweep.
+        """
+        return self.schema in ("spatial-reference/2", "spatial-reference/3",
+                               "spatial-reference/4", "spatial-reference/5",
+                               "spatial-reference/6")
+
+    @property
+    def actuation_delay_s(self):
+        """Command-to-response latency the local plant reproduces (/3 and /4).
+
+        Zero on every earlier rung keeps them byte-identical. The supervisor
+        reads the same value for its stopping margin, so the safety model and
+        the plant it protects carry one latency, not two.
+        """
+        return (REFERENCE_ACTUATION_DELAY_S
+                if self.schema in ("spatial-reference/3", "spatial-reference/4",
+                                   "spatial-reference/5", "spatial-reference/6") else 0.0)
+
+    @property
+    def attitude_omega(self):
+        """Attitude servo bandwidth of the local plant, rad/s (/4: Isaac-fitted)."""
+        from .dynamics import ATTITUDE_OMEGA
+        if self.schema == "spatial-reference/6":
+            return REFERENCE_ATTITUDE_SERVO_6[0]
+        return (REFERENCE_ATTITUDE_OMEGA_RAD_S
+                if self.schema in ("spatial-reference/4", "spatial-reference/5")
+                else ATTITUDE_OMEGA)
+
+    @property
+    def attitude_damping(self):
+        """Attitude servo damping ratio; critically damped before /6."""
+        from .dynamics import ATTITUDE_DAMPING
+        return (REFERENCE_ATTITUDE_SERVO_6[1]
+                if self.schema == "spatial-reference/6" else ATTITUDE_DAMPING)
+
+    @property
+    def landing_gear_extension_m(self):
+        """How far below the stock gear the /4 legs reach; zero elsewhere."""
+        return (REFERENCE_LANDING_GEAR_EXTENSION_M
+                if self.schema in ("spatial-reference/4", "spatial-reference/5",
+                                   "spatial-reference/6") else 0.0)
+
+    @property
+    def optical_realism(self):
+        """Tag-based detection and the detector's quality metric (/5 only)."""
+        return self.schema in ("spatial-reference/5", "spatial-reference/6")
+
+    @property
+    def touchdown_height(self):
+        """Body height above the pad at physical contact.
+
+        ``contact_height`` stays the stock-gear figure (and stays in the
+        config hash of every rung); the gear extension adds to it on /4.
+        """
+        return self.contact_height + self.landing_gear_extension_m
 
     @property
     def camera_transport_delay(self):
@@ -311,7 +478,7 @@ class SpatialConfig:
 
     @property
     def packet_fields(self):
-        if self.schema == REFERENCE_SCHEMA:
+        if self.schema in REFERENCE_SCHEMAS:
             return reference_field_names(self.axes, extras=True)
         if self.reference_context:
             return FIELDS_V9
@@ -419,6 +586,15 @@ class Estimator:
         self.last_optical_r = None
         self.last_optical_rv = None
         self.previous_action = np.zeros(3)
+        # Causal unmodelled-acceleration observer. 3D adds a per-episode
+        # external force of up to 0.75 N on each axis (0.5 m/s^2 against a
+        # 2.5 m/s^2 authority) that 2D has no counterpart for. It is observable
+        # without any truth: difference own EKF velocity and subtract the
+        # vehicle's OWN commanded acceleration. Both are own state.
+        self.disturbance = np.zeros(3)
+        self.previous_applied_acceleration = np.zeros(3)
+        self._disturbance_velocity = None
+        self._disturbance_time = None
         if config.reference_tracking:
             from .estimation import ReferenceSpatialTrack
             self.reference_track = ReferenceSpatialTrack(capture_aligned=config.reference_context)
@@ -502,11 +678,44 @@ class Estimator:
         self.std, self.velocity_std, self.acceleration_std = np.max(track.std, axis=1)
         self.last_t, self.last_detection, self.last_sample = track.last_t, track.last_detection, track.last_sample
         self.detected = bool(m.optical_position is not None)
+        self._update_disturbance(m)
         self.own = m
         self.updates += 1
         if accepted:
             self.last_optical_r = self.r.copy()
             self.last_optical_rv = self.rv.copy()
+
+    DISTURBANCE_TIME_CONSTANT_S = 1.5
+
+    def observe_actuation(self, applied_acceleration_m_s2):
+        """Record the vehicle's own commanded acceleration for the observer.
+
+        Own commanded state, never simulator truth and never the supervisor's
+        private reasoning. Called once per policy step by the environment.
+        """
+        value = np.asarray(applied_acceleration_m_s2, dtype=float)
+        if value.shape != (3,) or not np.isfinite(value).all():
+            raise ValueError("applied acceleration must be a finite ENU triple")
+        self.previous_applied_acceleration = value.copy()
+
+    def _update_disturbance(self, m):
+        """Low-pass the residual between realized and commanded acceleration.
+
+        The attitude/thrust lag shows up here too, but it is transient; the
+        external force is constant within an episode, so the filter separates
+        them. Estimating it is what lets a policy trade authority against a
+        standing bias instead of re-discovering it every step.
+        """
+        if self._disturbance_velocity is not None and self._disturbance_time is not None:
+            dt = m.time_s - self._disturbance_time
+            if 1e-6 < dt <= 2.0:
+                realized = (m.own_velocity - self._disturbance_velocity) / dt
+                residual = realized - self.previous_applied_acceleration
+                blend = 1.0 - math.exp(-dt / self.DISTURBANCE_TIME_CONSTANT_S)
+                self.disturbance += blend * (residual - self.disturbance)
+                self.disturbance = np.clip(self.disturbance, -5.0, 5.0)
+        self._disturbance_velocity = np.asarray(m.own_velocity, dtype=float).copy()
+        self._disturbance_time = float(m.time_s)
 
     @property
     def age(self):
@@ -593,7 +802,7 @@ def supervised_action(action, est, safety, cfg):
         applied[:2] = np.clip(-1.5 * est.own.own_velocity[:2] /
                              np.asarray(cfg.max_acceleration[:2]), -1., 1.)
     # Common causal braking envelope; it does not make unsafe contacts safe.
-    height = max(est.r[2] - cfg.contact_height, 0.0)
+    height = max(est.r[2] - cfg.touchdown_height, 0.0)
     safe_sink = math.sqrt(cfg.touchdown_z_speed ** 2 + 2.0 * 0.7 * height)
     if est.rv[2] < -safe_sink:
         applied[2] = max(
@@ -622,7 +831,7 @@ class Observation:
 
 
 def observation(est, safety, elapsed, cfg):
-    if cfg.schema == REFERENCE_SCHEMA:
+    if cfg.schema in REFERENCE_SCHEMAS:
         # One derived field list, one normalization, one plane builder per
         # axis -- see spatial/reference_contract.py and landing/packet.py.
         from .context import axis_context_graphs

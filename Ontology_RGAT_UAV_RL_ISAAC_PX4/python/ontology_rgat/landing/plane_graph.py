@@ -50,6 +50,9 @@ class AxisContext:
     half_fov: float                # half field of view on this axis (rad)
     tilt: float                    # tilt toward this axis (rad)
     tilt_rate: float               # tilt rate about this axis (rad/s)
+    # Extension inputs; zero where the task has no such phenomenon.
+    disturbance: float = 0.0       # unmodelled acceleration on this axis (m/s^2)
+    estimated_bearing: float = 0.0 # bearing from the current estimate (rad)
 
 
 @dataclass(frozen=True)
@@ -74,6 +77,12 @@ class SharedContext:
     tilt_limit: float              # attitude limit used for the risk channel
     tilt_rate_limit: float         # attitude-rate limit used for the risk channel
     tilt_rate_scale: float         # normalization of the signed rate channel
+    # Extension inputs; zero where the task has no such phenomenon.
+    disturbance_vertical: float = 0.0
+    transport_age: float = 0.0     # capture to use, in seconds
+    acceleration_limit: float = 1.0
+    vertical_acceleration_limit: float = 1.0
+    policy_dt: float = 0.1
 
 
 def descent_eligibility(shared: SharedContext, attitude_risk: float,
@@ -89,9 +98,34 @@ def descent_eligibility(shared: SharedContext, attitude_risk: float,
             * (1 - rate_risk) * (1 - shared.landing_inhibited))
 
 
+def _disturbance_row(axis, shared, acc_u):
+    """Unmodelled acceleration this axis carries, and what it costs in authority."""
+    d = axis.disturbance / max(shared.acceleration_limit, 1e-9)
+    dz = shared.disturbance_vertical / max(shared.vertical_acceleration_limit, 1e-9)
+    d, dz = float(np.clip(d, -1, 1)), float(np.clip(dz, -1, 1))
+    return [abs(d), d, abs(dz), dz, 1.0, 1 - acc_u, acc_u, d, abs(d)]
+
+
+def _latency_row(axis, shared, pos_u):
+    """How far the view has moved since the solve the estimate rests on."""
+    half = max(axis.half_fov, 1e-9)
+    age = min(shared.transport_age / max(shared.policy_dt, 1e-9), 1.0)
+    discrepancy = float(np.clip(
+        (axis.estimated_bearing - axis.measured_bearing) / half, -1, 1))
+    return [age, discrepancy, abs(discrepancy), axis.measured_bearing / half,
+            shared.bearing_valid, shared.detection_confidence, pos_u,
+            discrepancy, max(age, abs(discrepancy))]
+
+
+EXTENSION_ROWS = {
+    "DisturbanceEstimate": _disturbance_row,
+    "MeasurementLatency": _latency_row,
+}
+
+
 def build_plane(axis: AxisContext, shared: SharedContext, *,
-                eligibility: float) -> np.ndarray:
-    """One 9x12 context plane for one horizontal axis."""
+                eligibility: float, extensions=()) -> np.ndarray:
+    """One context plane for one horizontal axis, nine rows plus extensions."""
     ex, rv = axis.relative_position, axis.relative_velocity
     pv, pa = axis.pad_velocity, axis.pad_acceleration
     half = axis.half_fov
@@ -147,7 +181,13 @@ def build_plane(axis: AxisContext, shared: SharedContext, *,
         [inhibit, shared.abort_requested, age, shared.landing_inhibited, 1, 1,
          max(pos_u, vel_u, age), shared.abort_requested, inhibit],
     ]
+    for name in extensions:
+        if name not in EXTENSION_ROWS:
+            raise ValueError(f"no context row defined for extension {name!r}")
+        rows.append(EXTENSION_ROWS[name](
+            axis, shared, acc_u if name == "DisturbanceEstimate" else pos_u))
+    count = len(rows)
     plane = np.array(
-        [row + [shared.remaining_time, 1.0, (index + 1) / NODE_COUNT]
+        [row + [shared.remaining_time, 1.0, (index + 1) / count]
          for index, row in enumerate(rows)], dtype=np.float32)
     return np.clip(plane, -1.0, 1.0)

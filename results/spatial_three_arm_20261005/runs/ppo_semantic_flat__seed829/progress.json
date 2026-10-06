@@ -1,0 +1,3912 @@
+{
+  "mode": "ppo_semantic_flat",
+  "seed": 829,
+  "signature": {
+    "schema": "spatial-reference/2",
+    "packet_registry": "b5ec469ce76fa6d3b98337b8e97ec79895db6c3a97d3991c3e87bf94417977ba",
+    "action": "spatial-enu-direct-net-acceleration-v2",
+    "config_sha256": "4f679f9c3cac9a39363d80c782b890276d2e218d950fd352d0890f4986c0a4f8"
+  },
+  "hyperparameters": {
+    "iterations": 200,
+    "decisions_per_iteration": 512,
+    "epochs": 8,
+    "minibatch_size": 256,
+    "actor_lr": 0.0005,
+    "critic_lr": 0.001,
+    "clip_ratio": 0.2,
+    "entropy_coefficient": 0.0025,
+    "gae_lambda": 0.95,
+    "max_grad_norm": 1.0,
+    "target_kl": 0.02,
+    "initial_log_std": -1.1,
+    "evaluation_every": 100,
+    "evaluation_episodes": 2,
+    "value_warmup_iterations": 2,
+    "advantage_normalization": "rollout"
+  },
+  "episodes_per_iteration": 12,
+  "curriculum_loss_timeout_start": null,
+  "rollout_budget_unit": "complete_episodes",
+  "initialization": "reference-v28-gaussian",
+  "initialization_source": null,
+  "curriculum_angular_scales": [
+    1.0,
+    1.0
+  ],
+  "training_backend": "local-spatial",
+  "completed_nominal_episodes": 0,
+  "wall_seconds": 128.98299764003605,
+  "history": [
+    {
+      "actor_loss": 0.01225439938882898,
+      "critic_loss": 6.539752432278225,
+      "entropy": 0.9568156429699489,
+      "approx_kl": -2.6461807507110232e-09,
+      "clip_fraction": 0.0,
+      "explained_variance": -0.49578540034108975,
+      "minibatches": 56.0,
+      "policy_updated": 0.0,
+      "iteration": 1,
+      "completed_episodes": 12,
+      "difficulty": 0.0,
+      "environment_steps": 1580,
+      "episode_outcomes": [
+        {
+          "seed": 8390100,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.099999999999786,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390101,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 11.89999999999979,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390102,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 11.699999999999795,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390103,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.099999999999786,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390104,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.299999999999782,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390105,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 17.89999999999973,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390106,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 14.699999999999731,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390107,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 11.799999999999793,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390108,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.599999999999776,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390109,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.199999999999784,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390110,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.799999999999772,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390111,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 15.899999999999705,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        }
+      ],
+      "decision_dt_s": {
+        "mean": 0.09999999999999826,
+        "max": 0.10000000000000142,
+        "sum": 157.9999999999928
+      }
+    },
+    {
+      "actor_loss": -0.002394234926517432,
+      "critic_loss": 5.047371278206508,
+      "entropy": 0.9568156599998474,
+      "approx_kl": -2.3605828495624572e-09,
+      "clip_fraction": 0.0,
+      "explained_variance": -0.5033128441397909,
+      "minibatches": 48.0,
+      "policy_updated": 0.0,
+      "iteration": 2,
+      "completed_episodes": 24,
+      "difficulty": 0.0,
+      "environment_steps": 3045,
+      "episode_outcomes": [
+        {
+          "seed": 8390200,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.099999999999786,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390201,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 11.999999999999789,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390202,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.099999999999786,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390203,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.099999999999786,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390204,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.099999999999786,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390205,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.599999999999776,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390206,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.299999999999782,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390207,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 11.599999999999797,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390208,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.599999999999776,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390209,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 11.89999999999979,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390210,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.999999999999767,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390211,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.099999999999786,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        }
+      ],
+      "decision_dt_s": {
+        "mean": 0.09999999999999823,
+        "max": 0.10000000000000009,
+        "sum": 146.49999999999346
+      }
+    },
+    {
+      "actor_loss": -0.004541968587242688,
+      "critic_loss": 3.081072169045607,
+      "entropy": 0.9708284176886082,
+      "approx_kl": 0.004413331519269074,
+      "clip_fraction": 0.0465306677215267,
+      "explained_variance": -0.4147683066228969,
+      "minibatches": 48.0,
+      "policy_updated": 1.0,
+      "iteration": 3,
+      "completed_episodes": 36,
+      "difficulty": 0.0,
+      "environment_steps": 4524,
+      "episode_outcomes": [
+        {
+          "seed": 8390300,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 11.799999999999793,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390301,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.39999999999978,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390302,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 13.299999999999761,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390303,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.39999999999978,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390304,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.199999999999784,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390305,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.099999999999786,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390306,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 11.89999999999979,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390307,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.39999999999978,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390308,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 11.999999999999789,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390309,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.39999999999978,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390310,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.299999999999782,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390311,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.699999999999774,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        }
+      ],
+      "decision_dt_s": {
+        "mean": 0.09999999999999822,
+        "max": 0.10000000000000009,
+        "sum": 147.89999999999338
+      }
+    },
+    {
+      "actor_loss": -0.03432409604595575,
+      "critic_loss": 1.648363936160292,
+      "entropy": 0.9899994358420372,
+      "approx_kl": 0.009187402295148266,
+      "clip_fraction": 0.12596261182001658,
+      "explained_variance": 0.05608089877382805,
+      "minibatches": 56.0,
+      "policy_updated": 1.0,
+      "iteration": 4,
+      "completed_episodes": 48,
+      "difficulty": 0.0,
+      "environment_steps": 6070,
+      "episode_outcomes": [
+        {
+          "seed": 8390400,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.099999999999786,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390401,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.799999999999772,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390402,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 14.799999999999729,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390403,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.999999999999767,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390404,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 13.199999999999763,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390405,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.599999999999776,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390406,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.299999999999782,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390407,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 15.099999999999723,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390408,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 11.599999999999797,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390409,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.199999999999784,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390410,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.699999999999774,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390411,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.199999999999784,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        }
+      ],
+      "decision_dt_s": {
+        "mean": 0.09999999999999822,
+        "max": 0.10000000000000009,
+        "sum": 154.59999999999286
+      }
+    },
+    {
+      "actor_loss": -0.007570802550097662,
+      "critic_loss": 0.8478088980274541,
+      "entropy": 0.9974461229784148,
+      "approx_kl": 0.0053411683807748234,
+      "clip_fraction": 0.06516378140076995,
+      "explained_variance": 0.3536114955578977,
+      "minibatches": 56.0,
+      "policy_updated": 1.0,
+      "iteration": 5,
+      "completed_episodes": 60,
+      "difficulty": 0.0,
+      "environment_steps": 7739,
+      "episode_outcomes": [
+        {
+          "seed": 8390500,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 13.899999999999748,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390501,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.599999999999776,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390502,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.299999999999782,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390503,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.799999999999772,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390504,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.799999999999772,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390505,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 11.89999999999979,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390506,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 11.89999999999979,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390507,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 25.299999999999834,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390508,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 13.099999999999765,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390509,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 11.89999999999979,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390510,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 15.499999999999714,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390511,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.89999999999977,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        }
+      ],
+      "decision_dt_s": {
+        "mean": 0.09999999999999838,
+        "max": 0.10000000000000142,
+        "sum": 166.89999999999216
+      }
+    },
+    {
+      "actor_loss": -0.007944173092255369,
+      "critic_loss": 0.5390145187931401,
+      "entropy": 0.9944253031696592,
+      "approx_kl": 0.006076669831860012,
+      "clip_fraction": 0.07373423940901246,
+      "explained_variance": 0.6402028345397629,
+      "minibatches": 56.0,
+      "policy_updated": 1.0,
+      "iteration": 6,
+      "completed_episodes": 72,
+      "difficulty": 0.0,
+      "environment_steps": 9423,
+      "episode_outcomes": [
+        {
+          "seed": 8390600,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 11.4999999999998,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390601,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 22.19999999999979,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390602,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 11.4999999999998,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390603,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 11.89999999999979,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390604,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.299999999999782,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390605,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 22.19999999999979,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390606,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 13.499999999999757,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390607,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 14.099999999999744,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390608,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 11.89999999999979,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390609,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 11.89999999999979,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390610,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.799999999999772,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390611,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.599999999999776,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        }
+      ],
+      "decision_dt_s": {
+        "mean": 0.09999999999999847,
+        "max": 0.10000000000000142,
+        "sum": 168.39999999999245
+      }
+    },
+    {
+      "actor_loss": -0.010298659978919508,
+      "critic_loss": 0.31731078525384265,
+      "entropy": 0.9855085561672846,
+      "approx_kl": 0.006997052201768383,
+      "clip_fraction": 0.09067515686426002,
+      "explained_variance": 0.6328952431335757,
+      "minibatches": 48.0,
+      "policy_updated": 1.0,
+      "iteration": 7,
+      "completed_episodes": 84,
+      "difficulty": 0.0,
+      "environment_steps": 10948,
+      "episode_outcomes": [
+        {
+          "seed": 8390700,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.39999999999978,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390701,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.39999999999978,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390702,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.599999999999776,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390703,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.699999999999774,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390704,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 13.599999999999755,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390705,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.799999999999772,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390706,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 13.499999999999757,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390707,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.299999999999782,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390708,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.699999999999774,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390709,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.599999999999776,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390710,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.199999999999784,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390711,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.699999999999774,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        }
+      ],
+      "decision_dt_s": {
+        "mean": 0.09999999999999822,
+        "max": 0.10000000000000009,
+        "sum": 152.499999999993
+      }
+    },
+    {
+      "actor_loss": -0.004778451596697171,
+      "critic_loss": 0.21601980039849877,
+      "entropy": 0.9846421467761198,
+      "approx_kl": 0.006487769358500373,
+      "clip_fraction": 0.08535867851848404,
+      "explained_variance": 0.7214959764317739,
+      "minibatches": 48.0,
+      "policy_updated": 1.0,
+      "iteration": 8,
+      "completed_episodes": 96,
+      "difficulty": 0.0,
+      "environment_steps": 12459,
+      "episode_outcomes": [
+        {
+          "seed": 8390800,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.699999999999774,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390801,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.199999999999784,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390802,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.099999999999786,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390803,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.799999999999772,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390804,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 11.89999999999979,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390805,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 14.099999999999744,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390806,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 11.999999999999789,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390807,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.099999999999786,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390808,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.999999999999767,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390809,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 11.799999999999793,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390810,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 14.199999999999742,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390811,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.199999999999784,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        }
+      ],
+      "decision_dt_s": {
+        "mean": 0.09999999999999822,
+        "max": 0.10000000000000009,
+        "sum": 151.0999999999932
+      }
+    },
+    {
+      "actor_loss": -0.01080356705642771,
+      "critic_loss": 0.17596857839574417,
+      "entropy": 0.9910577783981959,
+      "approx_kl": 0.007611006187895934,
+      "clip_fraction": 0.10129041092780729,
+      "explained_variance": 0.7704934592756584,
+      "minibatches": 48.0,
+      "policy_updated": 1.0,
+      "iteration": 9,
+      "completed_episodes": 108,
+      "difficulty": 0.0,
+      "environment_steps": 13937,
+      "episode_outcomes": [
+        {
+          "seed": 8390900,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 13.299999999999761,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390901,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 11.89999999999979,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390902,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.499999999999778,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390903,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.099999999999786,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390904,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 11.799999999999793,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390905,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.299999999999782,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390906,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.299999999999782,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390907,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.39999999999978,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390908,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 13.199999999999763,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390909,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.099999999999786,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390910,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 11.89999999999979,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8390911,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 11.999999999999789,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        }
+      ],
+      "decision_dt_s": {
+        "mean": 0.09999999999999824,
+        "max": 0.10000000000000009,
+        "sum": 147.7999999999934
+      }
+    },
+    {
+      "actor_loss": -0.010734343459868493,
+      "critic_loss": 0.09616608909952144,
+      "entropy": 0.9828776580591997,
+      "approx_kl": 0.008308327960548922,
+      "clip_fraction": 0.11249357019551098,
+      "explained_variance": 0.7412312814238518,
+      "minibatches": 48.0,
+      "policy_updated": 1.0,
+      "iteration": 10,
+      "completed_episodes": 120,
+      "difficulty": 0.0,
+      "environment_steps": 15460,
+      "episode_outcomes": [
+        {
+          "seed": 8391000,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.699999999999774,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391001,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.39999999999978,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391002,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.999999999999767,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391003,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 11.999999999999789,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391004,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 11.999999999999789,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391005,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.699999999999774,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391006,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.89999999999977,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391007,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 11.799999999999793,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391008,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.39999999999978,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391009,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 13.599999999999755,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391010,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.89999999999977,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391011,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 13.899999999999748,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        }
+      ],
+      "decision_dt_s": {
+        "mean": 0.09999999999999822,
+        "max": 0.10000000000000009,
+        "sum": 152.29999999999313
+      }
+    },
+    {
+      "actor_loss": -0.008245309387954572,
+      "critic_loss": 0.07510212839891513,
+      "entropy": 0.9730496940513452,
+      "approx_kl": 0.007782542309238731,
+      "clip_fraction": 0.10774147751120229,
+      "explained_variance": 0.6792889658941863,
+      "minibatches": 48.0,
+      "policy_updated": 1.0,
+      "iteration": 11,
+      "completed_episodes": 132,
+      "difficulty": 0.0,
+      "environment_steps": 16960,
+      "episode_outcomes": [
+        {
+          "seed": 8391100,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 14.499999999999735,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391101,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.299999999999782,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391102,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.699999999999774,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391103,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 11.89999999999979,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391104,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 11.999999999999789,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391105,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.999999999999767,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391106,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.799999999999772,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391107,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.199999999999784,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391108,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 11.999999999999789,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391109,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.499999999999778,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391110,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.199999999999784,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391111,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 11.89999999999979,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        }
+      ],
+      "decision_dt_s": {
+        "mean": 0.09999999999999822,
+        "max": 0.10000000000000009,
+        "sum": 149.99999999999318
+      }
+    },
+    {
+      "actor_loss": -0.009395184223346101,
+      "critic_loss": 0.08484513266012073,
+      "entropy": 0.963806077837944,
+      "approx_kl": 0.00728001290311416,
+      "clip_fraction": 0.09109760805343588,
+      "explained_variance": 0.7036922884469042,
+      "minibatches": 48.0,
+      "policy_updated": 1.0,
+      "iteration": 12,
+      "completed_episodes": 144,
+      "difficulty": 0.0,
+      "environment_steps": 18456,
+      "episode_outcomes": [
+        {
+          "seed": 8391200,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 11.799999999999793,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391201,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 11.89999999999979,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391202,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 13.499999999999757,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391203,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 11.89999999999979,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391204,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.699999999999774,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391205,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 11.599999999999797,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391206,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.799999999999772,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391207,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 11.999999999999789,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391208,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 13.79999999999975,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391209,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.199999999999784,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391210,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.099999999999786,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391211,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 13.299999999999761,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        }
+      ],
+      "decision_dt_s": {
+        "mean": 0.09999999999999823,
+        "max": 0.10000000000000009,
+        "sum": 149.5999999999933
+      }
+    },
+    {
+      "actor_loss": -0.009023966801275188,
+      "critic_loss": 0.07232192174221079,
+      "entropy": 0.9422601188222567,
+      "approx_kl": 0.006854226170010709,
+      "clip_fraction": 0.0884925692807883,
+      "explained_variance": 0.7342551643025883,
+      "minibatches": 48.0,
+      "policy_updated": 1.0,
+      "iteration": 13,
+      "completed_episodes": 156,
+      "difficulty": 0.0,
+      "environment_steps": 19978,
+      "episode_outcomes": [
+        {
+          "seed": 8391300,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.599999999999776,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391301,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 14.599999999999733,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391302,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 11.999999999999789,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391303,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.89999999999977,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391304,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 11.799999999999793,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391305,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.199999999999784,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391306,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 11.799999999999793,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391307,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 11.599999999999797,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391308,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.39999999999978,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391309,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.89999999999977,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391310,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.89999999999977,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391311,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 14.499999999999735,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        }
+      ],
+      "decision_dt_s": {
+        "mean": 0.0999999999999982,
+        "max": 0.10000000000000009,
+        "sum": 152.19999999999303
+      }
+    },
+    {
+      "actor_loss": -0.015957325260387734,
+      "critic_loss": 0.07492937480232545,
+      "entropy": 0.9323250491704259,
+      "approx_kl": 0.007222429036378993,
+      "clip_fraction": 0.10030309749501091,
+      "explained_variance": 0.6991579771269318,
+      "minibatches": 56.0,
+      "policy_updated": 1.0,
+      "iteration": 14,
+      "completed_episodes": 168,
+      "difficulty": 0.0,
+      "environment_steps": 21587,
+      "episode_outcomes": [
+        {
+          "seed": 8391400,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.299999999999782,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391401,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 11.999999999999789,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391402,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 11.999999999999789,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391403,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.099999999999786,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391404,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.699999999999774,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391405,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 11.799999999999793,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391406,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.099999999999786,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391407,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 25.899999999999842,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391408,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.699999999999774,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391409,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.39999999999978,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391410,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 11.999999999999789,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391411,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.89999999999977,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        }
+      ],
+      "decision_dt_s": {
+        "mean": 0.09999999999999841,
+        "max": 0.10000000000000142,
+        "sum": 160.89999999999264
+      }
+    },
+    {
+      "actor_loss": -0.007213310430025948,
+      "critic_loss": 0.09649513681818332,
+      "entropy": 0.936129521046366,
+      "approx_kl": 0.006141799381501707,
+      "clip_fraction": 0.07162845076527447,
+      "explained_variance": 0.7318456970175171,
+      "minibatches": 56.0,
+      "policy_updated": 1.0,
+      "iteration": 15,
+      "completed_episodes": 180,
+      "difficulty": 0.0,
+      "environment_steps": 23346,
+      "episode_outcomes": [
+        {
+          "seed": 8391500,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.89999999999977,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391501,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 13.199999999999763,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391502,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.999999999999767,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391503,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 37.499999999998835,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391504,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 11.699999999999795,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391505,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 13.599999999999755,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391506,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.699999999999774,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391507,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.199999999999784,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391508,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.499999999999778,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391509,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 11.999999999999789,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391510,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.699999999999774,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391511,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 11.89999999999979,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        }
+      ],
+      "decision_dt_s": {
+        "mean": 0.09999999999999795,
+        "max": 0.10000000000000142,
+        "sum": 175.89999999999137
+      }
+    },
+    {
+      "actor_loss": -0.006229208360309713,
+      "critic_loss": 0.10953172715380788,
+      "entropy": 0.9409593269228935,
+      "approx_kl": 0.0063535377084917855,
+      "clip_fraction": 0.07588276109891012,
+      "explained_variance": 0.7182254745628325,
+      "minibatches": 64.0,
+      "policy_updated": 1.0,
+      "iteration": 16,
+      "completed_episodes": 192,
+      "difficulty": 0.0,
+      "environment_steps": 25176,
+      "episode_outcomes": [
+        {
+          "seed": 8391600,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.999999999999767,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391601,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 11.89999999999979,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391602,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 11.599999999999797,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391603,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 38.899999999998556,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391604,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.199999999999784,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391605,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 13.499999999999757,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391606,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 11.999999999999789,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391607,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 11.999999999999789,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391608,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 11.699999999999795,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391609,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 11.699999999999795,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391610,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.39999999999978,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391611,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 22.09999999999979,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        }
+      ],
+      "decision_dt_s": {
+        "mean": 0.09999999999999792,
+        "max": 0.10000000000000142,
+        "sum": 182.99999999999093
+      }
+    },
+    {
+      "actor_loss": -0.00972586143845027,
+      "critic_loss": 0.15916088143629686,
+      "entropy": 0.9368567935058049,
+      "approx_kl": 0.01024873522276591,
+      "clip_fraction": 0.14051072159782052,
+      "explained_variance": 0.5384882460111436,
+      "minibatches": 56.0,
+      "policy_updated": 1.0,
+      "iteration": 17,
+      "completed_episodes": 204,
+      "difficulty": 0.0,
+      "environment_steps": 26947,
+      "episode_outcomes": [
+        {
+          "seed": 8391700,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 11.699999999999795,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391701,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.89999999999977,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391702,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 14.499999999999735,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391703,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.299999999999782,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391704,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.599999999999776,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391705,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.299999999999782,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391706,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 11.799999999999793,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391707,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 13.099999999999765,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391708,
+          "status": "SAFETY_ENVELOPE_VIOLATION",
+          "elapsed_s": 38.599999999998616,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391709,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.499999999999778,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391710,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.099999999999786,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391711,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.699999999999774,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        }
+      ],
+      "decision_dt_s": {
+        "mean": 0.09999999999999783,
+        "max": 0.10000000000000142,
+        "sum": 177.0999999999897
+      }
+    },
+    {
+      "actor_loss": -0.009871675465547014,
+      "critic_loss": 0.19801555934827775,
+      "entropy": 0.9403559407219291,
+      "approx_kl": 0.0072269027441507205,
+      "clip_fraction": 0.09406139608472586,
+      "explained_variance": 0.5217175085448357,
+      "minibatches": 64.0,
+      "policy_updated": 1.0,
+      "iteration": 18,
+      "completed_episodes": 216,
+      "difficulty": 0.0,
+      "environment_steps": 28896,
+      "episode_outcomes": [
+        {
+          "seed": 8391800,
+          "status": "SAFETY_ENVELOPE_VIOLATION",
+          "elapsed_s": 28.49999999999988,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391801,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.099999999999786,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391802,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 13.79999999999975,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391803,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.299999999999782,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391804,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 11.999999999999789,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391805,
+          "status": "SAFETY_ENVELOPE_VIOLATION",
+          "elapsed_s": 19.699999999999754,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391806,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.499999999999778,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391807,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 11.89999999999979,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391808,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.499999999999778,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391809,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.599999999999776,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391810,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 19.99999999999976,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391811,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 26.999999999999858,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        }
+      ],
+      "decision_dt_s": {
+        "mean": 0.0999999999999987,
+        "max": 0.10000000000000142,
+        "sum": 194.899999999991
+      }
+    },
+    {
+      "actor_loss": -0.01674016861943528,
+      "critic_loss": 0.10954944629754339,
+      "entropy": 0.9539190371121679,
+      "approx_kl": 0.006588775302848912,
+      "clip_fraction": 0.08402193537248033,
+      "explained_variance": 0.7842016083773766,
+      "minibatches": 56.0,
+      "policy_updated": 1.0,
+      "iteration": 19,
+      "completed_episodes": 228,
+      "difficulty": 0.0,
+      "environment_steps": 30458,
+      "episode_outcomes": [
+        {
+          "seed": 8391900,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 18.899999999999743,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391901,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.89999999999977,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391902,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.39999999999978,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391903,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.499999999999778,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391904,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.299999999999782,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391905,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 13.899999999999748,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391906,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.099999999999786,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391907,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.099999999999786,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391908,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 11.699999999999795,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391909,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 11.999999999999789,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391910,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 13.699999999999752,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8391911,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 11.699999999999795,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        }
+      ],
+      "decision_dt_s": {
+        "mean": 0.09999999999999828,
+        "max": 0.10000000000000142,
+        "sum": 156.19999999999297
+      }
+    },
+    {
+      "actor_loss": -0.009902916077408008,
+      "critic_loss": 0.10955152369569987,
+      "entropy": 0.9568154746666551,
+      "approx_kl": 0.009730791185575072,
+      "clip_fraction": 0.1290254684863612,
+      "explained_variance": 0.7027979804813969,
+      "minibatches": 64.0,
+      "policy_updated": 1.0,
+      "iteration": 20,
+      "completed_episodes": 240,
+      "difficulty": 0.0,
+      "environment_steps": 32357,
+      "episode_outcomes": [
+        {
+          "seed": 8392000,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.499999999999778,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392001,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.39999999999978,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392002,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 36.19999999999909,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392003,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.799999999999772,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392004,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.599999999999776,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392005,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 13.999999999999746,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392006,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.799999999999772,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392007,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 14.399999999999737,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392008,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.599999999999776,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392009,
+          "status": "SAFETY_ENVELOPE_VIOLATION",
+          "elapsed_s": 22.29999999999979,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392010,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.299999999999782,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392011,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 14.999999999999725,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        }
+      ],
+      "decision_dt_s": {
+        "mean": 0.09999999999999817,
+        "max": 0.10000000000000142,
+        "sum": 189.8999999999912
+      }
+    },
+    {
+      "actor_loss": -0.00427696114347782,
+      "critic_loss": 0.11647056769579649,
+      "entropy": 0.9620561175048351,
+      "approx_kl": 0.006753299874253571,
+      "clip_fraction": 0.08549804706126451,
+      "explained_variance": 0.6584115172493143,
+      "minibatches": 80.0,
+      "policy_updated": 1.0,
+      "iteration": 21,
+      "completed_episodes": 252,
+      "difficulty": 0.0,
+      "environment_steps": 34685,
+      "episode_outcomes": [
+        {
+          "seed": 8392100,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.199999999999784,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392101,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 11.699999999999795,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392102,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 11.799999999999793,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392103,
+          "status": "SAFETY_ENVELOPE_VIOLATION",
+          "elapsed_s": 30.69999999999991,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392104,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 23.499999999999808,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392105,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 13.699999999999752,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392106,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 11.999999999999789,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392107,
+          "status": "SAFETY_ENVELOPE_VIOLATION",
+          "elapsed_s": 47.299999999996885,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392108,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.999999999999767,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392109,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 15.399999999999716,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392110,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 29.29999999999989,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392111,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.199999999999784,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        }
+      ],
+      "decision_dt_s": {
+        "mean": 0.09999999999999772,
+        "max": 0.10000000000000142,
+        "sum": 232.7999999999848
+      }
+    },
+    {
+      "actor_loss": -0.00921304424727251,
+      "critic_loss": 0.10022819033739241,
+      "entropy": 0.9711518003181978,
+      "approx_kl": 0.007104809099639004,
+      "clip_fraction": 0.08852328305048021,
+      "explained_variance": 0.7652319732740578,
+      "minibatches": 88.0,
+      "policy_updated": 1.0,
+      "iteration": 22,
+      "completed_episodes": 264,
+      "difficulty": 0.0,
+      "environment_steps": 37443,
+      "episode_outcomes": [
+        {
+          "seed": 8392200,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 37.399999999998855,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392201,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 13.399999999999759,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392202,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 14.099999999999744,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392203,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.89999999999977,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392204,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 40.29999999999828,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392205,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.699999999999774,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392206,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 11.89999999999979,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392207,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.499999999999778,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392208,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 18.69999999999974,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392209,
+          "status": "SAFETY_ENVELOPE_VIOLATION",
+          "elapsed_s": 29.399999999999892,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392210,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 25.199999999999832,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392211,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 47.299999999996885,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        }
+      ],
+      "decision_dt_s": {
+        "mean": 0.09999999999999713,
+        "max": 0.10000000000000142,
+        "sum": 275.7999999999814
+      }
+    },
+    {
+      "actor_loss": -0.002990815921091578,
+      "critic_loss": 0.08460106602352527,
+      "entropy": 0.9801352603567971,
+      "approx_kl": 0.0096590750811932,
+      "clip_fraction": 0.12904730910021397,
+      "explained_variance": 0.823092223912289,
+      "minibatches": 72.0,
+      "policy_updated": 1.0,
+      "iteration": 23,
+      "completed_episodes": 276,
+      "difficulty": 0.0,
+      "environment_steps": 39531,
+      "episode_outcomes": [
+        {
+          "seed": 8392300,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 14.499999999999735,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392301,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.599999999999776,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392302,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 11.699999999999795,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392303,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.599999999999776,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392304,
+          "status": "SAFETY_ENVELOPE_VIOLATION",
+          "elapsed_s": 40.49999999999824,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392305,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.299999999999782,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392306,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 33.59999999999961,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392307,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.299999999999782,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392308,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 20.599999999999767,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392309,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.599999999999776,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392310,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.599999999999776,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392311,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.89999999999977,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        }
+      ],
+      "decision_dt_s": {
+        "mean": 0.09999999999999788,
+        "max": 0.10000000000000142,
+        "sum": 208.7999999999882
+      }
+    },
+    {
+      "actor_loss": -0.007257155598684524,
+      "critic_loss": 0.09491353352657622,
+      "entropy": 0.9850914743211534,
+      "approx_kl": 0.006907849999455114,
+      "clip_fraction": 0.0861910520017975,
+      "explained_variance": 0.8451721245358579,
+      "minibatches": 72.0,
+      "policy_updated": 1.0,
+      "iteration": 24,
+      "completed_episodes": 288,
+      "difficulty": 0.0,
+      "environment_steps": 41775,
+      "episode_outcomes": [
+        {
+          "seed": 8392400,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 18.199999999999733,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392401,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 11.799999999999793,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392402,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 11.89999999999979,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392403,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 11.799999999999793,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392404,
+          "status": "SAFETY_ENVELOPE_VIOLATION",
+          "elapsed_s": 38.799999999998576,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392405,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 18.69999999999974,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392406,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.099999999999786,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392407,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.39999999999978,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392408,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 48.99999999999655,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392409,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 14.899999999999727,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392410,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.799999999999772,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392411,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 11.999999999999789,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        }
+      ],
+      "decision_dt_s": {
+        "mean": 0.0999999999999968,
+        "max": 0.10000000000000142,
+        "sum": 224.39999999998324
+      }
+    },
+    {
+      "actor_loss": -0.008453719445242314,
+      "critic_loss": 0.10319444700144231,
+      "entropy": 0.9907315270975232,
+      "approx_kl": 0.007001427937211702,
+      "clip_fraction": 0.09397686657030135,
+      "explained_variance": 0.8418351198933386,
+      "minibatches": 64.0,
+      "policy_updated": 1.0,
+      "iteration": 25,
+      "completed_episodes": 300,
+      "difficulty": 0.0,
+      "environment_steps": 43673,
+      "episode_outcomes": [
+        {
+          "seed": 8392500,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.39999999999978,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392501,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 11.699999999999795,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392502,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.699999999999774,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392503,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.099999999999786,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392504,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 27.09999999999986,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392505,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.499999999999778,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392506,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 13.999999999999746,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392507,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 26.799999999999855,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392508,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 14.199999999999742,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392509,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 11.999999999999789,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392510,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 15.099999999999723,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392511,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 19.199999999999747,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        }
+      ],
+      "decision_dt_s": {
+        "mean": 0.09999999999999863,
+        "max": 0.10000000000000142,
+        "sum": 189.79999999999086
+      }
+    },
+    {
+      "actor_loss": -0.007393452732569792,
+      "critic_loss": 0.09048148224299604,
+      "entropy": 1.0005063273689963,
+      "approx_kl": 0.009588977300815961,
+      "clip_fraction": 0.122940341044556,
+      "explained_variance": 0.7415580079568688,
+      "minibatches": 55.0,
+      "policy_updated": 1.0,
+      "iteration": 26,
+      "completed_episodes": 312,
+      "difficulty": 0.0,
+      "environment_steps": 46245,
+      "episode_outcomes": [
+        {
+          "seed": 8392600,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 11.599999999999797,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392601,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 31.599999999999923,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392602,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 25.09999999999983,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392603,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 22.09999999999979,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392604,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 19.699999999999754,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392605,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 11.699999999999795,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392606,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 11.699999999999795,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392607,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.199999999999784,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392608,
+          "status": "TASK_TIMEOUT",
+          "elapsed_s": 69.99999999999322,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392609,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.099999999999786,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392610,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 11.799999999999793,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392611,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 17.599999999999724,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        }
+      ],
+      "decision_dt_s": {
+        "mean": 0.09999999999999651,
+        "max": 0.10000000000000142,
+        "sum": 257.1999999999793
+      }
+    },
+    {
+      "actor_loss": -0.005655411139014177,
+      "critic_loss": 0.0886144143063575,
+      "entropy": 0.989245691895485,
+      "approx_kl": 0.009411218279274181,
+      "clip_fraction": 0.12986765881069004,
+      "explained_variance": 0.7675534055887948,
+      "minibatches": 80.0,
+      "policy_updated": 1.0,
+      "iteration": 27,
+      "completed_episodes": 324,
+      "difficulty": 0.0,
+      "environment_steps": 48781,
+      "episode_outcomes": [
+        {
+          "seed": 8392700,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.999999999999767,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392701,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 27.699999999999868,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392702,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 14.499999999999735,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392703,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 23.399999999999807,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392704,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 36.499999999999034,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392705,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 11.999999999999789,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392706,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 24.899999999999828,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392707,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 34.59999999999941,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392708,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 18.499999999999737,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392709,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 13.199999999999763,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392710,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 14.799999999999729,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392711,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 20.499999999999766,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        }
+      ],
+      "decision_dt_s": {
+        "mean": 0.09999999999999852,
+        "max": 0.10000000000000142,
+        "sum": 253.59999999998655
+      }
+    },
+    {
+      "actor_loss": -0.010216540294802852,
+      "critic_loss": 0.07621679998313387,
+      "entropy": 0.9810159107049307,
+      "approx_kl": 0.010014029417005885,
+      "clip_fraction": 0.14448159436384836,
+      "explained_variance": 0.8810789704180068,
+      "minibatches": 72.0,
+      "policy_updated": 1.0,
+      "iteration": 28,
+      "completed_episodes": 336,
+      "difficulty": 0.0,
+      "environment_steps": 51065,
+      "episode_outcomes": [
+        {
+          "seed": 8392800,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.699999999999774,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392801,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 18.899999999999743,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392802,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 24.899999999999828,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392803,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 20.299999999999763,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392804,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 26.999999999999858,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392805,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 11.89999999999979,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392806,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 26.49999999999985,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392807,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.099999999999786,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392808,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.199999999999784,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392809,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 15.499999999999714,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392810,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 29.599999999999895,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392811,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 16.799999999999713,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        }
+      ],
+      "decision_dt_s": {
+        "mean": 0.09999999999999891,
+        "max": 0.10000000000000142,
+        "sum": 228.3999999999893
+      }
+    },
+    {
+      "actor_loss": -0.006428650751331588,
+      "critic_loss": 0.07220128292101435,
+      "entropy": 0.980081079993397,
+      "approx_kl": 0.008730972485864186,
+      "clip_fraction": 0.12002228677738458,
+      "explained_variance": 0.6577128602449982,
+      "minibatches": 128.0,
+      "policy_updated": 1.0,
+      "iteration": 29,
+      "completed_episodes": 348,
+      "difficulty": 0.0,
+      "environment_steps": 55142,
+      "episode_outcomes": [
+        {
+          "seed": 8392900,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 23.499999999999808,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392901,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 41.49999999999804,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392902,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.199999999999784,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392903,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 41.99999999999794,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392904,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 35.99999999999913,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392905,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 35.19999999999929,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392906,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 39.59999999999842,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392907,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 14.899999999999727,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392908,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 50.69999999999621,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392909,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 43.6999999999976,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392910,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 35.59999999999921,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8392911,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 32.79999999999977,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        }
+      ],
+      "decision_dt_s": {
+        "mean": 0.0999999999999963,
+        "max": 0.10000000000000142,
+        "sum": 407.69999999999584
+      }
+    },
+    {
+      "actor_loss": -0.009530462736550432,
+      "critic_loss": 0.06894328029683003,
+      "entropy": 0.9836601408628317,
+      "approx_kl": 0.009091681706754921,
+      "clip_fraction": 0.12433516979217529,
+      "explained_variance": 0.8033812822809376,
+      "minibatches": 104.0,
+      "policy_updated": 1.0,
+      "iteration": 30,
+      "completed_episodes": 360,
+      "difficulty": 0.0,
+      "environment_steps": 58441,
+      "episode_outcomes": [
+        {
+          "seed": 8393000,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 11.999999999999789,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8393001,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 21.899999999999785,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8393002,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 17.499999999999723,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8393003,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 13.79999999999975,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8393004,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 12.599999999999776,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8393005,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 23.999999999999815,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8393006,
+          "status": "TASK_TIMEOUT",
+          "elapsed_s": 69.99999999999322,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8393007,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 35.99999999999913,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8393008,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 14.199999999999742,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8393009,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 32.69999999999979,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8393010,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 36.899999999998954,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8393011,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 38.299999999998676,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        }
+      ],
+      "decision_dt_s": {
+        "mean": 0.09999999999999641,
+        "max": 0.10000000000000142,
+        "sum": 329.8999999999874
+      }
+    }
+  ]
+}

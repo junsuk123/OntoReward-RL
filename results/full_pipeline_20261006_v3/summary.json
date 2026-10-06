@@ -1,0 +1,258 @@
+{
+  "root": "/home/j/SynologyDrive/junsuk/\ud559\uc220\ub300\ud68c/CICS2026/Ontology_RGAT_UAV_RL_ISAAC_PX4/results/full_pipeline_20261006_v3",
+  "seeds": [
+    828,
+    829
+  ],
+  "iterations": 200,
+  "held_out_seeds": [
+    4100,
+    4148
+  ],
+  "cells": {
+    "low_sigma_kl": {
+      "flags": [
+        "--final-log-std",
+        "-3.5",
+        "--log-std-anneal-fraction",
+        "0.02",
+        "--enforce-target-kl"
+      ],
+      "runs": {
+        "ppo_ontology_rgat__seed828": {
+          "landing_rate": 0.6041666666666666,
+          "unsafe_rate": 0.3541666666666667,
+          "mean_return": 5.8773163679454585,
+          "selected_checkpoint": "checkpoint_best.pt",
+          "relational_active": true,
+          "training_success": 1572,
+          "training_episodes": 2400
+        },
+        "ppo_ontology_rgat__seed829": {
+          "landing_rate": 0.7083333333333334,
+          "unsafe_rate": 0.25,
+          "mean_return": 13.218579241818027,
+          "selected_checkpoint": "checkpoint_best.pt",
+          "relational_active": true,
+          "training_success": 1687,
+          "training_episodes": 2400
+        },
+        "ppo_semantic_flat__seed828": {
+          "landing_rate": 0.7083333333333334,
+          "unsafe_rate": 0.20833333333333334,
+          "mean_return": 14.01137518109494,
+          "selected_checkpoint": "checkpoint_best.pt",
+          "relational_active": null,
+          "training_success": 1562,
+          "training_episodes": 2400
+        },
+        "ppo_semantic_flat__seed829": {
+          "landing_rate": 0.8333333333333334,
+          "unsafe_rate": 0.125,
+          "mean_return": 21.14528538628058,
+          "selected_checkpoint": "checkpoint_best.pt",
+          "relational_active": null,
+          "training_success": 1566,
+          "training_episodes": 2400
+        },
+        "ppo_vector_canonical__seed828": {
+          "landing_rate": 0.0,
+          "unsafe_rate": 0.041666666666666664,
+          "mean_return": -9.360108067849096,
+          "selected_checkpoint": "checkpoint_best.pt",
+          "relational_active": null,
+          "training_success": 83,
+          "training_episodes": 2400
+        },
+        "ppo_vector_canonical__seed829": {
+          "landing_rate": 0.25,
+          "unsafe_rate": 0.2916666666666667,
+          "mean_return": -7.821801044187655,
+          "selected_checkpoint": "checkpoint_best.pt",
+          "relational_active": null,
+          "training_success": 533,
+          "training_episodes": 2400
+        }
+      }
+    }
+  },
+  "clones": {
+    "plain": {
+      "ppo_ontology_rgat__seed828": {
+        "output": "clone_plain",
+        "run": "ppo_ontology_rgat__seed828",
+        "mode": "ppo_ontology_rgat",
+        "seed": 828,
+        "checkpoint": "checkpoint_cloned.pt",
+        "relational_active": null,
+        "landing_rate": 0.20833333333333334,
+        "unsafe_rate": 0.3125,
+        "safe_abort_rate": 0.14583333333333334,
+        "task_timeout_rate": 0.3333333333333333,
+        "mean_return": -9.575897774197188
+      },
+      "ppo_ontology_rgat__seed829": {
+        "output": "clone_plain",
+        "run": "ppo_ontology_rgat__seed829",
+        "mode": "ppo_ontology_rgat",
+        "seed": 829,
+        "checkpoint": "checkpoint_cloned.pt",
+        "relational_active": null,
+        "landing_rate": 0.5208333333333334,
+        "unsafe_rate": 0.25,
+        "safe_abort_rate": 0.0625,
+        "task_timeout_rate": 0.16666666666666666,
+        "mean_return": 5.3524908270453
+      },
+      "ppo_semantic_flat__seed828": {
+        "output": "clone_plain",
+        "run": "ppo_semantic_flat__seed828",
+        "mode": "ppo_semantic_flat",
+        "seed": 828,
+        "checkpoint": "checkpoint_cloned.pt",
+        "relational_active": null,
+        "landing_rate": 0.125,
+        "unsafe_rate": 0.2916666666666667,
+        "safe_abort_rate": 0.08333333333333333,
+        "task_timeout_rate": 0.5,
+        "mean_return": -11.934787981287082
+      },
+      "ppo_semantic_flat__seed829": {
+        "output": "clone_plain",
+        "run": "ppo_semantic_flat__seed829",
+        "mode": "ppo_semantic_flat",
+        "seed": 829,
+        "checkpoint": "checkpoint_cloned.pt",
+        "relational_active": null,
+        "landing_rate": 0.375,
+        "unsafe_rate": 0.3958333333333333,
+        "safe_abort_rate": 0.08333333333333333,
+        "task_timeout_rate": 0.14583333333333334,
+        "mean_return": -4.346902897901499
+      },
+      "ppo_vector_canonical__seed828": {
+        "output": "clone_plain",
+        "run": "ppo_vector_canonical__seed828",
+        "mode": "ppo_vector_canonical",
+        "seed": 828,
+        "checkpoint": "checkpoint_cloned.pt",
+        "relational_active": null,
+        "landing_rate": 0.14583333333333334,
+        "unsafe_rate": 0.3958333333333333,
+        "safe_abort_rate": 0.14583333333333334,
+        "task_timeout_rate": 0.3125,
+        "mean_return": -15.620028428908569
+      },
+      "ppo_vector_canonical__seed829": {
+        "output": "clone_plain",
+        "run": "ppo_vector_canonical__seed829",
+        "mode": "ppo_vector_canonical",
+        "seed": 829,
+        "checkpoint": "checkpoint_cloned.pt",
+        "relational_active": null,
+        "landing_rate": 0.0,
+        "unsafe_rate": 0.3541666666666667,
+        "safe_abort_rate": 0.14583333333333334,
+        "task_timeout_rate": 0.5,
+        "mean_return": -20.764892895692228
+      }
+    }
+  },
+  "isaac": {
+    "flown": {
+      "low_sigma_kl": {
+        "runs": [
+          "ppo_ontology_rgat__seed828",
+          "ppo_ontology_rgat__seed829",
+          "ppo_semantic_flat__seed828",
+          "ppo_semantic_flat__seed829",
+          "ppo_vector_canonical__seed829"
+        ],
+        "exit_code": 2,
+        "acceptance_passes": false,
+        "acceptance": {
+          "complete_matrix": true,
+          "common_contract": true,
+          "paired_episode_seeds": true,
+          "outcome_rates_consistent": true,
+          "no_unsafe_outcomes": true,
+          "all_episode_stops_confirmed": true,
+          "all_abort_terminal_holds_verified": true,
+          "landing_observed": false,
+          "proposed_landing_observed": false,
+          "proposed_relation_active": true,
+          "backend": "actual-isaac-px4",
+          "performance_parity_claim": false,
+          "state": "completed",
+          "acceptance_version": "spatial-actual-integration/3",
+          "note": "Small integration sample; hold checks are terminal snapshots, not sustained stability or superiority.",
+          "passes": false
+        },
+        "episodes": [
+          {
+            "mode": "ppo_vector_canonical",
+            "seed": 828,
+            "statuses": [
+              "TASK_TIMEOUT",
+              "TASK_TIMEOUT"
+            ],
+            "landing_rate": 0.0,
+            "unsafe_rate": 0.0
+          },
+          {
+            "mode": "ppo_semantic_flat",
+            "seed": 828,
+            "statuses": [
+              "SAFE_ABORT",
+              "SAFE_ABORT"
+            ],
+            "landing_rate": 0.0,
+            "unsafe_rate": 0.0
+          },
+          {
+            "mode": "ppo_ontology_rgat",
+            "seed": 828,
+            "statuses": [
+              "SAFE_ABORT",
+              "SAFE_ABORT"
+            ],
+            "landing_rate": 0.0,
+            "unsafe_rate": 0.0
+          },
+          {
+            "mode": "ppo_vector_canonical",
+            "seed": 829,
+            "statuses": [
+              "SAFE_ABORT",
+              "SAFE_ABORT"
+            ],
+            "landing_rate": 0.0,
+            "unsafe_rate": 0.0
+          },
+          {
+            "mode": "ppo_semantic_flat",
+            "seed": 829,
+            "statuses": [
+              "TASK_TIMEOUT",
+              "SAFE_ABORT"
+            ],
+            "landing_rate": 0.0,
+            "unsafe_rate": 0.0
+          },
+          {
+            "mode": "ppo_ontology_rgat",
+            "seed": 829,
+            "statuses": [
+              "SAFE_ABORT",
+              "SAFE_ABORT"
+            ],
+            "landing_rate": 0.0,
+            "unsafe_rate": 0.0
+          }
+        ]
+      }
+    },
+    "skipped": {},
+    "episodes_per_run": 2
+  }
+}

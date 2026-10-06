@@ -1,0 +1,10 @@
+[INFO] [1791260765.522392610] [ontology_rgat_px4_gateway_0]: gateway target=sitl, UDP=127.0.0.1:14650, PX4 namespace=/fmu, arm_allowed=True, offboard_allowed=True, heartbeat=50 Hz, pad_motion=random_walk, gnss=off, battery=on (hover 186 W)
+[INFO] [1791260765.524847332] [ontology_rgat_px4_gateway_0]: PX4 local frame is at world ENU (0.0, -0.0, 2.87) m; deck poses will be brought into it.
+[WARN] [1791260766.459448775] [ontology_rgat_px4_gateway_0]: XRCE-DDS rebased the PX4 timestamp (raw delta -0.007 s); continuing on the monotonic simulated-time axis
+[WARN] [1791261122.072589381] [ontology_rgat_px4_gateway_0]: PX4 rejected command 400 with result 1 (reason 0)
+[WARN] [1791261168.182968881] [ontology_rgat_px4_gateway_0]: PX4 rejected command 400 with result 1 (reason 0)
+[WARN] [1791261202.332735502] [ontology_rgat_px4_gateway_0]: PX4 rejected command 400 with result 1 (reason 0)
+[WARN] [1791261250.836094785] [ontology_rgat_px4_gateway_0]: PX4 rejected command 400 with result 1 (reason 0)
+[WARN] [1791261297.538146055] [ontology_rgat_px4_gateway_0]: PX4 rejected command 400 with result 1 (reason 0)
+[WARN] [1791261540.856615362] [ontology_rgat_px4_gateway_0]: PX4 rejected command 400 with result 1 (reason 0)
+[WARN] [1791261574.505513348] [ontology_rgat_px4_gateway_0]: PX4 rejected command 400 with result 1 (reason 0)

@@ -1,0 +1,319 @@
+{
+  "evaluation_seeds": [
+    4100,
+    4101,
+    4102,
+    4103,
+    4104,
+    4105,
+    4106,
+    4107,
+    4108,
+    4109,
+    4110,
+    4111,
+    4112,
+    4113,
+    4114,
+    4115,
+    4116,
+    4117,
+    4118,
+    4119,
+    4120,
+    4121,
+    4122,
+    4123,
+    4124,
+    4125,
+    4126,
+    4127,
+    4128,
+    4129,
+    4130,
+    4131,
+    4132,
+    4133,
+    4134,
+    4135,
+    4136,
+    4137,
+    4138,
+    4139,
+    4140,
+    4141,
+    4142,
+    4143,
+    4144,
+    4145,
+    4146,
+    4147
+  ],
+  "contract": {
+    "schema": "spatial-reference/5",
+    "packet_registry": "b5ec469ce76fa6d3b98337b8e97ec79895db6c3a97d3991c3e87bf94417977ba",
+    "action": "spatial-enu-direct-net-acceleration-v2",
+    "config_sha256": "0b2f13cadaefa4674294573a4e984023654306c017902bf4d4329f70400d0ad5"
+  },
+  "selection_seeds_excluded": [
+    2000,
+    2001
+  ],
+  "rows": [
+    {
+      "output": "clone_plain",
+      "run": "ppo_ontology_rgat__seed828",
+      "mode": "ppo_ontology_rgat",
+      "seed": 828,
+      "checkpoint": "checkpoint_cloned.pt",
+      "relational_active": null,
+      "landing_rate": 0.625,
+      "unsafe_rate": 0.08333333333333333,
+      "safe_abort_rate": 0.0,
+      "task_timeout_rate": 0.2916666666666667,
+      "mean_return": 13.350686437749502
+    },
+    {
+      "output": "clone_plain",
+      "run": "ppo_ontology_rgat__seed829",
+      "mode": "ppo_ontology_rgat",
+      "seed": 829,
+      "checkpoint": "checkpoint_cloned.pt",
+      "relational_active": null,
+      "landing_rate": 0.8125,
+      "unsafe_rate": 0.0625,
+      "safe_abort_rate": 0.0,
+      "task_timeout_rate": 0.125,
+      "mean_return": 21.4838214779153
+    },
+    {
+      "output": "clone_plain",
+      "run": "ppo_semantic_flat__seed828",
+      "mode": "ppo_semantic_flat",
+      "seed": 828,
+      "checkpoint": "checkpoint_cloned.pt",
+      "relational_active": null,
+      "landing_rate": 0.625,
+      "unsafe_rate": 0.08333333333333333,
+      "safe_abort_rate": 0.0,
+      "task_timeout_rate": 0.2916666666666667,
+      "mean_return": 13.505904621779328
+    },
+    {
+      "output": "clone_plain",
+      "run": "ppo_semantic_flat__seed829",
+      "mode": "ppo_semantic_flat",
+      "seed": 829,
+      "checkpoint": "checkpoint_cloned.pt",
+      "relational_active": null,
+      "landing_rate": 0.8333333333333334,
+      "unsafe_rate": 0.0625,
+      "safe_abort_rate": 0.0,
+      "task_timeout_rate": 0.10416666666666667,
+      "mean_return": 22.32122058338389
+    },
+    {
+      "output": "clone_plain",
+      "run": "ppo_vector_canonical__seed828",
+      "mode": "ppo_vector_canonical",
+      "seed": 828,
+      "checkpoint": "checkpoint_cloned.pt",
+      "relational_active": null,
+      "landing_rate": 0.5833333333333334,
+      "unsafe_rate": 0.3333333333333333,
+      "safe_abort_rate": 0.0,
+      "task_timeout_rate": 0.08333333333333333,
+      "mean_return": 4.380641420601912
+    },
+    {
+      "output": "clone_plain",
+      "run": "ppo_vector_canonical__seed829",
+      "mode": "ppo_vector_canonical",
+      "seed": 829,
+      "checkpoint": "checkpoint_cloned.pt",
+      "relational_active": null,
+      "landing_rate": 0.8125,
+      "unsafe_rate": 0.08333333333333333,
+      "safe_abort_rate": 0.0,
+      "task_timeout_rate": 0.10416666666666667,
+      "mean_return": 20.611062724861995
+    },
+    {
+      "output": "low_sigma_kl",
+      "run": "ppo_ontology_rgat__seed828",
+      "mode": "ppo_ontology_rgat",
+      "seed": 828,
+      "checkpoint": "checkpoint_best.pt",
+      "relational_active": true,
+      "landing_rate": 0.8333333333333334,
+      "unsafe_rate": 0.16666666666666666,
+      "safe_abort_rate": 0.0,
+      "task_timeout_rate": 0.0,
+      "mean_return": 19.2936978005561
+    },
+    {
+      "output": "low_sigma_kl",
+      "run": "ppo_ontology_rgat__seed829",
+      "mode": "ppo_ontology_rgat",
+      "seed": 829,
+      "checkpoint": "checkpoint_best.pt",
+      "relational_active": true,
+      "landing_rate": 0.8958333333333334,
+      "unsafe_rate": 0.10416666666666667,
+      "safe_abort_rate": 0.0,
+      "task_timeout_rate": 0.0,
+      "mean_return": 23.61377770867634
+    },
+    {
+      "output": "low_sigma_kl",
+      "run": "ppo_semantic_flat__seed828",
+      "mode": "ppo_semantic_flat",
+      "seed": 828,
+      "checkpoint": "checkpoint_best.pt",
+      "relational_active": null,
+      "landing_rate": 0.9166666666666666,
+      "unsafe_rate": 0.08333333333333333,
+      "safe_abort_rate": 0.0,
+      "task_timeout_rate": 0.0,
+      "mean_return": 25.421958321078375
+    },
+    {
+      "output": "low_sigma_kl",
+      "run": "ppo_semantic_flat__seed829",
+      "mode": "ppo_semantic_flat",
+      "seed": 829,
+      "checkpoint": "checkpoint_best.pt",
+      "relational_active": null,
+      "landing_rate": 0.9791666666666666,
+      "unsafe_rate": 0.0,
+      "safe_abort_rate": 0.0,
+      "task_timeout_rate": 0.020833333333333332,
+      "mean_return": 29.678162798875547
+    },
+    {
+      "output": "low_sigma_kl",
+      "run": "ppo_vector_canonical__seed828",
+      "mode": "ppo_vector_canonical",
+      "seed": 828,
+      "checkpoint": "checkpoint_best.pt",
+      "relational_active": null,
+      "landing_rate": 0.7291666666666666,
+      "unsafe_rate": 0.2708333333333333,
+      "safe_abort_rate": 0.0,
+      "task_timeout_rate": 0.0,
+      "mean_return": 12.62054805992839
+    },
+    {
+      "output": "low_sigma_kl",
+      "run": "ppo_vector_canonical__seed829",
+      "mode": "ppo_vector_canonical",
+      "seed": 829,
+      "checkpoint": "checkpoint_best.pt",
+      "relational_active": null,
+      "landing_rate": 0.9583333333333334,
+      "unsafe_rate": 0.041666666666666664,
+      "safe_abort_rate": 0.0,
+      "task_timeout_rate": 0.0,
+      "mean_return": 28.08760829552271
+    }
+  ],
+  "per_arm": {
+    "ppo_vector_canonical": {
+      "landing_rate": {
+        "mean": 0.7708333333333334,
+        "sd": 0.1358167167750552,
+        "min": 0.5833333333333334,
+        "max": 0.9583333333333334
+      },
+      "unsafe_rate": {
+        "mean": 0.18229166666666666,
+        "sd": 0.12270019780614318,
+        "min": 0.041666666666666664,
+        "max": 0.3333333333333333
+      },
+      "safe_abort_rate": {
+        "mean": 0.0,
+        "sd": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      },
+      "task_timeout_rate": {
+        "mean": 0.046875,
+        "sd": 0.04745017489137656,
+        "min": 0.0,
+        "max": 0.10416666666666667
+      },
+      "mean_return": {
+        "mean": 16.424965125228752,
+        "sd": 8.847033140265783,
+        "min": 4.380641420601912,
+        "max": 28.08760829552271
+      }
+    },
+    "ppo_semantic_flat": {
+      "landing_rate": {
+        "mean": 0.8385416666666666,
+        "sd": 0.13370310055201493,
+        "min": 0.625,
+        "max": 0.9791666666666666
+      },
+      "unsafe_rate": {
+        "mean": 0.057291666666666664,
+        "sd": 0.03415332564740625,
+        "min": 0.0,
+        "max": 0.08333333333333333
+      },
+      "safe_abort_rate": {
+        "mean": 0.0,
+        "sd": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      },
+      "task_timeout_rate": {
+        "mean": 0.10416666666666667,
+        "sd": 0.11505584392903398,
+        "min": 0.0,
+        "max": 0.2916666666666667
+      },
+      "mean_return": {
+        "mean": 22.731811581279285,
+        "sd": 5.932424228609144,
+        "min": 13.505904621779328,
+        "max": 29.678162798875547
+      }
+    },
+    "ppo_ontology_rgat": {
+      "landing_rate": {
+        "mean": 0.7916666666666667,
+        "sd": 0.1009933303628402,
+        "min": 0.625,
+        "max": 0.8958333333333334
+      },
+      "unsafe_rate": {
+        "mean": 0.10416666666666666,
+        "sd": 0.03897559777889522,
+        "min": 0.0625,
+        "max": 0.16666666666666666
+      },
+      "safe_abort_rate": {
+        "mean": 0.0,
+        "sd": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      },
+      "task_timeout_rate": {
+        "mean": 0.10416666666666667,
+        "sd": 0.11967838846954226,
+        "min": 0.0,
+        "max": 0.2916666666666667
+      },
+      "mean_return": {
+        "mean": 19.43549585622431,
+        "sd": 3.8307534976410573,
+        "min": 13.350686437749502,
+        "max": 23.61377770867634
+      }
+    }
+  },
+  "inert_relational_runs": []
+}

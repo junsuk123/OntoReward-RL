@@ -71,14 +71,19 @@ def runtime_source_hash(root=None):
 
 
 def deployment_profile(schema="spatial-causal-rgat/5"):
+    from .core import REFERENCE_SCHEMAS
+
     filename = ("spatial-isaac-system-v6.yaml" if schema in ("spatial-causal-rgat/6", "spatial-causal-rgat/7", "spatial-causal-rgat/8", "spatial-causal-rgat/9")
                 else "spatial-isaac-system.yaml")
     if schema in ('spatial-causal-rgat/9', 'spatial-causal-rgat/10',
-                  'spatial-reference/1'):
+                  *REFERENCE_SCHEMAS):
         # The unified contract flies the v9/v10 world: same camera mount,
         # direct-acceleration action and seeded disturbances. Only the packet
         # layout and the per-axis graph changed, and neither is deployed state.
         filename = 'spatial-isaac-system-v9.yaml'
+    if schema in ("spatial-reference/4", "spatial-reference/5", "spatial-reference/6"):
+        # The Isaac-calibrated vehicle: landing gear and the 17-tag board.
+        filename = 'spatial-isaac-system-v11.yaml'
     path = Path(__file__).resolve().parents[3] / "config" / filename
     scientific = scientific_configuration(load_experiment(path))
     return {

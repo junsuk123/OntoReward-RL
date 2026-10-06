@@ -1,0 +1,123 @@
+{
+ "arm": "ppo_ontology_rgat",
+ "seeds": [
+  7001,
+  7002,
+  7003,
+  7004,
+  7005,
+  7006,
+  7007,
+  7008,
+  7009,
+  7010,
+  7011,
+  7012
+ ],
+ "rows": [
+  {
+   "sigma": "deterministic",
+   "land": 0.5,
+   "outcomes": {
+    "SAFE_ABORT": 2,
+    "SUCCESS": 6,
+    "UNSAFE_CONTACT": 2,
+    "TASK_TIMEOUT": 2
+   },
+   "mean_return": 5.57,
+   "rate_within_limit": 0.852,
+   "tilt_within_limit": 0.915,
+   "corridor_armed": 0.624,
+   "stopping_margin_inhibit": 0.162,
+   "intervened": 0.196,
+   "lateral_accel_step_change_m_s2": 0.16
+  },
+  {
+   "sigma": "0.333 (log -1.1, shipped)",
+   "land": 0.0,
+   "outcomes": {
+    "MISSED_PAD_CONTACT": 1,
+    "TASK_TIMEOUT": 6,
+    "SAFE_ABORT": 4,
+    "UNSAFE_CONTACT": 1
+   },
+   "mean_return": -17.89,
+   "rate_within_limit": 0.108,
+   "tilt_within_limit": 0.382,
+   "corridor_armed": 0.007,
+   "stopping_margin_inhibit": 0.666,
+   "intervened": 0.712,
+   "lateral_accel_step_change_m_s2": 1.125
+  },
+  {
+   "sigma": "0.082 (log -2.5, floor)",
+   "land": 0.0,
+   "outcomes": {
+    "UNAUTHORIZED_CONTACT": 3,
+    "TASK_TIMEOUT": 6,
+    "UNSAFE_CONTACT": 1,
+    "SAFE_ABORT": 2
+   },
+   "mean_return": -20.4,
+   "rate_within_limit": 0.447,
+   "tilt_within_limit": 0.852,
+   "corridor_armed": 0.214,
+   "stopping_margin_inhibit": 0.427,
+   "intervened": 0.437,
+   "lateral_accel_step_change_m_s2": 0.39
+  },
+  {
+   "sigma": "0.041 (log -3.2)",
+   "land": 0.5,
+   "outcomes": {
+    "SUCCESS": 6,
+    "UNSAFE_CONTACT": 2,
+    "SAFE_ABORT": 1,
+    "UNAUTHORIZED_CONTACT": 1,
+    "TASK_TIMEOUT": 2
+   },
+   "mean_return": 2.75,
+   "rate_within_limit": 0.781,
+   "tilt_within_limit": 0.913,
+   "corridor_armed": 0.496,
+   "stopping_margin_inhibit": 0.223,
+   "intervened": 0.234,
+   "lateral_accel_step_change_m_s2": 0.25
+  },
+  {
+   "sigma": "0.030 (log -3.5, cell)",
+   "land": 0.4166666666666667,
+   "outcomes": {
+    "SAFE_ABORT": 1,
+    "SUCCESS": 5,
+    "UNAUTHORIZED_CONTACT": 3,
+    "UNSAFE_CONTACT": 2,
+    "TASK_TIMEOUT": 1
+   },
+   "mean_return": -5.15,
+   "rate_within_limit": 0.808,
+   "tilt_within_limit": 0.908,
+   "corridor_armed": 0.574,
+   "stopping_margin_inhibit": 0.204,
+   "intervened": 0.216,
+   "lateral_accel_step_change_m_s2": 0.227
+  },
+  {
+   "sigma": "0.010 (log -4.6)",
+   "land": 0.6666666666666666,
+   "outcomes": {
+    "SAFE_ABORT": 1,
+    "SUCCESS": 8,
+    "UNSAFE_CONTACT": 2,
+    "TASK_TIMEOUT": 1
+   },
+   "mean_return": 12.37,
+   "rate_within_limit": 0.871,
+   "tilt_within_limit": 0.926,
+   "corridor_armed": 0.625,
+   "stopping_margin_inhibit": 0.141,
+   "intervened": 0.154,
+   "lateral_accel_step_change_m_s2": 0.157
+  }
+ ]
+}

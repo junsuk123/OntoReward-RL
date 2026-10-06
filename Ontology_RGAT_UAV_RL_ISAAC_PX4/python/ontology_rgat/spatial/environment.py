@@ -19,7 +19,7 @@ from .core import (
     camera_bearings,
 )
 from ..controllers.spatial_controller import SpatialAccelerationController
-from ..landing.terminal import REFERENCE_TERMINAL_REWARDS, UNSAFE_REASONS
+from ..landing.terminal import REFERENCE_TERMINAL_REWARDS, UNSAFE_REASONS, REFERENCE_SPIN_WEIGHT
 
 
 @dataclass(frozen=True)
@@ -57,7 +57,8 @@ class Evaluator:
         goal = 0.65 * sat(xy / 3.0) + 0.35 * sat(max(r[2], 0) / 4.0)
         desired_xy = -r[:2] * min(0.6, cfg.touchdown_xy_speed / max(xy, 1e-9))
         desired_z = -min(0.8 * cfg.touchdown_z_speed, 0.5 * max(r[2], 0))
-        if cfg.schema != "spatial-causal-rgat/3" and 0 < r[2] <= 0.45:
+        if (cfg.schema != "spatial-causal-rgat/3"
+                and 0 < r[2] - cfg.landing_gear_extension_m <= 0.45):
             # The offset nadir camera loses the pad before physical contact.
             # Preserve the existing sub-limit sink target in this near-field
             # interval instead of rewarding an asymptotic blind hover.
@@ -111,9 +112,13 @@ class Evaluator:
             else 1.0
         )
         control = float(np.mean(np.square(action)))
-        running = -dt / 70.0 * (2.0 * goal + view + 0.25 * control) + 8.0 * (
-            readiness - self.previous_readiness
-        )
+        # Squared NORM, matching the supervisor's own settled test
+        # (|w_xy| <= touchdown_rate) and the 2D route's single axis: both
+        # dimensions pay exactly 1.0 sitting on their own rate limit.
+        spin = float(np.sum((truth.angular_rate[:2] / cfg.touchdown_rate) ** 2))
+        running = -dt / 70.0 * (
+            2.0 * goal + view + 0.25 * control + REFERENCE_SPIN_WEIGHT * spin
+        ) + 8.0 * (readiness - self.previous_readiness)
         phi_next = -2.0 * goal if status == "RUNNING" else 0.0
         potential = (
             math.exp(-dt / cfg.discount_tau) * phi_next + 2.0 * self.previous_goal
@@ -135,8 +140,23 @@ class Evaluator:
                 "readiness": readiness,
                 "view": view,
                 "control": control,
+                "spin": spin,
             },
         )
+
+
+_BOARD_CACHE: dict = {}
+
+
+def deployed_board(cfg):
+    """The tag layout the deployment profile paints, as (x, y, side) rows."""
+    if cfg.schema not in _BOARD_CACHE:
+        from .runtime_contract import deployment_profile
+        board = deployment_profile(cfg.schema)["resolved_scientific_configuration"]["vision"]["board"]
+        _BOARD_CACHE[cfg.schema] = np.array(
+            [[float(m["center_xy_m"][0]), float(m["center_xy_m"][1]), float(m["side_m"])]
+             for m in board], dtype=float)
+    return _BOARD_CACHE[cfg.schema]
 
 
 class LocalBackend:
@@ -149,6 +169,41 @@ class LocalBackend:
             raise ValueError("difficulty must be in [0,1]")
         self.cfg = cfg
         self.difficulty = float(difficulty)
+        self.board = deployed_board(cfg) if cfg.optical_realism else None
+
+    def _optical_quality(self, r, q):
+        """Detector-faithful visibility and confidence for the deployed board.
+
+        A tag counts as seen when its padded quad (4/3 of the tag side, the
+        white quiet zone ArUco needs) projects fully inside the frame at a
+        decodable size. Confidence is the detector's own metric: the largest
+        seen tag's pixel side over the full-scale 120 px, times a per-frame
+        sharpness, times 0.85 when one tag braces the solve. Returns
+        (visible, confidence).
+        """
+        from .core import (REFERENCE_OPTICAL_FULL_SCALE_PX, REFERENCE_OPTICAL_IMAGE_PX,
+                           REFERENCE_OPTICAL_MIN_TAG_PX, REFERENCE_OPTICAL_MISS_PROBABILITY,
+                           REFERENCE_OPTICAL_SHARPNESS)
+        half_fov = np.asarray(self.cfg.fov) / 2
+        fx = (REFERENCE_OPTICAL_IMAGE_PX[0] / 2) / math.tan(half_fov[0])
+        sides_px = []
+        for tx, ty, side in self.board:
+            bearing, depth = camera_bearings(r + np.array([tx, ty, 0.0]), q, self.cfg)
+            if depth <= 0.0:
+                continue
+            half_angle = math.atan((side * 4.0 / 3.0) / 2.0 / depth)
+            if np.all(np.abs(bearing) + half_angle < half_fov):
+                px = side * fx / depth
+                if px >= REFERENCE_OPTICAL_MIN_TAG_PX:
+                    sides_px.append(px)
+        # Paired draws so a seed's random stream does not depend on geometry.
+        miss = self.rng.uniform() < REFERENCE_OPTICAL_MISS_PROBABILITY
+        sharpness = float(np.clip(self.rng.normal(*REFERENCE_OPTICAL_SHARPNESS), 0.0, 1.0))
+        if not sides_px or miss:
+            return False, 0.0
+        scale = min(1.0, max(sides_px) / REFERENCE_OPTICAL_FULL_SCALE_PX)
+        corroboration = 1.0 if len(sides_px) > 1 else 0.85
+        return True, float(np.clip(sharpness * scale * corroboration, 0.0, 1.0))
 
     def reset(self, seed):
         self.rng = np.random.default_rng(seed)
@@ -184,8 +239,12 @@ class LocalBackend:
                 return (1 - d) * easy + d * value
 
             self.position[:2] *= 0.15 + 0.85 * d
+            # The easy rung starts low; with landing gear the body touches
+            # down higher, so the start band shifts up by the same amount.
+            start_heights = tuple(v + self.cfg.landing_gear_extension_m
+                                  for v in c.start_height_range_m)
             self.position[2] = interpolate_sample(
-                self.position[2], self.cfg.initial_height, c.start_height_range_m
+                self.position[2], self.cfg.initial_height, start_heights
             )
             if self.cfg.schema != "spatial-causal-rgat/3":
                 # The mounted camera's depth, not body altitude, determines
@@ -206,7 +265,30 @@ class LocalBackend:
         self.camera_time = -math.inf
         self.optical_position = None
         self.optical_confidence = 0.0
+        # Actuation latency (/3): commands arrive at the plant after
+        # cfg.actuation_delay_s. Until the first one lands the vehicle keeps
+        # the hover it was handed over in, as the entry hover does in Isaac.
+        self.command_queue = []
+        self.effective_command = None
         return self.measure(), self.truth()
+
+    def _hover_like(self, command):
+        from dataclasses import replace as _replace
+        zeros = np.zeros(3)
+        return _replace(command, velocity_enu_m_s=zeros, acceleration_enu_m_s2=zeros,
+                        normalized_action=zeros, derived_roll_pitch_rad=(0.0, 0.0),
+                        thrust_weight_ratio=1.0, constrained=False)
+
+    def _active_command(self, command):
+        """The command the plant runs during this substep."""
+        delay = self.cfg.actuation_delay_s
+        if delay <= 0:
+            return command
+        while self.command_queue and self.command_queue[0][0] <= self.t + 1e-9:
+            self.effective_command = self.command_queue.pop(0)[1]
+        if self.effective_command is None:
+            return self._hover_like(command)
+        return self.effective_command
 
     def measure(self):
         q = Rotation.from_euler("xyz", self.angles).as_quat()[[3, 0, 1, 2]]
@@ -214,13 +296,17 @@ class LocalBackend:
             r = self.position - self.pad
             bearing, depth = camera_bearings(r, q, self.cfg)
             noise = self.rng.normal(0, 0.02, 3)  # paired draw even on missed frames
-            visible = bool(
-                np.all(np.abs(bearing) < np.asarray(self.cfg.fov) / 2) and depth > 0
-            )
+            if self.board is not None:
+                visible, confidence = self._optical_quality(r, q)
+            else:
+                visible = bool(
+                    np.all(np.abs(bearing) < np.asarray(self.cfg.fov) / 2) and depth > 0
+                )
+                confidence = .98 if visible else 0.
             self.camera_time = self.t
             self.camera_sequence += 1
             frame = (self.camera_sequence,self.t,r+noise if visible else None,
-                     .98 if visible else 0.,self.position.copy(),q.copy())
+                     confidence,self.position.copy(),q.copy())
             if self.cfg.reference_context and self.t > 0:
                 self.camera_pending.append(frame)
             else:
@@ -262,7 +348,7 @@ class LocalBackend:
             self.velocity - self.pad_velocity,
             self.angles[:2].copy(),
             self.rates.copy(),
-            bool(r[2] <= self.cfg.contact_height),
+            bool(r[2] <= self.cfg.touchdown_height),
         )
 
     def advance(self, command, callback):
@@ -274,9 +360,12 @@ class LocalBackend:
             self.rates += scale*sample.initial_angular_rate_rad_s
             self.euler_rates += scale*sample.initial_angular_rate_rad_s
             self.domain_initial_pending = False
+        if self.cfg.actuation_delay_s > 0:
+            self.command_queue.append((self.t + self.cfg.actuation_delay_s, command))
         end = self.t + self.cfg.dt
         while self.t < end - 1e-9:
             h = min(self.cfg.sensor_dt, end - self.t)
+            active = self._active_command(command)
             previous_r = self.position - self.pad
             previous_v = self.velocity.copy()
             previous_position = self.position.copy()
@@ -296,28 +385,29 @@ class LocalBackend:
                         attitude_gain_scale=1+d*(gains-1))
                 (self.angles, self.euler_rates, self.thrust_acceleration,
                  self.acceleration, self.rates) = advance_attitude_thrust(
-                    self.angles, self.euler_rates, self.thrust_acceleration, command, h,
-                    **disturbance)
+                    self.angles, self.euler_rates, self.thrust_acceleration, active, h,
+                    attitude_omega=self.cfg.attitude_omega,
+                    attitude_damping=self.cfg.attitude_damping, **disturbance)
                 self.position += self.velocity*h + 0.5*self.acceleration*h*h
                 self.velocity += self.acceleration*h
             else:
-                desired = command.acceleration_enu_m_s2 + 1.8 * (
-                    command.velocity_enu_m_s - self.velocity
+                desired = active.acceleration_enu_m_s2 + 1.8 * (
+                    active.velocity_enu_m_s - self.velocity
                 )
                 self.acceleration += (desired - self.acceleration) * min(1, h / 0.08)
                 self.velocity += self.acceleration * h
                 self.position += self.velocity * h
-                target_angles = np.r_[command.derived_roll_pitch_rad, command.yaw_enu_rad]
+                target_angles = np.r_[active.derived_roll_pitch_rad, active.yaw_enu_rad]
                 self.rates = (target_angles - self.angles) / 0.15
                 self.angles += self.rates * h
             self.t += h
             # Interpolate first crossing to keep contact time and state coherent.
             r = self.position - self.pad
             if (
-                r[2] <= self.cfg.contact_height
-                and previous_r[2] > self.cfg.contact_height
+                r[2] <= self.cfg.touchdown_height
+                and previous_r[2] > self.cfg.touchdown_height
             ):
-                alpha = (previous_r[2] - self.cfg.contact_height) / (
+                alpha = (previous_r[2] - self.cfg.touchdown_height) / (
                     previous_r[2] - r[2]
                 )
                 self.t -= h * (1 - alpha)
@@ -325,7 +415,7 @@ class LocalBackend:
                 self.position = previous_position + alpha * (
                     self.position - previous_position
                 )
-                self.position[2] = self.pad[2] + self.cfg.contact_height
+                self.position[2] = self.pad[2] + self.cfg.touchdown_height
                 self.velocity = previous_v + alpha * (self.velocity - previous_v)
                 self.angles = previous_angles + alpha * (self.angles - previous_angles)
                 self.rates = previous_rates + alpha * (self.rates - previous_rates)
@@ -759,6 +849,9 @@ class SpatialLandingEnv:
             info["backend_entry_contract"] = self.backend.entry_contract
         if self.cfg.reference_tracking:
             est.previous_action = np.clip(np.asarray(action, dtype=float), -1., 1.).copy()
+            # Own commanded acceleration, for the causal disturbance observer.
+            # It is what the vehicle asked for, not what the world did.
+            est.observe_actuation(command.acceleration_enu_m_s2)
         return (
             observation(est, self.safety, elapsed, self.cfg),
             reward,

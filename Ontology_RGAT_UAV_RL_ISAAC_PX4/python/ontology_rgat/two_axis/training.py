@@ -19,6 +19,7 @@ policy sees the causal packet or the context graph built from it, nothing else.
 """
 from __future__ import annotations
 
+import copy
 from dataclasses import asdict, dataclass, field
 import json
 import math
@@ -36,8 +37,8 @@ from .curriculum import (CurriculumScheduler, EpisodeRole,
                          checkpoint_is_eligible, landing_rates,
                          replay_difficulty)
 from .environment import ObservationBundle, TwoAxisLandingEnv
-from .learning import Transition, time_aware_gae
-from .models import POLICY_MODES, TwoAxisActor, TwoAxisPPOAgent, observation_arrays
+from .learning import Transition, time_aware_gae, executed_axis_mask
+from .models import POLICY_MODES, TwoAxisActor, TwoAxisPPOAgent, observation_arrays, log_probability_axes
 from .ontology_v28 import schema_hash
 
 
@@ -61,6 +62,37 @@ class PPOHyperparameters:
     evaluation_episodes: int = 12
     value_warmup_iterations: int = 0
     advantage_normalization: str = "minibatch"
+    #: "none" keeps the shipped objective: PPO regresses on every proposed
+    #: action, including the ones the supervisor replaced before they reached
+    #: the plant (38-44 % of 3D steps, 54 % of 2D, and 73-99 % on the rungs
+    #: `tools/audit_exploration_reachability.py` measures). "per_axis" drops
+    #: only the axes that were actually overridden. A per-STEP mask was tried
+    #: and is the wrong shape: with a symmetric vertical hold it discards 92 %
+    #: of steps and the actor stops moving.
+    intervention_masking: str = "none"
+    #: Linear ceiling on log_std from `initial_log_std` down to this over
+    #: `log_std_anneal_fraction` of the run. None keeps exploration fixed,
+    #: which is the shipped behaviour. Measured 2026-10-06: at the shipped
+    #: sigma 0.333 a clone whose mean lands 95.8 % lands 0.0 % sampled, so
+    #: every batch is success-free; annealing is how a success enters one.
+    final_log_std: float | None = None
+    log_std_anneal_fraction: float = 0.5
+    #: The shipped early stop reads the trust region one minibatch LATE: a
+    #: minibatch's `approx_kl` is measured from the ratio BEFORE its own step,
+    #: so the first actor step of every iteration is unconstrained. Its size in
+    #: action space is set by `actor_lr`, not by sigma, so once sigma is small
+    #: one step moves the mean by several sigmas. Measured 2026-10-06 in
+    #: results/full_pipeline_20261006_lowsigma_unconstrained (sigma pinned at
+    #: 0.030 from iteration 5): per-iteration KL 0.5-3.4 against the 0.02
+    #: target, and both graph arms collapsed from a 62.5 %-landing clone to
+    #: 12/12 SAFE_ABORT at 118 steps within two iterations. True re-measures
+    #: the KL on the minibatch AFTER each actor step, reverts a step above
+    #: 1.5 * target_kl (parameters and optimiser moments) and halves the actor
+    #: learning rate when nothing had been accepted yet that iteration (a
+    #: rejection after accepted steps is the ordinary early stop); an
+    #: iteration that completes under target_kl / 2 grows it 1.5x, never
+    #: above `actor_lr`. Off keeps the shipped objective.
+    enforce_target_kl: bool = False
 
     def __post_init__(self):
         if min(self.iterations, self.decisions_per_iteration, self.epochs,
@@ -72,6 +104,22 @@ class PPOHyperparameters:
             raise ValueError("value warmup cannot be negative")
         if self.advantage_normalization not in ("minibatch", "rollout"):
             raise ValueError("advantage normalization must be minibatch or rollout")
+        if self.intervention_masking not in ("none", "per_axis"):
+            raise ValueError("intervention masking must be none or per_axis")
+        if self.final_log_std is not None:
+            if self.final_log_std > self.initial_log_std:
+                raise ValueError("annealing must lower exploration, not raise it")
+            if not 0.0 < self.log_std_anneal_fraction <= 1.0:
+                raise ValueError("anneal fraction must be in (0,1]")
+
+    def log_std_ceiling(self, iteration: int) -> float:
+        """Upper clamp on log_std at `iteration` (1-based); 1.0 means inert."""
+        if self.final_log_std is None:
+            return 1.0
+        span = max(1.0, self.log_std_anneal_fraction * self.iterations)
+        progress = min(1.0, max(0.0, (iteration - 1) / span))
+        return (self.initial_log_std
+                + progress * (self.final_log_std - self.initial_log_std))
 
 
 @dataclass
@@ -100,10 +148,11 @@ class EpisodeDrivenCollector:
     """
 
     def __init__(self, env: TwoAxisLandingEnv, scheduler: CurriculumScheduler,
-                 *, base_seed: int):
+                 *, base_seed: int, per_axis_evidence: bool = False):
         self.env = env
         self.scheduler = scheduler
         self.base_seed = int(base_seed)
+        self.per_axis_evidence = bool(per_axis_evidence)
         self.episode_index = 0
         self._observation: ObservationBundle | None = None
         self._role: EpisodeRole | None = None
@@ -145,6 +194,13 @@ class EpisodeDrivenCollector:
                 safety_flags={"intervened": info["safety_intervened"],
                               "reasons": info["safety_reasons"],
                               "abort_requested": info["abort_requested"]}))
+            if self.per_axis_evidence:
+                transitions[-1].old_log_probability_axes = log_probability_axes(
+                    agent, transitions[-1].observation,
+                    transitions[-1].raw_command)
+                transitions[-1].executed_axes = executed_axis_mask(
+                    transitions[-1].requested_acceleration_m_s2,
+                    transitions[-1].applied_acceleration_m_s2)
             if terminated:
                 assert self._role is not None
                 self.completed.append(
@@ -177,6 +233,24 @@ class PPOTrainer:
         self.critic_optimizer = torch.optim.Adam(
             agent.critic.parameters(), lr=hyper.critic_lr)
         self.updates = 0
+        #: Live actor learning rate; only `enforce_target_kl` ever moves it.
+        self.actor_lr = float(hyper.actor_lr)
+
+    def _actor_snapshot(self):
+        return ([p.detach().clone() for p in self.agent.actor.parameters()],
+                copy.deepcopy(self.actor_optimizer.state_dict()))
+
+    def _restore_actor(self, snapshot):
+        parameters, optimizer_state = snapshot
+        with torch.no_grad():
+            for live, saved in zip(self.agent.actor.parameters(), parameters):
+                live.copy_(saved)
+        self.actor_optimizer.load_state_dict(optimizer_state)
+
+    def _set_actor_lr(self, value: float):
+        self.actor_lr = float(min(max(value, 1e-7), self.hyper.actor_lr))
+        for group in self.actor_optimizer.param_groups:
+            group["lr"] = self.actor_lr
 
     def update(self, transitions: list[Transition], *,
                discount_time_constant_s: float) -> dict[str, float]:
@@ -197,6 +271,22 @@ class PPOTrainer:
         old_logp = torch.as_tensor(
             [item.old_log_probability for item in transitions],
             dtype=torch.float32, device=device)
+        masking = hyper.intervention_masking
+        executed = old_logp_axes = None
+        if masking == "per_axis":
+            missing = [item for item in transitions
+                       if item.executed_axes is None
+                       or item.old_log_probability_axes is None]
+            if missing:
+                raise ValueError(
+                    "per-axis masking needs executed_axes and "
+                    "old_log_probability_axes on every transition")
+            executed = torch.as_tensor(
+                np.stack([item.executed_axes for item in transitions]),
+                dtype=torch.float32, device=device)
+            old_logp_axes = torch.as_tensor(
+                np.stack([item.old_log_probability_axes for item in transitions]),
+                dtype=torch.float32, device=device)
         advantage = torch.as_tensor(advantages, dtype=torch.float32, device=device)
         if hyper.advantage_normalization == "rollout":
             # Upstream ppoTrain.m normalizes A once before shuffling epochs.
@@ -211,6 +301,20 @@ class PPOTrainer:
         batches = 0
         generator = self.minibatch_generator
         stop = False
+        rejected = 0
+        kl_after_total, kl_after_count = 0.0, 0
+
+        def density(index, mu, std):
+            """Log-density of the stored proposals under (mu, std), and the
+            stored reference it is compared with -- masked identically."""
+            if masking == "per_axis":
+                mask = executed[index]
+                return ((TwoAxisActor.raw_log_probability_axes(
+                    raw[index], mu, std) * mask).sum(-1),
+                        (old_logp_axes[index] * mask).sum(-1))
+            return (TwoAxisActor.raw_log_probability(raw[index], mu, std),
+                    old_logp[index])
+
         for _epoch in range(hyper.epochs):
             order = torch.randperm(count, generator=generator).to(device)
             for start in range(0, count, hyper.minibatch_size):
@@ -222,8 +326,12 @@ class PPOTrainer:
                     batch_advantage = ((batch_advantage - batch_advantage.mean())
                                        / (batch_advantage.std() + 1e-8))
                 mu, std = self.agent.actor(packets[index], graphs[index])
-                logp = TwoAxisActor.raw_log_probability(raw[index], mu, std)
-                ratio = torch.exp(logp - old_logp[index])
+                # Per-axis masking drops the SAME axes from numerator and
+                # denominator, so the ratio stays a ratio of densities over the
+                # axes the plant actually ran. A step whose every axis was
+                # replaced contributes ratio 1 and therefore no actor gradient.
+                logp, reference = density(index, mu, std)
+                ratio = torch.exp(logp - reference)
                 clipped = ratio.clamp(1.0 - hyper.clip_ratio,
                                       1.0 + hyper.clip_ratio)
                 objective = torch.minimum(ratio * batch_advantage,
@@ -231,11 +339,38 @@ class PPOTrainer:
                 entropy = torch.log(std * math.sqrt(2.0 * math.pi * math.e)).sum(-1).mean()
                 actor_loss = -objective.mean() - hyper.entropy_coefficient * entropy
                 if update_policy:
+                    snapshot = (self._actor_snapshot()
+                                if hyper.enforce_target_kl else None)
                     self.actor_optimizer.zero_grad(set_to_none=True)
                     actor_loss.backward()
                     torch.nn.utils.clip_grad_norm_(
                         self.agent.actor.parameters(), hyper.max_grad_norm)
                     self.actor_optimizer.step()
+                    if hyper.enforce_target_kl:
+                        # The trust region, measured where it applies: on the
+                        # policy this step actually produced.
+                        with torch.no_grad():
+                            mu_after, std_after = self.agent.actor(
+                                packets[index], graphs[index])
+                            logp_after, _ = density(index, mu_after, std_after)
+                            shift = logp_after - reference
+                            kl_after = float(((shift.exp() - 1.0) - shift).mean())
+                        if not math.isfinite(kl_after) or kl_after > 1.5 * hyper.target_kl:
+                            self._restore_actor(snapshot)
+                            if kl_after_count == 0:
+                                # Nothing was accepted this iteration: the
+                                # rate itself is too large for this sigma.
+                                # A rejection AFTER accepted steps is the
+                                # ordinary early stop -- the iteration made
+                                # progress -- and must not shrink the rate,
+                                # or it spirals to the floor and the actor
+                                # freezes.
+                                self._set_actor_lr(self.actor_lr * 0.5)
+                            rejected += 1
+                            stop = True
+                            break
+                        kl_after_total += kl_after
+                        kl_after_count += 1
 
                 predicted = self.agent.critic(packets[index], graphs[index])
                 critic_loss = 0.5 * ((predicted - target[index]) ** 2).mean()
@@ -246,7 +381,7 @@ class PPOTrainer:
                 self.critic_optimizer.step()
 
                 with torch.no_grad():
-                    approx_kl = float(((ratio - 1.0) - (logp - old_logp[index])).mean())
+                    approx_kl = float(((ratio - 1.0) - (logp - reference)).mean())
                     totals["approx_kl"] += approx_kl
                     totals["clip_fraction"] += float(
                         ((ratio - 1.0).abs() > hyper.clip_ratio).float().mean())
@@ -261,7 +396,15 @@ class PPOTrainer:
                     break
             if stop:
                 break
+        if (hyper.enforce_target_kl and update_policy and not rejected
+                and kl_after_count
+                and kl_after_total / kl_after_count < 0.5 * hyper.target_kl):
+            self._set_actor_lr(self.actor_lr * 1.5)
         metrics = {key: value / max(batches, 1) for key, value in totals.items()}
+        metrics["kl_after_step"] = kl_after_total / max(kl_after_count, 1)
+        metrics["accepted_steps"] = float(kl_after_count)
+        metrics["rejected_steps"] = float(rejected)
+        metrics["actor_lr"] = self.actor_lr
         residual = float(((target - values) ** 2).mean())
         variance = float(target.var())
         metrics["explained_variance"] = (
@@ -388,7 +531,8 @@ def train_arm(mode: str, *, seed: int, hyper: PPOHyperparameters,
     env = TwoAxisLandingEnv(config, perturbations=True)
     scheduler = CurriculumScheduler(config.curriculum, difficulty=0.0)
     collector = EpisodeDrivenCollector(
-        env, scheduler, base_seed=TRAIN_SEED_BASE + 10_000 * int(seed))
+        env, scheduler, base_seed=TRAIN_SEED_BASE + 10_000 * int(seed),
+        per_axis_evidence=hyper.intervention_masking == "per_axis")
     signature = experiment_signature(config, graph_schema_hash=schema_hash(config))
 
     history: list[dict[str, Any]] = []
@@ -398,6 +542,13 @@ def train_arm(mode: str, *, seed: int, hyper: PPOHyperparameters,
     log_path = output_dir / "training_log.jsonl"
     with log_path.open("w", encoding="utf-8") as log:
         for iteration in range(1, hyper.iterations + 1):
+            if hyper.final_log_std is not None:
+                # Same schedule in both dimensions; the floor moves with the
+                # ceiling so the actor's own clamp cannot pin sigma above it.
+                ceiling = hyper.log_std_ceiling(iteration)
+                agent.actor.maximum_log_std = ceiling
+                agent.actor.minimum_log_std = min(
+                    agent.actor.minimum_log_std, ceiling)
             scheduler.set_budget_progress((iteration-1)/hyper.iterations)
             adapting = iteration > math.ceil(
                 config.ontology.adaptation_warmup_fraction*hyper.iterations)

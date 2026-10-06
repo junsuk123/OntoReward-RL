@@ -1,0 +1,319 @@
+{
+  "evaluation_seeds": [
+    4100,
+    4101,
+    4102,
+    4103,
+    4104,
+    4105,
+    4106,
+    4107,
+    4108,
+    4109,
+    4110,
+    4111,
+    4112,
+    4113,
+    4114,
+    4115,
+    4116,
+    4117,
+    4118,
+    4119,
+    4120,
+    4121,
+    4122,
+    4123,
+    4124,
+    4125,
+    4126,
+    4127,
+    4128,
+    4129,
+    4130,
+    4131,
+    4132,
+    4133,
+    4134,
+    4135,
+    4136,
+    4137,
+    4138,
+    4139,
+    4140,
+    4141,
+    4142,
+    4143,
+    4144,
+    4145,
+    4146,
+    4147
+  ],
+  "contract": {
+    "schema": "spatial-reference/4",
+    "packet_registry": "b5ec469ce76fa6d3b98337b8e97ec79895db6c3a97d3991c3e87bf94417977ba",
+    "action": "spatial-enu-direct-net-acceleration-v2",
+    "config_sha256": "36e205991f2cd1a7ed341b1135b267126c9eb711048612e6bec12706e8d51732"
+  },
+  "selection_seeds_excluded": [
+    2000,
+    2001
+  ],
+  "rows": [
+    {
+      "output": "clone_plain",
+      "run": "ppo_ontology_rgat__seed828",
+      "mode": "ppo_ontology_rgat",
+      "seed": 828,
+      "checkpoint": "checkpoint_cloned.pt",
+      "relational_active": null,
+      "landing_rate": 0.6458333333333334,
+      "unsafe_rate": 0.14583333333333334,
+      "safe_abort_rate": 0.041666666666666664,
+      "task_timeout_rate": 0.16666666666666666,
+      "mean_return": 12.033465025833985
+    },
+    {
+      "output": "clone_plain",
+      "run": "ppo_ontology_rgat__seed829",
+      "mode": "ppo_ontology_rgat",
+      "seed": 829,
+      "checkpoint": "checkpoint_cloned.pt",
+      "relational_active": null,
+      "landing_rate": 0.5625,
+      "unsafe_rate": 0.25,
+      "safe_abort_rate": 0.0625,
+      "task_timeout_rate": 0.125,
+      "mean_return": 5.162434934643079
+    },
+    {
+      "output": "clone_plain",
+      "run": "ppo_semantic_flat__seed828",
+      "mode": "ppo_semantic_flat",
+      "seed": 828,
+      "checkpoint": "checkpoint_cloned.pt",
+      "relational_active": null,
+      "landing_rate": 0.5416666666666666,
+      "unsafe_rate": 0.1875,
+      "safe_abort_rate": 0.0625,
+      "task_timeout_rate": 0.20833333333333334,
+      "mean_return": 6.645245844864661
+    },
+    {
+      "output": "clone_plain",
+      "run": "ppo_semantic_flat__seed829",
+      "mode": "ppo_semantic_flat",
+      "seed": 829,
+      "checkpoint": "checkpoint_cloned.pt",
+      "relational_active": null,
+      "landing_rate": 0.6666666666666666,
+      "unsafe_rate": 0.1875,
+      "safe_abort_rate": 0.0625,
+      "task_timeout_rate": 0.08333333333333333,
+      "mean_return": 11.067171749453161
+    },
+    {
+      "output": "clone_plain",
+      "run": "ppo_vector_canonical__seed828",
+      "mode": "ppo_vector_canonical",
+      "seed": 828,
+      "checkpoint": "checkpoint_cloned.pt",
+      "relational_active": null,
+      "landing_rate": 0.4375,
+      "unsafe_rate": 0.4166666666666667,
+      "safe_abort_rate": 0.041666666666666664,
+      "task_timeout_rate": 0.10416666666666667,
+      "mean_return": -4.27130908335453
+    },
+    {
+      "output": "clone_plain",
+      "run": "ppo_vector_canonical__seed829",
+      "mode": "ppo_vector_canonical",
+      "seed": 829,
+      "checkpoint": "checkpoint_cloned.pt",
+      "relational_active": null,
+      "landing_rate": 0.5625,
+      "unsafe_rate": 0.25,
+      "safe_abort_rate": 0.10416666666666667,
+      "task_timeout_rate": 0.08333333333333333,
+      "mean_return": 4.98949802526091
+    },
+    {
+      "output": "low_sigma_kl",
+      "run": "ppo_ontology_rgat__seed828",
+      "mode": "ppo_ontology_rgat",
+      "seed": 828,
+      "checkpoint": "checkpoint_best.pt",
+      "relational_active": true,
+      "landing_rate": 0.6458333333333334,
+      "unsafe_rate": 0.2916666666666667,
+      "safe_abort_rate": 0.0625,
+      "task_timeout_rate": 0.0,
+      "mean_return": 7.426782337731492
+    },
+    {
+      "output": "low_sigma_kl",
+      "run": "ppo_ontology_rgat__seed829",
+      "mode": "ppo_ontology_rgat",
+      "seed": 829,
+      "checkpoint": "checkpoint_best.pt",
+      "relational_active": true,
+      "landing_rate": 0.5625,
+      "unsafe_rate": 0.3541666666666667,
+      "safe_abort_rate": 0.08333333333333333,
+      "task_timeout_rate": 0.0,
+      "mean_return": 3.014725270232132
+    },
+    {
+      "output": "low_sigma_kl",
+      "run": "ppo_semantic_flat__seed828",
+      "mode": "ppo_semantic_flat",
+      "seed": 828,
+      "checkpoint": "checkpoint_best.pt",
+      "relational_active": null,
+      "landing_rate": 0.6666666666666666,
+      "unsafe_rate": 0.2916666666666667,
+      "safe_abort_rate": 0.041666666666666664,
+      "task_timeout_rate": 0.0,
+      "mean_return": 8.400641322144223
+    },
+    {
+      "output": "low_sigma_kl",
+      "run": "ppo_semantic_flat__seed829",
+      "mode": "ppo_semantic_flat",
+      "seed": 829,
+      "checkpoint": "checkpoint_best.pt",
+      "relational_active": null,
+      "landing_rate": 0.8125,
+      "unsafe_rate": 0.14583333333333334,
+      "safe_abort_rate": 0.041666666666666664,
+      "task_timeout_rate": 0.0,
+      "mean_return": 18.83316225272833
+    },
+    {
+      "output": "low_sigma_kl",
+      "run": "ppo_vector_canonical__seed828",
+      "mode": "ppo_vector_canonical",
+      "seed": 828,
+      "checkpoint": "checkpoint_best.pt",
+      "relational_active": null,
+      "landing_rate": 0.7083333333333334,
+      "unsafe_rate": 0.25,
+      "safe_abort_rate": 0.041666666666666664,
+      "task_timeout_rate": 0.0,
+      "mean_return": 11.403922386477243
+    },
+    {
+      "output": "low_sigma_kl",
+      "run": "ppo_vector_canonical__seed829",
+      "mode": "ppo_vector_canonical",
+      "seed": 829,
+      "checkpoint": "checkpoint_best.pt",
+      "relational_active": null,
+      "landing_rate": 0.2708333333333333,
+      "unsafe_rate": 0.4791666666666667,
+      "safe_abort_rate": 0.14583333333333334,
+      "task_timeout_rate": 0.10416666666666667,
+      "mean_return": -13.749913271336576
+    }
+  ],
+  "per_arm": {
+    "ppo_vector_canonical": {
+      "landing_rate": {
+        "mean": 0.4947916666666667,
+        "sd": 0.1609535118787755,
+        "min": 0.2708333333333333,
+        "max": 0.7083333333333334
+      },
+      "unsafe_rate": {
+        "mean": 0.34895833333333337,
+        "sd": 0.10139542882256139,
+        "min": 0.25,
+        "max": 0.4791666666666667
+      },
+      "safe_abort_rate": {
+        "mean": 0.08333333333333334,
+        "sd": 0.04419417382415922,
+        "min": 0.041666666666666664,
+        "max": 0.14583333333333334
+      },
+      "task_timeout_rate": {
+        "mean": 0.07291666666666667,
+        "sd": 0.0429490169335173,
+        "min": 0.0,
+        "max": 0.10416666666666667
+      },
+      "mean_return": {
+        "mean": -0.4069504857382382,
+        "sd": 9.507711315089631,
+        "min": -13.749913271336576,
+        "max": 11.403922386477243
+      }
+    },
+    "ppo_semantic_flat": {
+      "landing_rate": {
+        "mean": 0.671875,
+        "sd": 0.09589558666417694,
+        "min": 0.5416666666666666,
+        "max": 0.8125
+      },
+      "unsafe_rate": {
+        "mean": 0.203125,
+        "sd": 0.053875418920773965,
+        "min": 0.14583333333333334,
+        "max": 0.2916666666666667
+      },
+      "safe_abort_rate": {
+        "mean": 0.05208333333333333,
+        "sd": 0.010416666666666668,
+        "min": 0.041666666666666664,
+        "max": 0.0625
+      },
+      "task_timeout_rate": {
+        "mean": 0.07291666666666667,
+        "sd": 0.08526409137367136,
+        "min": 0.0,
+        "max": 0.20833333333333334
+      },
+      "mean_return": {
+        "mean": 11.236555292297593,
+        "sd": 4.659926463584195,
+        "min": 6.645245844864661,
+        "max": 18.83316225272833
+      }
+    },
+    "ppo_ontology_rgat": {
+      "landing_rate": {
+        "mean": 0.6041666666666667,
+        "sd": 0.041666666666666685,
+        "min": 0.5625,
+        "max": 0.6458333333333334
+      },
+      "unsafe_rate": {
+        "mean": 0.2604166666666667,
+        "sd": 0.07583447801333873,
+        "min": 0.14583333333333334,
+        "max": 0.3541666666666667
+      },
+      "safe_abort_rate": {
+        "mean": 0.0625,
+        "sd": 0.01473139127471974,
+        "min": 0.041666666666666664,
+        "max": 0.08333333333333333
+      },
+      "task_timeout_rate": {
+        "mean": 0.07291666666666666,
+        "sd": 0.07438987946398802,
+        "min": 0.0,
+        "max": 0.16666666666666666
+      },
+      "mean_return": {
+        "mean": 6.9093518921101715,
+        "sd": 3.3445517283106865,
+        "min": 3.014725270232132,
+        "max": 12.033465025833985
+      }
+    }
+  },
+  "inert_relational_runs": []
+}

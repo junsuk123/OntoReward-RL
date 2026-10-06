@@ -1,0 +1,8 @@
+[INFO] [1791264275.333022937] [ontology_rgat_px4_gateway_0]: gateway target=sitl, UDP=127.0.0.1:14650, PX4 namespace=/fmu, arm_allowed=True, offboard_allowed=True, heartbeat=50 Hz, pad_motion=random_walk, gnss=off, battery=on (hover 186 W)
+[INFO] [1791264275.335910763] [ontology_rgat_px4_gateway_0]: PX4 local frame is at world ENU (0.0, -0.0, 2.86) m; deck poses will be brought into it.
+[INFO] [1791264743.438187782] [ontology_rgat_px4_gateway_0]: physical pad touchdown: OFFBOARD hold retained until SITL force-disarm confirmation (truth pad xyz=-0.55,0.42,0.34)
+[WARN] [1791264743.703253042] [ontology_rgat_px4_gateway_0]: PX4 rejected command 400 with result 1 (reason 0)
+[WARN] [1791265208.655674919] [ontology_rgat_px4_gateway_0]: XRCE-DDS rebased the PX4 timestamp (raw delta -1791264696.934 s); continuing on the monotonic simulated-time axis
+[WARN] [1791265210.573888786] [ontology_rgat_px4_gateway_0]: XRCE-DDS rebased the PX4 timestamp (raw delta 1791264702.553 s); continuing on the monotonic simulated-time axis
+[INFO] [1791265237.848620058] [ontology_rgat_px4_gateway_0]: physical pad touchdown: OFFBOARD hold retained until SITL force-disarm confirmation (truth pad xyz=0.34,0.18,0.32)
+[WARN] [1791265238.136255643] [ontology_rgat_px4_gateway_0]: PX4 rejected command 400 with result 1 (reason 0)

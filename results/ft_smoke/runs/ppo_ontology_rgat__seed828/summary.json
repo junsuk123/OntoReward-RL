@@ -1,0 +1,2231 @@
+{
+  "mode": "ppo_ontology_rgat",
+  "seed": 828,
+  "signature": {
+    "schema": "spatial-reference/2",
+    "packet_registry": "b5ec469ce76fa6d3b98337b8e97ec79895db6c3a97d3991c3e87bf94417977ba",
+    "action": "spatial-enu-direct-net-acceleration-v2",
+    "config_sha256": "de4f1622908f547a7d3a07ec10ba745f2c5c80f3d570301cfd9d45cc9f03f6be"
+  },
+  "hyperparameters": {
+    "iterations": 8,
+    "decisions_per_iteration": 512,
+    "epochs": 8,
+    "minibatch_size": 256,
+    "actor_lr": 0.0005,
+    "critic_lr": 0.001,
+    "clip_ratio": 0.2,
+    "entropy_coefficient": 0.0025,
+    "gae_lambda": 0.95,
+    "max_grad_norm": 1.0,
+    "target_kl": 0.02,
+    "initial_log_std": -1.1,
+    "evaluation_every": 4,
+    "evaluation_episodes": 2,
+    "value_warmup_iterations": 2,
+    "advantage_normalization": "rollout"
+  },
+  "episodes_per_iteration": 2,
+  "curriculum_loss_timeout_start": null,
+  "rollout_budget_unit": "complete_episodes",
+  "initialization": "reference-v28-gaussian",
+  "initialization_source": {
+    "path": "/home/j/SynologyDrive/junsuk/\ud559\uc220\ub300\ud68c/CICS2026/Ontology_RGAT_UAV_RL_ISAAC_PX4/Ontology_RGAT_UAV_RL_ISAAC_PX4/results/spatial_cloned_20261006/runs/ppo_ontology_rgat__seed828/checkpoint_cloned.pt",
+    "sha256": "9b26c11552f4960502b781b876bc7d2b388312de79f5bcac0be3b076ffc4c3ec",
+    "metadata": {
+      "initialization_source": null,
+      "eligible": true,
+      "completed_episodes": 0,
+      "training_backend": "behaviour-cloning",
+      "learned_by": "behaviour_cloning",
+      "ppo_success_claim": false,
+      "validation": {
+        "episodes": 24,
+        "landing_rate": 0.625,
+        "unsafe_rate": 0.125,
+        "safe_abort_rate": 0.125,
+        "task_timeout_rate": 0.125,
+        "mean_return": 11.446856857284752,
+        "selection_score": 310.19685685728473,
+        "selection_score_model": "outcome_weighted_v28",
+        "mean_abs_relation_residual": [
+          0.043139707297086716,
+          0.05518762394785881,
+          0.028049148619174957
+        ],
+        "rows": [
+          {
+            "seed": 3001,
+            "return": 30.201730041625154,
+            "status": "SUCCESS",
+            "steps": 171,
+            "elapsed_s": 17.034973549121364,
+            "backend": "local-spatial",
+            "stop_confirmed": true,
+            "terminal_hold_audit": {
+              "version": "terminal-hold-snapshot/1",
+              "evaluated": true,
+              "hold_verified": false,
+              "sustained_stability_claim": false,
+              "checks": {
+                "no_contact": false,
+                "clearance": false,
+                "horizontal_speed": false,
+                "vertical_speed": false,
+                "tilt": true
+              },
+              "horizontal_speed_m_s": 0.8871162132513,
+              "vertical_speed_m_s": -0.1116046648614524,
+              "tilt_rad": 0.06761820219537958,
+              "deck_clearance_m": 0.12
+            }
+          },
+          {
+            "seed": 3002,
+            "return": -15.117268529490026,
+            "status": "SAFE_ABORT",
+            "steps": 487,
+            "elapsed_s": 48.69999999999661,
+            "backend": "local-spatial",
+            "stop_confirmed": true,
+            "terminal_hold_audit": {
+              "version": "terminal-hold-snapshot/1",
+              "evaluated": true,
+              "hold_verified": true,
+              "sustained_stability_claim": false,
+              "checks": {
+                "no_contact": true,
+                "clearance": true,
+                "horizontal_speed": true,
+                "vertical_speed": true,
+                "tilt": true
+              },
+              "horizontal_speed_m_s": 0.0007993471250991659,
+              "vertical_speed_m_s": 0.000319448284184886,
+              "tilt_rad": 0.05341138067208979,
+              "deck_clearance_m": 1.1729616258086653
+            }
+          },
+          {
+            "seed": 3003,
+            "return": 28.334067290176183,
+            "status": "SUCCESS",
+            "steps": 444,
+            "elapsed_s": 44.34954851507966,
+            "backend": "local-spatial",
+            "stop_confirmed": true,
+            "terminal_hold_audit": {
+              "version": "terminal-hold-snapshot/1",
+              "evaluated": true,
+              "hold_verified": false,
+              "sustained_stability_claim": false,
+              "checks": {
+                "no_contact": false,
+                "clearance": false,
+                "horizontal_speed": false,
+                "vertical_speed": false,
+                "tilt": true
+              },
+              "horizontal_speed_m_s": 0.9081896923686587,
+              "vertical_speed_m_s": -0.16991630558249057,
+              "tilt_rad": 0.0645851183494562,
+              "deck_clearance_m": 0.12
+            }
+          },
+          {
+            "seed": 3004,
+            "return": -8.137608555812532,
+            "status": "TASK_TIMEOUT",
+            "steps": 700,
+            "elapsed_s": 69.99999999999322,
+            "backend": "local-spatial",
+            "stop_confirmed": true,
+            "terminal_hold_audit": {
+              "version": "terminal-hold-snapshot/1",
+              "evaluated": true,
+              "hold_verified": false,
+              "sustained_stability_claim": false,
+              "checks": {
+                "no_contact": true,
+                "clearance": true,
+                "horizontal_speed": false,
+                "vertical_speed": true,
+                "tilt": true
+              },
+              "horizontal_speed_m_s": 0.8463504379077125,
+              "vertical_speed_m_s": -0.00012693214278527586,
+              "tilt_rad": 0.04297877945185593,
+              "deck_clearance_m": 0.6817821657865448
+            }
+          },
+          {
+            "seed": 3005,
+            "return": -14.965506138798297,
+            "status": "SAFE_ABORT",
+            "steps": 117,
+            "elapsed_s": 11.699999999999795,
+            "backend": "local-spatial",
+            "stop_confirmed": true,
+            "terminal_hold_audit": {
+              "version": "terminal-hold-snapshot/1",
+              "evaluated": true,
+              "hold_verified": true,
+              "sustained_stability_claim": false,
+              "checks": {
+                "no_contact": true,
+                "clearance": true,
+                "horizontal_speed": true,
+                "vertical_speed": true,
+                "tilt": true
+              },
+              "horizontal_speed_m_s": 0.0003171798702832681,
+              "vertical_speed_m_s": 8.091611117460721e-05,
+              "tilt_rad": 0.047545434225502135,
+              "deck_clearance_m": 2.4913800780427002
+            }
+          },
+          {
+            "seed": 3006,
+            "return": 28.57261979692757,
+            "status": "SUCCESS",
+            "steps": 376,
+            "elapsed_s": 37.55322583915603,
+            "backend": "local-spatial",
+            "stop_confirmed": true,
+            "terminal_hold_audit": {
+              "version": "terminal-hold-snapshot/1",
+              "evaluated": true,
+              "hold_verified": false,
+              "sustained_stability_claim": false,
+              "checks": {
+                "no_contact": false,
+                "clearance": false,
+                "horizontal_speed": false,
+                "vertical_speed": true,
+                "tilt": true
+              },
+              "horizontal_speed_m_s": 0.750071791850894,
+              "vertical_speed_m_s": -0.09293115603123514,
+              "tilt_rad": 0.08485506429371734,
+              "deck_clearance_m": 0.12
+            }
+          },
+          {
+            "seed": 3007,
+            "return": 31.61962528467403,
+            "status": "SUCCESS",
+            "steps": 145,
+            "elapsed_s": 14.417554644990336,
+            "backend": "local-spatial",
+            "stop_confirmed": true,
+            "terminal_hold_audit": {
+              "version": "terminal-hold-snapshot/1",
+              "evaluated": true,
+              "hold_verified": false,
+              "sustained_stability_claim": false,
+              "checks": {
+                "no_contact": false,
+                "clearance": false,
+                "horizontal_speed": false,
+                "vertical_speed": false,
+                "tilt": true
+              },
+              "horizontal_speed_m_s": 0.959630004729321,
+              "vertical_speed_m_s": -0.17123990503299388,
+              "tilt_rad": 0.04334358555754279,
+              "deck_clearance_m": 0.12
+            }
+          },
+          {
+            "seed": 3008,
+            "return": 29.354735024540606,
+            "status": "SUCCESS",
+            "steps": 186,
+            "elapsed_s": 18.529652489465334,
+            "backend": "local-spatial",
+            "stop_confirmed": true,
+            "terminal_hold_audit": {
+              "version": "terminal-hold-snapshot/1",
+              "evaluated": true,
+              "hold_verified": false,
+              "sustained_stability_claim": false,
+              "checks": {
+                "no_contact": false,
+                "clearance": false,
+                "horizontal_speed": false,
+                "vertical_speed": false,
+                "tilt": true
+              },
+              "horizontal_speed_m_s": 0.8703042050212466,
+              "vertical_speed_m_s": -0.13218463112749548,
+              "tilt_rad": 0.07345975650876192,
+              "deck_clearance_m": 0.12
+            }
+          },
+          {
+            "seed": 3009,
+            "return": 32.13703430205954,
+            "status": "SUCCESS",
+            "steps": 129,
+            "elapsed_s": 12.84463927260036,
+            "backend": "local-spatial",
+            "stop_confirmed": true,
+            "terminal_hold_audit": {
+              "version": "terminal-hold-snapshot/1",
+              "evaluated": true,
+              "hold_verified": false,
+              "sustained_stability_claim": false,
+              "checks": {
+                "no_contact": false,
+                "clearance": false,
+                "horizontal_speed": false,
+                "vertical_speed": false,
+                "tilt": true
+              },
+              "horizontal_speed_m_s": 0.9072699433845354,
+              "vertical_speed_m_s": -0.2623136722618006,
+              "tilt_rad": 0.03785322738125064,
+              "deck_clearance_m": 0.12
+            }
+          },
+          {
+            "seed": 3010,
+            "return": -35.4851712467479,
+            "status": "UNAUTHORIZED_CONTACT",
+            "steps": 130,
+            "elapsed_s": 12.997509795937594,
+            "backend": "local-spatial",
+            "stop_confirmed": true,
+            "terminal_hold_audit": {
+              "version": "terminal-hold-snapshot/1",
+              "evaluated": true,
+              "hold_verified": false,
+              "sustained_stability_claim": false,
+              "checks": {
+                "no_contact": false,
+                "clearance": false,
+                "horizontal_speed": false,
+                "vertical_speed": true,
+                "tilt": true
+              },
+              "horizontal_speed_m_s": 0.7220195416939492,
+              "vertical_speed_m_s": -0.07586283513727392,
+              "tilt_rad": 0.03014819616000865,
+              "deck_clearance_m": 0.12
+            }
+          },
+          {
+            "seed": 3011,
+            "return": 29.070641210994005,
+            "status": "SUCCESS",
+            "steps": 70,
+            "elapsed_s": 6.9448679073073425,
+            "backend": "local-spatial",
+            "stop_confirmed": true,
+            "terminal_hold_audit": {
+              "version": "terminal-hold-snapshot/1",
+              "evaluated": true,
+              "hold_verified": false,
+              "sustained_stability_claim": false,
+              "checks": {
+                "no_contact": false,
+                "clearance": false,
+                "horizontal_speed": false,
+                "vertical_speed": false,
+                "tilt": true
+              },
+              "horizontal_speed_m_s": 0.6016929913694662,
+              "vertical_speed_m_s": -0.2323472862322053,
+              "tilt_rad": 0.06542256087639106,
+              "deck_clearance_m": 0.12
+            }
+          },
+          {
+            "seed": 3012,
+            "return": 31.773052359058966,
+            "status": "SUCCESS",
+            "steps": 124,
+            "elapsed_s": 12.330982315175948,
+            "backend": "local-spatial",
+            "stop_confirmed": true,
+            "terminal_hold_audit": {
+              "version": "terminal-hold-snapshot/1",
+              "evaluated": true,
+              "hold_verified": false,
+              "sustained_stability_claim": false,
+              "checks": {
+                "no_contact": false,
+                "clearance": false,
+                "horizontal_speed": false,
+                "vertical_speed": false,
+                "tilt": true
+              },
+              "horizontal_speed_m_s": 1.0341168878563858,
+              "vertical_speed_m_s": -0.1895815592246774,
+              "tilt_rad": 0.036097731511820344,
+              "deck_clearance_m": 0.12
+            }
+          },
+          {
+            "seed": 3013,
+            "return": -38.14815467011115,
+            "status": "UNSAFE_CONTACT",
+            "steps": 163,
+            "elapsed_s": 16.226066583148747,
+            "backend": "local-spatial",
+            "stop_confirmed": true,
+            "terminal_hold_audit": {
+              "version": "terminal-hold-snapshot/1",
+              "evaluated": true,
+              "hold_verified": false,
+              "sustained_stability_claim": false,
+              "checks": {
+                "no_contact": false,
+                "clearance": false,
+                "horizontal_speed": false,
+                "vertical_speed": true,
+                "tilt": true
+              },
+              "horizontal_speed_m_s": 0.6940731078387322,
+              "vertical_speed_m_s": -0.035001713917430885,
+              "tilt_rad": 0.02273709386775794,
+              "deck_clearance_m": 0.12
+            }
+          },
+          {
+            "seed": 3014,
+            "return": -8.575158320819781,
+            "status": "TASK_TIMEOUT",
+            "steps": 700,
+            "elapsed_s": 69.99999999999322,
+            "backend": "local-spatial",
+            "stop_confirmed": true,
+            "terminal_hold_audit": {
+              "version": "terminal-hold-snapshot/1",
+              "evaluated": true,
+              "hold_verified": false,
+              "sustained_stability_claim": false,
+              "checks": {
+                "no_contact": true,
+                "clearance": true,
+                "horizontal_speed": false,
+                "vertical_speed": true,
+                "tilt": true
+              },
+              "horizontal_speed_m_s": 1.2059460596151983,
+              "vertical_speed_m_s": -0.0008303539730388351,
+              "tilt_rad": 0.04873643391381792,
+              "deck_clearance_m": 0.749751225253924
+            }
+          },
+          {
+            "seed": 3015,
+            "return": 31.541036119619683,
+            "status": "SUCCESS",
+            "steps": 117,
+            "elapsed_s": 11.640020802462839,
+            "backend": "local-spatial",
+            "stop_confirmed": true,
+            "terminal_hold_audit": {
+              "version": "terminal-hold-snapshot/1",
+              "evaluated": true,
+              "hold_verified": false,
+              "sustained_stability_claim": false,
+              "checks": {
+                "no_contact": false,
+                "clearance": false,
+                "horizontal_speed": false,
+                "vertical_speed": false,
+                "tilt": true
+              },
+              "horizontal_speed_m_s": 0.8992853203525264,
+              "vertical_speed_m_s": -0.269843778450826,
+              "tilt_rad": 0.05312719660387031,
+              "deck_clearance_m": 0.12
+            }
+          },
+          {
+            "seed": 3016,
+            "return": -36.22607171782232,
+            "status": "UNSAFE_CONTACT",
+            "steps": 130,
+            "elapsed_s": 12.956907177731864,
+            "backend": "local-spatial",
+            "stop_confirmed": true,
+            "terminal_hold_audit": {
+              "version": "terminal-hold-snapshot/1",
+              "evaluated": true,
+              "hold_verified": false,
+              "sustained_stability_claim": false,
+              "checks": {
+                "no_contact": false,
+                "clearance": false,
+                "horizontal_speed": false,
+                "vertical_speed": false,
+                "tilt": false
+              },
+              "horizontal_speed_m_s": 0.5133864119631072,
+              "vertical_speed_m_s": -0.195143342256694,
+              "tilt_rad": 0.08975471702145589,
+              "deck_clearance_m": 0.12
+            }
+          },
+          {
+            "seed": 3017,
+            "return": 30.545696972854557,
+            "status": "SUCCESS",
+            "steps": 165,
+            "elapsed_s": 16.45729974950187,
+            "backend": "local-spatial",
+            "stop_confirmed": true,
+            "terminal_hold_audit": {
+              "version": "terminal-hold-snapshot/1",
+              "evaluated": true,
+              "hold_verified": false,
+              "sustained_stability_claim": false,
+              "checks": {
+                "no_contact": false,
+                "clearance": false,
+                "horizontal_speed": false,
+                "vertical_speed": false,
+                "tilt": true
+              },
+              "horizontal_speed_m_s": 0.8373877224560183,
+              "vertical_speed_m_s": -0.12498595783658975,
+              "tilt_rad": 0.06048453440065016,
+              "deck_clearance_m": 0.12
+            }
+          },
+          {
+            "seed": 3018,
+            "return": -15.222309812178267,
+            "status": "SAFE_ABORT",
+            "steps": 190,
+            "elapsed_s": 18.999999999999744,
+            "backend": "local-spatial",
+            "stop_confirmed": true,
+            "terminal_hold_audit": {
+              "version": "terminal-hold-snapshot/1",
+              "evaluated": true,
+              "hold_verified": true,
+              "sustained_stability_claim": false,
+              "checks": {
+                "no_contact": true,
+                "clearance": true,
+                "horizontal_speed": true,
+                "vertical_speed": true,
+                "tilt": true
+              },
+              "horizontal_speed_m_s": 0.0004067939836442563,
+              "vertical_speed_m_s": 0.00033012652050219877,
+              "tilt_rad": 0.03815537249940297,
+              "deck_clearance_m": 0.767806332149046
+            }
+          },
+          {
+            "seed": 3019,
+            "return": 30.46162922932369,
+            "status": "SUCCESS",
+            "steps": 142,
+            "elapsed_s": 14.143914221574038,
+            "backend": "local-spatial",
+            "stop_confirmed": true,
+            "terminal_hold_audit": {
+              "version": "terminal-hold-snapshot/1",
+              "evaluated": true,
+              "hold_verified": false,
+              "sustained_stability_claim": false,
+              "checks": {
+                "no_contact": false,
+                "clearance": false,
+                "horizontal_speed": false,
+                "vertical_speed": false,
+                "tilt": true
+              },
+              "horizontal_speed_m_s": 1.0889294573396262,
+              "vertical_speed_m_s": -0.16365756064289164,
+              "tilt_rad": 0.03924299327104246,
+              "deck_clearance_m": 0.12
+            }
+          },
+          {
+            "seed": 3020,
+            "return": 30.410349403913447,
+            "status": "SUCCESS",
+            "steps": 150,
+            "elapsed_s": 14.992643940772016,
+            "backend": "local-spatial",
+            "stop_confirmed": true,
+            "terminal_hold_audit": {
+              "version": "terminal-hold-snapshot/1",
+              "evaluated": true,
+              "hold_verified": false,
+              "sustained_stability_claim": false,
+              "checks": {
+                "no_contact": false,
+                "clearance": false,
+                "horizontal_speed": false,
+                "vertical_speed": false,
+                "tilt": true
+              },
+              "horizontal_speed_m_s": 1.1898990956489184,
+              "vertical_speed_m_s": -0.15610482973829187,
+              "tilt_rad": 0.07053597116250318,
+              "deck_clearance_m": 0.12
+            }
+          },
+          {
+            "seed": 3021,
+            "return": 30.496478967142036,
+            "status": "SUCCESS",
+            "steps": 145,
+            "elapsed_s": 14.461031165342662,
+            "backend": "local-spatial",
+            "stop_confirmed": true,
+            "terminal_hold_audit": {
+              "version": "terminal-hold-snapshot/1",
+              "evaluated": true,
+              "hold_verified": false,
+              "sustained_stability_claim": false,
+              "checks": {
+                "no_contact": false,
+                "clearance": false,
+                "horizontal_speed": false,
+                "vertical_speed": false,
+                "tilt": true
+              },
+              "horizontal_speed_m_s": 0.8801675121429501,
+              "vertical_speed_m_s": -0.1978672473248051,
+              "tilt_rad": 0.051176048835671555,
+              "deck_clearance_m": 0.12
+            }
+          },
+          {
+            "seed": 3022,
+            "return": 30.279881615078104,
+            "status": "SUCCESS",
+            "steps": 226,
+            "elapsed_s": 22.532883332949982,
+            "backend": "local-spatial",
+            "stop_confirmed": true,
+            "terminal_hold_audit": {
+              "version": "terminal-hold-snapshot/1",
+              "evaluated": true,
+              "hold_verified": false,
+              "sustained_stability_claim": false,
+              "checks": {
+                "no_contact": false,
+                "clearance": false,
+                "horizontal_speed": false,
+                "vertical_speed": true,
+                "tilt": true
+              },
+              "horizontal_speed_m_s": 1.176210142157566,
+              "vertical_speed_m_s": -0.055046431545646084,
+              "tilt_rad": 0.05510318917301717,
+              "deck_clearance_m": 0.12
+            }
+          },
+          {
+            "seed": 3023,
+            "return": 29.484711772433737,
+            "status": "SUCCESS",
+            "steps": 198,
+            "elapsed_s": 19.707809592644804,
+            "backend": "local-spatial",
+            "stop_confirmed": true,
+            "terminal_hold_audit": {
+              "version": "terminal-hold-snapshot/1",
+              "evaluated": true,
+              "hold_verified": false,
+              "sustained_stability_claim": false,
+              "checks": {
+                "no_contact": false,
+                "clearance": false,
+                "horizontal_speed": false,
+                "vertical_speed": true,
+                "tilt": true
+              },
+              "horizontal_speed_m_s": 1.2321330884782893,
+              "vertical_speed_m_s": -0.040766524274268225,
+              "tilt_rad": 0.06855589325416174,
+              "deck_clearance_m": 0.12
+            }
+          },
+          {
+            "seed": 3024,
+            "return": -7.681475823806993,
+            "status": "TASK_TIMEOUT",
+            "steps": 700,
+            "elapsed_s": 69.99999999999322,
+            "backend": "local-spatial",
+            "stop_confirmed": true,
+            "terminal_hold_audit": {
+              "version": "terminal-hold-snapshot/1",
+              "evaluated": true,
+              "hold_verified": false,
+              "sustained_stability_claim": false,
+              "checks": {
+                "no_contact": true,
+                "clearance": false,
+                "horizontal_speed": false,
+                "vertical_speed": true,
+                "tilt": true
+              },
+              "horizontal_speed_m_s": 0.8525895658774331,
+              "vertical_speed_m_s": 0.0037283940576510006,
+              "tilt_rad": 0.040679624237357694,
+              "deck_clearance_m": 0.4981827833906756
+            }
+          }
+        ]
+      }
+    },
+    "optimizer_reset": true,
+    "mode": "PPO fine-tuning, not exact optimizer-state resume",
+    "contract_migration": null
+  },
+  "completed_nominal_episodes": 4,
+  "selected_checkpoint": "checkpoint_best.pt",
+  "environment_steps": 8506,
+  "total_training_environment_steps": 10554,
+  "training_backend": "local-spatial",
+  "curriculum_enabled": true,
+  "curriculum_angular_scales": [
+    1.0,
+    1.0
+  ],
+  "adaptation_starts_at_iteration": 8,
+  "pretraining": {
+    "enabled": false,
+    "environment_steps": 0,
+    "reason": "eligible PPO checkpoint initialization"
+  },
+  "relation_activation": {
+    "accepted": false,
+    "selected_scale": 0.0,
+    "anchor_info": {
+      "episodes": 2,
+      "landing_rate": 0.0,
+      "unsafe_rate": 0.0,
+      "safe_abort_rate": 0.5,
+      "task_timeout_rate": 0.5,
+      "mean_return": -13.918934716398839,
+      "selection_score": -68.91893471639884,
+      "selection_score_model": "outcome_weighted_v28",
+      "mean_abs_relation_residual": [
+        0.08744605630636215,
+        0.09550498425960541,
+        0.02177659049630165
+      ],
+      "rows": [
+        {
+          "seed": 2000,
+          "return": -12.69838205977341,
+          "status": "TASK_TIMEOUT",
+          "steps": 700,
+          "elapsed_s": 69.99999999999322,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "terminal_hold_audit": {
+            "version": "terminal-hold-snapshot/1",
+            "evaluated": true,
+            "hold_verified": false,
+            "sustained_stability_claim": false,
+            "checks": {
+              "no_contact": true,
+              "clearance": true,
+              "horizontal_speed": false,
+              "vertical_speed": true,
+              "tilt": true
+            },
+            "horizontal_speed_m_s": 0.9876855461952193,
+            "vertical_speed_m_s": -0.014990625256213346,
+            "tilt_rad": 0.03034237330161195,
+            "deck_clearance_m": 0.9977949898647707
+          }
+        },
+        {
+          "seed": 2001,
+          "return": -15.139487373024268,
+          "status": "SAFE_ABORT",
+          "steps": 140,
+          "elapsed_s": 13.999999999999746,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "terminal_hold_audit": {
+            "version": "terminal-hold-snapshot/1",
+            "evaluated": true,
+            "hold_verified": true,
+            "sustained_stability_claim": false,
+            "checks": {
+              "no_contact": true,
+              "clearance": true,
+              "horizontal_speed": true,
+              "vertical_speed": true,
+              "tilt": true
+            },
+            "horizontal_speed_m_s": 0.0003681265717908841,
+            "vertical_speed_m_s": 0.00014417891449399137,
+            "tilt_rad": 0.01800752975015706,
+            "deck_clearance_m": 1.6678738306992567
+          }
+        }
+      ]
+    },
+    "selected_info": {
+      "episodes": 2,
+      "landing_rate": 0.0,
+      "unsafe_rate": 0.0,
+      "safe_abort_rate": 0.5,
+      "task_timeout_rate": 0.5,
+      "mean_return": -13.918934716398839,
+      "selection_score": -68.91893471639884,
+      "selection_score_model": "outcome_weighted_v28",
+      "mean_abs_relation_residual": [
+        0.08744605630636215,
+        0.09550498425960541,
+        0.02177659049630165
+      ],
+      "rows": [
+        {
+          "seed": 2000,
+          "return": -12.69838205977341,
+          "status": "TASK_TIMEOUT",
+          "steps": 700,
+          "elapsed_s": 69.99999999999322,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "terminal_hold_audit": {
+            "version": "terminal-hold-snapshot/1",
+            "evaluated": true,
+            "hold_verified": false,
+            "sustained_stability_claim": false,
+            "checks": {
+              "no_contact": true,
+              "clearance": true,
+              "horizontal_speed": false,
+              "vertical_speed": true,
+              "tilt": true
+            },
+            "horizontal_speed_m_s": 0.9876855461952193,
+            "vertical_speed_m_s": -0.014990625256213346,
+            "tilt_rad": 0.03034237330161195,
+            "deck_clearance_m": 0.9977949898647707
+          }
+        },
+        {
+          "seed": 2001,
+          "return": -15.139487373024268,
+          "status": "SAFE_ABORT",
+          "steps": 140,
+          "elapsed_s": 13.999999999999746,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "terminal_hold_audit": {
+            "version": "terminal-hold-snapshot/1",
+            "evaluated": true,
+            "hold_verified": true,
+            "sustained_stability_claim": false,
+            "checks": {
+              "no_contact": true,
+              "clearance": true,
+              "horizontal_speed": true,
+              "vertical_speed": true,
+              "tilt": true
+            },
+            "horizontal_speed_m_s": 0.0003681265717908841,
+            "vertical_speed_m_s": 0.00014417891449399137,
+            "tilt_rad": 0.01800752975015706,
+            "deck_clearance_m": 1.6678738306992567
+          }
+        }
+      ]
+    },
+    "options": {
+      "scale_grid": [
+        1.0,
+        0.75,
+        0.5,
+        0.25,
+        0.1,
+        0.05,
+        0.02,
+        0.01,
+        0.005,
+        0.002,
+        0.001
+      ],
+      "mean_return_tolerance": 0.25,
+      "selection_score_tolerance": 0.25,
+      "rate_tolerance": 0.0,
+      "min_residual_norm": 1e-06,
+      "max_residual_norm": 0.005,
+      "active_tolerance": 1e-10
+    },
+    "trials": [
+      {
+        "scale": 1.0,
+        "validation": {
+          "episodes": 2,
+          "landing_rate": 0.0,
+          "unsafe_rate": 0.0,
+          "safe_abort_rate": 0.0,
+          "task_timeout_rate": 1.0,
+          "mean_return": -12.553098748676927,
+          "selection_score": -22.553098748676927,
+          "selection_score_model": "outcome_weighted_v28",
+          "mean_abs_relation_residual": [
+            0.0883914902806282,
+            0.1513555496931076,
+            0.012764787301421165
+          ],
+          "rows": [
+            {
+              "seed": 2000,
+              "return": -12.67634316838257,
+              "status": "TASK_TIMEOUT",
+              "steps": 700,
+              "elapsed_s": 69.99999999999322,
+              "backend": "local-spatial",
+              "stop_confirmed": true,
+              "terminal_hold_audit": {
+                "version": "terminal-hold-snapshot/1",
+                "evaluated": true,
+                "hold_verified": false,
+                "sustained_stability_claim": false,
+                "checks": {
+                  "no_contact": true,
+                  "clearance": true,
+                  "horizontal_speed": false,
+                  "vertical_speed": true,
+                  "tilt": true
+                },
+                "horizontal_speed_m_s": 0.9958542387897557,
+                "vertical_speed_m_s": -0.06078475464288449,
+                "tilt_rad": 0.046610866132742144,
+                "deck_clearance_m": 1.0087387765734324
+              }
+            },
+            {
+              "seed": 2001,
+              "return": -12.429854328971283,
+              "status": "TASK_TIMEOUT",
+              "steps": 700,
+              "elapsed_s": 69.99999999999322,
+              "backend": "local-spatial",
+              "stop_confirmed": true,
+              "terminal_hold_audit": {
+                "version": "terminal-hold-snapshot/1",
+                "evaluated": true,
+                "hold_verified": false,
+                "sustained_stability_claim": false,
+                "checks": {
+                  "no_contact": true,
+                  "clearance": true,
+                  "horizontal_speed": false,
+                  "vertical_speed": true,
+                  "tilt": false
+                },
+                "horizontal_speed_m_s": 0.8286055872013002,
+                "vertical_speed_m_s": 0.060318954010273845,
+                "tilt_rad": 0.13691954791543154,
+                "deck_clearance_m": 0.98236493458707
+              }
+            }
+          ]
+        },
+        "audit": {
+          "required": true,
+          "parameter_path_active": true,
+          "tolerance": 1e-10,
+          "actor_readout_norm": 0.745485782623291,
+          "actor_head_norm": 0.5466341376304626,
+          "critic_readout_norm": 0.4383196532726288,
+          "critic_head_norm": 0.21865826845169067
+        },
+        "residual_norm": 0.17573985823308177,
+        "outcome_guard": false,
+        "score_guard": true,
+        "residual_guard": false,
+        "accepted": false
+      },
+      {
+        "scale": 0.75,
+        "validation": {
+          "episodes": 2,
+          "landing_rate": 0.0,
+          "unsafe_rate": 0.0,
+          "safe_abort_rate": 0.0,
+          "task_timeout_rate": 1.0,
+          "mean_return": -12.60627410476362,
+          "selection_score": -22.60627410476362,
+          "selection_score_model": "outcome_weighted_v28",
+          "mean_abs_relation_residual": [
+            0.03891199454665184,
+            0.11466686427593231,
+            0.010548120364546776
+          ],
+          "rows": [
+            {
+              "seed": 2000,
+              "return": -12.700476622605095,
+              "status": "TASK_TIMEOUT",
+              "steps": 700,
+              "elapsed_s": 69.99999999999322,
+              "backend": "local-spatial",
+              "stop_confirmed": true,
+              "terminal_hold_audit": {
+                "version": "terminal-hold-snapshot/1",
+                "evaluated": true,
+                "hold_verified": false,
+                "sustained_stability_claim": false,
+                "checks": {
+                  "no_contact": true,
+                  "clearance": true,
+                  "horizontal_speed": false,
+                  "vertical_speed": true,
+                  "tilt": true
+                },
+                "horizontal_speed_m_s": 1.0366526894644146,
+                "vertical_speed_m_s": 0.05923280409997164,
+                "tilt_rad": 0.015352386553175591,
+                "deck_clearance_m": 0.9974098621491989
+              }
+            },
+            {
+              "seed": 2001,
+              "return": -12.512071586922149,
+              "status": "TASK_TIMEOUT",
+              "steps": 700,
+              "elapsed_s": 69.99999999999322,
+              "backend": "local-spatial",
+              "stop_confirmed": true,
+              "terminal_hold_audit": {
+                "version": "terminal-hold-snapshot/1",
+                "evaluated": true,
+                "hold_verified": false,
+                "sustained_stability_claim": false,
+                "checks": {
+                  "no_contact": true,
+                  "clearance": true,
+                  "horizontal_speed": false,
+                  "vertical_speed": true,
+                  "tilt": false
+                },
+                "horizontal_speed_m_s": 1.0416346266946646,
+                "vertical_speed_m_s": -0.01752670664570055,
+                "tilt_rad": 0.11946053031702882,
+                "deck_clearance_m": 1.0116650099828801
+              }
+            }
+          ]
+        },
+        "audit": {
+          "required": true,
+          "parameter_path_active": true,
+          "tolerance": 1e-10,
+          "actor_readout_norm": 0.5591143369674683,
+          "actor_head_norm": 0.5466341376304626,
+          "critic_readout_norm": 0.3287397623062134,
+          "critic_head_norm": 0.21865826845169067
+        },
+        "residual_norm": 0.12154791617176623,
+        "outcome_guard": false,
+        "score_guard": true,
+        "residual_guard": false,
+        "accepted": false
+      },
+      {
+        "scale": 0.5,
+        "validation": {
+          "episodes": 2,
+          "landing_rate": 0.0,
+          "unsafe_rate": 0.0,
+          "safe_abort_rate": 0.0,
+          "task_timeout_rate": 1.0,
+          "mean_return": -12.376441684431297,
+          "selection_score": -22.3764416844313,
+          "selection_score_model": "outcome_weighted_v28",
+          "mean_abs_relation_residual": [
+            0.03102264739573002,
+            0.08010779321193695,
+            0.010846015065908432
+          ],
+          "rows": [
+            {
+              "seed": 2000,
+              "return": -12.735133713491557,
+              "status": "TASK_TIMEOUT",
+              "steps": 700,
+              "elapsed_s": 69.99999999999322,
+              "backend": "local-spatial",
+              "stop_confirmed": true,
+              "terminal_hold_audit": {
+                "version": "terminal-hold-snapshot/1",
+                "evaluated": true,
+                "hold_verified": false,
+                "sustained_stability_claim": false,
+                "checks": {
+                  "no_contact": true,
+                  "clearance": true,
+                  "horizontal_speed": false,
+                  "vertical_speed": true,
+                  "tilt": true
+                },
+                "horizontal_speed_m_s": 1.2529010207358815,
+                "vertical_speed_m_s": 0.008057519065572977,
+                "tilt_rad": 0.019210124901649722,
+                "deck_clearance_m": 1.0127513711598062
+              }
+            },
+            {
+              "seed": 2001,
+              "return": -12.017749655371038,
+              "status": "TASK_TIMEOUT",
+              "steps": 700,
+              "elapsed_s": 69.99999999999322,
+              "backend": "local-spatial",
+              "stop_confirmed": true,
+              "terminal_hold_audit": {
+                "version": "terminal-hold-snapshot/1",
+                "evaluated": true,
+                "hold_verified": false,
+                "sustained_stability_claim": false,
+                "checks": {
+                  "no_contact": true,
+                  "clearance": true,
+                  "horizontal_speed": false,
+                  "vertical_speed": false,
+                  "tilt": true
+                },
+                "horizontal_speed_m_s": 0.9771221977720236,
+                "vertical_speed_m_s": 0.11677126388862946,
+                "tilt_rad": 0.02871493876208908,
+                "deck_clearance_m": 1.0181210994587657
+              }
+            }
+          ]
+        },
+        "audit": {
+          "required": true,
+          "parameter_path_active": true,
+          "tolerance": 1e-10,
+          "actor_readout_norm": 0.3727428913116455,
+          "actor_head_norm": 0.5466341376304626,
+          "critic_readout_norm": 0.2191598266363144,
+          "critic_head_norm": 0.21865826845169067
+        },
+        "residual_norm": 0.08658694605733684,
+        "outcome_guard": false,
+        "score_guard": true,
+        "residual_guard": false,
+        "accepted": false
+      },
+      {
+        "scale": 0.25,
+        "validation": {
+          "episodes": 2,
+          "landing_rate": 0.0,
+          "unsafe_rate": 0.0,
+          "safe_abort_rate": 0.0,
+          "task_timeout_rate": 1.0,
+          "mean_return": -12.359306489157564,
+          "selection_score": -22.359306489157564,
+          "selection_score_model": "outcome_weighted_v28",
+          "mean_abs_relation_residual": [
+            0.019263938069343567,
+            0.041730210185050964,
+            0.006812185049057007
+          ],
+          "rows": [
+            {
+              "seed": 2000,
+              "return": -12.464240741969682,
+              "status": "TASK_TIMEOUT",
+              "steps": 700,
+              "elapsed_s": 69.99999999999322,
+              "backend": "local-spatial",
+              "stop_confirmed": true,
+              "terminal_hold_audit": {
+                "version": "terminal-hold-snapshot/1",
+                "evaluated": true,
+                "hold_verified": false,
+                "sustained_stability_claim": false,
+                "checks": {
+                  "no_contact": true,
+                  "clearance": true,
+                  "horizontal_speed": false,
+                  "vertical_speed": true,
+                  "tilt": true
+                },
+                "horizontal_speed_m_s": 1.0901064570879613,
+                "vertical_speed_m_s": -0.054924938068101184,
+                "tilt_rad": 0.04186656190162231,
+                "deck_clearance_m": 1.1482904449185891
+              }
+            },
+            {
+              "seed": 2001,
+              "return": -12.254372236345448,
+              "status": "TASK_TIMEOUT",
+              "steps": 700,
+              "elapsed_s": 69.99999999999322,
+              "backend": "local-spatial",
+              "stop_confirmed": true,
+              "terminal_hold_audit": {
+                "version": "terminal-hold-snapshot/1",
+                "evaluated": true,
+                "hold_verified": false,
+                "sustained_stability_claim": false,
+                "checks": {
+                  "no_contact": true,
+                  "clearance": true,
+                  "horizontal_speed": false,
+                  "vertical_speed": true,
+                  "tilt": true
+                },
+                "horizontal_speed_m_s": 0.9416210536053217,
+                "vertical_speed_m_s": 0.07873098962649236,
+                "tilt_rad": 0.01793440881869678,
+                "deck_clearance_m": 1.011692583368053
+              }
+            }
+          ]
+        },
+        "audit": {
+          "required": true,
+          "parameter_path_active": true,
+          "tolerance": 1e-10,
+          "actor_readout_norm": 0.18637144565582275,
+          "actor_head_norm": 0.5466341376304626,
+          "critic_readout_norm": 0.1095799133181572,
+          "critic_head_norm": 0.21865826845169067
+        },
+        "residual_norm": 0.04646413258816559,
+        "outcome_guard": false,
+        "score_guard": true,
+        "residual_guard": false,
+        "accepted": false
+      },
+      {
+        "scale": 0.1,
+        "validation": {
+          "episodes": 2,
+          "landing_rate": 0.0,
+          "unsafe_rate": 0.0,
+          "safe_abort_rate": 0.0,
+          "task_timeout_rate": 1.0,
+          "mean_return": -12.417276809982601,
+          "selection_score": -22.417276809982603,
+          "selection_score_model": "outcome_weighted_v28",
+          "mean_abs_relation_residual": [
+            0.008467978797852993,
+            0.0170957762748003,
+            0.002994632115587592
+          ],
+          "rows": [
+            {
+              "seed": 2000,
+              "return": -12.496555319462773,
+              "status": "TASK_TIMEOUT",
+              "steps": 700,
+              "elapsed_s": 69.99999999999322,
+              "backend": "local-spatial",
+              "stop_confirmed": true,
+              "terminal_hold_audit": {
+                "version": "terminal-hold-snapshot/1",
+                "evaluated": true,
+                "hold_verified": false,
+                "sustained_stability_claim": false,
+                "checks": {
+                  "no_contact": true,
+                  "clearance": true,
+                  "horizontal_speed": false,
+                  "vertical_speed": true,
+                  "tilt": true
+                },
+                "horizontal_speed_m_s": 1.101030195853025,
+                "vertical_speed_m_s": 0.0580665489934621,
+                "tilt_rad": 0.06567158813215887,
+                "deck_clearance_m": 1.0160202219414207
+              }
+            },
+            {
+              "seed": 2001,
+              "return": -12.337998300502429,
+              "status": "TASK_TIMEOUT",
+              "steps": 700,
+              "elapsed_s": 69.99999999999322,
+              "backend": "local-spatial",
+              "stop_confirmed": true,
+              "terminal_hold_audit": {
+                "version": "terminal-hold-snapshot/1",
+                "evaluated": true,
+                "hold_verified": false,
+                "sustained_stability_claim": false,
+                "checks": {
+                  "no_contact": true,
+                  "clearance": true,
+                  "horizontal_speed": false,
+                  "vertical_speed": false,
+                  "tilt": true
+                },
+                "horizontal_speed_m_s": 0.9869723395318449,
+                "vertical_speed_m_s": 0.12749211363173818,
+                "tilt_rad": 0.04901491230599169,
+                "deck_clearance_m": 1.0752927406668298
+              }
+            }
+          ]
+        },
+        "audit": {
+          "required": true,
+          "parameter_path_active": true,
+          "tolerance": 1e-10,
+          "actor_readout_norm": 0.07454857975244522,
+          "actor_head_norm": 0.5466341376304626,
+          "critic_readout_norm": 0.043831966817379,
+          "critic_head_norm": 0.21865826845169067
+        },
+        "residual_norm": 0.019311655881011896,
+        "outcome_guard": false,
+        "score_guard": true,
+        "residual_guard": false,
+        "accepted": false
+      },
+      {
+        "scale": 0.05,
+        "validation": {
+          "episodes": 2,
+          "landing_rate": 0.0,
+          "unsafe_rate": 0.0,
+          "safe_abort_rate": 0.0,
+          "task_timeout_rate": 1.0,
+          "mean_return": -12.387276244283587,
+          "selection_score": -22.387276244283587,
+          "selection_score_model": "outcome_weighted_v28",
+          "mean_abs_relation_residual": [
+            0.0043920488096773624,
+            0.008601473644375801,
+            0.0015320023521780968
+          ],
+          "rows": [
+            {
+              "seed": 2000,
+              "return": -12.568875252609976,
+              "status": "TASK_TIMEOUT",
+              "steps": 700,
+              "elapsed_s": 69.99999999999322,
+              "backend": "local-spatial",
+              "stop_confirmed": true,
+              "terminal_hold_audit": {
+                "version": "terminal-hold-snapshot/1",
+                "evaluated": true,
+                "hold_verified": false,
+                "sustained_stability_claim": false,
+                "checks": {
+                  "no_contact": true,
+                  "clearance": true,
+                  "horizontal_speed": false,
+                  "vertical_speed": false,
+                  "tilt": true
+                },
+                "horizontal_speed_m_s": 1.1046719251491768,
+                "vertical_speed_m_s": -0.13759828779626937,
+                "tilt_rad": 0.03462800328659291,
+                "deck_clearance_m": 1.098779641860003
+              }
+            },
+            {
+              "seed": 2001,
+              "return": -12.2056772359572,
+              "status": "TASK_TIMEOUT",
+              "steps": 700,
+              "elapsed_s": 69.99999999999322,
+              "backend": "local-spatial",
+              "stop_confirmed": true,
+              "terminal_hold_audit": {
+                "version": "terminal-hold-snapshot/1",
+                "evaluated": true,
+                "hold_verified": false,
+                "sustained_stability_claim": false,
+                "checks": {
+                  "no_contact": true,
+                  "clearance": true,
+                  "horizontal_speed": false,
+                  "vertical_speed": false,
+                  "tilt": true
+                },
+                "horizontal_speed_m_s": 1.0729131386794084,
+                "vertical_speed_m_s": -0.1848820123500579,
+                "tilt_rad": 0.024571355881575413,
+                "deck_clearance_m": 1.0941039502206253
+              }
+            }
+          ]
+        },
+        "audit": {
+          "required": true,
+          "parameter_path_active": true,
+          "tolerance": 1e-10,
+          "actor_readout_norm": 0.03727428987622261,
+          "actor_head_norm": 0.5466341376304626,
+          "critic_readout_norm": 0.0219159834086895,
+          "critic_head_norm": 0.21865826845169067
+        },
+        "residual_norm": 0.009778674389126529,
+        "outcome_guard": false,
+        "score_guard": true,
+        "residual_guard": false,
+        "accepted": false
+      },
+      {
+        "scale": 0.02,
+        "validation": {
+          "episodes": 2,
+          "landing_rate": 0.0,
+          "unsafe_rate": 0.0,
+          "safe_abort_rate": 0.0,
+          "task_timeout_rate": 1.0,
+          "mean_return": -12.57160818368768,
+          "selection_score": -22.57160818368768,
+          "selection_score_model": "outcome_weighted_v28",
+          "mean_abs_relation_residual": [
+            0.001781162340193987,
+            0.003455215599387884,
+            0.0006176140741445124
+          ],
+          "rows": [
+            {
+              "seed": 2000,
+              "return": -12.751383822320934,
+              "status": "TASK_TIMEOUT",
+              "steps": 700,
+              "elapsed_s": 69.99999999999322,
+              "backend": "local-spatial",
+              "stop_confirmed": true,
+              "terminal_hold_audit": {
+                "version": "terminal-hold-snapshot/1",
+                "evaluated": true,
+                "hold_verified": false,
+                "sustained_stability_claim": false,
+                "checks": {
+                  "no_contact": true,
+                  "clearance": true,
+                  "horizontal_speed": false,
+                  "vertical_speed": true,
+                  "tilt": true
+                },
+                "horizontal_speed_m_s": 0.9623246327340329,
+                "vertical_speed_m_s": 0.08846403796824118,
+                "tilt_rad": 0.04708084992105287,
+                "deck_clearance_m": 1.0093553491154215
+              }
+            },
+            {
+              "seed": 2001,
+              "return": -12.391832545054426,
+              "status": "TASK_TIMEOUT",
+              "steps": 700,
+              "elapsed_s": 69.99999999999322,
+              "backend": "local-spatial",
+              "stop_confirmed": true,
+              "terminal_hold_audit": {
+                "version": "terminal-hold-snapshot/1",
+                "evaluated": true,
+                "hold_verified": false,
+                "sustained_stability_claim": false,
+                "checks": {
+                  "no_contact": true,
+                  "clearance": true,
+                  "horizontal_speed": false,
+                  "vertical_speed": false,
+                  "tilt": true
+                },
+                "horizontal_speed_m_s": 1.038365286885943,
+                "vertical_speed_m_s": 0.12587825489243726,
+                "tilt_rad": 0.03240542457378146,
+                "deck_clearance_m": 1.0710380167182076
+              }
+            }
+          ]
+        },
+        "audit": {
+          "required": true,
+          "parameter_path_active": true,
+          "tolerance": 1e-10,
+          "actor_readout_norm": 0.0149097153916955,
+          "actor_head_norm": 0.5466341376304626,
+          "critic_readout_norm": 0.008766393177211285,
+          "critic_head_norm": 0.21865826845169067
+        },
+        "residual_norm": 0.003936051481492599,
+        "outcome_guard": false,
+        "score_guard": true,
+        "residual_guard": true,
+        "accepted": false
+      },
+      {
+        "scale": 0.01,
+        "validation": {
+          "episodes": 2,
+          "landing_rate": 0.0,
+          "unsafe_rate": 0.0,
+          "safe_abort_rate": 0.0,
+          "task_timeout_rate": 1.0,
+          "mean_return": -12.680779052883445,
+          "selection_score": -22.680779052883445,
+          "selection_score_model": "outcome_weighted_v28",
+          "mean_abs_relation_residual": [
+            0.000898469181265682,
+            0.0017335901502519846,
+            0.0003098626038990915
+          ],
+          "rows": [
+            {
+              "seed": 2000,
+              "return": -12.76477475892856,
+              "status": "TASK_TIMEOUT",
+              "steps": 700,
+              "elapsed_s": 69.99999999999322,
+              "backend": "local-spatial",
+              "stop_confirmed": true,
+              "terminal_hold_audit": {
+                "version": "terminal-hold-snapshot/1",
+                "evaluated": true,
+                "hold_verified": false,
+                "sustained_stability_claim": false,
+                "checks": {
+                  "no_contact": true,
+                  "clearance": true,
+                  "horizontal_speed": false,
+                  "vertical_speed": false,
+                  "tilt": true
+                },
+                "horizontal_speed_m_s": 0.9160149223256632,
+                "vertical_speed_m_s": 0.10635407538355979,
+                "tilt_rad": 0.03894415984055863,
+                "deck_clearance_m": 1.0280422578706139
+              }
+            },
+            {
+              "seed": 2001,
+              "return": -12.596783346838329,
+              "status": "TASK_TIMEOUT",
+              "steps": 700,
+              "elapsed_s": 69.99999999999322,
+              "backend": "local-spatial",
+              "stop_confirmed": true,
+              "terminal_hold_audit": {
+                "version": "terminal-hold-snapshot/1",
+                "evaluated": true,
+                "hold_verified": false,
+                "sustained_stability_claim": false,
+                "checks": {
+                  "no_contact": true,
+                  "clearance": true,
+                  "horizontal_speed": false,
+                  "vertical_speed": true,
+                  "tilt": true
+                },
+                "horizontal_speed_m_s": 1.1986342324802748,
+                "vertical_speed_m_s": -0.042499747314881264,
+                "tilt_rad": 0.06022530379026663,
+                "deck_clearance_m": 1.0229825000782282
+              }
+            }
+          ]
+        },
+        "audit": {
+          "required": true,
+          "parameter_path_active": true,
+          "tolerance": 1e-10,
+          "actor_readout_norm": 0.00745485769584775,
+          "actor_head_norm": 0.5466341376304626,
+          "critic_readout_norm": 0.004383196588605642,
+          "critic_head_norm": 0.21865826845169067
+        },
+        "residual_norm": 0.0019770170742889523,
+        "outcome_guard": false,
+        "score_guard": true,
+        "residual_guard": true,
+        "accepted": false
+      },
+      {
+        "scale": 0.005,
+        "validation": {
+          "episodes": 2,
+          "landing_rate": 0.0,
+          "unsafe_rate": 0.0,
+          "safe_abort_rate": 0.0,
+          "task_timeout_rate": 1.0,
+          "mean_return": -12.615140057602119,
+          "selection_score": -22.61514005760212,
+          "selection_score_model": "outcome_weighted_v28",
+          "mean_abs_relation_residual": [
+            0.0004521260561887175,
+            0.0008668529917486012,
+            0.0001563753467053175
+          ],
+          "rows": [
+            {
+              "seed": 2000,
+              "return": -12.501478500687016,
+              "status": "TASK_TIMEOUT",
+              "steps": 700,
+              "elapsed_s": 69.99999999999322,
+              "backend": "local-spatial",
+              "stop_confirmed": true,
+              "terminal_hold_audit": {
+                "version": "terminal-hold-snapshot/1",
+                "evaluated": true,
+                "hold_verified": false,
+                "sustained_stability_claim": false,
+                "checks": {
+                  "no_contact": true,
+                  "clearance": true,
+                  "horizontal_speed": false,
+                  "vertical_speed": false,
+                  "tilt": true
+                },
+                "horizontal_speed_m_s": 1.1451246726383735,
+                "vertical_speed_m_s": -0.1950067928321788,
+                "tilt_rad": 0.04111339672088613,
+                "deck_clearance_m": 1.0639800959175898
+              }
+            },
+            {
+              "seed": 2001,
+              "return": -12.728801614517222,
+              "status": "TASK_TIMEOUT",
+              "steps": 700,
+              "elapsed_s": 69.99999999999322,
+              "backend": "local-spatial",
+              "stop_confirmed": true,
+              "terminal_hold_audit": {
+                "version": "terminal-hold-snapshot/1",
+                "evaluated": true,
+                "hold_verified": false,
+                "sustained_stability_claim": false,
+                "checks": {
+                  "no_contact": true,
+                  "clearance": true,
+                  "horizontal_speed": false,
+                  "vertical_speed": false,
+                  "tilt": true
+                },
+                "horizontal_speed_m_s": 1.2634195215454254,
+                "vertical_speed_m_s": -0.2855832775105273,
+                "tilt_rad": 0.04923556683483448,
+                "deck_clearance_m": 1.04862004584309
+              }
+            }
+          ]
+        },
+        "audit": {
+          "required": true,
+          "parameter_path_active": true,
+          "tolerance": 1e-10,
+          "actor_readout_norm": 0.003727428847923875,
+          "actor_head_norm": 0.5466341376304626,
+          "critic_readout_norm": 0.002191598294302821,
+          "critic_head_norm": 0.21865826845169067
+        },
+        "residual_norm": 0.0009901036961073684,
+        "outcome_guard": false,
+        "score_guard": true,
+        "residual_guard": true,
+        "accepted": false
+      },
+      {
+        "scale": 0.002,
+        "validation": {
+          "episodes": 2,
+          "landing_rate": 0.0,
+          "unsafe_rate": 0.0,
+          "safe_abort_rate": 0.0,
+          "task_timeout_rate": 1.0,
+          "mean_return": -12.781402616244867,
+          "selection_score": -22.78140261624487,
+          "selection_score_model": "outcome_weighted_v28",
+          "mean_abs_relation_residual": [
+            0.00018216673925053328,
+            0.00034750852501019835,
+            6.318763917079195e-05
+          ],
+          "rows": [
+            {
+              "seed": 2000,
+              "return": -12.93819873789151,
+              "status": "TASK_TIMEOUT",
+              "steps": 700,
+              "elapsed_s": 69.99999999999322,
+              "backend": "local-spatial",
+              "stop_confirmed": true,
+              "terminal_hold_audit": {
+                "version": "terminal-hold-snapshot/1",
+                "evaluated": true,
+                "hold_verified": false,
+                "sustained_stability_claim": false,
+                "checks": {
+                  "no_contact": true,
+                  "clearance": true,
+                  "horizontal_speed": false,
+                  "vertical_speed": false,
+                  "tilt": true
+                },
+                "horizontal_speed_m_s": 1.1231710532527759,
+                "vertical_speed_m_s": -0.20343384256182934,
+                "tilt_rad": 0.08593406919822313,
+                "deck_clearance_m": 1.0519259605436078
+              }
+            },
+            {
+              "seed": 2001,
+              "return": -12.624606494598224,
+              "status": "TASK_TIMEOUT",
+              "steps": 700,
+              "elapsed_s": 69.99999999999322,
+              "backend": "local-spatial",
+              "stop_confirmed": true,
+              "terminal_hold_audit": {
+                "version": "terminal-hold-snapshot/1",
+                "evaluated": true,
+                "hold_verified": false,
+                "sustained_stability_claim": false,
+                "checks": {
+                  "no_contact": true,
+                  "clearance": true,
+                  "horizontal_speed": false,
+                  "vertical_speed": false,
+                  "tilt": true
+                },
+                "horizontal_speed_m_s": 1.1628369329355728,
+                "vertical_speed_m_s": 0.12705861170400629,
+                "tilt_rad": 0.04817920110133149,
+                "deck_clearance_m": 1.2174786012711225
+              }
+            }
+          ]
+        },
+        "audit": {
+          "required": true,
+          "parameter_path_active": true,
+          "tolerance": 1e-10,
+          "actor_readout_norm": 0.00149097153916955,
+          "actor_head_norm": 0.5466341376304626,
+          "critic_readout_norm": 0.0008766393875703216,
+          "critic_head_norm": 0.21865826845169067
+        },
+        "residual_norm": 0.000397416121449437,
+        "outcome_guard": false,
+        "score_guard": true,
+        "residual_guard": true,
+        "accepted": false
+      },
+      {
+        "scale": 0.001,
+        "validation": {
+          "episodes": 2,
+          "landing_rate": 0.0,
+          "unsafe_rate": 0.0,
+          "safe_abort_rate": 0.0,
+          "task_timeout_rate": 1.0,
+          "mean_return": -12.532094567538458,
+          "selection_score": -22.532094567538458,
+          "selection_score_model": "outcome_weighted_v28",
+          "mean_abs_relation_residual": [
+            9.048719221027568e-05,
+            0.00017335735901724547,
+            3.121419285889715e-05
+          ],
+          "rows": [
+            {
+              "seed": 2000,
+              "return": -12.621741239328959,
+              "status": "TASK_TIMEOUT",
+              "steps": 700,
+              "elapsed_s": 69.99999999999322,
+              "backend": "local-spatial",
+              "stop_confirmed": true,
+              "terminal_hold_audit": {
+                "version": "terminal-hold-snapshot/1",
+                "evaluated": true,
+                "hold_verified": false,
+                "sustained_stability_claim": false,
+                "checks": {
+                  "no_contact": true,
+                  "clearance": true,
+                  "horizontal_speed": false,
+                  "vertical_speed": true,
+                  "tilt": true
+                },
+                "horizontal_speed_m_s": 1.0781902059955564,
+                "vertical_speed_m_s": -0.08494604611027029,
+                "tilt_rad": 0.03413689082543943,
+                "deck_clearance_m": 1.1155578121777843
+              }
+            },
+            {
+              "seed": 2001,
+              "return": -12.442447895747957,
+              "status": "TASK_TIMEOUT",
+              "steps": 700,
+              "elapsed_s": 69.99999999999322,
+              "backend": "local-spatial",
+              "stop_confirmed": true,
+              "terminal_hold_audit": {
+                "version": "terminal-hold-snapshot/1",
+                "evaluated": true,
+                "hold_verified": false,
+                "sustained_stability_claim": false,
+                "checks": {
+                  "no_contact": true,
+                  "clearance": true,
+                  "horizontal_speed": false,
+                  "vertical_speed": false,
+                  "tilt": true
+                },
+                "horizontal_speed_m_s": 1.0360267129821847,
+                "vertical_speed_m_s": 0.1261361826340788,
+                "tilt_rad": 0.04175914833593548,
+                "deck_clearance_m": 1.0717439392766204
+              }
+            }
+          ]
+        },
+        "audit": {
+          "required": true,
+          "parameter_path_active": true,
+          "tolerance": 1e-10,
+          "actor_readout_norm": 0.000745485769584775,
+          "actor_head_norm": 0.5466341376304626,
+          "critic_readout_norm": 0.0004383196937851608,
+          "critic_head_norm": 0.21865826845169067
+        },
+        "residual_norm": 0.000198027855907612,
+        "outcome_guard": false,
+        "score_guard": true,
+        "residual_guard": true,
+        "accepted": false
+      }
+    ],
+    "selected_audit": {
+      "required": true,
+      "parameter_path_active": true,
+      "tolerance": 1e-10,
+      "actor_readout_norm": 0.7468142509460449,
+      "actor_head_norm": 0.5437883734703064,
+      "critic_readout_norm": 0.2816377878189087,
+      "critic_head_norm": 0.1679561287164688
+    },
+    "environment_steps": 2048
+  },
+  "relational_health": {
+    "applicable": true,
+    "samples": 128,
+    "actor_readout_norm": 0.7468142509460449,
+    "critic_readout_norm": 0.2816377878189087,
+    "actor_delta_max_abs": 0.28576311469078064,
+    "critic_delta_max_abs": 0.15028667449951172,
+    "relation_active_on_probe": true,
+    "warning": "A zero output is flat-equivalent; nonzero output alone proves no benefit.",
+    "active": true,
+    "degenerate_to_semantic_flat": false,
+    "measured": true,
+    "adaptation_iterations": 1,
+    "adaptation_fraction_of_budget": 0.125
+  },
+  "history": [
+    {
+      "actor_loss": 0.007236166668008082,
+      "critic_loss": 2.152869552373886,
+      "entropy": 0.9568156599998474,
+      "approx_kl": 2.1216692361325507e-09,
+      "clip_fraction": 0.0,
+      "explained_variance": -0.10960485310480439,
+      "minibatches": 32.0,
+      "policy_updated": 0.0,
+      "iteration": 1,
+      "completed_episodes": 2,
+      "difficulty": 0.0,
+      "environment_steps": 818,
+      "episode_outcomes": [
+        {
+          "seed": 8380100,
+          "status": "TASK_TIMEOUT",
+          "elapsed_s": 69.99999999999322,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8380101,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 11.799999999999793,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        }
+      ],
+      "decision_dt_s": {
+        "mean": 0.09999999999999147,
+        "max": 0.10000000000000142,
+        "sum": 81.79999999999255
+      }
+    },
+    {
+      "actor_loss": -0.0009677095513325185,
+      "critic_loss": 1.7981553301215172,
+      "entropy": 0.9568156599998474,
+      "approx_kl": 3.3047399400354394e-09,
+      "clip_fraction": 0.0,
+      "explained_variance": -0.048289569972153945,
+      "minibatches": 32.0,
+      "policy_updated": 0.0,
+      "iteration": 2,
+      "completed_episodes": 4,
+      "difficulty": 0.0,
+      "environment_steps": 1636,
+      "episode_outcomes": [
+        {
+          "seed": 8380200,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 11.799999999999793,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        },
+        {
+          "seed": 8380201,
+          "status": "TASK_TIMEOUT",
+          "elapsed_s": 69.99999999999322,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "active"
+        }
+      ],
+      "decision_dt_s": {
+        "mean": 0.09999999999999147,
+        "max": 0.10000000000000142,
+        "sum": 81.799999999993
+      }
+    },
+    {
+      "actor_loss": 0.019094400107860565,
+      "critic_loss": 1.5497978925704956,
+      "entropy": 0.9565656185150146,
+      "approx_kl": 0.07963616633787751,
+      "clip_fraction": 0.369140625,
+      "explained_variance": 0.20190721556249913,
+      "minibatches": 2.0,
+      "policy_updated": 1.0,
+      "iteration": 3,
+      "completed_episodes": 6,
+      "difficulty": 0.15000000000000002,
+      "environment_steps": 2455,
+      "episode_outcomes": [
+        {
+          "seed": 8380300,
+          "status": "TASK_TIMEOUT",
+          "elapsed_s": 69.99999999999322,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.07500000000000001,
+          "role": "bridge_replay"
+        },
+        {
+          "seed": 8380301,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 11.89999999999979,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "easy_replay"
+        }
+      ],
+      "decision_dt_s": {
+        "mean": 0.09999999999999147,
+        "max": 0.10000000000000142,
+        "sum": 81.89999999999254
+      }
+    },
+    {
+      "actor_loss": 0.02321403194218874,
+      "critic_loss": 0.884112536907196,
+      "entropy": 0.9566695690155029,
+      "approx_kl": 0.018291770946234465,
+      "clip_fraction": 0.19921875,
+      "explained_variance": 0.1047877177971579,
+      "minibatches": 2.0,
+      "policy_updated": 1.0,
+      "iteration": 4,
+      "completed_episodes": 8,
+      "difficulty": 0.4,
+      "environment_steps": 3855,
+      "episode_outcomes": [
+        {
+          "seed": 8380400,
+          "status": "TASK_TIMEOUT",
+          "elapsed_s": 69.99999999999322,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.4,
+          "role": "active"
+        },
+        {
+          "seed": 8380401,
+          "status": "TASK_TIMEOUT",
+          "elapsed_s": 69.99999999999322,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.4,
+          "role": "active"
+        }
+      ],
+      "decision_dt_s": {
+        "mean": 0.09999999999999032,
+        "max": 0.10000000000000142,
+        "sum": 139.99999999998386
+      }
+    },
+    {
+      "actor_loss": 0.009175502695143223,
+      "critic_loss": 0.7374926090240479,
+      "entropy": 0.9585148692131042,
+      "approx_kl": 0.013796187937259674,
+      "clip_fraction": 0.1640625,
+      "explained_variance": 0.14652052884386546,
+      "minibatches": 5.0,
+      "policy_updated": 1.0,
+      "iteration": 5,
+      "completed_episodes": 10,
+      "difficulty": 0.65,
+      "environment_steps": 5255,
+      "episode_outcomes": [
+        {
+          "seed": 8380500,
+          "status": "TASK_TIMEOUT",
+          "elapsed_s": 69.99999999999322,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.65,
+          "role": "active"
+        },
+        {
+          "seed": 8380501,
+          "status": "TASK_TIMEOUT",
+          "elapsed_s": 69.99999999999322,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.65,
+          "role": "active"
+        }
+      ],
+      "decision_dt_s": {
+        "mean": 0.09999999999999032,
+        "max": 0.10000000000000142,
+        "sum": 139.99999999998386
+      }
+    },
+    {
+      "actor_loss": 0.019240972552714602,
+      "critic_loss": 0.6886378015790667,
+      "entropy": 0.9607762183461871,
+      "approx_kl": 0.014589787627171193,
+      "clip_fraction": 0.19415922622595513,
+      "explained_variance": 0.1842243287117281,
+      "minibatches": 7.0,
+      "policy_updated": 1.0,
+      "iteration": 6,
+      "completed_episodes": 12,
+      "difficulty": 0.9,
+      "environment_steps": 6655,
+      "episode_outcomes": [
+        {
+          "seed": 8380600,
+          "status": "TASK_TIMEOUT",
+          "elapsed_s": 69.99999999999322,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.45,
+          "role": "bridge_replay"
+        },
+        {
+          "seed": 8380601,
+          "status": "TASK_TIMEOUT",
+          "elapsed_s": 69.99999999999322,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 0.0,
+          "role": "easy_replay"
+        }
+      ],
+      "decision_dt_s": {
+        "mean": 0.09999999999999032,
+        "max": 0.10000000000000142,
+        "sum": 139.99999999998386
+      }
+    },
+    {
+      "actor_loss": -0.012713824609471928,
+      "critic_loss": 0.7942610901026499,
+      "entropy": 0.9648015953245617,
+      "approx_kl": 0.017063541093929893,
+      "clip_fraction": 0.18934594768853413,
+      "explained_variance": 0.24157480683996013,
+      "minibatches": 21.0,
+      "policy_updated": 1.0,
+      "iteration": 7,
+      "completed_episodes": 14,
+      "difficulty": 1.0,
+      "environment_steps": 7784,
+      "episode_outcomes": [
+        {
+          "seed": 8380700,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 42.89999999999776,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 1.0,
+          "role": "active"
+        },
+        {
+          "seed": 8380701,
+          "status": "TASK_TIMEOUT",
+          "elapsed_s": 69.99999999999322,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 1.0,
+          "role": "active"
+        }
+      ],
+      "decision_dt_s": {
+        "mean": 0.09999999999999201,
+        "max": 0.10000000000000142,
+        "sum": 112.89999999998977
+      }
+    },
+    {
+      "actor_loss": -0.0036665683146566153,
+      "critic_loss": 1.484203152358532,
+      "entropy": 0.9688925345738729,
+      "approx_kl": 0.002583991537297455,
+      "clip_fraction": 0.02000093029346317,
+      "explained_variance": 0.4363786668785439,
+      "minibatches": 24.0,
+      "policy_updated": 1.0,
+      "iteration": 8,
+      "completed_episodes": 16,
+      "difficulty": 1.0,
+      "environment_steps": 8506,
+      "validation": {
+        "episodes": 2,
+        "landing_rate": 0.0,
+        "unsafe_rate": 0.0,
+        "safe_abort_rate": 0.5,
+        "task_timeout_rate": 0.5,
+        "mean_return": -13.918934716398839,
+        "selection_score": -68.91893471639884,
+        "selection_score_model": "outcome_weighted_v28",
+        "mean_abs_relation_residual": [
+          0.08744605630636215,
+          0.09550498425960541,
+          0.02177659049630165
+        ],
+        "rows": [
+          {
+            "seed": 2000,
+            "return": -12.69838205977341,
+            "status": "TASK_TIMEOUT",
+            "steps": 700,
+            "elapsed_s": 69.99999999999322,
+            "backend": "local-spatial",
+            "stop_confirmed": true,
+            "terminal_hold_audit": {
+              "version": "terminal-hold-snapshot/1",
+              "evaluated": true,
+              "hold_verified": false,
+              "sustained_stability_claim": false,
+              "checks": {
+                "no_contact": true,
+                "clearance": true,
+                "horizontal_speed": false,
+                "vertical_speed": true,
+                "tilt": true
+              },
+              "horizontal_speed_m_s": 0.9876855461952193,
+              "vertical_speed_m_s": -0.014990625256213346,
+              "tilt_rad": 0.03034237330161195,
+              "deck_clearance_m": 0.9977949898647707
+            }
+          },
+          {
+            "seed": 2001,
+            "return": -15.139487373024268,
+            "status": "SAFE_ABORT",
+            "steps": 140,
+            "elapsed_s": 13.999999999999746,
+            "backend": "local-spatial",
+            "stop_confirmed": true,
+            "terminal_hold_audit": {
+              "version": "terminal-hold-snapshot/1",
+              "evaluated": true,
+              "hold_verified": true,
+              "sustained_stability_claim": false,
+              "checks": {
+                "no_contact": true,
+                "clearance": true,
+                "horizontal_speed": true,
+                "vertical_speed": true,
+                "tilt": true
+              },
+              "horizontal_speed_m_s": 0.0003681265717908841,
+              "vertical_speed_m_s": 0.00014417891449399137,
+              "tilt_rad": 0.01800752975015706,
+              "deck_clearance_m": 1.6678738306992567
+            }
+          }
+        ]
+      },
+      "episode_outcomes": [
+        {
+          "seed": 8380800,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 33.89999999999955,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 1.0,
+          "role": "active"
+        },
+        {
+          "seed": 8380801,
+          "status": "SAFE_ABORT",
+          "elapsed_s": 38.299999999998676,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "difficulty": 1.0,
+          "role": "active"
+        }
+      ],
+      "decision_dt_s": {
+        "mean": 0.09999999999999755,
+        "max": 0.10000000000000142,
+        "sum": 72.19999999999767
+      }
+    }
+  ],
+  "wall_seconds": 83.79384113300148,
+  "comparison_factors": [
+    "state_representation",
+    "causal_masked_pretraining",
+    "staged_graph_adaptation",
+    "guarded_relation_only_ppo",
+    "validation_readout_calibration"
+  ]
+}

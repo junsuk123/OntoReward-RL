@@ -151,8 +151,10 @@ def test_extras_are_opt_in_and_never_shift_the_reference_core():
         assert set(extra).isdisjoint(core)
         assert spec.registry(axes)["sha256"] != spec.registry(
             axes, extras=True)["sha256"]
-    # The active 3D contract: the derived core plus the transport-delay extras.
-    assert len(spec.field_names(spec.SPATIAL_AXES, extras=True)) == 41
+    # The active 3D contract: the derived core plus the declared 3D extras
+    # (capture-vs-now bearing per axis, transport age, disturbance per axis
+    # and vertically).
+    assert len(spec.field_names(spec.SPATIAL_AXES, extras=True)) == 44
 
 
 def test_normalize_and_decode_are_inverses_on_both_axis_counts():
@@ -254,15 +256,20 @@ def test_the_unified_contract_builds_one_reference_plane_per_axis():
             observation, *_ = env.step(np.zeros(3))
     finally:
         env.close()
+    from ontology_rgat.landing.ontology import SPATIAL_EXTENSIONS, schema
+
+    ontology = schema(SPATIAL_EXTENSIONS)
     graphs = np.asarray(observation.graph.X)
-    assert graphs.shape == (len(cfg.axes), 9, len(FEATURE_CHANNELS))
+    assert graphs.shape == (len(cfg.axes), ontology.node_count,
+                            len(FEATURE_CHANNELS))
     for plane in graphs:
         # `bias` is the constant channel and `typeId` the node index; a
         # positional fill overwrites both.
         assert np.allclose(plane[:, FEATURE_CHANNELS.index("bias")], 1.0)
         np.testing.assert_allclose(
             plane[:, FEATURE_CHANNELS.index("typeId")],
-            np.arange(1, 10) / 9, atol=1e-6)
+            np.arange(1, ontology.node_count + 1) / ontology.node_count,
+            atol=1e-6)
         # Row 2 is DroneTranslation; its validity channel is a validity flag.
         assert plane[2, FEATURE_CHANNELS.index("validity")] == 1.0
     assert np.isfinite(graphs).all() and np.abs(graphs).max() <= 1.0
@@ -295,7 +302,7 @@ def test_head_geometry_is_implied_by_the_axis_count():
             planar.graph_planes) == (26, 2, 1, 1)
     spatial = head_geometry(SPATIAL_AXES, extras=True)
     assert (spatial.packet_dim, spatial.action_dim, spatial.descent_axis,
-            spatial.graph_planes) == (41, 3, 2, 2)
+            spatial.graph_planes) == (44, 3, 2, 2)
     # The descent command is always the last action component.
     for axes in (PLANAR_AXES, SPATIAL_AXES):
         geometry = head_geometry(axes)
@@ -316,3 +323,176 @@ def test_the_spatial_head_is_built_from_the_derived_geometry():
     assert agent.actor.descent_axis == geometry.descent_axis
     assert agent.actor.log_std.shape == (geometry.action_dim,)
     assert len(cfg.packet_fields) == geometry.packet_dim
+
+
+def _graph_blind_fields(fields, build, base):
+    """Packet fields that provably never change the graph."""
+    import numpy as np
+
+    reference = np.asarray(build(base))
+    blind = []
+    for index, name in enumerate(fields):
+        moved = False
+        for delta in (0.17, -0.23, 0.41):
+            probe = np.array(base, dtype=np.float32)
+            probe[index] = np.clip(probe[index] + delta, -0.98, 0.98)
+            if probe[index] == base[index]:
+                continue
+            if not np.array_equal(np.asarray(build(probe)), reference):
+                moved = True
+                break
+        if not moved:
+            blind.append(name)
+    return blind
+
+
+def test_3d_gives_the_baseline_no_information_the_graph_arms_cannot_see():
+    """The confound that would have hidden the proposed method's advantage.
+
+    ``ppo_semantic_flat`` and ``ppo_ontology_rgat`` read the graph alone
+    (``self.raw(graphs.flatten(1))``); only ``ppo_vector_canonical`` reads the
+    packet. So a packet field absent from the context rows is information the
+    BASELINE holds exclusively. Before the ontology was extended, 3D had six
+    such fields against the planar task's two, and the three extra ones --
+    capture-vs-now bearing per axis and the transport age -- were exactly the
+    quantities describing what 3D adds. The baseline would have been handed the
+    new phenomena and the proposed arm denied them.
+
+    What may remain blind is the planar task's own inherited set: the
+    policy-memory fields, which upstream's nine rows do not read either.
+    """
+    import numpy as np
+    from dataclasses import replace
+
+    from ontology_rgat.spatial.context import axis_context_graphs
+    from ontology_rgat.spatial.core import REFERENCE_SCHEMA
+    from ontology_rgat.spatial.environment import SpatialLandingEnv
+
+    cfg = replace(SpatialConfig(), schema=REFERENCE_SCHEMA)
+    env = SpatialLandingEnv(cfg)
+    try:
+        observation, _ = env.reset(seed=3001)
+        for _ in range(15):
+            observation, *_ = env.step(np.zeros(3))
+    finally:
+        env.close()
+    blind = _graph_blind_fields(
+        list(cfg.packet_fields),
+        lambda values: axis_context_graphs(values, cfg),
+        np.asarray(observation.packet.values, dtype=np.float32))
+    assert set(blind) <= {"previousAction_x", "previousAction_y",
+                          "previousNormalizedActionZ"}, blind
+    # The quantities describing what 3D adds must all reach the graph.
+    for name in ("estimatedBearing_x", "estimatedBearing_y",
+                 "opticalTransportAge", "disturbanceEstimate_x",
+                 "disturbanceEstimate_y", "disturbanceEstimateZ"):
+        assert name in cfg.packet_fields and name not in blind, name
+
+
+def test_the_spatial_ontology_extends_the_planar_one_without_disturbing_it():
+    from ontology_rgat.landing.ontology import (
+        BASE_NODES, PLANAR_EXTENSIONS, SPATIAL_EXTENSIONS, schema)
+    from ontology_rgat.two_axis.ontology_v28 import (
+        GRAPH_EDGES, GRAPH_SCHEMA_HASH, NODE_NAMES, READOUT_GROUPS, SCHEMA_VERSION)
+    from ontology_rgat.landing.ontology import schema_hash
+    from ontology_rgat.landing.plane_graph import FEATURE_CHANNELS
+
+    planar = schema(PLANAR_EXTENSIONS)
+    assert planar.node_names == NODE_NAMES == BASE_NODES
+    assert planar.edges == GRAPH_EDGES
+    assert planar.readout_groups == READOUT_GROUPS
+    # The ported contract's structure digest must not move.
+    assert schema_hash(planar, feature_channels=FEATURE_CHANNELS,
+                       version=SCHEMA_VERSION,
+                       decoding="python-causal-v3-smooth-v28") == GRAPH_SCHEMA_HASH
+
+    spatial = schema(SPATIAL_EXTENSIONS)
+    assert spatial.node_names[:len(BASE_NODES)] == BASE_NODES
+    assert spatial.extensions == ("DisturbanceEstimate", "MeasurementLatency")
+    # Indices the actor depends on must not shift.
+    assert spatial.node_names.index("DescentEligibility") == 7
+    # An extension joins an existing readout group; there are still four.
+    assert len(spatial.readout_groups) == len(READOUT_GROUPS) == 4
+    assert set(spatial.declared_edges) > set(planar.declared_edges)
+
+
+def test_every_declared_ontology_extension_has_a_context_row():
+    """A node with no row would be nine zeros the attention still spends on."""
+    from ontology_rgat.landing.ontology import EXTENSION_NAMES
+    from ontology_rgat.landing.plane_graph import EXTENSION_ROWS
+
+    assert set(EXTENSION_NAMES) == set(EXTENSION_ROWS)
+
+
+def test_both_routes_price_sustained_body_rate_in_the_running_term():
+    """Angular rate must cost something while it is being held, in BOTH routes.
+
+    It already appears inside ``readiness``, but readiness is paid as a
+    difference, so the sum telescopes to the endpoint and a vehicle that spins
+    for the whole approach pays nothing for it. That is what let the 3D
+    policies sit outside the terminal-descent corridor, whose ``settled``
+    condition is a body-rate limit: measured on the run1 checkpoints, the rate
+    condition fails on 61-100 % of in-band steps while the tilt condition
+    passes on 69-100 %.
+
+    The weight lives in landing/terminal.py so a dimension study keeps one
+    objective; this checks both routes actually read it and that the term is
+    in ``running``, not in a telescoping difference.
+    """
+    import math
+    from dataclasses import replace
+
+    import numpy as np
+
+    from ontology_rgat.landing.terminal import REFERENCE_SPIN_WEIGHT
+    from ontology_rgat.spatial.core import SpatialConfig
+    from ontology_rgat.spatial.environment import Evaluator, Truth
+    from ontology_rgat.two_axis.config import RewardConfig
+    from ontology_rgat.two_axis.reward import compute_reward
+
+    assert RewardConfig().spin_weight == REFERENCE_SPIN_WEIGHT
+    # Shipped off: weight 1.0 was trained and lost (see landing/terminal.py).
+    # The wiring still has to be symmetric for the day it is raised, so the
+    # comparison below forces a nonzero weight instead of the default.
+    assert REFERENCE_SPIN_WEIGHT == 0.0, "raising this needs a trained comparison"
+    weight = 1.0
+
+    # 2D: the same state, spinning at the touchdown limit versus still.
+    common = dict(ex_true_m=0.2, h_true_m=1.0, measured_bearing_rad=0.05,
+                  bearing_valid=True, normalized_policy_action=np.zeros(2),
+                  fov_rad=1.2, dt_s=0.1, terminal_reason=None,
+                  config=replace(RewardConfig(), spin_weight=weight),
+                  previous_goal_cost=0.0,
+                  touchdown_pitch_rate_rad_s=math.radians(10.0))
+    still = compute_reward(pitch_rate_rad_s=0.0, **common)
+    spinning = compute_reward(pitch_rate_rad_s=math.radians(10.0), **common)
+    assert spinning.spin_cost > still.spin_cost == 0.0
+    assert spinning.running < still.running, (spinning.running, still.running)
+
+    # 3D: same comparison through the evaluator's own components.
+    cfg = SpatialConfig()
+    import ontology_rgat.spatial.environment as spatial_env
+
+    def state(rate):
+        return Truth(relative_position=np.array([0.2, 0.0, 1.0]),
+                     relative_velocity=np.zeros(3), roll_pitch=np.zeros(2),
+                     angular_rate=np.array([rate, 0.0, 0.0]), contact=False)
+    kwargs = dict(elapsed=1.0, dt=cfg.dt, action=np.zeros(3),
+                  safety=type("S", (), dict(inhibited=False, abort=False))(),
+                  abort_elapsed=0.0, bearings=np.zeros(2), visible=True)
+    original = spatial_env.REFERENCE_SPIN_WEIGHT
+    spatial_env.REFERENCE_SPIN_WEIGHT = weight
+    try:
+        quiet = Evaluator(cfg)
+        quiet.reset(state(0.0))
+        _, _, quiet_parts = quiet.evaluate(state(0.0), **kwargs)
+        fast = Evaluator(cfg)
+        fast.reset(state(cfg.touchdown_rate))
+        _, _, fast_parts = fast.evaluate(state(cfg.touchdown_rate), **kwargs)
+    finally:
+        spatial_env.REFERENCE_SPIN_WEIGHT = original
+    assert fast_parts["spin"] > quiet_parts["spin"] == 0.0
+    assert fast_parts["running"] < quiet_parts["running"]
+
+    # Same body rate, in units of each route's own limit, costs the same.
+    assert math.isclose(fast_parts["spin"], spinning.spin_cost, rel_tol=1e-9)

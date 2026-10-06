@@ -31,15 +31,25 @@ def pretrain_causal_encoder(agent, config, *, seed, env_factory=TwoAxisLandingEn
         close=getattr(env,'close',None)
         if close is not None:close()
     samples = torch.as_tensor(np.stack(states), dtype=torch.float32, device=agent.device)
-    # Spatial v9 has two signed ENU projections, each retaining the same
-    # 9x12 schema and shared encoder. They are same-time causal samples,
-    # not additional environment interactions or cross-plane target labels.
+    encoder = agent.actor.encoder
+    # The spatial task has one signed ENU projection per horizontal axis, each
+    # retaining the schema and the shared encoder. They are same-time causal
+    # samples, not additional environment interactions or cross-plane targets.
+    # Node count comes from the encoder, because the spatial ontology declares
+    # extension nodes the planar one does not have.
+    nodes, channels = encoder.node_count, samples.shape[-1]
     if samples.ndim == 4:
-        samples = samples.reshape(-1,9,12)
+        samples = samples.reshape(-1, nodes, channels)
+    if samples.shape[1:] != (nodes, channels):
+        raise ValueError(
+            f"pretraining samples are {tuple(samples.shape[1:])}, but the "
+            f"encoder declares {nodes} nodes")
+    # Reconstruct the nine semantic channels; remainingTime/bias/typeId are
+    # constants, so masking them would teach nothing.
+    reconstructed = channels - 3
     with torch.random.fork_rng(devices=[]):
         torch.manual_seed(seed+7_000_001)
-        decoder = nn.Linear(settings.hidden_dimension, 9).to(agent.device)
-    encoder = agent.actor.encoder
+        decoder = nn.Linear(settings.hidden_dimension, reconstructed).to(agent.device)
     optimizer = torch.optim.Adam(list(encoder.parameters()) + list(decoder.parameters()), lr=1e-3)
     generator = torch.Generator(device=agent.device).manual_seed(seed+7_000_002)
     history = []
@@ -48,12 +58,14 @@ def pretrain_causal_encoder(agent, config, *, seed, env_factory=TwoAxisLandingEn
         order = torch.randperm(len(samples), generator=generator, device=agent.device)
         for indices in order.split(128):
             target = samples[indices]
-            mask = torch.rand(target[:,:,:9].shape, generator=generator, device=agent.device) < .25
+            mask = torch.rand(target[:,:,:reconstructed].shape,
+                              generator=generator, device=agent.device) < .25
             mask[:,0,0] |= ~mask.flatten(1).any(1)
             masked = target.clone()
-            masked[:,:,:9] = torch.where(mask, 0, target[:,:,:9])
+            masked[:,:,:reconstructed] = torch.where(
+                mask, 0, target[:,:,:reconstructed])
             prediction = decoder(encoder.node_embeddings(masked))
-            loss = ((prediction-target[:,:,:9])[mask]**2).mean()
+            loss = ((prediction-target[:,:,:reconstructed])[mask]**2).mean()
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
             nn.utils.clip_grad_norm_(list(encoder.parameters()) + list(decoder.parameters()), 1)

@@ -1,0 +1,807 @@
+Starting kit application with the following args:  ['/home/j/isaacsim/_build/linux-x86_64/release/exts/isaacsim.simulation_app/isaacsim/simulation_app/simulation_app.py', '/home/j/isaacsim/_build/linux-x86_64/release/apps/isaacsim.exp.base.python.kit', '--/app/tokens/exe-path=/home/j/isaacsim/_build/linux-x86_64/release/kit', '--/persistent/app/viewport/displayOptions=3094', '--/rtx/materialDb/syncLoads=True', '--/rtx/hydra/materialSyncLoads=True', '--/omni.kit.plugin/syncUsdLoads=True', '--/app/renderer/resolution/width=960', '--/app/renderer/resolution/height=540', '--/app/window/width=1440', '--/app/window/height=900', '--/renderer/multiGpu/enabled=False', '--/app/fastShutdown=True', '--/app/installSignalHandlers=0', '--ext-folder', '/home/j/isaacsim/_build/linux-x86_64/release/exts', '--ext-folder', '/home/j/isaacsim/_build/linux-x86_64/release/apps', '--/physics/cudaDevice=0', '--/plugins/carb.tasking.plugin/threadCount=20', '--/plugins/omni.tbb.globalcontrol/maxThreadCount=20', '--portable']
+Passing the following args to the base kit application:  ['--config', '/home/j/SynologyDrive/junsuk/학술대회/CICS2026/Ontology_RGAT_UAV_RL_ISAAC_PX4/Ontology_RGAT_UAV_RL_ISAAC_PX4/config/spatial-isaac-system-v9.yaml', '--viewport-pair-index', '0']
+[Info] [carb] Logging to file: /home/j/.cache/packman/chk/kit-kernel/107.3.3+isaac.229672.69cbf6ad.gl.manylinux_2_35_x86_64.release/logs/Kit/Isaac-Sim Python/5.1/kit_20261006_113809.log
+2026-10-06T02:38:09Z [3ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: '/home/j/.cache/packman/chk/kit-kernel/107.3.3+isaac.229672.69cbf6ad.gl.manylinux_2_35_x86_64.release/data/Kit/Isaac-Sim Python/5.1/cd8c6651-5c90-49a8-c0ac7b9d-5b08e648.dmp'
+2026-10-06T02:38:09Z [4ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: '/home/j/.cache/packman/chk/kit-kernel/107.3.3+isaac.229672.69cbf6ad.gl.manylinux_2_35_x86_64.release/data/Kit/Isaac-Sim Python/5.1/7e4d5ee6-4ec1-4810-ba514d8e-e371c876.dmp'
+2026-10-06T02:38:09Z [5ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: '/home/j/.cache/packman/chk/kit-kernel/107.3.3+isaac.229672.69cbf6ad.gl.manylinux_2_35_x86_64.release/data/Kit/Isaac-Sim Python/5.1/d15c6cd5-d960-448f-0cdcdaba-264a9837.dmp'
+2026-10-06T02:38:09Z [5ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: '/home/j/.cache/packman/chk/kit-kernel/107.3.3+isaac.229672.69cbf6ad.gl.manylinux_2_35_x86_64.release/data/Kit/Isaac-Sim Python/5.1/17055d11-c0f1-4977-6d3abba6-44b9f961.dmp'
+2026-10-06T02:38:09Z [6ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: '/home/j/.cache/packman/chk/kit-kernel/107.3.3+isaac.229672.69cbf6ad.gl.manylinux_2_35_x86_64.release/data/Kit/Isaac-Sim Python/5.1/f10e53b5-9d4a-45a9-cc28639b-52b0f497.dmp'
+2026-10-06T02:38:09Z [6ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: '/home/j/.cache/packman/chk/kit-kernel/107.3.3+isaac.229672.69cbf6ad.gl.manylinux_2_35_x86_64.release/data/Kit/Isaac-Sim Python/5.1/217e93af-7fbb-401c-6eca6c8a-42ec8ee6.dmp'
+2026-10-06T02:38:09Z [6ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: '/home/j/.cache/packman/chk/kit-kernel/107.3.3+isaac.229672.69cbf6ad.gl.manylinux_2_35_x86_64.release/data/Kit/Isaac-Sim Python/5.1/56819d66-b44f-4535-2f37e59a-606467a9.dmp'
+2026-10-06T02:38:09Z [7ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: '/home/j/.cache/packman/chk/kit-kernel/107.3.3+isaac.229672.69cbf6ad.gl.manylinux_2_35_x86_64.release/data/Kit/Isaac-Sim Python/5.1/9dd4bf59-4da5-45b0-0718feb0-1d1df1aa.dmp'
+2026-10-06T02:38:09Z [7ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: '/home/j/.cache/packman/chk/kit-kernel/107.3.3+isaac.229672.69cbf6ad.gl.manylinux_2_35_x86_64.release/data/Kit/Isaac-Sim Python/5.1/e01cedea-7925-4ab2-9abc8780-540b62bd.dmp'
+2026-10-06T02:38:09Z [7ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: '/home/j/.cache/packman/chk/kit-kernel/107.3.3+isaac.229672.69cbf6ad.gl.manylinux_2_35_x86_64.release/data/Kit/Isaac-Sim Python/5.1/b8a31b08-d16f-4fa2-04f807b6-46ab6599.dmp'
+2026-10-06T02:38:09Z [8ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: '/home/j/.cache/packman/chk/kit-kernel/107.3.3+isaac.229672.69cbf6ad.gl.manylinux_2_35_x86_64.release/data/Kit/Isaac-Sim Python/5.1/bdc67741-f487-42cd-0438feb6-af5f2d23.dmp'
+2026-10-06T02:38:09Z [8ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: '/home/j/.cache/packman/chk/kit-kernel/107.3.3+isaac.229672.69cbf6ad.gl.manylinux_2_35_x86_64.release/data/Kit/Isaac-Sim Python/5.1/2a726f25-31af-434e-0e1147b1-8d996c63.dmp'
+2026-10-06T02:38:09Z [9ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: '/home/j/.cache/packman/chk/kit-kernel/107.3.3+isaac.229672.69cbf6ad.gl.manylinux_2_35_x86_64.release/data/Kit/Isaac-Sim Python/5.1/666b0d98-f66b-4096-d0c65280-9d13b587.dmp'
+2026-10-06T02:38:09Z [9ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: '/home/j/.cache/packman/chk/kit-kernel/107.3.3+isaac.229672.69cbf6ad.gl.manylinux_2_35_x86_64.release/data/Kit/Isaac-Sim Python/5.1/0e639710-499b-4952-4765d283-e3536456.dmp'
+2026-10-06T02:38:09Z [9ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: '/home/j/.cache/packman/chk/kit-kernel/107.3.3+isaac.229672.69cbf6ad.gl.manylinux_2_35_x86_64.release/data/Kit/Isaac-Sim Python/5.1/3d74a719-6b86-4fcf-34ce5cac-2805482a.dmp'
+2026-10-06T02:38:09Z [10ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: '/home/j/.cache/packman/chk/kit-kernel/107.3.3+isaac.229672.69cbf6ad.gl.manylinux_2_35_x86_64.release/data/Kit/Isaac-Sim Python/5.1/8e22a2fd-bd8e-412d-f90bd4a5-a4e21eb7.dmp'
+2026-10-06T02:38:09Z [10ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: '/home/j/.cache/packman/chk/kit-kernel/107.3.3+isaac.229672.69cbf6ad.gl.manylinux_2_35_x86_64.release/data/Kit/Isaac-Sim Python/5.1/8a713b11-277f-4ef3-6a51cb83-c5381a24.dmp'
+2026-10-06T02:38:09Z [10ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: '/home/j/.cache/packman/chk/kit-kernel/107.3.3+isaac.229672.69cbf6ad.gl.manylinux_2_35_x86_64.release/data/Kit/Isaac-Sim Python/5.1/19439184-86ed-461e-10a1c08e-fee726ed.dmp'
+2026-10-06T02:38:09Z [11ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: '/home/j/.cache/packman/chk/kit-kernel/107.3.3+isaac.229672.69cbf6ad.gl.manylinux_2_35_x86_64.release/data/Kit/Isaac-Sim Python/5.1/cd3591c6-7a49-4856-8ea58c90-1a6e23e2.dmp'
+2026-10-06T02:38:09Z [11ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: '/home/j/.cache/packman/chk/kit-kernel/107.3.3+isaac.229672.69cbf6ad.gl.manylinux_2_35_x86_64.release/data/Kit/Isaac-Sim Python/5.1/c1af14f3-be16-4486-367759a4-57b59142.dmp'
+2026-10-06T02:38:09Z [12ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: '/home/j/.cache/packman/chk/kit-kernel/107.3.3+isaac.229672.69cbf6ad.gl.manylinux_2_35_x86_64.release/data/Kit/Isaac-Sim Python/5.1/237d7458-0826-444a-a33000b1-80a9d041.dmp'
+2026-10-06T02:38:09Z [12ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: '/home/j/.cache/packman/chk/kit-kernel/107.3.3+isaac.229672.69cbf6ad.gl.manylinux_2_35_x86_64.release/data/Kit/Isaac-Sim Python/5.1/4d1c383a-cc47-491c-20a8bc8c-f5bc05f8.dmp'
+2026-10-06T02:38:09Z [14ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: '/home/j/.cache/packman/chk/kit-kernel/107.3.3+isaac.229672.69cbf6ad.gl.manylinux_2_35_x86_64.release/data/Kit/Isaac-Sim Python/5.1/eea6af74-6da3-4c4f-1c2de1af-7efb16f9.dmp'
+2026-10-06T02:38:09Z [14ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: '/home/j/.cache/packman/chk/kit-kernel/107.3.3+isaac.229672.69cbf6ad.gl.manylinux_2_35_x86_64.release/data/Kit/Isaac-Sim Python/5.1/5740b6f2-c214-40a9-dc5e738b-0f0b2c24.dmp'
+2026-10-06T02:38:09Z [15ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: '/home/j/.cache/packman/chk/kit-kernel/107.3.3+isaac.229672.69cbf6ad.gl.manylinux_2_35_x86_64.release/data/Kit/Isaac-Sim Python/5.1/5c4f443b-09c8-4a17-bec9d79c-47309954.dmp'
+2026-10-06T02:38:09Z [15ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: '/home/j/.cache/packman/chk/kit-kernel/107.3.3+isaac.229672.69cbf6ad.gl.manylinux_2_35_x86_64.release/data/Kit/Isaac-Sim Python/5.1/5252b583-471f-4517-74edff9f-f5267fee.dmp'
+2026-10-06T02:38:09Z [16ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: '/home/j/.cache/packman/chk/kit-kernel/107.3.3+isaac.229672.69cbf6ad.gl.manylinux_2_35_x86_64.release/data/Kit/Isaac-Sim Python/5.1/add550cc-472a-4e4b-931ef18d-8ca320e9.dmp'
+2026-10-06T02:38:09Z [16ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: '/home/j/.cache/packman/chk/kit-kernel/107.3.3+isaac.229672.69cbf6ad.gl.manylinux_2_35_x86_64.release/data/Kit/Isaac-Sim Python/5.1/cd5a7486-f613-4051-c542bf97-45dbbaa4.dmp'
+2026-10-06T02:38:09Z [17ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: '/home/j/.cache/packman/chk/kit-kernel/107.3.3+isaac.229672.69cbf6ad.gl.manylinux_2_35_x86_64.release/data/Kit/Isaac-Sim Python/5.1/785284b6-9e5b-45ec-44ed72a4-78f5a41a.dmp'
+2026-10-06T02:38:09Z [17ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: '/home/j/.cache/packman/chk/kit-kernel/107.3.3+isaac.229672.69cbf6ad.gl.manylinux_2_35_x86_64.release/data/Kit/Isaac-Sim Python/5.1/e8da156f-27de-48ae-56b0bd98-1a077112.dmp'
+2026-10-06T02:38:09Z [18ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: '/home/j/.cache/packman/chk/kit-kernel/107.3.3+isaac.229672.69cbf6ad.gl.manylinux_2_35_x86_64.release/data/Kit/Isaac-Sim Python/5.1/69831074-4885-4cc9-8b59b4a0-a28f446f.dmp'
+2026-10-06T02:38:09Z [18ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: '/home/j/.cache/packman/chk/kit-kernel/107.3.3+isaac.229672.69cbf6ad.gl.manylinux_2_35_x86_64.release/data/Kit/Isaac-Sim Python/5.1/af438d72-1aa5-4774-634820a4-42726375.dmp'
+2026-10-06T02:38:09Z [19ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: '/home/j/.cache/packman/chk/kit-kernel/107.3.3+isaac.229672.69cbf6ad.gl.manylinux_2_35_x86_64.release/data/Kit/Isaac-Sim Python/5.1/f98e17a0-5713-45fa-61095fb4-5dfa0311.dmp'
+2026-10-06T02:38:09Z [19ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: '/home/j/.cache/packman/chk/kit-kernel/107.3.3+isaac.229672.69cbf6ad.gl.manylinux_2_35_x86_64.release/data/Kit/Isaac-Sim Python/5.1/2c0cb2e2-ae69-4156-b792759b-4e1b749d.dmp'
+2026-10-06T02:38:09Z [20ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: '/home/j/.cache/packman/chk/kit-kernel/107.3.3+isaac.229672.69cbf6ad.gl.manylinux_2_35_x86_64.release/data/Kit/Isaac-Sim Python/5.1/b0010279-d3a0-449e-4fa0e396-0830b7d5.dmp'
+2026-10-06T02:38:09Z [20ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: '/home/j/.cache/packman/chk/kit-kernel/107.3.3+isaac.229672.69cbf6ad.gl.manylinux_2_35_x86_64.release/data/Kit/Isaac-Sim Python/5.1/ecd1b8e5-0e87-4aca-2a0282b2-2bd91f83.dmp'
+2026-10-06T02:38:09Z [21ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: '/home/j/.cache/packman/chk/kit-kernel/107.3.3+isaac.229672.69cbf6ad.gl.manylinux_2_35_x86_64.release/data/Kit/Isaac-Sim Python/5.1/8da5a278-f487-484e-6eb3beae-41c0f603.dmp'
+2026-10-06T02:38:09Z [22ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: '/home/j/.cache/packman/chk/kit-kernel/107.3.3+isaac.229672.69cbf6ad.gl.manylinux_2_35_x86_64.release/data/Kit/Isaac-Sim Python/5.1/09017fd5-a20d-4fdf-f11fe687-17bcbe11.dmp'
+2026-10-06T02:38:09Z [22ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: '/home/j/.cache/packman/chk/kit-kernel/107.3.3+isaac.229672.69cbf6ad.gl.manylinux_2_35_x86_64.release/data/Kit/Isaac-Sim Python/5.1/46d16c2a-5ea5-479a-09be24a7-010fae46.dmp'
+2026-10-06T02:38:09Z [22ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: '/home/j/.cache/packman/chk/kit-kernel/107.3.3+isaac.229672.69cbf6ad.gl.manylinux_2_35_x86_64.release/data/Kit/Isaac-Sim Python/5.1/58f3ed89-d333-438e-a2072194-d8beb396.dmp'
+2026-10-06T02:38:09Z [23ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: '/home/j/.cache/packman/chk/kit-kernel/107.3.3+isaac.229672.69cbf6ad.gl.manylinux_2_35_x86_64.release/data/Kit/Isaac-Sim Python/5.1/e2937188-3a58-4950-52016f88-77071478.dmp'
+2026-10-06T02:38:09Z [23ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: '/home/j/.cache/packman/chk/kit-kernel/107.3.3+isaac.229672.69cbf6ad.gl.manylinux_2_35_x86_64.release/data/Kit/Isaac-Sim Python/5.1/debf850d-1af1-41cb-175a99bb-079e46e2.dmp'
+2026-10-06T02:38:09Z [24ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: '/home/j/.cache/packman/chk/kit-kernel/107.3.3+isaac.229672.69cbf6ad.gl.manylinux_2_35_x86_64.release/data/Kit/Isaac-Sim Python/5.1/88c46e23-dde8-440d-b70e21b9-291c3bf6.dmp'
+2026-10-06T02:38:09Z [24ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: '/home/j/.cache/packman/chk/kit-kernel/107.3.3+isaac.229672.69cbf6ad.gl.manylinux_2_35_x86_64.release/data/Kit/Isaac-Sim Python/5.1/22ceade2-c7e5-4708-77f22d81-729d75ed.dmp'
+2026-10-06T02:38:09Z [25ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: '/home/j/.cache/packman/chk/kit-kernel/107.3.3+isaac.229672.69cbf6ad.gl.manylinux_2_35_x86_64.release/data/Kit/Isaac-Sim Python/5.1/a494cc30-4061-474e-4eda5ea1-8f1005d8.dmp'
+2026-10-06T02:38:09Z [25ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: '/home/j/.cache/packman/chk/kit-kernel/107.3.3+isaac.229672.69cbf6ad.gl.manylinux_2_35_x86_64.release/data/Kit/Isaac-Sim Python/5.1/dcdbe11b-796b-41fa-d116a892-41845f68.dmp'
+2026-10-06T02:38:09Z [25ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: '/home/j/.cache/packman/chk/kit-kernel/107.3.3+isaac.229672.69cbf6ad.gl.manylinux_2_35_x86_64.release/data/Kit/Isaac-Sim Python/5.1/3f86baac-9d47-4ea5-0bff0f93-d97e75e2.dmp'
+2026-10-06T02:38:09Z [26ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: '/home/j/.cache/packman/chk/kit-kernel/107.3.3+isaac.229672.69cbf6ad.gl.manylinux_2_35_x86_64.release/data/Kit/Isaac-Sim Python/5.1/43be5649-c4e0-470f-df1de083-2481aadd.dmp'
+2026-10-06T02:38:09Z [26ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: '/home/j/.cache/packman/chk/kit-kernel/107.3.3+isaac.229672.69cbf6ad.gl.manylinux_2_35_x86_64.release/data/Kit/Isaac-Sim Python/5.1/7b319f85-4dd0-46c2-05c80bb4-ebba8652.dmp'
+2026-10-06T02:38:09Z [27ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: '/home/j/.cache/packman/chk/kit-kernel/107.3.3+isaac.229672.69cbf6ad.gl.manylinux_2_35_x86_64.release/data/Kit/Isaac-Sim Python/5.1/e19ccec1-70c9-4692-93c708b9-ef949471.dmp'
+2026-10-06T02:38:09Z [27ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: '/home/j/.cache/packman/chk/kit-kernel/107.3.3+isaac.229672.69cbf6ad.gl.manylinux_2_35_x86_64.release/data/Kit/Isaac-Sim Python/5.1/7fd0ac64-9e18-4848-9aa71c99-0d358185.dmp'
+2026-10-06T02:38:09Z [27ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: '/home/j/.cache/packman/chk/kit-kernel/107.3.3+isaac.229672.69cbf6ad.gl.manylinux_2_35_x86_64.release/data/Kit/Isaac-Sim Python/5.1/15107995-e9a2-4aee-82ce0392-e7a1051b.dmp'
+2026-10-06T02:38:09Z [28ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: '/home/j/.cache/packman/chk/kit-kernel/107.3.3+isaac.229672.69cbf6ad.gl.manylinux_2_35_x86_64.release/data/Kit/Isaac-Sim Python/5.1/2c8d269b-2e53-4ae7-653bd499-ca04d278.dmp'
+2026-10-06T02:38:09Z [28ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: '/home/j/.cache/packman/chk/kit-kernel/107.3.3+isaac.229672.69cbf6ad.gl.manylinux_2_35_x86_64.release/data/Kit/Isaac-Sim Python/5.1/154db68a-a40a-46d8-aa1f7480-f2ecf297.dmp'
+2026-10-06T02:38:09Z [29ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: '/home/j/.cache/packman/chk/kit-kernel/107.3.3+isaac.229672.69cbf6ad.gl.manylinux_2_35_x86_64.release/data/Kit/Isaac-Sim Python/5.1/00f693d9-7097-495a-def4e0b1-83a36a57.dmp'
+2026-10-06T02:38:09Z [29ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: '/home/j/.cache/packman/chk/kit-kernel/107.3.3+isaac.229672.69cbf6ad.gl.manylinux_2_35_x86_64.release/data/Kit/Isaac-Sim Python/5.1/653f8bcb-250a-47d0-f76e9295-1c465590.dmp'
+2026-10-06T02:38:09Z [29ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: '/home/j/.cache/packman/chk/kit-kernel/107.3.3+isaac.229672.69cbf6ad.gl.manylinux_2_35_x86_64.release/data/Kit/Isaac-Sim Python/5.1/632dc12f-cf4c-4903-322cc281-bbb68c97.dmp'
+2026-10-06T02:38:09Z [30ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: '/home/j/.cache/packman/chk/kit-kernel/107.3.3+isaac.229672.69cbf6ad.gl.manylinux_2_35_x86_64.release/data/Kit/Isaac-Sim Python/5.1/f7de4d6c-5ef5-45ad-e57cd89d-6d2a1323.dmp'
+2026-10-06T02:38:09Z [30ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: '/home/j/.cache/packman/chk/kit-kernel/107.3.3+isaac.229672.69cbf6ad.gl.manylinux_2_35_x86_64.release/data/Kit/Isaac-Sim Python/5.1/0d152d65-1894-4541-1234f08f-a3ced89d.dmp'
+2026-10-06T02:38:09Z [30ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: '/home/j/.cache/packman/chk/kit-kernel/107.3.3+isaac.229672.69cbf6ad.gl.manylinux_2_35_x86_64.release/data/Kit/Isaac-Sim Python/5.1/f95eca07-5676-490b-6c2c63ad-5865d2af.dmp'
+2026-10-06T02:38:09Z [31ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: '/home/j/.cache/packman/chk/kit-kernel/107.3.3+isaac.229672.69cbf6ad.gl.manylinux_2_35_x86_64.release/data/Kit/Isaac-Sim Python/5.1/958eda3b-0936-4aaa-a9905e8b-4dad58d5.dmp'
+2026-10-06T02:38:09Z [31ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: '/home/j/.cache/packman/chk/kit-kernel/107.3.3+isaac.229672.69cbf6ad.gl.manylinux_2_35_x86_64.release/data/Kit/Isaac-Sim Python/5.1/72fd4bfb-05f1-420e-cd03e981-778975b6.dmp'
+2026-10-06T02:38:09Z [32ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: '/home/j/.cache/packman/chk/kit-kernel/107.3.3+isaac.229672.69cbf6ad.gl.manylinux_2_35_x86_64.release/data/Kit/Isaac-Sim Python/5.1/95c1f481-0f18-4c47-a495d2bb-c5585ad7.dmp'
+2026-10-06T02:38:09Z [32ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: '/home/j/.cache/packman/chk/kit-kernel/107.3.3+isaac.229672.69cbf6ad.gl.manylinux_2_35_x86_64.release/data/Kit/Isaac-Sim Python/5.1/85bcc5de-f50e-4241-a73de2bb-a175218d.dmp'
+2026-10-06T02:38:09Z [32ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: '/home/j/.cache/packman/chk/kit-kernel/107.3.3+isaac.229672.69cbf6ad.gl.manylinux_2_35_x86_64.release/data/Kit/Isaac-Sim Python/5.1/b9c82d5b-29f9-418d-3c014ca7-bc33388e.dmp'
+2026-10-06T02:38:09Z [33ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: '/home/j/.cache/packman/chk/kit-kernel/107.3.3+isaac.229672.69cbf6ad.gl.manylinux_2_35_x86_64.release/data/Kit/Isaac-Sim Python/5.1/8b35e58e-2a38-4535-c1fc8887-414c451c.dmp'
+2026-10-06T02:38:09Z [33ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: '/home/j/.cache/packman/chk/kit-kernel/107.3.3+isaac.229672.69cbf6ad.gl.manylinux_2_35_x86_64.release/data/Kit/Isaac-Sim Python/5.1/8e8f8ffb-1717-495b-db9c118b-774e8fc1.dmp'
+2026-10-06T02:38:09Z [34ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: '/home/j/.cache/packman/chk/kit-kernel/107.3.3+isaac.229672.69cbf6ad.gl.manylinux_2_35_x86_64.release/data/Kit/Isaac-Sim Python/5.1/358d0b55-a567-41ea-664f02b9-b43abc99.dmp'
+2026-10-06T02:38:09Z [34ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: '/home/j/.cache/packman/chk/kit-kernel/107.3.3+isaac.229672.69cbf6ad.gl.manylinux_2_35_x86_64.release/data/Kit/Isaac-Sim Python/5.1/15e68007-6ac8-4b20-5af0c585-b23c1c99.dmp'
+2026-10-06T02:38:09Z [34ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: '/home/j/.cache/packman/chk/kit-kernel/107.3.3+isaac.229672.69cbf6ad.gl.manylinux_2_35_x86_64.release/data/Kit/Isaac-Sim Python/5.1/0fc208ba-22ee-4c10-126714a9-1d3d70fe.dmp'
+2026-10-06T02:38:09Z [35ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: '/home/j/.cache/packman/chk/kit-kernel/107.3.3+isaac.229672.69cbf6ad.gl.manylinux_2_35_x86_64.release/data/Kit/Isaac-Sim Python/5.1/9e7b3421-7b31-4da6-630a4797-e2552aa0.dmp'
+2026-10-06T02:38:09Z [35ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: '/home/j/.cache/packman/chk/kit-kernel/107.3.3+isaac.229672.69cbf6ad.gl.manylinux_2_35_x86_64.release/data/Kit/Isaac-Sim Python/5.1/94430072-4f6c-413e-e911aba7-61390cb3.dmp'
+2026-10-06T02:38:09Z [35ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: '/home/j/.cache/packman/chk/kit-kernel/107.3.3+isaac.229672.69cbf6ad.gl.manylinux_2_35_x86_64.release/data/Kit/Isaac-Sim Python/5.1/1b79232c-85a2-47c6-d0d564be-d18b7cd3.dmp'
+2026-10-06T02:38:09Z [36ms] [Warning] [carb.crashreporter-breakpad.plugin] [previous crash] preventing upload of minidump due to user opt-out: '/home/j/.cache/packman/chk/kit-kernel/107.3.3+isaac.229672.69cbf6ad.gl.manylinux_2_35_x86_64.release/data/Kit/Isaac-Sim Python/5.1/59eaac87-07c8-4c4d-54e31180-683f0f51.dmp'
+[0.061s] [ext: omni.kit.async_engine-0.0.3] startup
+[0.877s] [ext: omni.metrics.core-0.0.3] startup
+[0.878s] [ext: omni.client.lib-1.1.0] startup
+[0.905s] [ext: omni.blobkey-1.1.2] startup
+[0.906s] [ext: omni.stats-1.0.1] startup
+[0.908s] [ext: omni.datastore-0.0.0] startup
+[0.922s] [ext: omni.client-1.3.0] startup
+[0.932s] [ext: omni.ujitso.default-1.0.0] startup
+[0.935s] [ext: omni.hsscclient-1.1.2] startup
+[0.944s] [ext: omni.gpu_foundation.shadercache.vulkan-1.0.0] startup
+[0.946s] [ext: omni.assets.plugins-0.0.0] startup
+[0.950s] [ext: omni.gpu_foundation-0.0.0] startup
+[0.990s] [ext: carb.windowing.plugins-1.0.0] startup
+[0.997s] [ext: omni.kit.renderer.init-0.0.0] startup
+2026-10-06T02:38:10Z [1,373ms] [Warning] [gpu.foundation.plugin] Skipping unsupported non-NVIDIA GPU: Intel(R) Graphics (RPL-S)
+2026-10-06T02:38:10Z [1,373ms] [Warning] [gpu.foundation.plugin] Skipping unsupported non-NVIDIA GPU: Intel(R) Graphics (RPL-S)
+
+|---------------------------------------------------------------------------------------------|
+| Driver Version: 570.172.08    | Graphics API: Vulkan
+|=============================================================================================|
+| GPU | Name                             | Active | LDA | GPU Memory | Vendor-ID | LUID       |
+|     |                                  |        |     |            | Device-ID | UUID       |
+|     |                                  |        |     |            | Bus-ID    |            |
+|---------------------------------------------------------------------------------------------|
+| 0   | NVIDIA GeForce RTX 4060 Laptop.. | Yes: 0 |     | 8188    MB | 10de      | 0          |
+|     |                                  |        |     |            | 28e0      | 182d21ed.. |
+|     |                                  |        |     |            | 1         |            |
+|---------------------------------------------------------------------------------------------|
+| 1   | Intel(R) Graphics (RPL-S)        |        |     | 23832   MB | 8086      | 0          |
+|     |                                  |        |     |            | a78b      | 86808ba7.. |
+|     |                                  |        |     |            | 0         |            |
+|=============================================================================================|
+| OS: 22.04.5 LTS (Jammy Jellyfish) ubuntu, Version: 22.04.5, Kernel: 6.1.0-1013-oem
+| XServer Vendor: The X.Org Foundation, XServer Version: 12101004 (1.21.1.4)
+| Processor: 13th Gen Intel(R) Core(TM) i7-13650HX
+| Bare Metal Cores: 14 | Bare Metal Logical Cores: 28
+| Available Cores:  20 
+|---------------------------------------------------------------------------------------------|
+| Total Memory (MB): 31776 | Free Memory: 24052
+| Total Page/Swap (MB): 2047 | Free Page/Swap: 2047
+|---------------------------------------------------------------------------------------------|
+2026-10-06T02:38:10Z [1,607ms] [Warning] [gpu.foundation.plugin] CPU performance profile is set to powersave. This profile sets the CPU to the lowest frequency reducing performance.
+[1.757s] [ext: omni.kit.pipapi-0.0.0] startup
+[1.758s] [ext: omni.kit.pip_archive-0.0.0] startup
+[1.759s] [ext: omni.pip.compute-1.6.3] startup
+[1.759s] [ext: omni.materialx.libs-1.0.7] startup
+[1.770s] [ext: omni.pip.cloud-1.4.3] startup
+[1.772s] [ext: omni.isaac.core_archive-3.0.0] startup
+[1.773s] [ext: omni.usd.config-1.0.6] startup
+[1.778s] [ext: omni.gpucompute.plugins-0.0.0] startup
+[1.780s] [ext: omni.usd.libs-1.0.1] startup
+[1.931s] [ext: omni.mdl-56.0.3] startup
+[1.952s] [ext: omni.iray.libs-0.0.0] startup
+[1.988s] [ext: omni.mdl.neuraylib-0.2.12] startup
+[1.992s] [ext: omni.kit.usd.mdl-1.1.5] startup
+[2.108s] [ext: omni.services.pip_archive-0.16.0] startup
+[2.109s] [ext: omni.isaac.ml_archive-3.0.4] startup
+[2.109s] [ext: omni.kit.telemetry-0.5.2] startup
+[2.131s] [ext: omni.kit.loop-isaac-1.3.7] startup
+[2.133s] [ext: omni.kit.test-2.0.1] startup
+[2.182s] [ext: omni.appwindow-1.1.10] startup
+[2.188s] [ext: omni.kit.renderer.core-1.1.0] startup
+[2.266s] [ext: omni.kit.renderer.capture-0.0.0] startup
+[2.270s] [ext: omni.kit.renderer.imgui-2.0.5] startup
+[2.361s] [ext: omni.ui-2.27.1] startup
+[2.375s] [ext: omni.kit.mainwindow-1.0.3] startup
+[2.376s] [ext: carb.audio-0.1.0] startup
+[2.380s] [ext: omni.uiaudio-1.0.0] startup
+[2.382s] [ext: omni.kit.uiapp-0.0.0] startup
+[2.382s] [ext: omni.usd.schema.metrics.assembler-107.3.1] startup
+[2.386s] [ext: omni.anim.behavior.schema-107.3.0] startup
+[2.397s] [ext: omni.usd.schema.omnigraph-1.0.0] startup
+[2.404s] [ext: omni.usd.schema.geospatial-0.0.0] startup
+[2.408s] [ext: omni.usd.schema.anim-0.0.0] startup
+[2.428s] [ext: omni.usd.schema.audio-0.0.0] startup
+[2.432s] [ext: isaacsim.robot.schema-3.6.0] startup
+[2.442s] [ext: omni.usd_resolver-1.0.0] startup
+[2.448s] [ext: omni.usd.core-1.5.3] startup
+[2.452s] [ext: omni.usd.schema.omni_sensors-0.0.0] startup
+[2.474s] [ext: omni.usd.schema.semantics-0.0.0] startup
+[2.478s] [ext: omni.usd.schema.omni_lens_distortion-0.0.0] startup
+[2.478s] [ext: omni.usd.schema.render_settings.rtx-0.0.0] startup
+[2.480s] [ext: omni.graph.exec-0.9.6] startup
+[2.481s] [ext: omni.kit.actions.core-1.0.0] startup
+[2.484s] [ext: omni.kit.usd_undo-0.1.8] startup
+[2.484s] [ext: omni.kit.exec.core-0.13.4] startup
+[2.487s] [ext: omni.kit.commands-1.4.10] startup
+[2.491s] [ext: omni.kit.window.popup_dialog-2.0.24] startup
+[2.495s] [ext: omni.activity.core-1.0.3] startup
+[2.497s] [ext: omni.resourcemonitor-107.0.1] startup
+[2.500s] [ext: omni.timeline-1.0.14] startup
+[2.502s] [ext: omni.kit.widget.nucleus_connector-2.0.1] startup
+[2.505s] [ext: usdrt.scenegraph-7.6.1] startup
+[2.560s] [ext: omni.kit.audiodeviceenum-1.0.2] startup
+[2.562s] [ext: omni.hydra.usdrt_delegate-7.5.1] startup
+[2.572s] [ext: omni.hydra.scene_delegate-0.3.4] startup
+[2.578s] [ext: omni.usd-1.13.10] startup
+[2.602s] [ext: omni.kit.asset_converter-5.0.17] startup
+[2.628s] [ext: omni.usd.schema.physx-107.3.26] startup
+[2.672s] [ext: omni.anim.navigation.schema-107.3.3] startup
+[2.677s] [ext: omni.inspect-1.0.2] startup
+[2.679s] [ext: omni.kit.notification_manager-1.0.10] startup
+[2.681s] [ext: omni.graph.core-2.184.5] startup
+[2.687s] [ext: isaacsim.core.deprecation_manager-0.2.7] startup
+[2.688s] [ext: omni.usd.schema.omniscripting-1.0.0] startup
+[2.694s] [ext: omni.usd.schema.flow-107.1.1] startup
+[2.695s] [ext: omni.anim.graph.schema-107.3.3] startup
+[2.704s] [ext: omni.usd.schema.isaac-3.0.5] startup
+[2.704s] [ext: isaacsim.core.version-2.0.6] startup
+[2.705s] [ext: omni.ui.scene-1.11.5] startup
+[2.711s] [ext: isaacsim.storage.native-1.5.1] startup
+[2.714s] [ext: omni.kit.widget.options_menu-1.1.6] startup
+[2.719s] [ext: omni.kit.menu.core-1.1.2] startup
+[2.722s] [ext: omni.graph.tools-1.79.2] startup
+[2.745s] [ext: omni.kit.widget.filter-1.1.4] startup
+[2.746s] [ext: omni.kit.menu.utils-2.0.5] startup
+[2.752s] [ext: omni.graph-1.141.2] startup
+[2.793s] [ext: omni.kit.hotkeys.core-1.3.10] startup
+[2.794s] [ext: omni.anim.curve.core-1.3.1] startup
+[2.808s] [ext: omni.kit.clipboard-1.0.5] startup
+[2.809s] [ext: omni.usdphysics-107.3.26] startup
+[2.812s] [ext: omni.physx.foundation-107.3.26] startup
+[2.818s] [ext: omni.kit.widget.context_menu-1.2.5] startup
+[2.820s] [ext: omni.kit.helper.file_utils-0.1.9] startup
+[2.822s] [ext: omni.kit.widget.path_field-2.0.11] startup
+[2.823s] [ext: omni.kvdb-107.3.26] startup
+[2.826s] [ext: omni.kit.widget.options_button-1.0.3] startup
+[2.827s] [ext: omni.kit.widget.filebrowser-2.12.3] startup
+[2.832s] [ext: omni.kit.widget.browser_bar-2.0.10] startup
+[2.834s] [ext: omni.localcache-107.3.26] startup
+[2.836s] [ext: omni.convexdecomposition-107.3.26] startup
+[2.840s] [ext: omni.kit.window.filepicker-2.13.4] startup
+[2.854s] [ext: omni.physx.cooking-107.3.26] startup
+[2.859s] [ext: omni.physics-107.3.26] startup
+[2.864s] [ext: omni.kit.window.file_exporter-1.0.33] startup
+[2.867s] [ext: omni.kit.stage_template.core-1.1.22] startup
+[2.868s] [ext: omni.physx-107.3.26] startup
+[2.883s] [ext: omni.kit.usd.layers-2.2.11] startup
+[2.892s] [ext: omni.kit.window.file_importer-1.1.18] startup
+[2.894s] [ext: omni.physics.physx-107.3.26] startup
+2026-10-06T02:38:12Z [2,875ms] [Warning] [carb] Acquiring non optional plugin interface which is not listed as dependency: [omni::physx::IPhysxBenchmarks v1.0] (plugin: <default plugin>), by client: omni.physics.physx.plugin. Add it to CARB_PLUGIN_IMPL_DEPS() macro of a client.
+[2.896s] [ext: omni.kit.numpy.common-0.1.3] startup
+[2.898s] [ext: omni.kit.window.file-2.0.5] startup
+[2.901s] [ext: omni.physics.stageupdate-107.3.26] startup
+[2.904s] [ext: omni.kit.window.drop_support-1.0.5] startup
+[2.906s] [ext: omni.kit.window.content_browser_registry-0.0.6] startup
+[2.907s] [ext: omni.isaac.dynamic_control-2.0.7] startup
+2026-10-06T02:38:12Z [2,893ms] [Warning] [omni.isaac.dynamic_control] omni.isaac.dynamic_control is deprecated as of Isaac Sim 4.5. No action is needed from end-users.
+[2.914s] [ext: omni.kit.window.content_browser-3.1.3] startup
+[2.925s] [ext: omni.graph.action_core-1.1.7] startup
+[2.928s] [ext: omni.kit.usd.collect-2.4.5] startup
+[2.931s] [ext: isaacsim.gui.content_browser-0.1.11] startup
+[2.934s] [ext: omni.graph.action_nodes-1.50.4] startup
+[2.938s] [ext: omni.kit.widget.prompt-1.0.7] startup
+[2.941s] [ext: omni.graph.action-1.130.0] startup
+[2.942s] [ext: omni.kit.tool.collect-2.2.18] startup
+[2.947s] [ext: omni.index.libs-380600.8087.0] startup
+[2.948s] [ext: omni.ujitso.client-0.0.0] startup
+[2.948s] [ext: omni.index-1.0.1] startup
+[2.950s] [ext: omni.volume-0.5.2] startup
+[2.960s] [ext: omni.hydra.rtx.shadercache.vulkan-1.0.0] startup
+[2.969s] [ext: omni.kit.context_menu-1.8.6] startup
+[2.974s] [ext: omni.hydra.rtx-1.0.0] startup
+2026-10-06T02:38:12Z [3,006ms] [Warning] [omni.log] Source: omni.hydra was already registered.
+[3.067s] [ext: omni.kit.material.library-2.0.7] startup
+[3.073s] [ext: omni.hydra.engine.stats-1.0.3] startup
+[3.076s] [ext: omni.kit.widget.stage_icons-1.0.8] startup
+[3.078s] [ext: omni.kit.viewport.scene_camera_model-1.0.6] startup
+[3.083s] [ext: omni.kit.hydra_texture-1.4.6] startup
+[3.087s] [ext: omni.kit.viewport.legacy_gizmos-1.0.19] startup
+[3.090s] [ext: omni.kit.widget.searchfield-1.1.8] startup
+[3.092s] [ext: omni.kit.widget.viewport-107.1.3] startup
+[3.098s] [ext: omni.kit.viewport.registry-104.0.6] startup
+[3.099s] [ext: omni.kit.raycast.query-1.1.0] startup
+[3.104s] [ext: omni.kit.widget.stage-3.1.4] startup
+[3.118s] [ext: omni.kit.widget.zoombar-1.0.6] startup
+[3.119s] [ext: omni.kit.viewport.window-107.2.0] startup
+[3.136s] [ext: omni.kit.window.stage-2.6.1] startup
+[3.140s] [ext: omni.kit.browser.core-2.3.13] startup
+[3.145s] [ext: omni.kit.menu.stage-1.2.7] startup
+[3.147s] [ext: omni.kit.browser.folder.core-1.10.9] startup
+[3.153s] [ext: omni.kit.property.adapter.core-1.0.2] startup
+[3.156s] [ext: omni.kit.widget.highlight_label-1.0.3] startup
+[3.158s] [ext: omni.kit.property.adapter.usd-1.0.2] startup
+[3.159s] [ext: omni.ui_query-1.1.8] startup
+[3.160s] [ext: omni.kit.window.property-1.12.1] startup
+[3.163s] [ext: omni.kit.property.adapter.fabric-1.0.3] startup
+[3.166s] [ext: omni.kit.ui_test-1.3.7] startup
+[3.168s] [ext: omni.kit.property.usd-4.5.12] startup
+[3.179s] [ext: omni.kit.viewport.utility-1.1.2] startup
+[3.181s] [ext: omni.kit.manipulator.viewport-107.0.1] startup
+[3.183s] [ext: omni.kit.usdz_export-1.0.9] startup
+[3.186s] [ext: omni.kit.window.extensions-1.4.27] startup
+[3.193s] [ext: omni.graph.visualization.nodes-2.1.3] startup
+[3.199s] [ext: omni.kit.tool.asset_importer-4.3.2] startup
+[3.210s] [ext: isaacsim.gui.components-1.2.1] startup
+[3.215s] [ext: isaacsim.examples.browser-0.2.1] startup
+[3.221s] [ext: isaacsim.asset.importer.urdf-2.4.30] startup
+[3.292s] [ext: omni.kit.menu.create-2.0.1] startup
+[3.300s] [ext: omni.physics.tensors-107.3.26] startup
+[3.307s] [ext: omni.usd.metrics.assembler-107.3.1] startup
+[3.311s] [ext: omni.kit.widget.graph-2.0.0] startup
+[3.320s] [ext: omni.kit.widget.searchable_combobox-1.0.6] startup
+[3.322s] [ext: omni.warp.core-1.8.2] startup
+[3.481s] [ext: omni.usd.metrics.assembler.physics-107.3.26] startup
+[3.485s] [ext: omni.kit.graph.delegate.default-1.2.3] startup
+[3.486s] [ext: omni.kit.scripting-107.3.2] startup
+[3.493s] [ext: omni.physx.tensors-107.3.26] startup
+[3.501s] [ext: isaacsim.core.utils-3.5.1] startup
+[3.505s] [ext: omni.anim.asset-107.3.0] startup
+[3.510s] [ext: isaacsim.core.simulation_manager-1.4.4] startup
+[3.615s] [ext: omni.graph.scriptnode-1.50.0] startup
+[3.620s] [ext: omni.kit.graph.editor.core-1.5.3] startup
+[3.625s] [ext: omni.kit.widget.settings-1.2.6] startup
+[3.629s] [ext: omni.kit.primitive.mesh-1.0.17] startup
+[3.634s] [ext: isaacsim.core.prims-0.6.1] startup
+[3.659s] [ext: omni.kit.widget.material_preview-1.0.16] startup
+[3.663s] [ext: omni.kit.graph.usd.commands-1.3.1] startup
+[3.665s] [ext: omni.graph.image.core-0.6.1] startup
+[3.666s] [ext: omni.kit.window.preferences-1.8.0] startup
+[3.673s] [ext: omni.kit.stage_templates-2.0.0] startup
+[3.675s] [ext: isaacsim.asset.browser-1.3.23] startup
+[3.732s] [ext: omni.graph.image.nodes-1.3.1] startup
+[3.734s] [ext: omni.kit.viewport.menubar.core-107.2.1] startup
+[3.747s] [ext: isaacsim.core.api-4.8.0] startup
+[3.760s] [ext: omni.kit.window.material_graph-1.9.1] startup
+[3.769s] [ext: omni.kit.viewport.actions-107.0.2] startup
+[3.774s] [ext: omni.graph.nodes-1.170.10] startup
+[3.806s] [ext: omni.syntheticdata-0.6.13] startup
+[3.840s] [ext: omni.isaac.assets_check-0.3.13] startup
+2026-10-06T02:38:13Z [3,822ms] [Warning] [omni.isaac.assets_check] omni.isaac.assets_check has been deprecated in favor of isaacsim.asset.browser. Please update your code accordingly.
+[3.842s] [ext: isaacsim.core.cloner-1.4.10] startup
+[3.846s] [ext: omni.kit.viewport.menubar.display-107.0.3] startup
+[3.850s] [ext: omni.graph.ui_nodes-1.50.5] startup
+[3.860s] [ext: omni.videoencoding-0.1.2] startup
+[3.863s] [ext: omni.isaac.cloner-1.0.7] startup
+2026-10-06T02:38:13Z [3,844ms] [Warning] [omni.isaac.cloner] omni.isaac.cloner has been deprecated in favor of isaacsim.core.cloner. Please update your code accordingly.
+[3.865s] [ext: isaacsim.gui.sensors.icon-2.0.3] startup
+[3.893s] [ext: omni.warp-1.8.2] startup
+[3.903s] [ext: omni.anim.retarget.core-107.3.3] startup
+[3.913s] [ext: omni.debugdraw-0.1.4] startup
+[3.917s] [ext: omni.replicator.core-1.12.27] startup
+2026-10-06T02:38:13Z [3,926ms] [Warning] [pxr.Semantics] pxr.Semantics is deprecated - please use Semantics instead
+Warp 1.8.2 initialized:
+   CUDA Toolkit 12.8, Driver 12.8
+   Devices:
+     "cpu"      : "x86_64"
+     "cuda:0"   : "NVIDIA GeForce RTX 4060 Laptop GPU" (8 GiB, sm_89, mempool enabled)
+   Kernel cache:
+     /home/j/.cache/warp/1.8.2
+2026-10-06T02:38:13Z [4,186ms] [Warning] [omni.graph.core.plugin] Found duplicate of category 'Replicator' - was 'Annotators', adding 'Fabric Reader'
+2026-10-06T02:38:13Z [4,186ms] [Warning] [omni.graph.core.plugin] Category 'Replicator' not accepted on node type 'omni.replicator.core.FabricReader' in extension 'omni.replicator.core'
+2026-10-06T02:38:13Z [4,187ms] [Warning] [omni.replicator.core.scripts.extension] No material configuration file, adding configuration to material settings directly.
+[4.210s] [ext: omni.kit.quicklayout-1.0.8] startup
+[4.213s] [ext: omni.anim.navigation.core-107.3.8] startup
+[4.225s] [ext: omni.anim.graph.core-107.3.4] startup
+[4.239s] [ext: omni.metropolis.utils-0.1.20] startup
+[4.254s] [ext: isaacsim.asset.importer.mjcf-2.5.13] startup
+[4.266s] [ext: omni.anim.people-0.7.9] startup
+[4.289s] [ext: isaacsim.test.docstring-1.1.0] startup
+2026-10-06T02:38:13Z [4,274ms] [Warning] [omni.graph.core._impl._registration.register_python_ogn] Python import process in omni.anim.graph.core failed - 'NoneType' object is not subscriptable. Aborting Python node registration
+[4.300s] [ext: isaacsim.core.experimental.utils-0.3.0] startup
+[4.303s] [ext: isaacsim.anim.robot-0.0.15] startup
+[4.382s] [ext: isaacsim.core.experimental.prims-0.8.1] startup
+[4.526s] [ext: isaacsim.core.nodes-3.4.3] startup
+[4.583s] [ext: omni.flowusd-107.1.8] startup
+2026-10-06T02:38:13Z [4,568ms] [Warning] [omni.stageupdate.plugin] Deprecated: direct use of IStageUpdate callbacks is deprecated. Use IStageUpdate::getStageUpdate instead.
+[4.635s] [ext: omni.sensors.nv.common-3.0.0] startup
+Warp DeprecationWarning: The `warp.sim` module is deprecated and will be removed in v1.10. Please transition to using the forthcoming Newton library instead.
+[4.738s] [ext: isaacsim.core.experimental.materials-0.4.0] startup
+[4.753s] [ext: omni.isaac.core-4.0.7] startup
+2026-10-06T02:38:14Z [4,740ms] [Warning] [omni.isaac.core.physics_context.physics_context] omni.isaac.core.physics_context.physics_context has been deprecated in favor of isaacsim.core.api.physics_context.physics_context. Please update your code accordingly.
+2026-10-06T02:38:14Z [4,741ms] [Warning] [omni.isaac.core.simulation_context.simulation_context] omni.isaac.core.simulation_context.simulation_context has been deprecated in favor of isaacsim.core.api.simulation_context.simulation_context. Please update your code accordingly.
+2026-10-06T02:38:14Z [4,742ms] [Warning] [omni.isaac.core.world.world] omni.isaac.core.world.world has been deprecated in favor of isaacsim.core.api.world.world. Please update your code accordingly.
+2026-10-06T02:38:14Z [4,742ms] [Warning] [omni.isaac.core] omni.isaac.core has been deprecated in favor of isaacsim.core.api. Please update your code accordingly.
+[4.763s] [ext: isaacsim.replicator.incident-0.1.28] startup
+[isaacsim.replicator.incident] started
+[4.800s] [ext: omni.sensors.net-1.0.0] startup
+[4.807s] [ext: omni.sensors.nv.materials-2.0.0] startup
+[4.820s] [ext: isaacsim.sensors.camera-1.3.6] startup
+[4.830s] [ext: omni.sensors.nv.wpm-3.0.0] startup
+[4.837s] [ext: isaacsim.util.debug_draw-3.1.0] startup
+[4.846s] [ext: omni.sensors.nv.ids-2.0.0] startup
+[4.850s] [ext: omni.sensors.nv.lidar-3.0.0] startup
+[4.867s] [ext: omni.sensors.nv.radar-3.0.0] startup
+[4.875s] [ext: isaacsim.sensors.physics-0.4.3] startup
+[4.886s] [ext: isaacsim.robot_motion.lula-4.0.8] startup
+[4.920s] [ext: isaacsim.robot.surface_gripper-3.3.1] startup
+[4.928s] [ext: isaacsim.sensors.rtx-15.8.4] startup
+[4.942s] [ext: omni.kit.mesh.raycast-107.0.1] startup
+[4.952s] [ext: isaacsim.robot_motion.motion_generation-8.0.26] startup
+[4.962s] [ext: isaacsim.robot.manipulators-3.3.6] startup
+[4.967s] [ext: isaacsim.core.experimental.objects-0.4.0] startup
+[4.978s] [ext: omni.isaac.core_nodes-2.0.6] startup
+2026-10-06T02:38:14Z [4,962ms] [Warning] [omni.isaac.core_nodes] omni.isaac.core_nodes has been deprecated in favor of isaacsim.core.nodes. Please update your code accordingly.
+[4.983s] [ext: isaacsim.replicator.agent.core-0.7.28] startup
+[4.994s] [ext: isaacsim.robot.manipulators.examples-1.1.2] startup
+[4.998s] [ext: isaacsim.simulation_app-2.12.2] startup
+[5.001s] [ext: omni.kit.selection-0.1.6] startup
+[5.003s] [ext: omni.isaac.franka-1.0.7] startup
+2026-10-06T02:38:14Z [4,984ms] [Warning] [omni.isaac.franka] omni.isaac.franka has been deprecated in favor of isaacsim.robot.manipulators.examples.franka. Please update your code accordingly.
+2026-10-06T02:38:14Z [4,985ms] [Warning] [omni.isaac.franka.franka] omni.isaac.franka has been deprecated in favor of isaacsim.robot.manipulators.examples.franka. Please update your code accordingly.
+2026-10-06T02:38:14Z [5,001ms] [Warning] [omni.isaac.franka.kinematics_solver] omni.isaac.franka has been deprecated in favor of isaacsim.robot.manipulators.examples.franka. Please update your code accordingly.
+[5.021s] [ext: isaacsim.robot_motion.lula_test_widget-1.0.12] startup
+[5.025s] [ext: omni.isaac.kit-2.0.6] startup
+2026-10-06T02:38:14Z [5,007ms] [Warning] [omni.isaac.kit] omni.isaac.kit has been deprecated in favor of isaacsim.simulation_app. Please update your code accordingly.
+[5.028s] [ext: isaacsim.gui.menu-2.4.4] startup
+[5.034s] [ext: omni.isaac.asset_browser-1.0.6] startup
+2026-10-06T02:38:14Z [5,017ms] [Warning] [omni.isaac.asset_browser] omni.isaac.asset_browser has been deprecated in favor of isaacsim.asset.browser. Please update your code accordingly.
+[5.037s] [ext: omni.isaac.lula_test_widget-1.0.6] startup
+2026-10-06T02:38:14Z [5,020ms] [Warning] [omni.isaac.lula_test_widget] omni.isaac.lula_test_widget has been deprecated in favor of isaacsim.robot_motion.lula_test_widget. Please update your code accordingly.
+[5.040s] [ext: omni.isaac.manipulators-3.0.7] startup
+2026-10-06T02:38:14Z [5,021ms] [Warning] [omni.isaac.manipulators] omni.isaac.manipulators has been deprecated in favor of isaacsim.robot.manipulators. Please update your code accordingly.
+2026-10-06T02:38:14Z [5,021ms] [Warning] [omni.isaac.manipulators.controllers] omni.isaac.manipulators has been deprecated in favor of isaacsim.robot.manipulators. Please update your code accordingly.
+2026-10-06T02:38:14Z [5,022ms] [Warning] [omni.isaac.manipulators.controllers.pick_place_controller] omni.isaac.manipulators has been deprecated in favor of isaacsim.robot.manipulators. Please update your code accordingly.
+2026-10-06T02:38:14Z [5,023ms] [Warning] [omni.isaac.manipulators.controllers.stacking_controller] omni.isaac.manipulators has been deprecated in favor of isaacsim.robot.manipulators. Please update your code accordingly.
+2026-10-06T02:38:14Z [5,023ms] [Warning] [omni.isaac.manipulators.grippers] omni.isaac.manipulators has been deprecated in favor of isaacsim.robot.manipulators. Please update your code accordingly.
+2026-10-06T02:38:14Z [5,023ms] [Warning] [omni.isaac.manipulators.grippers.gripper] omni.isaac.manipulators has been deprecated in favor of isaacsim.robot.manipulators. Please update your code accordingly.
+2026-10-06T02:38:14Z [5,023ms] [Warning] [omni.isaac.manipulators.grippers.parallel_gripper] omni.isaac.manipulators has been deprecated in favor of isaacsim.robot.manipulators. Please update your code accordingly.
+2026-10-06T02:38:14Z [5,023ms] [Warning] [omni.isaac.manipulators.grippers.surface_gripper] omni.isaac.manipulators has been deprecated in favor of isaacsim.robot.manipulators. Please update your code accordingly.
+2026-10-06T02:38:14Z [5,023ms] [Warning] [omni.isaac.manipulators.manipulators] omni.isaac.manipulators has been deprecated in favor of isaacsim.robot.manipulators. Please update your code accordingly.
+2026-10-06T02:38:14Z [5,024ms] [Warning] [omni.isaac.manipulators.manipulators.single_manipulator] omni.isaac.manipulators has been deprecated in favor of isaacsim.robot.manipulators. Please update your code accordingly.
+[5.044s] [ext: omni.isaac.menu-1.0.6] startup
+2026-10-06T02:38:14Z [5,026ms] [Warning] [omni.isaac.menu] omni.isaac.menu has been deprecated in favor of isaacsim.gui.menu. Please update your code accordingly.
+[5.048s] [ext: isaacsim.robot.policy.examples-4.1.11] startup
+[5.051s] [ext: isaacsim.sensors.physx-2.3.2] startup
+[5.058s] [ext: omni.isaac.motion_generation-8.0.7] startup
+2026-10-06T02:38:14Z [5,039ms] [Warning] [omni.isaac.motion_generation] omni.isaac.motion_generation has been deprecated in favor of isaacsim.robot_motion.motion_generation. Please update your code accordingly.
+2026-10-06T02:38:14Z [5,039ms] [Warning] [omni.isaac.motion_generation.articulation_kinematics_solver] omni.isaac.motion_generation has been deprecated in favor of isaacsim.robot_motion.motion_generation. Please update your code accordingly.
+2026-10-06T02:38:14Z [5,040ms] [Warning] [omni.isaac.motion_generation.articulation_motion_policy] omni.isaac.motion_generation has been deprecated in favor of isaacsim.robot_motion.motion_generation. Please update your code accordingly.
+2026-10-06T02:38:14Z [5,040ms] [Warning] [omni.isaac.motion_generation.articulation_trajectory] omni.isaac.motion_generation has been deprecated in favor of isaacsim.robot_motion.motion_generation. Please update your code accordingly.
+2026-10-06T02:38:14Z [5,040ms] [Warning] [omni.isaac.motion_generation.kinematics_interface] omni.isaac.motion_generation has been deprecated in favor of isaacsim.robot_motion.motion_generation. Please update your code accordingly.
+2026-10-06T02:38:14Z [5,041ms] [Warning] [omni.isaac.motion_generation.lula] omni.isaac.motion_generation has been deprecated in favor of isaacsim.robot_motion.motion_generation. Please update your code accordingly.
+2026-10-06T02:38:14Z [5,041ms] [Warning] [omni.isaac.motion_generation.lula.kinematics] omni.isaac.motion_generation has been deprecated in favor of isaacsim.robot_motion.motion_generation. Please update your code accordingly.
+2026-10-06T02:38:14Z [5,042ms] [Warning] [omni.isaac.motion_generation.lula.motion_policies] omni.isaac.motion_generation has been deprecated in favor of isaacsim.robot_motion.motion_generation. Please update your code accordingly.
+2026-10-06T02:38:14Z [5,042ms] [Warning] [omni.isaac.motion_generation.lula.path_planners] omni.isaac.motion_generation has been deprecated in favor of isaacsim.robot_motion.motion_generation. Please update your code accordingly.
+2026-10-06T02:38:14Z [5,042ms] [Warning] [omni.isaac.motion_generation.lula.trajectory_generator] omni.isaac.motion_generation has been deprecated in favor of isaacsim.robot_motion.motion_generation. Please update your code accordingly.
+2026-10-06T02:38:14Z [5,042ms] [Warning] [omni.isaac.motion_generation.motion_policy_controller] omni.isaac.motion_generation has been deprecated in favor of isaacsim.robot_motion.motion_generation. Please update your code accordingly.
+2026-10-06T02:38:14Z [5,042ms] [Warning] [omni.isaac.motion_generation.motion_policy_interface] omni.isaac.motion_generation has been deprecated in favor of isaacsim.robot_motion.motion_generation. Please update your code accordingly.
+2026-10-06T02:38:14Z [5,043ms] [Warning] [omni.isaac.motion_generation.path_planner_visualizer] omni.isaac.motion_generation has been deprecated in favor of isaacsim.robot_motion.motion_generation. Please update your code accordingly.
+2026-10-06T02:38:14Z [5,043ms] [Warning] [omni.isaac.motion_generation.path_planning_interface] omni.isaac.motion_generation has been deprecated in favor of isaacsim.robot_motion.motion_generation. Please update your code accordingly.
+2026-10-06T02:38:14Z [5,043ms] [Warning] [omni.isaac.motion_generation.trajectory] omni.isaac.motion_generation has been deprecated in favor of isaacsim.robot_motion.motion_generation. Please update your code accordingly.
+2026-10-06T02:38:14Z [5,043ms] [Warning] [omni.isaac.motion_generation.world_interface] omni.isaac.motion_generation has been deprecated in favor of isaacsim.robot_motion.motion_generation. Please update your code accordingly.
+[5.063s] [ext: omni.isaac.nucleus-1.0.6] startup
+2026-10-06T02:38:14Z [5,046ms] [Warning] [omni.isaac.nucleus] omni.isaac.nucleus has been deprecated in favor of isaacsim.storage.native. Please update your code accordingly.
+2026-10-06T02:38:14Z [5,046ms] [Warning] [omni.isaac.nucleus.nucleus] omni.isaac.nucleus.nucleus has been deprecated in favor of isaacsim.storage.native. Please update your code accordingly.
+[5.067s] [ext: omni.isaac.quadruped-3.0.7] startup
+2026-10-06T02:38:14Z [5,047ms] [Warning] [omni.isaac.quadruped] omni.isaac.quadruped has been deprecated in favor of isaacsim.robot.policy.examples. Please update your code accordingly.
+[5.068s] [ext: omni.isaac.range_sensor-4.0.6] startup
+2026-10-06T02:38:14Z [5,051ms] [Warning] [omni.isaac.range_sensor] omni.isaac.range_sensor has been deprecated in favor of isaacsim.sensors.physx. Please update your code accordingly.
+2026-10-06T02:38:14Z [5,051ms] [Warning] [omni.isaac.range_sensor.commands] omni.isaac.range_sensor.commands has been deprecated in favor of isaacsim.sensors.physx.commands. Please update your code accordingly.
+[5.072s] [ext: omni.isaac.sensor-13.0.7] startup
+2026-10-06T02:38:14Z [5,054ms] [Warning] [omni.isaac.sensor] omni.isaac.sensor has been deprecated in favor of isaacsim.sensors.camera, isaacsim.sensors.physics, isaacsim.sensors.physx, and isaacsim.sensors.rtx. Please update your code accordingly.
+2026-10-06T02:38:14Z [5,054ms] [Warning] [omni.isaac.sensor.camera] omni.isaac.sensor.camera has been deprecated in favor of isaacsim.sensors.camera.camera. Please update your code accordingly.
+2026-10-06T02:38:14Z [5,056ms] [Warning] [omni.isaac.sensor.camera_view] omni.isaac.sensor.camera_view has been deprecated in favor of isaacsim.sensors.camera.camera_view. Please update your code accordingly.
+2026-10-06T02:38:14Z [5,056ms] [Warning] [omni.isaac.sensor.commands] omni.isaac.sensor.commands has been deprecated in favor of isaacsim.sensors.physics.commands, isaacsim.sensors.physx.commands, and isaacsim.sensors.rtx.commands. Please update your code accordingly.
+2026-10-06T02:38:14Z [5,056ms] [Warning] [omni.isaac.sensor.contact_sensor] omni.isaac.sensor.contact_sensor has been deprecated in favor of isaacsim.sensors.physics.contact_sensor. Please update your code accordingly.
+2026-10-06T02:38:14Z [5,056ms] [Warning] [omni.isaac.sensor.imu_sensor] omni.isaac.sensor.imu_sensor has been deprecated in favor of isaacsim.sensors.physics.imu_sensor. Please update your code accordingly.
+2026-10-06T02:38:14Z [5,056ms] [Warning] [omni.isaac.sensor.lidar_rtx] omni.isaac.sensor.lidar_rtx has been deprecated in favor of isaacsim.sensors.rtx.lidar_rtx. Please update your code accordingly.
+2026-10-06T02:38:14Z [5,056ms] [Warning] [omni.isaac.sensor.rotating_lidar_physX] omni.isaac.sensor.imu_sensor has been deprecated in favor of isaacsim.sensors.physix.rotating_lidar_physX. Please update your code accordingly.
+2026-10-06T02:38:14Z [5,057ms] [Warning] [omni.isaac.sensor.scripts.samples.contact_sensor] omni.isaac.sensor.scripts.samples.contact_sensor has been deprecated in favor of isaacsim.sensors.physics.scripts.samples.contact_sensor. Please update your code accordingly.
+2026-10-06T02:38:14Z [5,057ms] [Warning] [omni.isaac.sensor.scripts.samples.imu_sensor] omni.isaac.sensor.scripts.samples.imu_sensor has been deprecated in favor of isaacsim.sensors.physics.scripts.samples.imu_sensor. Please update your code accordingly.
+2026-10-06T02:38:14Z [5,057ms] [Warning] [omni.isaac.sensor.scripts.samples.lightbeam_sensor] omni.isaac.sensor.scripts.samples.lightbeam_sensor has been deprecated in favor of isaacsim.sensors.physx.scripts.samples.lightbeam_sensor. Please update your code accordingly.
+[5.077s] [ext: omni.isaac.surface_gripper-2.0.6] startup
+2026-10-06T02:38:14Z [5,059ms] [Warning] [omni.isaac.surface_gripper] omni.isaac.surface_gripper has been deprecated in favor of isaacsim.robot.surface_gripper. Please update your code accordingly.
+[5.085s] [ext: omni.kit.widget.toolbar-2.0.1] startup
+[5.096s] [ext: omni.kit.manipulator.transform-107.0.0] startup
+[5.101s] [ext: omni.kit.manipulator.selector-1.1.3] startup
+[5.103s] [ext: isaacsim.app.about-2.0.11] startup
+[5.111s] [ext: isaacsim.cortex.framework-1.0.12] startup
+[5.112s] [ext: omni.kit.manipulator.tool.snap-1.5.13] startup
+[5.118s] [ext: omni.isaac.universal_robots-1.0.6] startup
+2026-10-06T02:38:14Z [5,100ms] [Warning] [omni.isaac.universal_robots] omni.isaac.universal_robots has been deprecated in favor of isaacsim.robot.manipulators.examples.universal_robots. Please update your code accordingly.
+2026-10-06T02:38:14Z [5,100ms] [Warning] [omni.isaac.universal_robots.kinematics_solver] omni.isaac.franka has been deprecated in favor of isaacsim.robot.manipulators.examples.universal_robots. Please update your code accordingly.
+2026-10-06T02:38:14Z [5,101ms] [Warning] [omni.isaac.universal_robots.ur10] omni.isaac.franka has been deprecated in favor of isaacsim.robot.manipulators.examples.universal_robots. Please update your code accordingly.
+[5.121s] [ext: omni.isaac.utils-2.0.6] startup
+[5.124s] [ext: omni.isaac.cortex-1.0.5] startup
+2026-10-06T02:38:14Z [5,108ms] [Warning] [omni.isaac.cortex] omni.isaac.cortex has been deprecated in favor of isaacsim.cortex.framework. Please update your code accordingly.
+[5.128s] [ext: omni.kit.viewport.manipulator.transform-107.0.4] startup
+[5.131s] [ext: omni.isaac.window.about-2.0.7] startup
+2026-10-06T02:38:14Z [5,113ms] [Warning] [omni.isaac.window.about] omni.isaac.window.about has been deprecated in favor of isaacsim.app.about. Please update your code accordingly.
+2026-10-06T02:38:14Z [5,114ms] [Warning] [omni.isaac.window.about.about] omni.isaac.window.about.about has been deprecated in favor of isaacsim.app.about.about. Please update your code accordingly.
+[5.134s] [ext: omni.kit.manipulator.camera-106.0.4] startup
+[5.139s] [ext: omni.kit.property.audio-1.0.16] startup
+[5.141s] [ext: omni.fabric.commands-1.1.6] startup
+[5.145s] [ext: omni.kit.manipulator.prim.core-107.0.8] startup
+[5.152s] [ext: omni.kit.property.camera-1.0.10] startup
+[5.154s] [ext: omni.kit.property.geometry-2.0.4] startup
+[5.158s] [ext: omni.kit.property.light-1.0.12] startup
+[5.168s] [ext: omni.hydra.scene_api-0.1.2] startup
+[5.174s] [ext: omni.kit.manipulator.prim.fabric-107.0.4] startup
+[5.176s] [ext: omni.kit.manipulator.prim.usd-107.0.3] startup
+[5.178s] [ext: omni.kit.property.material-1.11.9] startup
+[5.186s] [ext: omni.kit.property.render-1.2.1] startup
+[5.188s] [ext: omni.kit.property.transform-1.5.13] startup
+[5.193s] [ext: isaacsim.gui.property-1.1.3] startup
+[5.195s] [ext: omni.kit.manipulator.prim-107.0.0] startup
+[5.195s] [ext: omni.kit.manipulator.selection-106.0.1] startup
+[5.198s] [ext: omni.isaac.lula-4.0.6] startup
+2026-10-06T02:38:14Z [5,179ms] [Warning] [omni.isaac.lula] omni.isaac.lula has been deprecated in favor of isaacsim.robot_motion.lula. Please update your code accordingly.
+[5.199s] [ext: omni.kit.property.bundle-1.4.1] startup
+[5.202s] [ext: omni.kit.property.isaac-1.0.6] startup
+2026-10-06T02:38:14Z [5,183ms] [Warning] [omni.kit.property.isaac] omni.kit.property.isaac has been deprecated in favor of isaacsim.gui.property. Please update your code accordingly.
+2026-10-06T02:38:14Z [5,183ms] [Warning] [omni.kit.property.isaac.widgets] omni.kit.property.isaac.widgets has been deprecated in favor of isaacsim.gui.property.widgets. Please update your code accordingly.
+[5.203s] [ext: isaacsim.replicator.writers-1.0.17] startup
+[5.221s] [ext: omni.kit.viewport.menubar.camera-107.0.6] startup
+[5.233s] [ext: omni.kit.viewport.menubar.lighting-107.3.1] startup
+[5.239s] [ext: omni.kit.viewport.menubar.render-107.0.10] startup
+[5.242s] [ext: omni.kit.viewport.menubar.settings-107.0.3] startup
+[5.247s] [ext: isaacsim.replicator.domain_randomization-1.0.16] startup
+[5.250s] [ext: isaacsim.replicator.examples-1.3.6] startup
+[5.253s] [ext: omni.ocio-0.1.1] startup
+[5.257s] [ext: omni.rtx.window.settings-0.6.19] startup
+[5.270s] [ext: omni.kit.window.console-1.1.4] startup
+[5.278s] [ext: omni.kit.window.status_bar-0.1.9] startup
+[5.282s] [ext: omni.kit.window.toolbar-2.0.0] startup
+[5.284s] [ext: omni.replicator.isaac-2.0.8] startup
+2026-10-06T02:38:14Z [5,265ms] [Warning] [omni.replicator.isaac] omni.replicator.isaac has been deprecated in favor of isaacsim.replicator.domain_randomization, isaacsim.replicator.examples, isaacsim.replicator.writers. Please update your code accordingly.
+[5.286s] [ext: omni.replicator.replicator_yaml-2.0.11] startup
+[5.291s] [ext: omni.rtx.settings.core-0.6.5] startup
+[5.297s] [ext: omni.usd.metrics.assembler.ui-107.3.1] startup
+[5.307s] [ext: isaacsim.robot.wheeled_robots-4.0.24] startup
+[5.315s] [ext: isaacsim.cortex.behaviors-2.0.14] startup
+[5.317s] [ext: omni.isaac.version-2.0.7] startup
+2026-10-06T02:38:14Z [5,299ms] [Warning] [omni.isaac.version] omni.isaac.version has been deprecated in favor of isaacsim.core.version. Please update your code accordingly.
+[5.320s] [ext: semantics.schema.editor-2.0.2] startup
+[5.325s] [ext: omni.kit.ui.actions-1.0.5] startup
+[5.327s] [ext: semantics.schema.property-2.0.1] startup
+[5.330s] [ext: omni.isaac.wheeled_robots-3.0.7] startup
+2026-10-06T02:38:14Z [5,313ms] [Warning] [omni.isaac.wheeled_robots] omni.isaac.wheeled_robots has been deprecated in favor of isaacsim.robot.wheeled_robots. Please update your code accordingly.
+2026-10-06T02:38:14Z [5,313ms] [Warning] [omni.isaac.wheeled_robots.controllers] omni.isaac.wheeled_robots has been deprecated in favor of isaacsim.robot.wheeled_robots. Please update your code accordingly.
+2026-10-06T02:38:14Z [5,313ms] [Warning] [omni.isaac.wheeled_robots.controllers.ackermann_controller] omni.isaac.wheeled_robots has been deprecated in favor of isaacsim.robot.wheeled_robots. Please update your code accordingly.
+2026-10-06T02:38:14Z [5,314ms] [Warning] [omni.isaac.wheeled_robots.controllers.differential_controller] omni.isaac.wheeled_robots has been deprecated in favor of isaacsim.robot.wheeled_robots. Please update your code accordingly.
+2026-10-06T02:38:14Z [5,315ms] [Warning] [omni.isaac.wheeled_robots.controllers.holonomic_controller] omni.isaac.wheeled_robots has been deprecated in favor of isaacsim.robot.wheeled_robots. Please update your code accordingly.
+2026-10-06T02:38:14Z [5,315ms] [Warning] [omni.isaac.wheeled_robots.controllers.quintic_path_planner] omni.isaac.wheeled_robots has been deprecated in favor of isaacsim.robot.wheeled_robots. Please update your code accordingly.
+2026-10-06T02:38:14Z [5,316ms] [Warning] [omni.isaac.wheeled_robots.controllers.stanley_control] omni.isaac.wheeled_robots has been deprecated in favor of isaacsim.robot.wheeled_robots. Please update your code accordingly.
+2026-10-06T02:38:14Z [5,316ms] [Warning] [omni.isaac.wheeled_robots.controllers.wheel_base_pose_controller] omni.isaac.wheeled_robots has been deprecated in favor of isaacsim.robot.wheeled_robots. Please update your code accordingly.
+2026-10-06T02:38:14Z [5,316ms] [Warning] [omni.isaac.wheeled_robots.impl] omni.isaac.wheeled_robots has been deprecated in favor of isaacsim.robot.wheeled_robots. Please update your code accordingly.
+2026-10-06T02:38:14Z [5,316ms] [Warning] [omni.isaac.wheeled_robots.robots] omni.isaac.wheeled_robots has been deprecated in favor of isaacsim.robot.wheeled_robots. Please update your code accordingly.
+2026-10-06T02:38:14Z [5,317ms] [Warning] [omni.isaac.wheeled_robots.robots.holonomic_robot_usd_setup] omni.isaac.wheeled_robots has been deprecated in favor of isaacsim.robot.wheeled_robots. Please update your code accordingly.
+2026-10-06T02:38:14Z [5,317ms] [Warning] [omni.isaac.wheeled_robots.robots.wheeled_robot] omni.isaac.wheeled_robots has been deprecated in favor of isaacsim.robot.wheeled_robots. Please update your code accordingly.
+[5.338s] [ext: omni.isaac.cortex.sample_behaviors-2.0.5] startup
+2026-10-06T02:38:14Z [5,320ms] [Warning] [omni.isaac.cortex.sample_behaviors] omni.isaac.cortex.sample_behaviors has been deprecated in favor of isaacsim.cortex.behaviors. Please update your code accordingly.
+[5.340s] [ext: isaacsim.replicator.behavior-1.1.16] startup
+[5.344s] [ext: isaacsim.core.throttling-2.2.2] startup
+[5.349s] [ext: omni.kit.menu.common-2.0.1] startup
+[5.355s] [ext: isaacsim.exp.base-5.1.0] startup
+[5.356s] [ext: isaacsim.exp.base.python-5.1.0] startup
+[5.357s] Simulation App Starting
+2026-10-06T02:38:15Z [5,763ms] [Warning] [omni.fabric.plugin] Warning: attribute viewPickingId not found for bucket id 9
+
+[5.877s] app ready
+[8.042s] Simulation App Startup Complete
+[8.052s] [ext: isaacsim.ros2.bridge-4.12.4] startup
+[8.104s] Attempting to load system rclpy
+[8.104s] Could not import system rclpy: No module named 'rclpy'
+[8.104s] Attempting to load internal rclpy for ROS Distro: humble
+[8.124s] rclpy loaded
+2026-10-06T02:38:18Z [9,367ms] [Warning] [pegasus.simulator.logic.backends.ardupilot_mavlink_backend] [ArduPilotMavlinkBackendConfig] Initialized with vehicle_id=0, connection_type=udpin, connection_ip=127.0.0.1, connection_baseport=14550, ardupilot_autolaunch=True, ardupilot_dir=/home/j/ardupilot, ardupilot_vehicle_model=gazebo-iris, enable_lockstep=False, num_rotors=4, input_offset=[0.0, 0.0, 0.0, 0.0], input_scaling=[1000, 1000, 1000, 1000], zero_position_armed=[100, 100, 100, 100], update_rate=400
+2026-10-06T02:38:18Z [9,441ms] [Warning] [pegasus.simulator.logic.interface.pegasus_interface] New global coordinates set to: 37.5503, 127.0736, 30.0
+2026-10-06T02:38:18Z [9,441ms] [Warning] [__main__] World origin set to 37.55030, 127.07360.
+[landing-pad] official UGV active visual meshes: 9
+2026-10-06T02:38:18Z [9,597ms] [Warning] [isaacsim.sensors.camera.camera] 'verticalAperture' (1.5290800094604493) and 'horizontalAperture' (2.0954999923706055) are inconsistent with the pixel resolution aspect ratio (1.3333333333333333). Setting 'verticalAperture' to 1.571624994277954 to ensure square pixels.
+2026-10-06T02:38:19Z [10,374ms] [Warning] [omni.fabric.plugin] getAttributeCount called on non-existent path /World/landing_rover/ranger_mini_v3_visual/root_joint/rr_wheel_link/visuals/wheel_v3/Scene
+2026-10-06T02:38:19Z [10,374ms] [Warning] [omni.fabric.plugin] getTypes called on non-existent path /World/landing_rover/ranger_mini_v3_visual/root_joint/rr_wheel_link/visuals/wheel_v3/Scene
+2026-10-06T02:38:20Z [11,130ms] [Warning] [pegasus.simulator.logic.interface.pegasus_interface] Loading a new environment into the simulator. Please wait...
+INFO  [px4] instance: 0
+
+______  __   __    ___ 
+| ___ \ \ \ / /   /   |
+| |_/ /  \ V /   / /| |
+|  __/   /   \  / /_| |
+| |     / /^\ \ \___  |
+\_|     \/   \/     |_/
+
+px4 starting.
+
+INFO  [px4] startup script: /bin/sh /home/j/SynologyDrive/junsuk/학술대회/CICS2026/Ontology_RGAT_UAV_RL_ISAAC_PX4/Ontology
+INFO  [init] found model autostart file as SYS_AUTOSTART=10015
+INFO  [param] selected parameter default file parameters.bson
+INFO  [param] selected parameter backup file parameters_backup.bson
+  SYS_AUTOCONFIG: curr: 0 -> new: 1
+  SYS_AUTOSTART: curr: 0 -> new: 10015
+  CAL_ACC0_ID: curr: 0 -> new: 1310988
+  CAL_GYRO0_ID: curr: 0 -> new: 1310988
+  CAL_ACC1_ID: curr: 0 -> new: 1310996
+  CAL_GYRO1_ID: curr: 0 -> new: 1310996
+  CAL_ACC2_ID: curr: 0 -> new: 1311004
+  CAL_GYRO2_ID: curr: 0 -> new: 1311004
+  CAL_MAG0_ID: curr: 0 -> new: 197388
+  CAL_MAG0_PRIO: curr: -1 -> new: 50
+  CAL_MAG1_ID: curr: 0 -> new: 197644
+  CAL_MAG1_PRIO: curr: -1 -> new: 50
+* SENS_BOARD_X_OFF: curr: 0.0000 -> new: 0.0000
+* SENS_DPRES_OFF: curr: 0.0000 -> new: 0.0010
+INFO  [dataman] data manager file './dataman' size is 7866640 bytes
+/home/j/SynologyDrive/junsuk/학술대회/CICS2026/Ontology_RGAT_UAV_RL_ISAAC_PX4/Ontology_RGAT_UAV_RL_ISAAC_PX4/logs/runs/run-20261006-1138/px4/px4_0/ontology_rgat_rcS: 39: [: Illegal number: 
+INFO  [init] PX4_SIM_HOSTNAME: localhost
+INFO  [simulator_mavlink] Waiting for simulator to accept connection on TCP port 4560
+INFO  [simulator_mavlink] Simulator connected on TCP port 4560.
+2026-10-06T02:38:21Z [11,933ms] [Warning] [isaacsim.sensors.camera.camera] 'verticalAperture' (1.5716249465942382) and 'horizontalAperture' (10.0) are inconsistent with the pixel resolution aspect ratio (1.3333333333333333). Setting 'verticalAperture' to 7.5 to ensure square pixels.
+2026-10-06T02:38:21Z [11,970ms] [Warning] [__main__] Isaac PX4 startup render rate: 2.0 Hz (physics 250 Hz)
+2026-10-06T02:38:21Z [11,980ms] [Warning] [pegasus.simulator.logic.backends.px4_mavlink_backend] Waiting for first hearbeat
+2026-10-06T02:38:21Z [11,993ms] [Warning] [pegasus.simulator.logic.backends.px4_mavlink_backend] Received first hearbeat
+INFO  [lockstep_scheduler] setting initial absolute time to 4000 us
+INFO  [commander] LED: open /dev/led0 failed (22)
+INFO  [mavlink] mode: Normal, data rate: 4000000 B/s on udp port 18570 remote port 14550
+INFO  [uxrce_dds_client] synchronized with time offset 1791254301345014us
+INFO  [uxrce_dds_client] successfully created rt/fmu/out/failsafe_flags data writer, topic id: 80
+INFO  [uxrce_dds_client] successfully created rt/fmu/out/position_setpoint_triplet data writer, topic id: 149
+INFO  [uxrce_dds_client] successfully created rt/fmu/out/sensor_combined data writer, topic id: 168
+INFO  [uxrce_dds_client] successfully created rt/fmu/out/timesync_status data writer, topic id: 191
+INFO  [uxrce_dds_client] successfully created rt/fmu/out/vehicle_control_mode data writer, topic id: 212
+INFO  [uxrce_dds_client] successfully created rt/fmu/out/vehicle_gps_position data writer, topic id: 215
+INFO  [uxrce_dds_client] successfully created rt/fmu/out/estimator_innovations data writer, topic id: 65
+INFO  [uxrce_dds_client] successfully created rt/fmu/out/estimator_status_flags data writer, topic id: 74
+INFO  [uxrce_dds_client] successfully created rt/fmu/out/vehicle_status data writer, topic id: 229
+INFO  [uxrce_dds_client] successfully created rt/fmu/out/vehicle_thrust_setpoint data writer, topic id: 230
+INFO  [uxrce_dds_client] successfully created rt/fmu/out/estimator_gps_status data writer, topic id: 62
+INFO  [mavlink] mode: Onboard, data rate: 4000000 B/s on udp port 14580 remote port 14540
+INFO  [mavlink] mode: Onboard, data rate: 4000 B/s on udp port 14280 remote port 14030
+INFO  [mavlink] mode: Gimbal, data rate: 400000 B/s on udp port 13030 remote port 13280
+INFO  [logger] logger started (mode=all)
+INFO  [logger] Start file log (type: full)
+INFO  [logger] [logger] ./log/2026-10-06/02_38_21.ulg	
+INFO  [logger] Opened full log file: ./log/2026-10-06/02_38_21.ulg
+INFO  [mavlink] MAVLink only on localhost (set param MAV_{i}_BROADCAST = 1 to enable network)
+INFO  [mavlink] MAVLink only on localhost (set param MAV_{i}_BROADCAST = 1 to enable network)
+INFO  [ontology_rgat] applying autonomous SITL parameters
+* COM_RC_IN_MODE: curr: 1 -> new: 4
+* COM_RCL_EXCEPT: curr: 0 -> new: 4
+* COM_OF_LOSS_T: curr: 1.0000 -> new: 30.0000
+* COM_OBL_RC_ACT: curr: 0 -> new: 5
+* FD_FAIL_R: curr: 60 -> new: 85
+* FD_FAIL_P: curr: 60 -> new: 85
+* MPC_THR_HOVER: curr: 0.5000 -> new: 0.5800
+* MPC_XY_VEL_MAX: curr: 12.0000 -> new: 10.0000
+* MPC_Z_VEL_MAX_UP: curr: 3.0000 -> new: 5.0000
+* MPC_Z_VEL_MAX_DN: curr: 1.5000 -> new: 5.0000
+* MPC_ACC_HOR_MAX: curr: 5.0000 -> new: 3.6000
+* MPC_ACC_UP_MAX: curr: 4.0000 -> new: 2.0000
+* MPC_ACC_DOWN_MAX: curr: 3.0000 -> new: 2.0000
+* SIM_BAT_MIN_PCT: curr: 50.0000 -> new: 100.0000
+INFO  [px4] Startup script returned successfully
+INFO  [tone_alarm] home set
+INFO  [uxrce_dds_client] successfully created rt/fmu/out/battery_status data writer, topic id: 16
+INFO  [uxrce_dds_client] successfully created rt/fmu/out/vehicle_land_detected data writer, topic id: 218
+INFO  [uxrce_dds_client] successfully created rt/fmu/out/vehicle_local_position data writer, topic id: 219
+INFO  [uxrce_dds_client] successfully created rt/fmu/out/vehicle_odometry data writer, topic id: 224
+2026-10-06T02:38:21Z [12,454ms] [Warning] [rtx.postprocessing.plugin] DLSS increasing input dimensions: Render resolution of (320, 240) is below minimal input resolution of 300.
+2026-10-06T02:38:21Z [12,556ms] [Warning] [isaacsim.sensors.physics.plugin] *** warning: get_contact_sensor_raw_data is deprecated and will replaced in the next release
+2026-10-06T02:38:21Z [12,556ms] [Warning] [__main__] Landing camera produced no frame; is rendering enabled?
+INFO  [tone_alarm] notify negative
+INFO  [uxrce_dds_client] successfully created rt/fmu/out/estimator_sensor_bias data writer, topic id: 71
+2026-10-06T02:38:22Z [13,005ms] [Warning] [omni.syntheticdata.plugin] OgnSdPostRenderVarToHost : rendervar copy from texture directly to host buffer is counter-performant. Please use copy from texture to device buffer first.
+INFO  [uxrce_dds_client] successfully created rt/fmu/out/vehicle_attitude data writer, topic id: 206
+INFO  [uxrce_dds_client] successfully created rt/fmu/out/vehicle_global_position data writer, topic id: 213
+INFO  [commander] [32mReady for takeoff![0m
+2026-10-06T02:38:28Z [18,678ms] [Warning] [__main__] Isaac run-time render rate: 20.0 Hz (physics 250 Hz)
+INFO  [uxrce_dds_client] successfully created rt/fmu/out/vehicle_command_ack data writer, topic id: 210
+INFO  [commander] Armed by external command	
+INFO  [tone_alarm] arming warning
+2026-10-06T02:38:34Z [25,469ms] [Warning] [carb] Client gpu.foundation.plugin has acquired [gpu::unstable::IMemoryBudgetManagerFactory v0.1] 100 times. Consider accessing this interface with carb::getCachedInterface() (Performance warning)
+INFO  [commander] Takeoff detected	
+2026-10-06T02:38:42Z [32,993ms] [Warning] [__main__] Policy has the vehicle; the lorry pulls away.
+INFO  [commander] Landing at current position	
+INFO  [commander] Landing detected	
+INFO  [commander] Disarmed by external command	
+INFO  [tone_alarm] notify neutral
+WARN  [health_and_arming_checks] Preflight Fail: velocity estimate error
+INFO  [commander] Armed by external command	
+INFO  [tone_alarm] arming warning
+INFO  [logger] Start file log (type: full)
+INFO  [logger] [logger] ./log/2026-10-06/02_38_55.ulg	
+INFO  [logger] closed logfile, bytes written: 5832280
+INFO  [logger] Opened full log file: ./log/2026-10-06/02_38_55.ulg
+INFO  [commander] Takeoff detected	
+2026-10-06T02:39:05Z [55,856ms] [Warning] [__main__] Policy has the vehicle; the lorry pulls away.
+INFO  [commander] Landing at current position	
+INFO  [commander] Landing detected	
+INFO  [commander] Disarmed by external command	
+INFO  [tone_alarm] notify neutral
+WARN  [health_and_arming_checks] Preflight Fail: horizontal velocity unstable
+WARN  [health_and_arming_checks] Preflight Fail: velocity estimate error
+INFO  [logger] closed logfile, bytes written: 6153874
+INFO  [commander] Armed by external command	
+INFO  [tone_alarm] arming warning
+INFO  [logger] Start file log (type: full)
+INFO  [logger] [logger] ./log/2026-10-06/02_39_39.ulg	
+INFO  [logger] Opened full log file: ./log/2026-10-06/02_39_39.ulg
+INFO  [commander] Takeoff detected	
+2026-10-06T02:39:50Z [101,501ms] [Warning] [__main__] Policy has the vehicle; the lorry pulls away.
+INFO  [commander] Landing at current position	
+INFO  [commander] Landing detected	
+INFO  [commander] Disarmed by external command	
+INFO  [tone_alarm] notify neutral
+INFO  [vehicle_imu] ACC 0 (1310988) offset committed: [0.000 0.000 0.000]->[0.196 0.370 0.000])
+WARN  [health_and_arming_checks] Preflight Fail: velocity estimate error
+INFO  [commander] Armed by external command	
+INFO  [tone_alarm] arming warning
+INFO  [logger] Start file log (type: full)
+INFO  [logger] [logger] ./log/2026-10-06/02_42_10.ulg	
+INFO  [logger] closed logfile, bytes written: 21126995
+INFO  [logger] Opened full log file: ./log/2026-10-06/02_42_10.ulg
+INFO  [commander] Takeoff detected	
+2026-10-06T02:42:21Z [252,539ms] [Warning] [__main__] Policy has the vehicle; the lorry pulls away.
+INFO  [commander] Landing at current position	
+INFO  [commander] Landing detected	
+INFO  [commander] Disarmed by external command	
+INFO  [tone_alarm] notify neutral
+WARN  [health_and_arming_checks] Preflight Fail: horizontal velocity unstable
+WARN  [health_and_arming_checks] Preflight Fail: velocity estimate error
+INFO  [logger] closed logfile, bytes written: 6490022
+INFO  [commander] Armed by external command	
+INFO  [tone_alarm] arming warning
+INFO  [logger] Start file log (type: full)
+INFO  [logger] [logger] ./log/2026-10-06/02_42_55.ulg	
+INFO  [logger] Opened full log file: ./log/2026-10-06/02_42_55.ulg
+INFO  [commander] Takeoff detected	
+2026-10-06T02:43:05Z [296,393ms] [Warning] [__main__] Policy has the vehicle; the lorry pulls away.
+INFO  [commander] Landing at current position	
+INFO  [commander] Landing detected	
+INFO  [commander] Disarmed by external command	
+INFO  [tone_alarm] notify neutral
+WARN  [health_and_arming_checks] Preflight Fail: horizontal velocity unstable
+WARN  [health_and_arming_checks] Preflight Fail: velocity estimate error
+INFO  [tone_alarm] notify negative
+INFO  [logger] closed logfile, bytes written: 6353786
+INFO  [commander] Armed by external command	
+INFO  [tone_alarm] arming warning
+INFO  [logger] Start file log (type: full)
+INFO  [logger] [logger] ./log/2026-10-06/02_43_39.ulg	
+INFO  [logger] Opened full log file: ./log/2026-10-06/02_43_39.ulg
+INFO  [commander] Takeoff detected	
+2026-10-06T02:43:49Z [340,443ms] [Warning] [__main__] Policy has the vehicle; the lorry pulls away.
+INFO  [commander] Landing at current position	
+INFO  [commander] Landing detected	
+INFO  [commander] Disarmed by external command	
+INFO  [tone_alarm] notify neutral
+WARN  [health_and_arming_checks] Preflight Fail: horizontal velocity unstable
+WARN  [health_and_arming_checks] Preflight Fail: velocity estimate error
+INFO  [tone_alarm] notify negative
+INFO  [logger] closed logfile, bytes written: 6627532
+INFO  [commander] Armed by external command	
+INFO  [tone_alarm] arming warning
+INFO  [logger] Start file log (type: full)
+INFO  [logger] [logger] ./log/2026-10-06/02_44_26.ulg	
+INFO  [logger] Opened full log file: ./log/2026-10-06/02_44_26.ulg
+INFO  [commander] Takeoff detected	
+2026-10-06T02:44:35Z [386,504ms] [Warning] [__main__] Policy has the vehicle; the lorry pulls away.
+INFO  [commander] Landing at current position	
+INFO  [commander] Landing detected	
+INFO  [commander] Disarmed by external command	
+INFO  [tone_alarm] notify neutral
+WARN  [health_and_arming_checks] Preflight Fail: horizontal velocity unstable
+WARN  [health_and_arming_checks] Preflight Fail: velocity estimate error
+INFO  [tone_alarm] notify negative
+INFO  [logger] closed logfile, bytes written: 6481295
+INFO  [commander] Armed by external command	
+INFO  [tone_alarm] arming warning
+INFO  [logger] Start file log (type: full)
+INFO  [logger] [logger] ./log/2026-10-06/02_45_11.ulg	
+INFO  [logger] Opened full log file: ./log/2026-10-06/02_45_11.ulg
+INFO  [commander] Takeoff detected	
+2026-10-06T02:45:21Z [432,329ms] [Warning] [__main__] Policy has the vehicle; the lorry pulls away.
+INFO  [commander] Landing at current position	
+INFO  [commander] Landing detected	
+INFO  [commander] Disarmed by external command	
+INFO  [tone_alarm] notify neutral
+WARN  [health_and_arming_checks] Preflight Fail: horizontal velocity unstable
+WARN  [health_and_arming_checks] Preflight Fail: velocity estimate error
+INFO  [tone_alarm] notify negative
+INFO  [logger] closed logfile, bytes written: 6382816
+INFO  [commander] Armed by external command	
+INFO  [tone_alarm] arming warning
+INFO  [logger] Start file log (type: full)
+INFO  [logger] [logger] ./log/2026-10-06/02_46_02.ulg	
+INFO  [logger] Opened full log file: ./log/2026-10-06/02_46_02.ulg
+INFO  [commander] Takeoff detected	
+2026-10-06T02:46:16Z [487,155ms] [Warning] [__main__] Policy has the vehicle; the lorry pulls away.
+INFO  [commander] Landing at current position	
+INFO  [commander] Landing detected	
+INFO  [commander] Disarmed by external command	
+INFO  [tone_alarm] notify neutral
+WARN  [health_and_arming_checks] Preflight Fail: horizontal velocity unstable
+WARN  [health_and_arming_checks] Preflight Fail: velocity estimate error
+INFO  [tone_alarm] notify negative
+INFO  [logger] closed logfile, bytes written: 6516905
+INFO  [commander] Armed by external command	
+INFO  [tone_alarm] arming warning
+INFO  [logger] Start file log (type: full)
+INFO  [logger] [logger] ./log/2026-10-06/02_46_54.ulg	
+INFO  [logger] Opened full log file: ./log/2026-10-06/02_46_54.ulg
+INFO  [commander] Takeoff detected	
+2026-10-06T02:47:04Z [534,830ms] [Warning] [__main__] Policy has the vehicle; the lorry pulls away.
+INFO  [commander] Landing at current position	
+INFO  [commander] Landing detected	
+INFO  [commander] Disarmed by external command	
+INFO  [tone_alarm] notify neutral
+WARN  [health_and_arming_checks] Preflight Fail: horizontal velocity unstable
+WARN  [health_and_arming_checks] Preflight Fail: velocity estimate error
+INFO  [logger] closed logfile, bytes written: 6271939
+INFO  [commander] Armed by external command	
+INFO  [tone_alarm] arming warning
+INFO  [logger] Start file log (type: full)
+INFO  [logger] [logger] ./log/2026-10-06/02_47_39.ulg	
+INFO  [logger] Opened full log file: ./log/2026-10-06/02_47_39.ulg
+INFO  [commander] Takeoff detected	
+2026-10-06T02:47:48Z [579,544ms] [Warning] [__main__] Policy has the vehicle; the lorry pulls away.
+INFO  [commander] Landing at current position	
+INFO  [commander] Landing detected	
+INFO  [commander] Disarmed by external command	
+INFO  [tone_alarm] notify neutral
+INFO  [commander] Armed by external command	
+INFO  [logger] Start file log (type: full)
+INFO  [tone_alarm] arming warning
+INFO  [logger] [logger] ./log/2026-10-06/02_47_59.ulg	
+INFO  [logger] closed logfile, bytes written: 3146648
+INFO  [logger] Opened full log file: ./log/2026-10-06/02_47_59.ulg
+INFO  [commander] Takeoff detected	
+2026-10-06T02:48:16Z [606,994ms] [Warning] [__main__] Policy has the vehicle; the lorry pulls away.
+INFO  [commander] Landing at current position	
+INFO  [commander] Landing detected	
+INFO  [commander] Disarmed by external command	
+INFO  [tone_alarm] notify neutral
+WARN  [health_and_arming_checks] Preflight Fail: horizontal velocity unstable
+WARN  [health_and_arming_checks] Preflight Fail: velocity estimate error
+
+PX4 Exiting...
+Exiting NOW.

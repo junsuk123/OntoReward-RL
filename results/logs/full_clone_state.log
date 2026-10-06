@@ -1,0 +1,15 @@
+[clone] teacher: 19699 steps from 120 episodes, {'SUCCESS': 108, 'TASK_TIMEOUT': 6, 'SAFE_ABORT': 3, 'UNAUTHORIZED_CONTACT': 3}
+[clone] ppo_vector_canonical seed=828 mse 0.03456->0.00346 holdout land=0.125 unsafe=0.375 | isaac preflight unsafe=0.000 ADMISSIBLE
+[clone] ppo_semantic_flat seed=828 mse 0.03584->0.00402 holdout land=0.500 unsafe=0.292 | isaac preflight unsafe=0.000 ADMISSIBLE
+[clone] ppo_ontology_rgat seed=828 mse 0.03584->0.00402 holdout land=0.625 unsafe=0.125 | isaac preflight unsafe=0.000 ADMISSIBLE | actor readout 0.7463 delta|max| 0.3652
+[clone] ppo_vector_canonical seed=829 mse 0.03342->0.00333 holdout land=0.167 unsafe=0.167 | isaac preflight unsafe=0.000 ADMISSIBLE
+[clone] ppo_semantic_flat seed=829 mse 0.03446->0.00404 holdout land=0.708 unsafe=0.042 | isaac preflight unsafe=0.000 ADMISSIBLE
+[clone] ppo_ontology_rgat seed=829 mse 0.03444->0.00404 holdout land=0.625 unsafe=0.083 | isaac preflight unsafe=0.000 ADMISSIBLE | actor readout 0.5690 delta|max| 0.0931
+
+[clone] 6/6 checkpoints pass the Isaac preflight
+   ok ppo_vector_canonical   seed828 ['TASK_TIMEOUT', 'TASK_TIMEOUT']
+   ok ppo_semantic_flat      seed828 ['TASK_TIMEOUT', 'TASK_TIMEOUT']
+   ok ppo_ontology_rgat      seed828 ['SUCCESS', 'TASK_TIMEOUT']
+   ok ppo_vector_canonical   seed829 ['TASK_TIMEOUT', 'TASK_TIMEOUT']
+   ok ppo_semantic_flat      seed829 ['TASK_TIMEOUT', 'TASK_TIMEOUT']
+   ok ppo_ontology_rgat      seed829 ['TASK_TIMEOUT', 'TASK_TIMEOUT']

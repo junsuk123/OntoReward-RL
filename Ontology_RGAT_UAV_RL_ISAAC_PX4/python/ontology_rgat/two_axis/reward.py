@@ -24,6 +24,7 @@ class RewardBreakdown:
     readiness_delta_reward: float
     dt_s: float
     potential_shaping: float = 0.0
+    spin_cost: float = 0.0
 
 
 def _saturate(normalized: float) -> float:
@@ -90,6 +91,8 @@ def compute_reward(*, ex_true_m: float, h_true_m: float,
                    config: RewardConfig, readiness: float = 0.0,
                    previous_readiness: float = 0.0,
                    previous_goal_cost: float | None = None,
+                   pitch_rate_rad_s: float = 0.0,
+                   touchdown_pitch_rate_rad_s: float = 1.0,
                    discount_time_constant_s: float = 70.0) -> RewardBreakdown:
     action = np.asarray(normalized_policy_action, dtype=float).reshape(2)
     # Each axis saturates on its own scale before they are mixed. Sharing one
@@ -104,9 +107,14 @@ def compute_reward(*, ex_true_m: float, h_true_m: float,
     else:
         view = 1.0
     control = 0.5 * float(np.dot(action, action))
+    # Sustained body rate is priced here, NOT inside readiness: readiness is
+    # paid as a difference, so its sum telescopes to the endpoint and holding a
+    # high rate for the whole approach costs nothing. Per-axis, so the spatial
+    # route's two axes and this route's one cost the same for the same rate.
+    spin = (float(pitch_rate_rad_s) / max(float(touchdown_pitch_rate_rad_s), 1e-9)) ** 2
     running = -(float(dt_s) / config.reference_duration_s) * (
         config.goal_weight * goal + config.view_weight * view
-        + config.control_weight * control)
+        + config.control_weight * control + config.spin_weight * spin)
     # Pay only the change in readiness: a held state earns nothing, so a
     # near-pad hover cannot compete with an actual touchdown.
     readiness_delta = config.readiness_weight * (
@@ -126,7 +134,8 @@ def compute_reward(*, ex_true_m: float, h_true_m: float,
     return RewardBreakdown(float(total), float(running), float(terminal),
                            float(goal), float(horizontal), float(height),
                            float(view), float(control), float(readiness),
-                           float(readiness_delta), float(dt_s), float(potential))
+                           float(readiness_delta), float(dt_s), float(potential),
+                           spin_cost=float(spin))
 
 
 def goal_cost(ex_m: float, h_m: float, config: RewardConfig) -> float:

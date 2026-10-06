@@ -1201,6 +1201,47 @@ class ViewportFollower:
 class LandingWorld:
     """One independently controlled UAV/UGV pair in a possibly shared stage."""
 
+
+    def _attach_landing_gear(self, vehicle_prim_path: str, gear: dict) -> None:
+        """Four rigid legs under the body, as colliders of the same rigid body.
+
+        Children of ``/body`` with a collision API are shapes of that rigid
+        body in PhysX, so the vehicle's dynamics, the deck's contact sensor
+        (which matches contacts by vehicle prim path) and PX4's land detector
+        all see one vehicle that simply stands taller. Each leg carries a
+        nominal mass; the Iris authors its own mass and inertia, so the
+        legs do not re-derive them.
+        """
+        stage = self.world.stage
+        extension = float(gear.get("extension_m", 0.0))
+        radius = float(gear.get("leg_radius_m", 0.012))
+        top_z = float(gear.get("stock_gear_bottom_body_z_m", -0.12))
+        mass = float(gear.get("mass_per_leg_kg", 0.02))
+        footprint = gear.get("leg_xy_flu_m") or [[0.16, 0.16], [0.16, -0.16],
+                                                  [-0.16, 0.16], [-0.16, -0.16]]
+        if not 0.0 < radius <= 0.05 or extension <= 0.0:
+            raise ValueError("landing gear needs a positive extension and a leg radius in (0, 0.05] m")
+        root = f"{vehicle_prim_path}/body/landing_gear"
+        UsdGeom.Xform.Define(stage, root)
+        for index, (x, y) in enumerate(footprint):
+            path = f"{root}/leg_{index}"
+            leg = UsdGeom.Cylinder.Define(stage, path)
+            leg.CreateRadiusAttr(radius)
+            leg.CreateHeightAttr(extension)
+            leg.CreateAxisAttr(UsdGeom.Tokens.z)
+            leg.CreateExtentAttr([Gf.Vec3f(-radius, -radius, -extension / 2.0),
+                                  Gf.Vec3f(radius, radius, extension / 2.0)])
+            leg.CreateDisplayColorAttr([Gf.Vec3f(0.12, 0.12, 0.12)])
+            UsdGeom.XformCommonAPI(leg).SetTranslate(
+                Gf.Vec3d(float(x), float(y), top_z - extension / 2.0))
+            prim = leg.GetPrim()
+            UsdPhysics.CollisionAPI.Apply(prim)
+            UsdPhysics.MassAPI.Apply(prim).CreateMassAttr(mass)
+        carb.log_info(
+            f"[landing-gear] {len(footprint)} legs, {extension:.2f} m below the stock gear; "
+            f"body rests at {-top_z + extension:.2f} m, camera at "
+            f"{-top_z + extension - 0.16:.2f} m above the deck")
+
     def __init__(self, *, pair_index: int = 0, pair_count: int = 1,
                  shared=None):
         isaac_cfg = CONFIG["isaac"]
@@ -1381,6 +1422,16 @@ class LandingWorld:
         self.px4_hover_thrust = float(
             (CONFIG.get("px4") or {}).get("hover_thrust", 0.58))
         self.px4_normalized_thrust = 0.0
+        # spatial-reference/4 landing gear: legs below the stock Iris gear so
+        # the body (and the camera 0.16 m under it) rests higher at touchdown.
+        # A ground spawn must sit higher by the same amount or the legs start
+        # inside the deck; the airborne hover start is unaffected.
+        self.landing_gear_cfg = dict((CONFIG.get("vehicle") or {}).get("landing_gear") or {})
+        gear_extension = float(self.landing_gear_cfg.get("extension_m", 0.0))
+        if gear_extension < 0.0 or gear_extension > 0.5:
+            raise ValueError("vehicle.landing_gear.extension_m must be in [0, 0.5] m")
+        if gear_extension > 0.0:
+            self.deck_clearance_pad_m = self.deck_clearance_pad_m + np.array([0.0, 0.0, gear_extension])
         clearance = (self.hover_start_pad_m if self.start_airborne
                      else self.deck_clearance_pad_m)
         spawn = self.deck.world_from_pad(clearance).tolist()
@@ -1392,6 +1443,8 @@ class LandingWorld:
             [0.0, 0.0, 0.0, 1.0],
             config=vehicle_cfg,
         )
+        if gear_extension > 0.0:
+            self._attach_landing_gear(self.vehicle.prim_path, self.landing_gear_cfg)
 
         vision_cfg = CONFIG["vision"]
         vision_mode = str(vision_cfg.get("mode", "pose_proxy"))

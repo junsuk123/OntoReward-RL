@@ -1,0 +1,40 @@
+[compare] ppo_ontology_rgat      seed828 landing_rate=0.292 unsafe_rate=0.479 safe_abort_rate=0.000 task_timeout_rate=0.229 mean_return=-10.918
+[compare] ppo_ontology_rgat      seed829 landing_rate=0.562 unsafe_rate=0.167 safe_abort_rate=0.000 task_timeout_rate=0.271 mean_return=8.651
+[compare] ppo_ontology_rgat      seed830 landing_rate=0.646 unsafe_rate=0.208 safe_abort_rate=0.000 task_timeout_rate=0.146 mean_return=10.324
+[compare] ppo_ontology_rgat      seed831 landing_rate=0.438 unsafe_rate=0.479 safe_abort_rate=0.000 task_timeout_rate=0.083 mean_return=-5.847
+[compare] ppo_ontology_rgat      seed832 landing_rate=0.646 unsafe_rate=0.229 safe_abort_rate=0.021 task_timeout_rate=0.104 mean_return=9.533
+[compare] ppo_semantic_flat      seed828 landing_rate=0.500 unsafe_rate=0.271 safe_abort_rate=0.000 task_timeout_rate=0.229 mean_return=2.775
+[compare] ppo_semantic_flat      seed829 landing_rate=0.729 unsafe_rate=0.042 safe_abort_rate=0.000 task_timeout_rate=0.229 mean_return=18.646
+[compare] ppo_semantic_flat      seed830 landing_rate=0.792 unsafe_rate=0.146 safe_abort_rate=0.000 task_timeout_rate=0.062 mean_return=17.794
+[compare] ppo_semantic_flat      seed831 landing_rate=0.688 unsafe_rate=0.208 safe_abort_rate=0.000 task_timeout_rate=0.104 mean_return=12.151
+[compare] ppo_semantic_flat      seed832 landing_rate=0.688 unsafe_rate=0.208 safe_abort_rate=0.000 task_timeout_rate=0.104 mean_return=11.876
+[compare] ppo_vector_canonical   seed828 landing_rate=0.500 unsafe_rate=0.438 safe_abort_rate=0.000 task_timeout_rate=0.062 mean_return=-2.073
+[compare] ppo_vector_canonical   seed829 landing_rate=0.229 unsafe_rate=0.354 safe_abort_rate=0.000 task_timeout_rate=0.417 mean_return=-10.901
+[compare] ppo_vector_canonical   seed830 landing_rate=0.646 unsafe_rate=0.104 safe_abort_rate=0.000 task_timeout_rate=0.250 mean_return=13.213
+[compare] ppo_vector_canonical   seed831 landing_rate=0.688 unsafe_rate=0.125 safe_abort_rate=0.000 task_timeout_rate=0.188 mean_return=14.124
+[compare] ppo_vector_canonical   seed832 landing_rate=0.729 unsafe_rate=0.167 safe_abort_rate=0.000 task_timeout_rate=0.104 mean_return=14.626
+[compare] ppo_ontology_rgat      seed828 landing_rate=0.708 unsafe_rate=0.167 safe_abort_rate=0.000 task_timeout_rate=0.125 mean_return=14.300
+[compare] ppo_ontology_rgat      seed829 landing_rate=0.771 unsafe_rate=0.208 safe_abort_rate=0.000 task_timeout_rate=0.021 mean_return=15.680
+[compare] ppo_ontology_rgat      seed830 landing_rate=0.833 unsafe_rate=0.125 safe_abort_rate=0.000 task_timeout_rate=0.042 mean_return=20.719
+[compare] ppo_ontology_rgat      seed831 landing_rate=0.896 unsafe_rate=0.104 safe_abort_rate=0.000 task_timeout_rate=0.000 mean_return=23.557
+[compare] ppo_ontology_rgat      seed832 landing_rate=0.854 unsafe_rate=0.104 safe_abort_rate=0.021 task_timeout_rate=0.021 mean_return=22.140
+[compare] ppo_semantic_flat      seed828 landing_rate=0.188 unsafe_rate=0.562 safe_abort_rate=0.083 task_timeout_rate=0.167 mean_return=-18.466
+[compare] ppo_semantic_flat      seed829 landing_rate=0.604 unsafe_rate=0.229 safe_abort_rate=0.042 task_timeout_rate=0.125 mean_return=7.778
+[compare] ppo_semantic_flat      seed830 landing_rate=0.667 unsafe_rate=0.292 safe_abort_rate=0.000 task_timeout_rate=0.042 mean_return=9.512
+[compare] ppo_semantic_flat      seed831 landing_rate=0.792 unsafe_rate=0.208 safe_abort_rate=0.000 task_timeout_rate=0.000 mean_return=16.805
+[compare] ppo_semantic_flat      seed832 landing_rate=0.792 unsafe_rate=0.146 safe_abort_rate=0.000 task_timeout_rate=0.062 mean_return=18.414
+[compare] ppo_vector_canonical   seed828 landing_rate=0.917 unsafe_rate=0.062 safe_abort_rate=0.021 task_timeout_rate=0.000 mean_return=25.252
+[compare] ppo_vector_canonical   seed829 landing_rate=0.646 unsafe_rate=0.333 safe_abort_rate=0.021 task_timeout_rate=0.000 mean_return=6.973
+[compare] ppo_vector_canonical   seed830 landing_rate=0.625 unsafe_rate=0.354 safe_abort_rate=0.021 task_timeout_rate=0.000 mean_return=5.675
+[compare] ppo_vector_canonical   seed831 landing_rate=0.875 unsafe_rate=0.125 safe_abort_rate=0.000 task_timeout_rate=0.000 mean_return=22.407
+[compare] ppo_vector_canonical   seed832 landing_rate=0.688 unsafe_rate=0.208 safe_abort_rate=0.021 task_timeout_rate=0.083 mean_return=11.931
+
+=== pooled over 48 held-out episodes per run ===
+arm                      runs   landing_rate    unsafe_rate safe_abort_rate task_timeout_rate    mean_return
+ppo_vector_canonical       10   0.654+-0.182   0.227+-0.124   0.008+-0.010   0.110+-0.131  10.123+-10.244
+ppo_semantic_flat          10   0.644+-0.175   0.231+-0.129   0.013+-0.027   0.113+-0.073   9.728+-10.619
+ppo_ontology_rgat          10   0.665+-0.182   0.227+-0.133   0.004+-0.008   0.104+-0.086  10.814+-10.867
+
+mean +- population sd ACROSS TRAINING SEEDS. Read the sd before the mean: on two seeds it swamped every between-arm difference.
+
+wrote /home/j/SynologyDrive/junsuk/학술대회/CICS2026/Ontology_RGAT_UAV_RL_ISAAC_PX4/results/full_pipeline_20261006_v6_5seeds/held_out.json

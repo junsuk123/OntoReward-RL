@@ -19,11 +19,19 @@ IRIS_INERTIA_KG_M2 = np.array([.029125, .029125, .055225])
 
 
 def advance_attitude_thrust(angles, euler_rates, thrust_acceleration, command, dt,
-                           *, force_body=None, torque_body=None, attitude_gain_scale=1.):
+                           *, force_body=None, torque_body=None, attitude_gain_scale=1.,
+                           attitude_omega=None, attitude_damping=None):
+    # The servo bandwidth and damping are contract laws
+    # (SpatialConfig.attitude_omega / attitude_damping): 10 rad/s critically
+    # damped on every rung before spatial-reference/4, 14 rad/s on /4-/5, and
+    # 10 rad/s at zeta 0.7 on /6, each fitted to the Isaac vehicle's measured
+    # response. Callers that pass nothing get the historical constants.
+    omega = ATTITUDE_OMEGA if attitude_omega is None else float(attitude_omega)
+    zeta = ATTITUDE_DAMPING if attitude_damping is None else float(attitude_damping)
     target = np.r_[command.derived_roll_pitch_rad, command.yaw_enu_rad]
     error = (target-angles+math.pi) % (2*math.pi)-math.pi
-    angular_acceleration = ATTITUDE_OMEGA**2*np.asarray(attitude_gain_scale)*error
-    angular_acceleration -= 2*ATTITUDE_DAMPING*ATTITUDE_OMEGA*euler_rates
+    angular_acceleration = omega**2*np.asarray(attitude_gain_scale)*error
+    angular_acceleration -= 2*zeta*omega*euler_rates
     if torque_body is not None:
         # Body disturbance in Euler coordinates. This is a reduced-order
         # attitude servo, not exact PX4 rigid-body/control-gain equivalence.

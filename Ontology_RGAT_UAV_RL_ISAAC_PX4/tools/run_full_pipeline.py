@@ -176,7 +176,14 @@ def main() -> int:
         parser.error(f"unknown cells: {sorted(unknown)}")
 
     stamp = dt.datetime.now().strftime("%Y%m%d")
-    root = args.run_root or (REPOSITORY / "results" / f"full_pipeline_{stamp}")
+    # Stages run with cwd=ROOT (the project directory) while the driver's own
+    # reads use this path from wherever it was launched; a relative --run-root
+    # therefore split one run across two `results/` trees on 2026-10-06
+    # (clones under the project's results/, lock and summary under the
+    # repository's). Resolve it once, against the launch cwd, before anyone
+    # sees it.
+    root = (args.run_root.resolve() if args.run_root
+            else REPOSITORY / "results" / f"full_pipeline_{stamp}")
     logs = REPOSITORY / "results" / "logs"
     seeds = [str(seed) for seed in args.seeds]
     print(f"run root : {root}")

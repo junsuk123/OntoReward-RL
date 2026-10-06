@@ -102,9 +102,33 @@ from ..two_axis.ontology_v28 import GRAPH_SCHEMA_HASH as TOPOLOGY_HASH
 #: servo never overshoots, so no policy trained on it could learn that
 #: margin. Steady-state tilt gain is 0.90-1.02, i.e. there is no gain error
 #: to model. Packet, graph, reward and capabilities are identical to /5.
+#: /7 is /6 plus one law, the CONTACT VERDICT. Decided by the user on
+#: 2026-10-06 over the six non-landing contacts of the five-seed /6 Isaac
+#: flight (results/full_pipeline_20261006_v6_5seeds): four were vehicles that
+#: sank onto the pad from a low hover while the supervisor held the vertical
+#: rate (``vertical_stopping_margin``), touching at |vz| 0.01-0.07 m/s, and
+#: were scored UNAUTHORIZED_CONTACT (two, every touchdown limit met) or
+#: UNSAFE_CONTACT (two: body rate 10.47 deg/s; tilt 5.27 deg at 12.51 deg/s,
+#: against the 5 deg / 10 deg/s touchdown band, both at |vz| <= 0.07). Two
+#: touched inside the terminal-descent corridor at vz -0.62 and -0.38 m/s
+#: against the 0.30 m/s limit. The user ruled the four acceptable landings
+#: and the two not. The one rule that draws exactly that line is the IMPACT
+#: SPEED: on /7 a pad contact is UNSAFE_CONTACT when its horizontal or
+#: vertical speed exceeds the touchdown limits, SAFETY_ENVELOPE_VIOLATION
+#: when the thrust axis is past the 21 deg hard limit at contact,
+#: UNAUTHORIZED_CONTACT only while the abort hold owns the vehicle, and
+#: SUCCESS otherwise -- whether or not descent was inhibited, whatever the
+#: tilt and body rate inside the envelope. Attitude and rate remain the
+#: corridor's ``settled`` commit condition and the readiness term's price;
+#: they stop being contact criteria. The limit VALUES are unchanged. Plant,
+#: packet, graph, ontology, supervisor and terminal table are identical to
+#: /6 (guarded in tests/test_contact_verdict_rung.py). Re-scoring the
+#: recorded /6 flight under this rule gives 27 SUCCESS / 2 UNSAFE_CONTACT /
+#: 1 SAFE_ABORT; acceptance still forbids the two.
 REFERENCE_SCHEMAS = ("spatial-reference/1", "spatial-reference/2",
                      "spatial-reference/3", "spatial-reference/4",
-                     "spatial-reference/5", "spatial-reference/6")
+                     "spatial-reference/5", "spatial-reference/6",
+                     "spatial-reference/7")
 REFERENCE_SCHEMA = REFERENCE_SCHEMAS[-1]
 #: /6 attitude servo: natural frequency (rad/s) and damping ratio.
 REFERENCE_ATTITUDE_SERVO_6 = (10.0, 0.7)
@@ -417,7 +441,7 @@ class SpatialConfig:
         """
         return self.schema in ("spatial-reference/2", "spatial-reference/3",
                                "spatial-reference/4", "spatial-reference/5",
-                               "spatial-reference/6")
+                               "spatial-reference/6", "spatial-reference/7")
 
     @property
     def actuation_delay_s(self):
@@ -429,13 +453,14 @@ class SpatialConfig:
         """
         return (REFERENCE_ACTUATION_DELAY_S
                 if self.schema in ("spatial-reference/3", "spatial-reference/4",
-                                   "spatial-reference/5", "spatial-reference/6") else 0.0)
+                                   "spatial-reference/5", "spatial-reference/6",
+                                   "spatial-reference/7") else 0.0)
 
     @property
     def attitude_omega(self):
         """Attitude servo bandwidth of the local plant, rad/s (/4: Isaac-fitted)."""
         from .dynamics import ATTITUDE_OMEGA
-        if self.schema == "spatial-reference/6":
+        if self.schema in ("spatial-reference/6", "spatial-reference/7"):
             return REFERENCE_ATTITUDE_SERVO_6[0]
         return (REFERENCE_ATTITUDE_OMEGA_RAD_S
                 if self.schema in ("spatial-reference/4", "spatial-reference/5")
@@ -446,19 +471,32 @@ class SpatialConfig:
         """Attitude servo damping ratio; critically damped before /6."""
         from .dynamics import ATTITUDE_DAMPING
         return (REFERENCE_ATTITUDE_SERVO_6[1]
-                if self.schema == "spatial-reference/6" else ATTITUDE_DAMPING)
+                if self.schema in ("spatial-reference/6", "spatial-reference/7")
+                else ATTITUDE_DAMPING)
 
     @property
     def landing_gear_extension_m(self):
         """How far below the stock gear the /4 legs reach; zero elsewhere."""
         return (REFERENCE_LANDING_GEAR_EXTENSION_M
                 if self.schema in ("spatial-reference/4", "spatial-reference/5",
-                                   "spatial-reference/6") else 0.0)
+                                   "spatial-reference/6", "spatial-reference/7") else 0.0)
 
     @property
     def optical_realism(self):
-        """Tag-based detection and the detector's quality metric (/5 only)."""
-        return self.schema in ("spatial-reference/5", "spatial-reference/6")
+        """Tag-based detection and the detector's quality metric (/5 onward)."""
+        return self.schema in ("spatial-reference/5", "spatial-reference/6",
+                               "spatial-reference/7")
+
+    @property
+    def contact_verdict_by_speed(self):
+        """/7: a pad contact is judged by its impact speed.
+
+        Not by whether descent was inhibited, and not by tilt or body rate
+        inside the 21 deg envelope -- those stay the corridor's commit
+        condition. See the /7 note above REFERENCE_SCHEMAS for the six Isaac
+        contacts this rule was drawn from.
+        """
+        return self.schema == "spatial-reference/7"
 
     @property
     def touchdown_height(self):

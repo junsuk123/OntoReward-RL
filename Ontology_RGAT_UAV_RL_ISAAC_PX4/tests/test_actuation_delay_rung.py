@@ -41,10 +41,10 @@ THREE_CONFIG_SHA256 = "8b102acab1ff"  # prefix; the full hash is checked below
 
 
 def test_the_latency_rungs_carry_it_and_the_earlier_ones_do_not():
-    assert REFERENCE_SCHEMA == "spatial-reference/6"
+    assert REFERENCE_SCHEMA == "spatial-reference/7"
     assert REFERENCE_ACTUATION_DELAY_S == pytest.approx(0.10)
     for schema in ("spatial-reference/3", "spatial-reference/4", "spatial-reference/5",
-                   "spatial-reference/6"):
+                   "spatial-reference/6", "spatial-reference/7"):
         assert _cfg(schema).actuation_delay_s == pytest.approx(0.10), schema
     for schema in ("spatial-reference/1", "spatial-reference/2",
                    "spatial-causal-rgat/5", "spatial-causal-rgat/10"):

@@ -689,14 +689,27 @@
     "mode": "PPO fine-tuning, not exact optimizer-state resume",
     "contract_migration": null
   },
+  "completed_nominal_episodes": 1396,
+  "selected_checkpoint": "checkpoint_best.pt",
+  "environment_steps": 464849,
+  "total_training_environment_steps": 464849,
+  "training_backend": "local-spatial",
+  "curriculum_enabled": true,
   "curriculum_angular_scales": [
     1.0,
     1.0
   ],
-  "training_backend": "local-spatial",
-  "state_dependent_log_std": false,
-  "completed_nominal_episodes": 1396,
-  "wall_seconds": 2002.2880868390057,
+  "adaptation_starts_at_iteration": 181,
+  "pretraining": {
+    "enabled": false,
+    "environment_steps": 0,
+    "reason": "eligible PPO checkpoint initialization"
+  },
+  "relation_activation": null,
+  "relational_health": {
+    "applicable": false,
+    "measured": false
+  },
   "history": [
     {
       "actor_loss": -0.002299273120253488,
@@ -27919,5 +27932,13 @@
         "sum": 146.93474903507317
       }
     }
+  ],
+  "wall_seconds": 2002.3343657600053,
+  "comparison_factors": [
+    "state_representation",
+    "causal_masked_pretraining",
+    "staged_graph_adaptation",
+    "guarded_relation_only_ppo",
+    "validation_readout_calibration"
   ]
 }

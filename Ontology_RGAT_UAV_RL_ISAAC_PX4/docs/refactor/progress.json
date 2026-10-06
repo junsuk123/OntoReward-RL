@@ -1427,7 +1427,7 @@
   "experiment": "two_axis_context_rgat_v1",
   "algorithm_version": "two-axis-context-rgat-v1",
   "contract_revision": "planar-visibility-ppo-v2.5",
-  "performance_verified": "partial: 5-seed local comparison on /6 done (rgat 81 %, vector 75 %, flat 61 % held-out); Isaac 23/30 landings on /6, 27/30 re-scored under the /7 verdict; acceptance gate not passed (2 corridor impacts remain unsafe); /7 five-seed run started 2026-10-06 ~21:00 KST",
+  "performance_verified": "partial: /6 five seeds rgat 81 / vector 75 / flat 61 % held-out, Isaac 23/30; /7 five seeds vector 92.5 / rgat 90.4 / flat 84.6 % held-out (unsafe 7-15 %, all vertical-speed), Isaac 9/12 before a PX4 preflight arming refusal; acceptance not passed; /8 (legs removed on user instruction) five-seed run starting 2026-10-06 ~22:40 KST",
   "corrections": [
     {
       "id": "authorized-touchdown-reachable",
@@ -1662,6 +1662,26 @@
         "acceptance_would_pass": false
       },
       "run": "results/full_pipeline_20261006_v7_5seeds: ./run.sh all --run-root results/full_pipeline_20261006_v7_5seeds --cells low_sigma_kl --seeds 828 829 830 831 832 --workers 10 --isaac --isaac-episodes 2"
+    },
+    {
+      "id": "spatial-reference-8-no-landing-gear",
+      "date": "2026-10-06",
+      "decision": "user, 2026-10-06 ~22:10 KST: 'remove drone legs again'",
+      "source": "the /4 legs (0.18 m) were added so the camera (0.16 m under the body) stays 0.14 m above the pad at touchdown; the user asked for them to be removed",
+      "fix": "spatial-reference/8 = /7 minus the gear: landing_gear_extension_m 0 (touchdown_height back to 0.12 m; supervisor heights and curriculum low band follow), deployment profile v12 = v11 with vehicle.landing_gear.extension_m 0 (no leg colliders in landing_world.py). Board, optical realism, /6 servo, /7 verdict inherited. /6 and /7 config_sha256 unchanged and pinned; snapshots of 2D, v5, /5, /6, /7 byte-identical before/after",
+      "risk": "camera is 0.04 m below the pad plane at contact; the last centimetres rely on terminal_coast / track memory. Never measured with the v11 board and /5 optics and no legs",
+      "guard": "tests/test_contact_verdict_rung.py::test_the_legless_rung_differs_from_seven_in_nothing_but_the_gear_and_its_profile",
+      "also": "tools/run_full_pipeline.py now passes --reset-recoveries (driver flag --isaac-reset-recoveries, default 2) after the /7 flight died at run 7/15 on a PX4 'Preflight Fail: High Accelerometer Bias' arming refusal; and resolves a relative --run-root to an absolute path after the first /7 launch split one run across two results/ trees",
+      "run": "results/full_pipeline_20261006_v8_5seeds: ./run.sh all --run-root <abs>/results/full_pipeline_20261006_v8_5seeds --cells low_sigma_kl --seeds 828 829 830 831 832 --workers 10 --isaac --isaac-episodes 2",
+      "measured_before_launch": {
+        "teacher_nominal_24": {
+          "/7": "22 SUCCESS, 1 UNSAFE, 1 TIMEOUT",
+          "/8": "21 SUCCESS, 3 TIMEOUT"
+        },
+        "teacher_difficulty_0.5_and_0.0": "12/12 on both rungs",
+        "easy_band_defect": "fixed-descent probe at difficulty 0.0: /7 12/12 SUCCESS, /8 7/12 (5 SAFE_ABORT) because the band's low end (body 0.20 m) puts the camera 0.04 m above the deck, blind; abort latched at step 1",
+        "easy_band_fix": "SpatialConfig.easy_start_lift_m = 0.18 on /4-/8 (gear on /4-/7, kept on /8); probe on /8 -> 11 SUCCESS, 1 MISSED_PAD_CONTACT; /7 byte-identical; tests/test_exploration_reachability_tool.py passes again"
+      }
     }
   ],
   "measurements": {
@@ -1957,10 +1977,106 @@
         ]
       },
       "claim_allowed": "all three arms land after PPO on 5 seeds; the proposed arm has the highest mean and lowest spread on /6; not a superiority claim (sd 7-22 points, flat ahead on /5 with 2 seeds)"
+    },
+    "five_seed_spatial_reference_7_20261006": {
+      "root": "results/full_pipeline_20261006_v7_5seeds",
+      "training_seeds": [
+        828,
+        829,
+        830,
+        831,
+        832
+      ],
+      "held_out_seeds": "4100-4147",
+      "scored_under": "spatial-reference/7",
+      "clones_mean_sd": {
+        "ppo_ontology_rgat": [
+          0.829,
+          0.069,
+          "unsafe 0.000"
+        ],
+        "ppo_semantic_flat": [
+          0.854,
+          0.07,
+          "unsafe 0.000"
+        ],
+        "ppo_vector_canonical": [
+          0.792,
+          0.12,
+          "unsafe 0.004"
+        ]
+      },
+      "after_ppo_mean_sd": {
+        "ppo_ontology_rgat": {
+          "land": [
+            0.904,
+            0.084
+          ],
+          "unsafe": [
+            0.092,
+            0.088
+          ],
+          "return": 24.0
+        },
+        "ppo_semantic_flat": {
+          "land": [
+            0.846,
+            0.085
+          ],
+          "unsafe": [
+            0.146,
+            0.081
+          ],
+          "return": 20.5
+        },
+        "ppo_vector_canonical": {
+          "land": [
+            0.925,
+            0.047
+          ],
+          "unsafe": [
+            0.071,
+            0.043
+          ],
+          "return": 25.5
+        }
+      },
+      "held_out_terminals_720": {
+        "SUCCESS": 642,
+        "UNSAFE_CONTACT": 74,
+        "TASK_TIMEOUT": 3,
+        "SAFE_ABORT": 1,
+        "unsafe_all_vertical_speed": true,
+        "unsafe_vz_bands": {
+          "0.30-0.35": 49,
+          "0.35-0.45": 24,
+          ">0.45": 1
+        },
+        "success_vz_median_p90": [
+          0.18,
+          0.27
+        ],
+        "success_settle_contacts_under_hold": 62
+      },
+      "training_success_per_run": "2056-2200 of 2400 (v6: 864-1748); includes reclassified settle contacts",
+      "isaac": {
+        "episodes_flown": 12,
+        "of": 30,
+        "SUCCESS": 9,
+        "UNSAFE_CONTACT": 3,
+        "unsafe_vz": [
+          -0.31,
+          -0.33,
+          "-0.3x"
+        ],
+        "stopped_by": "PX4 ArmingRefused: Preflight Fail High Accelerometer Bias at run 7 (ppo_vector_canonical seed830), owned stack stopped, stage exit 1, no summary.json",
+        "note": "infrastructure, not RL; driver had no restart budget"
+      },
+      "claim_allowed": "under the /7 verdict all three arms land 85-93 % held-out with unsafe 7-15 %, every unsafe is a vertical-speed exceedance at or just above the 0.30 m/s limit; arms within sd of each other"
     }
   },
   "pending": [
-    "acceptance gate: unsafe 0 over the Isaac matrix. DECIDED 2026-10-06 evening (user): the four low-hover settle contacts are landings, the two corridor impacts at vz 0.38-0.62 m/s are not; shipped as spatial-reference/7 (contact verdict by impact speed, correction spatial-reference-7-contact-verdict). The two rejected cases remain: a policy that commits to the corridor must shed the extra 0.15 m/s the corridor admits (1.5 x 0.30) before the legs touch, so a tighter corridor commit (vz margin) or a touchdown-margin term is still the open design question for THOSE two. Measure on the /7 five-seed run first",
+    "acceptance gate: unsafe 0 over the Isaac matrix. Under /7 the only unsafe left is impact speed and the policies descend at the 0.30 m/s limit (held-out: 74/720 over, 49 of them within 0.30-0.35). The corridor admits 1.5 x 0.30 m/s while landing requires 0.30. Options, to be MEASURED on arms: tighten the corridor's descent allowance toward the landing limit, or price vz at contact. /8 (no legs) changes the touchdown geometry first; measure there before deciding",
     "after the /5 flight: if the policy still over-commands, compare the remaining channels (tiltRate, sinTilt jitter) against their training-time spread the same way",
     "calibrate spatial/dynamics.py attitude/thrust response (ATTITUDE_OMEGA, THRUST_TAU) to Isaac's measured step response -- target gain ~0.97 at one 0.1 s step of lag -- or randomise it in training; snapshot the contract before/after, re-clone, re-run low_sigma_kl(_masked), re-fly",
     "re-run the three-arm comparison with >=5 training seeds under low_sigma_kl (and low_sigma_kl_masked, running 2026-10-06) before any representation claim; held-out unsafe after PPO is 6-31 % and needs its own study",

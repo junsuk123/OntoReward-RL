@@ -187,9 +187,37 @@ The v1 config remains an explicit historical experiment; Isaac/PX4 remains
   `two_axis/config.py: DEFAULT_CONFIG_PATH` also still points at the retired v1
   config, so a bare `load_config()` quietly returns -40/-30/-50 with tau 350
   instead of the reference table. Always pass the config path explicitly.
-- The active spatial contract is `spatial-reference/7` (`REFERENCE_SCHEMA`,
-  2026-10-06 late evening, deployment profile
-  `config/spatial-isaac-system-v11.yaml`). It is `/6` plus exactly ONE law,
+- The active spatial contract is `spatial-reference/8` (`REFERENCE_SCHEMA`,
+  2026-10-06 ~22:30 KST, deployment profile
+  `config/spatial-isaac-system-v12.yaml`). It is `/7` MINUS one law: the /4
+  landing gear is removed on the user's instruction ("remove drone legs
+  again"). `landing_gear_extension_m` is 0 on `/8`, so `touchdown_height` is
+  the stock 0.12 m again, the supervisor's gate/corridor/stopping margin and
+  the curriculum's low start band follow it down, and v12 = v11 with
+  `vehicle.landing_gear.extension_m: 0` so `landing_world.py` attaches no leg
+  colliders. Board, optical realism, the /6 servo and the /7 verdict are
+  inherited; /7's `config_sha256` is unchanged and pinned. This gives back the
+  geometry /4 was built to avoid -- the camera is 0.04 m BELOW the pad plane
+  at contact and the last centimetres are flown on the estimator's memory --
+  and whether the v11 centre cluster plus the /5 optical model carry that
+  interval was never measured with the legs off; the /8 run measures it.
+  Measured before launching it: the swept teacher lands 21/24 nominal on `/8`
+  (22/24 on `/7`) and 12/12 at difficulties 0.5 and 0.0, so the task is
+  solvable without legs. What broke was the CURRICULUM's easy end: the band
+  `start_height_range_m` (0.2-0.5 m) is a body height, and without the legs
+  its low end puts the camera 0.04 m above the deck where no tag fits the
+  frame -- the estimator never initialises, `prolonged_visual_loss` latches
+  at step 1 and the supervisor climbs; the fixed-descent reachability probe
+  aborted 5 of 12 easy seeds (`/7`: 0 of 12). `SpatialConfig.easy_start_lift_m`
+  therefore lifts the easy band by 0.18 m on /4-/8 (the gear on /4-/7, kept on
+  /8 without the gear), which is byte-identical for /4-/7 and restores the
+  probe to 11-12 of 12 on /8. Training-only; difficulty 1.0 never reads it.
+  The driver now passes `--isaac-reset-recoveries` (default 2) to the Isaac stage
+  because the /7 flight died at run 7 of 15 on a PX4 "Preflight Fail: High
+  Accelerometer Bias" arming refusal with no restart budget (infrastructure,
+  not RL; 18 episodes unflown). First run: `results/full_pipeline_20261006_v8_5seeds`.
+- `spatial-reference/7` (2026-10-06 late evening, deployment profile
+  `config/spatial-isaac-system-v11.yaml`) is `/6` plus exactly ONE law,
   the CONTACT VERDICT (`SpatialConfig.contact_verdict_by_speed`), and it is a
   USER DECISION, not a measurement: of the six non-landing contacts in the
   five-seed `/6` flight, four were vehicles sinking onto their legs from a low
@@ -216,8 +244,27 @@ The v1 config remains an explicit historical experiment; Isaac/PX4 remains
   still fail on the two corridor impacts; the open design question (the
   corridor admits 1.5 x 0.30 m/s, landing requires 0.30) now concerns those
   two only. `--contract-version` lists `spatial-reference/3..7`, so every
-  earlier rung's checkpoints stay loadable. First run:
-  `results/full_pipeline_20261006_v7_5seeds` (five seeds, `--isaac`).
+  earlier rung's checkpoints stay loadable. **Measured, `/7` five seeds
+  (`results/full_pipeline_20261006_v7_5seeds`, same recipe as /6, 48
+  held-out seeds, deterministic, scored under /7):** clones 79-85 % landing
+  with 0 % unsafe (their non-landings are 15-20 % TASK_TIMEOUT); after PPO
+  `ppo_vector_canonical` 92.5 +- 4.7 %, `ppo_ontology_rgat` 90.4 +- 8.4 %,
+  `ppo_semantic_flat` 84.6 +- 8.5 %, unsafe 7.1 / 9.2 / 14.6 %, timeouts
+  ~0. PPO converts the clones' timeouts into contacts and a tenth of those
+  are too fast: of 720 held-out terminals, 642 SUCCESS, 74 UNSAFE_CONTACT,
+  and ALL 74 are vertical-speed exceedances (none lateral), 49 of them in
+  the 0.30-0.35 m/s band and 24 in 0.35-0.45; SUCCESS contacts touch at a
+  median 0.18 m/s (p90 0.27). 62 of the 642 landings were settle contacts
+  under the supervisor's hold, i.e. the reclassified kind. Training SUCCESS
+  rose from 864-1748 to 2056-2200 of 2400 per run (part of that is the
+  reclassification itself). The Isaac flight reached 12 of 30 episodes
+  before PX4 refused to arm (see the /8 bullet): 9 SUCCESS, 3
+  UNSAFE_CONTACT at vz -0.31 / -0.33 / -0.3x against 0.30, all inside the
+  corridor, with the SUCCESS cases touching at -0.29. Under /7 the only way
+  left to be unsafe is impact speed, and the policies descend at the limit;
+  the corridor admits 1.5 x 0.30 m/s while landing requires 0.30, so the
+  remaining design question is that 0.15 m/s gap. No summary.json was
+  written for the /7 run (the Isaac stage exited 1, not 2).
 - `spatial-reference/6` (2026-10-06 night, deployment profile
   `config/spatial-isaac-system-v11.yaml`) is `/5` plus exactly ONE law, the
   attitude servo's damping:

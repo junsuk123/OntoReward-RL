@@ -8,3 +8,34 @@ clearing a stale lock from pid 1299674
 [train:low_sigma_kl] --final-log-std -3.5 --log-std-anneal-fraction 0.02 --enforce-target-kl
   $ /usr/bin/python3 /home/j/SynologyDrive/junsuk/학술대회/CICS2026/Ontology_RGAT_UAV_RL_ISAAC_PX4/Ontology_RGAT_UAV_RL_ISAAC_PX4/python/run_spatial_pipeline.py --stage train --output /home/j/SynologyDrive/junsuk/학술대회/CICS2026/Ontology_RGAT_UAV_RL_ISAAC_PX4/results/full_pipeline_20261006_v7_5seeds/low_sigma_kl --initialize-from /home/j/SynologyDrive/junsuk/학술대회/CICS2026/Ontology_RGAT_UAV_RL_ISAAC_PX4/results/full_pipeline_20261006_v7_5seeds/clone_plain --seeds 828 829 830 831 832 --iterations 200 --episodes-per-iteration 12 --evaluation-every 20 --ppo-preset reference-v28-episodic --activation-iterations 25 --activation-decisions 2048 --workers 10 --final-log-std -3.5 --log-std-anneal-fraction 0.02 --enforce-target-kl
     log -> /home/j/SynologyDrive/junsuk/학술대회/CICS2026/Ontology_RGAT_UAV_RL_ISAAC_PX4/results/logs/full_train_low_sigma_kl.log
+  $ /usr/bin/python3 /home/j/SynologyDrive/junsuk/학술대회/CICS2026/Ontology_RGAT_UAV_RL_ISAAC_PX4/Ontology_RGAT_UAV_RL_ISAAC_PX4/tools/compare_spatial_arms.py /home/j/SynologyDrive/junsuk/학술대회/CICS2026/Ontology_RGAT_UAV_RL_ISAAC_PX4/results/full_pipeline_20261006_v7_5seeds/clone_plain /home/j/SynologyDrive/junsuk/학술대회/CICS2026/Ontology_RGAT_UAV_RL_ISAAC_PX4/results/full_pipeline_20261006_v7_5seeds/low_sigma_kl --seeds 4100 4148 --report /home/j/SynologyDrive/junsuk/학술대회/CICS2026/Ontology_RGAT_UAV_RL_ISAAC_PX4/results/full_pipeline_20261006_v7_5seeds/held_out.json
+    log -> /home/j/SynologyDrive/junsuk/학술대회/CICS2026/Ontology_RGAT_UAV_RL_ISAAC_PX4/results/logs/full_held_out.log
+[isaac:low_sigma_kl] flying 15 run(s)
+  $ /usr/bin/python3 /home/j/SynologyDrive/junsuk/학술대회/CICS2026/Ontology_RGAT_UAV_RL_ISAAC_PX4/Ontology_RGAT_UAV_RL_ISAAC_PX4/python/run_spatial_pipeline.py --stage isaac --output /home/j/SynologyDrive/junsuk/학술대회/CICS2026/Ontology_RGAT_UAV_RL_ISAAC_PX4/results/full_pipeline_20261006_v7_5seeds/low_sigma_kl --seeds 828 829 830 831 832 --workers 1 --isaac-episodes 2
+    log -> /home/j/SynologyDrive/junsuk/학술대회/CICS2026/Ontology_RGAT_UAV_RL_ISAAC_PX4/results/logs/full_isaac_low_sigma_kl.log
+stage failed (1):
+Entry hover: 1.3 m to fly; allowing 3 simulated s of travel on top of the 90 s hold budget.
+Entry hover: 1.7 m to fly; allowing 4 simulated s of travel on top of the 90 s hold budget.
+Stopping gateway_0 (pid 1538566).
+Stopping isaac (pid 1537568).
+Stopping agent (pid 1537550).
+Traceback (most recent call last):
+  File "/home/j/SynologyDrive/junsuk/학술대회/CICS2026/Ontology_RGAT_UAV_RL_ISAAC_PX4/Ontology_RGAT_UAV_RL_ISAAC_PX4/python/run_spatial_pipeline.py", line 545, in <module>
+    raise SystemExit(main())
+  File "/home/j/SynologyDrive/junsuk/학술대회/CICS2026/Ontology_RGAT_UAV_RL_ISAAC_PX4/Ontology_RGAT_UAV_RL_ISAAC_PX4/python/run_spatial_pipeline.py", line 527, in main
+    run_evaluation("isaac")
+  File "/home/j/SynologyDrive/junsuk/학술대회/CICS2026/Ontology_RGAT_UAV_RL_ISAAC_PX4/Ontology_RGAT_UAV_RL_ISAAC_PX4/python/run_spatial_pipeline.py", line 499, in run_evaluation
+    metrics = evaluate(agent, cfg, seeds=seeds, trace=record, **kwargs)
+  File "/home/j/SynologyDrive/junsuk/학술대회/CICS2026/Ontology_RGAT_UAV_RL_ISAAC_PX4/Ontology_RGAT_UAV_RL_ISAAC_PX4/python/ontology_rgat/spatial/training.py", line 224, in evaluate
+    obs, _ = env.reset(seed=seed)
+  File "/home/j/SynologyDrive/junsuk/학술대회/CICS2026/Ontology_RGAT_UAV_RL_ISAAC_PX4/Ontology_RGAT_UAV_RL_ISAAC_PX4/python/ontology_rgat/spatial/environment.py", line 733, in reset
+    m, truth = self.backend.reset(seed)
+  File "/home/j/SynologyDrive/junsuk/학술대회/CICS2026/Ontology_RGAT_UAV_RL_ISAAC_PX4/Ontology_RGAT_UAV_RL_ISAAC_PX4/python/ontology_rgat/spatial/environment.py", line 529, in reset
+    return self._reset_once(seed)
+  File "/home/j/SynologyDrive/junsuk/학술대회/CICS2026/Ontology_RGAT_UAV_RL_ISAAC_PX4/Ontology_RGAT_UAV_RL_ISAAC_PX4/python/ontology_rgat/spatial/environment.py", line 544, in _reset_once
+    self.last_state = self.bridge.reset(
+  File "/home/j/SynologyDrive/junsuk/학술대회/CICS2026/Ontology_RGAT_UAV_RL_ISAAC_PX4/Ontology_RGAT_UAV_RL_ISAAC_PX4/python/ontology_rgat/bridge.py", line 504, in reset
+    state = self.wait_at_entry(np.asarray(entry["position"], dtype=float),
+  File "/home/j/SynologyDrive/junsuk/학술대회/CICS2026/Ontology_RGAT_UAV_RL_ISAAC_PX4/Ontology_RGAT_UAV_RL_ISAAC_PX4/python/ontology_rgat/bridge.py", line 734, in wait_at_entry
+    raise ArmingRefused(
+ontology_rgat.bridge.ArmingRefused: PX4 refused to arm for 25 s (command 400 result 1); the vehicle never left the ground, so no entry pose is reachable. Check the simulator log for 'Preflight Fail': a degraded SITL EKF (high accelerometer bias, attitude failure) needs a fresh simulator, not another reset.

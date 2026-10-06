@@ -125,10 +125,26 @@ from ..two_axis.ontology_v28 import GRAPH_SCHEMA_HASH as TOPOLOGY_HASH
 #: /6 (guarded in tests/test_contact_verdict_rung.py). Re-scoring the
 #: recorded /6 flight under this rule gives 27 SUCCESS / 2 UNSAFE_CONTACT /
 #: 1 SAFE_ABORT; acceptance still forbids the two.
+#: /8 is /7 MINUS one law: the /4 landing gear is removed, on the user's
+#: instruction of 2026-10-06 late evening ("remove drone legs again"). The
+#: body touches down at the stock Iris height again (``touchdown_height`` =
+#: ``contact_height`` = 0.12 m), the supervisor's gate, corridor and stopping
+#: margin shift down with it (they are heights above the stock-gear
+#: touchdown), the curriculum's low start band follows, and the deployment
+#: profile is v12 = v11 with ``vehicle.landing_gear.extension_m: 0`` so the
+#: Isaac world attaches no leg colliders. The 17-tag board, optical realism,
+#: the delayed /6 servo and the /7 contact verdict are all inherited. What
+#: this gives back is the geometry /4 was built to avoid: the camera sits
+#: 0.16 m below the body, so at contact it is 0.04 m BELOW the pad plane and
+#: the last centimetres are flown on the estimator's memory (``terminal_coast``
+#: and the capture-time-aligned track), not on a detection. Whether the
+#: centre cluster of the v11 board and the /5 optical model carry that
+#: interval is what the /8 run measures; it was not measured before the legs
+#: were added.
 REFERENCE_SCHEMAS = ("spatial-reference/1", "spatial-reference/2",
                      "spatial-reference/3", "spatial-reference/4",
                      "spatial-reference/5", "spatial-reference/6",
-                     "spatial-reference/7")
+                     "spatial-reference/7", "spatial-reference/8")
 REFERENCE_SCHEMA = REFERENCE_SCHEMAS[-1]
 #: /6 attitude servo: natural frequency (rad/s) and damping ratio.
 REFERENCE_ATTITUDE_SERVO_6 = (10.0, 0.7)
@@ -441,7 +457,8 @@ class SpatialConfig:
         """
         return self.schema in ("spatial-reference/2", "spatial-reference/3",
                                "spatial-reference/4", "spatial-reference/5",
-                               "spatial-reference/6", "spatial-reference/7")
+                               "spatial-reference/6", "spatial-reference/7",
+                               "spatial-reference/8")
 
     @property
     def actuation_delay_s(self):
@@ -454,13 +471,14 @@ class SpatialConfig:
         return (REFERENCE_ACTUATION_DELAY_S
                 if self.schema in ("spatial-reference/3", "spatial-reference/4",
                                    "spatial-reference/5", "spatial-reference/6",
-                                   "spatial-reference/7") else 0.0)
+                                   "spatial-reference/7", "spatial-reference/8") else 0.0)
 
     @property
     def attitude_omega(self):
         """Attitude servo bandwidth of the local plant, rad/s (/4: Isaac-fitted)."""
         from .dynamics import ATTITUDE_OMEGA
-        if self.schema in ("spatial-reference/6", "spatial-reference/7"):
+        if self.schema in ("spatial-reference/6", "spatial-reference/7",
+                           "spatial-reference/8"):
             return REFERENCE_ATTITUDE_SERVO_6[0]
         return (REFERENCE_ATTITUDE_OMEGA_RAD_S
                 if self.schema in ("spatial-reference/4", "spatial-reference/5")
@@ -471,21 +489,50 @@ class SpatialConfig:
         """Attitude servo damping ratio; critically damped before /6."""
         from .dynamics import ATTITUDE_DAMPING
         return (REFERENCE_ATTITUDE_SERVO_6[1]
-                if self.schema in ("spatial-reference/6", "spatial-reference/7")
+                if self.schema in ("spatial-reference/6", "spatial-reference/7",
+                                   "spatial-reference/8")
                 else ATTITUDE_DAMPING)
 
     @property
     def landing_gear_extension_m(self):
-        """How far below the stock gear the /4 legs reach; zero elsewhere."""
+        """How far below the stock gear the /4 legs reach; zero elsewhere.
+
+        /4 through /7 carry the legs; /8 removes them again (user decision,
+        see the /8 note above REFERENCE_SCHEMAS), so the stock Iris contact
+        height is back and everything derived from this value follows.
+        """
         return (REFERENCE_LANDING_GEAR_EXTENSION_M
                 if self.schema in ("spatial-reference/4", "spatial-reference/5",
                                    "spatial-reference/6", "spatial-reference/7") else 0.0)
 
     @property
+    def easy_start_lift_m(self):
+        """How far above ``curriculum.start_height_range_m`` the easy spawn
+        band sits, so the camera can see the pad at the band's low end.
+
+        The camera is mounted 0.16 m under the body and, from /5 on, detection
+        is tag-based: at the band's stock low end (body 0.20 m) the camera is
+        0.04 m above the deck and no tag's padded quad fits the frame, so the
+        estimator never initialises, the supervisor latches ``prolonged_visual
+        _loss`` at the first step and climbs. Measured 2026-10-06 on /8 with
+        the fixed-descent reachability probe: 5 of 12 easy-rung seeds ended
+        SAFE_ABORT where /7 landed 12 of 12. On /4-/7 the legs lifted the band
+        (body 0.38-0.68 m, camera 0.22-0.52 m) as a side effect; /8 removes
+        the legs and keeps the lift, so the easy rung stays the same camera
+        geometry it was trained on. Zero on /1-/3, whose optical model was not
+        tag-based. Training-only: difficulty 1.0 never reads this.
+        """
+        if self.schema in ("spatial-reference/4", "spatial-reference/5",
+                           "spatial-reference/6", "spatial-reference/7",
+                           "spatial-reference/8"):
+            return REFERENCE_LANDING_GEAR_EXTENSION_M
+        return self.landing_gear_extension_m
+
+    @property
     def optical_realism(self):
         """Tag-based detection and the detector's quality metric (/5 onward)."""
         return self.schema in ("spatial-reference/5", "spatial-reference/6",
-                               "spatial-reference/7")
+                               "spatial-reference/7", "spatial-reference/8")
 
     @property
     def contact_verdict_by_speed(self):
@@ -496,7 +543,7 @@ class SpatialConfig:
         condition. See the /7 note above REFERENCE_SCHEMAS for the six Isaac
         contacts this rule was drawn from.
         """
-        return self.schema == "spatial-reference/7"
+        return self.schema in ("spatial-reference/7", "spatial-reference/8")
 
     @property
     def touchdown_height(self):

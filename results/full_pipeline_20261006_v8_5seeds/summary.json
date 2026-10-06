@@ -1,0 +1,559 @@
+{
+  "root": "/home/j/SynologyDrive/junsuk/\ud559\uc220\ub300\ud68c/CICS2026/Ontology_RGAT_UAV_RL_ISAAC_PX4/results/full_pipeline_20261006_v8_5seeds",
+  "seeds": [
+    828,
+    829,
+    830,
+    831,
+    832
+  ],
+  "iterations": 200,
+  "held_out_seeds": [
+    4100,
+    4148
+  ],
+  "cells": {
+    "low_sigma_kl": {
+      "flags": [
+        "--final-log-std",
+        "-3.5",
+        "--log-std-anneal-fraction",
+        "0.02",
+        "--enforce-target-kl"
+      ],
+      "runs": {
+        "ppo_ontology_rgat__seed828": {
+          "landing_rate": 0.8958333333333334,
+          "unsafe_rate": 0.10416666666666667,
+          "mean_return": 24.468694783103853,
+          "selected_checkpoint": "checkpoint_best.pt",
+          "relational_active": true,
+          "training_success": 1879,
+          "training_episodes": 2400
+        },
+        "ppo_ontology_rgat__seed829": {
+          "landing_rate": 0.5208333333333334,
+          "unsafe_rate": 0.041666666666666664,
+          "mean_return": 10.053933355841325,
+          "selected_checkpoint": "checkpoint_best.pt",
+          "relational_active": true,
+          "training_success": 1598,
+          "training_episodes": 2400
+        },
+        "ppo_ontology_rgat__seed830": {
+          "landing_rate": 0.6041666666666666,
+          "unsafe_rate": 0.3125,
+          "mean_return": 6.813332501528445,
+          "selected_checkpoint": "checkpoint_best.pt",
+          "relational_active": true,
+          "training_success": 1895,
+          "training_episodes": 2400
+        },
+        "ppo_ontology_rgat__seed831": {
+          "landing_rate": 0.75,
+          "unsafe_rate": 0.22916666666666666,
+          "mean_return": 15.264098496493835,
+          "selected_checkpoint": "checkpoint_best.pt",
+          "relational_active": true,
+          "training_success": 1863,
+          "training_episodes": 2400
+        },
+        "ppo_ontology_rgat__seed832": {
+          "landing_rate": 0.9166666666666666,
+          "unsafe_rate": 0.020833333333333332,
+          "mean_return": 27.216934782991647,
+          "selected_checkpoint": "checkpoint_best.pt",
+          "relational_active": true,
+          "training_success": 1974,
+          "training_episodes": 2400
+        },
+        "ppo_semantic_flat__seed828": {
+          "landing_rate": 0.7916666666666666,
+          "unsafe_rate": 0.041666666666666664,
+          "mean_return": 21.718728070178827,
+          "selected_checkpoint": "checkpoint_best.pt",
+          "relational_active": null,
+          "training_success": 1714,
+          "training_episodes": 2400
+        },
+        "ppo_semantic_flat__seed829": {
+          "landing_rate": 0.7916666666666666,
+          "unsafe_rate": 0.16666666666666666,
+          "mean_return": 17.508946425509436,
+          "selected_checkpoint": "checkpoint_best.pt",
+          "relational_active": null,
+          "training_success": 1890,
+          "training_episodes": 2400
+        },
+        "ppo_semantic_flat__seed830": {
+          "landing_rate": 0.6666666666666666,
+          "unsafe_rate": 0.3125,
+          "mean_return": 9.144663699282143,
+          "selected_checkpoint": "checkpoint_best.pt",
+          "relational_active": null,
+          "training_success": 1978,
+          "training_episodes": 2400
+        },
+        "ppo_semantic_flat__seed831": {
+          "landing_rate": 0.8541666666666666,
+          "unsafe_rate": 0.10416666666666667,
+          "mean_return": 22.272962865073087,
+          "selected_checkpoint": "checkpoint_best.pt",
+          "relational_active": null,
+          "training_success": 1936,
+          "training_episodes": 2400
+        },
+        "ppo_semantic_flat__seed832": {
+          "landing_rate": 0.7916666666666666,
+          "unsafe_rate": 0.1875,
+          "mean_return": 17.945968590525283,
+          "selected_checkpoint": "checkpoint_best.pt",
+          "relational_active": null,
+          "training_success": 1916,
+          "training_episodes": 2400
+        },
+        "ppo_vector_canonical__seed828": {
+          "landing_rate": 0.8333333333333334,
+          "unsafe_rate": 0.10416666666666667,
+          "mean_return": 20.278210564916133,
+          "selected_checkpoint": "checkpoint_best.pt",
+          "relational_active": null,
+          "training_success": 1626,
+          "training_episodes": 2400
+        },
+        "ppo_vector_canonical__seed829": {
+          "landing_rate": 0.75,
+          "unsafe_rate": 0.041666666666666664,
+          "mean_return": 18.27930051891239,
+          "selected_checkpoint": "checkpoint_best.pt",
+          "relational_active": null,
+          "training_success": 1771,
+          "training_episodes": 2400
+        },
+        "ppo_vector_canonical__seed830": {
+          "landing_rate": 0.75,
+          "unsafe_rate": 0.20833333333333334,
+          "mean_return": 14.678480627804147,
+          "selected_checkpoint": "checkpoint_best.pt",
+          "relational_active": null,
+          "training_success": 1891,
+          "training_episodes": 2400
+        },
+        "ppo_vector_canonical__seed831": {
+          "landing_rate": 0.8541666666666666,
+          "unsafe_rate": 0.08333333333333333,
+          "mean_return": 22.206692916313838,
+          "selected_checkpoint": "checkpoint_best.pt",
+          "relational_active": null,
+          "training_success": 1832,
+          "training_episodes": 2400
+        },
+        "ppo_vector_canonical__seed832": {
+          "landing_rate": 0.7083333333333334,
+          "unsafe_rate": 0.16666666666666666,
+          "mean_return": 13.344937760641232,
+          "selected_checkpoint": "checkpoint_best.pt",
+          "relational_active": null,
+          "training_success": 1660,
+          "training_episodes": 2400
+        }
+      }
+    }
+  },
+  "clones": {
+    "plain": {
+      "ppo_ontology_rgat__seed828": {
+        "output": "clone_plain",
+        "run": "ppo_ontology_rgat__seed828",
+        "mode": "ppo_ontology_rgat",
+        "seed": 828,
+        "checkpoint": "checkpoint_cloned.pt",
+        "relational_active": null,
+        "landing_rate": 0.75,
+        "unsafe_rate": 0.020833333333333332,
+        "safe_abort_rate": 0.020833333333333332,
+        "task_timeout_rate": 0.20833333333333334,
+        "mean_return": 20.01636215574938
+      },
+      "ppo_ontology_rgat__seed829": {
+        "output": "clone_plain",
+        "run": "ppo_ontology_rgat__seed829",
+        "mode": "ppo_ontology_rgat",
+        "seed": 829,
+        "checkpoint": "checkpoint_cloned.pt",
+        "relational_active": null,
+        "landing_rate": 0.8333333333333334,
+        "unsafe_rate": 0.020833333333333332,
+        "safe_abort_rate": 0.0,
+        "task_timeout_rate": 0.14583333333333334,
+        "mean_return": 24.129565953276867
+      },
+      "ppo_ontology_rgat__seed830": {
+        "output": "clone_plain",
+        "run": "ppo_ontology_rgat__seed830",
+        "mode": "ppo_ontology_rgat",
+        "seed": 830,
+        "checkpoint": "checkpoint_cloned.pt",
+        "relational_active": null,
+        "landing_rate": 0.7083333333333334,
+        "unsafe_rate": 0.041666666666666664,
+        "safe_abort_rate": 0.020833333333333332,
+        "task_timeout_rate": 0.22916666666666666,
+        "mean_return": 17.893679741104382
+      },
+      "ppo_ontology_rgat__seed831": {
+        "output": "clone_plain",
+        "run": "ppo_ontology_rgat__seed831",
+        "mode": "ppo_ontology_rgat",
+        "seed": 831,
+        "checkpoint": "checkpoint_cloned.pt",
+        "relational_active": null,
+        "landing_rate": 0.7083333333333334,
+        "unsafe_rate": 0.0,
+        "safe_abort_rate": 0.0625,
+        "task_timeout_rate": 0.22916666666666666,
+        "mean_return": 18.79073128434706
+      },
+      "ppo_ontology_rgat__seed832": {
+        "output": "clone_plain",
+        "run": "ppo_ontology_rgat__seed832",
+        "mode": "ppo_ontology_rgat",
+        "seed": 832,
+        "checkpoint": "checkpoint_cloned.pt",
+        "relational_active": null,
+        "landing_rate": 0.6458333333333334,
+        "unsafe_rate": 0.020833333333333332,
+        "safe_abort_rate": 0.0625,
+        "task_timeout_rate": 0.2708333333333333,
+        "mean_return": 15.6219322435203
+      },
+      "ppo_semantic_flat__seed828": {
+        "output": "clone_plain",
+        "run": "ppo_semantic_flat__seed828",
+        "mode": "ppo_semantic_flat",
+        "seed": 828,
+        "checkpoint": "checkpoint_cloned.pt",
+        "relational_active": null,
+        "landing_rate": 0.7916666666666666,
+        "unsafe_rate": 0.020833333333333332,
+        "safe_abort_rate": 0.0,
+        "task_timeout_rate": 0.1875,
+        "mean_return": 22.116944494824185
+      },
+      "ppo_semantic_flat__seed829": {
+        "output": "clone_plain",
+        "run": "ppo_semantic_flat__seed829",
+        "mode": "ppo_semantic_flat",
+        "seed": 829,
+        "checkpoint": "checkpoint_cloned.pt",
+        "relational_active": null,
+        "landing_rate": 0.8125,
+        "unsafe_rate": 0.041666666666666664,
+        "safe_abort_rate": 0.0,
+        "task_timeout_rate": 0.14583333333333334,
+        "mean_return": 22.582385647650536
+      },
+      "ppo_semantic_flat__seed830": {
+        "output": "clone_plain",
+        "run": "ppo_semantic_flat__seed830",
+        "mode": "ppo_semantic_flat",
+        "seed": 830,
+        "checkpoint": "checkpoint_cloned.pt",
+        "relational_active": null,
+        "landing_rate": 0.7708333333333334,
+        "unsafe_rate": 0.020833333333333332,
+        "safe_abort_rate": 0.041666666666666664,
+        "task_timeout_rate": 0.16666666666666666,
+        "mean_return": 20.882368031508097
+      },
+      "ppo_semantic_flat__seed831": {
+        "output": "clone_plain",
+        "run": "ppo_semantic_flat__seed831",
+        "mode": "ppo_semantic_flat",
+        "seed": 831,
+        "checkpoint": "checkpoint_cloned.pt",
+        "relational_active": null,
+        "landing_rate": 0.625,
+        "unsafe_rate": 0.0,
+        "safe_abort_rate": 0.0625,
+        "task_timeout_rate": 0.3125,
+        "mean_return": 15.325239904174715
+      },
+      "ppo_semantic_flat__seed832": {
+        "output": "clone_plain",
+        "run": "ppo_semantic_flat__seed832",
+        "mode": "ppo_semantic_flat",
+        "seed": 832,
+        "checkpoint": "checkpoint_cloned.pt",
+        "relational_active": null,
+        "landing_rate": 0.75,
+        "unsafe_rate": 0.020833333333333332,
+        "safe_abort_rate": 0.020833333333333332,
+        "task_timeout_rate": 0.20833333333333334,
+        "mean_return": 19.901522362005014
+      },
+      "ppo_vector_canonical__seed828": {
+        "output": "clone_plain",
+        "run": "ppo_vector_canonical__seed828",
+        "mode": "ppo_vector_canonical",
+        "seed": 828,
+        "checkpoint": "checkpoint_cloned.pt",
+        "relational_active": null,
+        "landing_rate": 0.3333333333333333,
+        "unsafe_rate": 0.020833333333333332,
+        "safe_abort_rate": 0.1875,
+        "task_timeout_rate": 0.4583333333333333,
+        "mean_return": 1.12642666322933
+      },
+      "ppo_vector_canonical__seed829": {
+        "output": "clone_plain",
+        "run": "ppo_vector_canonical__seed829",
+        "mode": "ppo_vector_canonical",
+        "seed": 829,
+        "checkpoint": "checkpoint_cloned.pt",
+        "relational_active": null,
+        "landing_rate": 0.6041666666666666,
+        "unsafe_rate": 0.10416666666666667,
+        "safe_abort_rate": 0.08333333333333333,
+        "task_timeout_rate": 0.20833333333333334,
+        "mean_return": 10.201365073855966
+      },
+      "ppo_vector_canonical__seed830": {
+        "output": "clone_plain",
+        "run": "ppo_vector_canonical__seed830",
+        "mode": "ppo_vector_canonical",
+        "seed": 830,
+        "checkpoint": "checkpoint_cloned.pt",
+        "relational_active": null,
+        "landing_rate": 0.4166666666666667,
+        "unsafe_rate": 0.0,
+        "safe_abort_rate": 0.041666666666666664,
+        "task_timeout_rate": 0.5416666666666666,
+        "mean_return": 6.078976650022061
+      },
+      "ppo_vector_canonical__seed831": {
+        "output": "clone_plain",
+        "run": "ppo_vector_canonical__seed831",
+        "mode": "ppo_vector_canonical",
+        "seed": 831,
+        "checkpoint": "checkpoint_cloned.pt",
+        "relational_active": null,
+        "landing_rate": 0.4375,
+        "unsafe_rate": 0.0,
+        "safe_abort_rate": 0.0625,
+        "task_timeout_rate": 0.5,
+        "mean_return": 6.066480866321176
+      },
+      "ppo_vector_canonical__seed832": {
+        "output": "clone_plain",
+        "run": "ppo_vector_canonical__seed832",
+        "mode": "ppo_vector_canonical",
+        "seed": 832,
+        "checkpoint": "checkpoint_cloned.pt",
+        "relational_active": null,
+        "landing_rate": 0.5625,
+        "unsafe_rate": 0.020833333333333332,
+        "safe_abort_rate": 0.08333333333333333,
+        "task_timeout_rate": 0.3333333333333333,
+        "mean_return": 11.329959119066624
+      }
+    }
+  },
+  "isaac": {
+    "flown": {
+      "low_sigma_kl": {
+        "runs": [
+          "ppo_ontology_rgat__seed828",
+          "ppo_ontology_rgat__seed829",
+          "ppo_ontology_rgat__seed830",
+          "ppo_ontology_rgat__seed831",
+          "ppo_ontology_rgat__seed832",
+          "ppo_semantic_flat__seed828",
+          "ppo_semantic_flat__seed829",
+          "ppo_semantic_flat__seed830",
+          "ppo_semantic_flat__seed831",
+          "ppo_semantic_flat__seed832",
+          "ppo_vector_canonical__seed828",
+          "ppo_vector_canonical__seed829",
+          "ppo_vector_canonical__seed830",
+          "ppo_vector_canonical__seed831",
+          "ppo_vector_canonical__seed832"
+        ],
+        "exit_code": 2,
+        "acceptance_passes": false,
+        "acceptance": {
+          "complete_matrix": true,
+          "common_contract": true,
+          "paired_episode_seeds": true,
+          "outcome_rates_consistent": true,
+          "no_unsafe_outcomes": false,
+          "all_episode_stops_confirmed": true,
+          "all_abort_terminal_holds_verified": true,
+          "landing_observed": true,
+          "proposed_landing_observed": false,
+          "proposed_relation_active": true,
+          "backend": "actual-isaac-px4",
+          "performance_parity_claim": false,
+          "state": "completed",
+          "acceptance_version": "spatial-actual-integration/3",
+          "note": "Small integration sample; hold checks are terminal snapshots, not sustained stability or superiority.",
+          "passes": false
+        },
+        "episodes": [
+          {
+            "mode": "ppo_vector_canonical",
+            "seed": 828,
+            "statuses": [
+              "SAFETY_ENVELOPE_VIOLATION",
+              "SAFE_ABORT"
+            ],
+            "landing_rate": 0.0,
+            "unsafe_rate": 0.5
+          },
+          {
+            "mode": "ppo_semantic_flat",
+            "seed": 828,
+            "statuses": [
+              "SUCCESS",
+              "SUCCESS"
+            ],
+            "landing_rate": 1.0,
+            "unsafe_rate": 0.0
+          },
+          {
+            "mode": "ppo_ontology_rgat",
+            "seed": 828,
+            "statuses": [
+              "SUCCESS",
+              "SUCCESS"
+            ],
+            "landing_rate": 1.0,
+            "unsafe_rate": 0.0
+          },
+          {
+            "mode": "ppo_vector_canonical",
+            "seed": 829,
+            "statuses": [
+              "SAFE_ABORT",
+              "SAFE_ABORT"
+            ],
+            "landing_rate": 0.0,
+            "unsafe_rate": 0.0
+          },
+          {
+            "mode": "ppo_semantic_flat",
+            "seed": 829,
+            "statuses": [
+              "SUCCESS",
+              "SAFETY_ENVELOPE_VIOLATION"
+            ],
+            "landing_rate": 0.5,
+            "unsafe_rate": 0.5
+          },
+          {
+            "mode": "ppo_ontology_rgat",
+            "seed": 829,
+            "statuses": [
+              "SUCCESS",
+              "SUCCESS"
+            ],
+            "landing_rate": 1.0,
+            "unsafe_rate": 0.0
+          },
+          {
+            "mode": "ppo_vector_canonical",
+            "seed": 830,
+            "statuses": [
+              "SUCCESS",
+              "UNSAFE_CONTACT"
+            ],
+            "landing_rate": 0.5,
+            "unsafe_rate": 0.5
+          },
+          {
+            "mode": "ppo_semantic_flat",
+            "seed": 830,
+            "statuses": [
+              "UNSAFE_CONTACT",
+              "UNSAFE_CONTACT"
+            ],
+            "landing_rate": 0.0,
+            "unsafe_rate": 1.0
+          },
+          {
+            "mode": "ppo_ontology_rgat",
+            "seed": 830,
+            "statuses": [
+              "SUCCESS",
+              "SUCCESS"
+            ],
+            "landing_rate": 1.0,
+            "unsafe_rate": 0.0
+          },
+          {
+            "mode": "ppo_vector_canonical",
+            "seed": 831,
+            "statuses": [
+              "SAFE_ABORT",
+              "SAFE_ABORT"
+            ],
+            "landing_rate": 0.0,
+            "unsafe_rate": 0.0
+          },
+          {
+            "mode": "ppo_semantic_flat",
+            "seed": 831,
+            "statuses": [
+              "SUCCESS",
+              "SUCCESS"
+            ],
+            "landing_rate": 1.0,
+            "unsafe_rate": 0.0
+          },
+          {
+            "mode": "ppo_ontology_rgat",
+            "seed": 831,
+            "statuses": [
+              "UNSAFE_CONTACT",
+              "UNSAFE_CONTACT"
+            ],
+            "landing_rate": 0.0,
+            "unsafe_rate": 1.0
+          },
+          {
+            "mode": "ppo_vector_canonical",
+            "seed": 832,
+            "statuses": [
+              "TASK_TIMEOUT",
+              "TASK_TIMEOUT"
+            ],
+            "landing_rate": 0.0,
+            "unsafe_rate": 0.0
+          },
+          {
+            "mode": "ppo_semantic_flat",
+            "seed": 832,
+            "statuses": [
+              "SUCCESS",
+              "SUCCESS"
+            ],
+            "landing_rate": 1.0,
+            "unsafe_rate": 0.0
+          },
+          {
+            "mode": "ppo_ontology_rgat",
+            "seed": 832,
+            "statuses": [
+              "SUCCESS",
+              "SUCCESS"
+            ],
+            "landing_rate": 1.0,
+            "unsafe_rate": 0.0
+          }
+        ]
+      }
+    },
+    "skipped": {},
+    "episodes_per_run": 2
+  }
+}

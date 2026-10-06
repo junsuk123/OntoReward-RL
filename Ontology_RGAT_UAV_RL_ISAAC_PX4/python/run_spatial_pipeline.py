@@ -179,7 +179,7 @@ def main():
                                  "spatial-reference/1", "spatial-reference/2",
                                  "spatial-reference/3", "spatial-reference/4",
                                  "spatial-reference/5", "spatial-reference/6",
-                                 "spatial-reference/7", "reference"],
+                                 "spatial-reference/7", "spatial-reference/8", "reference"],
                         default="reference")
     parser.add_argument("--initialize-v4-weights", action="store_true",
                         help="Explicit v4 to v5 PPO transfer; eligibility is NOT transferred")

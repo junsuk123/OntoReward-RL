@@ -86,6 +86,9 @@ TEACHER_GAINS_BY_SCHEMA = {
     # /7 changes the contact verdict only; the plant is /6's, so are the gains.
     "spatial-reference/7": dict(kp=0.4, kd=0.3, ki=0.1, kz=1.0, vdes=0.15,
                                 align=0.15, anorm=0.3),
+    # /8 removes the legs; the /3 plant had none and landed on this same set.
+    "spatial-reference/8": dict(kp=0.4, kd=0.3, ki=0.1, kz=1.0, vdes=0.15,
+                                align=0.15, anorm=0.3),
 }
 TEACHER_GAINS = dict(kp=0.4, kd=0.8, ki=0.4, kz=1.0, vdes=0.15, align=0.15,
                      anorm=0.3)
@@ -177,7 +180,7 @@ def main():
                                  "spatial-reference/1", "spatial-reference/2",
                                  "spatial-reference/3", "spatial-reference/4",
                                  "spatial-reference/5", "spatial-reference/6",
-                                 "spatial-reference/7", "reference"],
+                                 "spatial-reference/7", "spatial-reference/8", "reference"],
                         default="reference")
     args = parser.parse_args()
     if any(not 0.0 <= d <= 1.0 for d in args.difficulties):

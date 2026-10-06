@@ -1,0 +1,14 @@
+# spatial-reference/8: the v11 vehicle and board WITHOUT the landing gear.
+#
+# The /4 legs (0.18 m below the stock Iris gear) were added so the camera,
+# mounted 0.16 m under the body, would still be 0.14 m above the pad at
+# touchdown. On 2026-10-06 the user asked for them to be removed again, so
+# this profile is v11 with the gear extension set to zero: the world attaches
+# no leg colliders, the body touches down at the stock 0.12 m, and the camera
+# is 0.04 m below the pad plane at contact. Everything else -- the 17-tag
+# three-scale board, the v9 camera mount and capture timing, direct
+# acceleration and seeded disturbances -- is inherited unchanged.
+extends: spatial-isaac-system-v11.yaml
+vehicle:
+  landing_gear:
+    extension_m: 0.0

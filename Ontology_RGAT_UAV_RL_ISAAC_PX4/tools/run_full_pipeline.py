@@ -168,6 +168,17 @@ def main() -> int:
                         help="after training, fly every cell that produced an "
                              "eligible checkpoint (starts an Isaac/PX4 stack)")
     parser.add_argument("--isaac-episodes", type=int, default=1)
+    # The /7 five-seed flight died at run 7 of 15 when PX4 refused to arm
+    # ("Preflight Fail: High Accelerometer Bias", a degraded SITL EKF that
+    # needs a fresh simulator). The stage has an explicit owned-stack restart
+    # budget for exactly that (`--reset-recoveries`, recorded per restart in
+    # the lifecycle events), but the driver never passed it, so one refusal
+    # ended a 30-episode matrix with 18 episodes unflown. Every restart is
+    # logged; none collects a transition.
+    parser.add_argument("--isaac-reset-recoveries", type=int, default=2,
+                        choices=range(6),
+                        help="owned-stack restarts the Isaac stage may spend on "
+                             "arming refusals before giving up (0 disables)")
     args = parser.parse_args()
 
     selected = [cell for cell in CELLS if cell["name"] in args.cells]
@@ -302,7 +313,8 @@ def _execute(args, selected, root: Path, logs: Path, seeds: list[str]) -> int:
             code = run([PYTHON, str(ROOT / "python" / "run_spatial_pipeline.py"),
                         "--stage", "isaac", "--output", str(directory),
                         "--seeds", *seeds, "--workers", "1",
-                        "--isaac-episodes", str(args.isaac_episodes)],
+                        "--isaac-episodes", str(args.isaac_episodes),
+                        "--reset-recoveries", str(args.isaac_reset_recoveries)],
                        logs / f"full_isaac_{cell['name']}.log", tolerated=(2,))
             acceptance_path = directory / "isaac_acceptance.json"
             acceptance = (json.loads(acceptance_path.read_text())

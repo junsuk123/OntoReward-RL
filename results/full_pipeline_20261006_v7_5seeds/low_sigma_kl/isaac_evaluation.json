@@ -1,0 +1,437 @@
+[
+  {
+    "mode": "ppo_vector_canonical",
+    "seed": 828,
+    "signature": {
+      "schema": "spatial-reference/7",
+      "packet_registry": "b5ec469ce76fa6d3b98337b8e97ec79895db6c3a97d3991c3e87bf94417977ba",
+      "action": "spatial-enu-direct-net-acceleration-v2",
+      "config_sha256": "979ab7df0ab0590222d30eec2469d827fc700962684b9ccc635d68e5b769cf5e"
+    },
+    "checkpoint": "checkpoint_best.pt",
+    "checkpoint_sha256": "ced69b31ad7513e4c81f782b286b75e4b9441ad6da75e13455e8681ccb115cb3",
+    "episode_seeds": [
+      12000,
+      12001
+    ],
+    "cold_stack_per_episode": false,
+    "backend": "isaac",
+    "metrics": {
+      "episodes": 2,
+      "landing_rate": 0.5,
+      "unsafe_rate": 0.5,
+      "safe_abort_rate": 0.0,
+      "task_timeout_rate": 0.0,
+      "mean_return": -1.9912342424472094,
+      "selection_score": -751.9912342424473,
+      "selection_score_model": "outcome_weighted_v28",
+      "mean_abs_relation_residual": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "rows": [
+        {
+          "seed": 12000,
+          "return": -34.85427586603163,
+          "status": "UNSAFE_CONTACT",
+          "steps": 98,
+          "elapsed_s": 10.400000493973494,
+          "backend": "isaac-px4-spatial",
+          "stop_confirmed": true,
+          "terminal_hold_audit": {
+            "version": "terminal-hold-snapshot/1",
+            "evaluated": true,
+            "hold_verified": false,
+            "sustained_stability_claim": false,
+            "checks": {
+              "no_contact": false,
+              "clearance": false,
+              "horizontal_speed": false,
+              "vertical_speed": false,
+              "tilt": true
+            },
+            "horizontal_speed_m_s": 0.7064805077563013,
+            "vertical_speed_m_s": -0.30641767382621765,
+            "tilt_rad": 0.04662943399290125,
+            "deck_clearance_m": 0.3110362458229065
+          }
+        },
+        {
+          "seed": 12001,
+          "return": 30.87180738113721,
+          "status": "SUCCESS",
+          "steps": 63,
+          "elapsed_s": 6.700000318232924,
+          "backend": "isaac-px4-spatial",
+          "stop_confirmed": true,
+          "terminal_hold_audit": {
+            "version": "terminal-hold-snapshot/1",
+            "evaluated": true,
+            "hold_verified": false,
+            "sustained_stability_claim": false,
+            "checks": {
+              "no_contact": false,
+              "clearance": false,
+              "horizontal_speed": false,
+              "vertical_speed": false,
+              "tilt": true
+            },
+            "horizontal_speed_m_s": 1.0017368964382185,
+            "vertical_speed_m_s": -0.11217177659273148,
+            "tilt_rad": 0.014706684685721443,
+            "deck_clearance_m": 0.30947520017623903
+          }
+        }
+      ]
+    }
+  },
+  {
+    "mode": "ppo_semantic_flat",
+    "seed": 828,
+    "signature": {
+      "schema": "spatial-reference/7",
+      "packet_registry": "b5ec469ce76fa6d3b98337b8e97ec79895db6c3a97d3991c3e87bf94417977ba",
+      "action": "spatial-enu-direct-net-acceleration-v2",
+      "config_sha256": "979ab7df0ab0590222d30eec2469d827fc700962684b9ccc635d68e5b769cf5e"
+    },
+    "checkpoint": "checkpoint_best.pt",
+    "checkpoint_sha256": "c0c96b9bf028536e833956992f0d6efca8328b67ed88f73fcbb28511dba93a81",
+    "episode_seeds": [
+      12000,
+      12001
+    ],
+    "cold_stack_per_episode": false,
+    "backend": "isaac",
+    "metrics": {
+      "episodes": 2,
+      "landing_rate": 0.5,
+      "unsafe_rate": 0.5,
+      "safe_abort_rate": 0.0,
+      "task_timeout_rate": 0.0,
+      "mean_return": -1.984875258575915,
+      "selection_score": -751.9848752585759,
+      "selection_score_model": "outcome_weighted_v28",
+      "mean_abs_relation_residual": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "rows": [
+        {
+          "seed": 12000,
+          "return": -34.69039940366861,
+          "status": "UNSAFE_CONTACT",
+          "steps": 76,
+          "elapsed_s": 8.084000383969396,
+          "backend": "isaac-px4-spatial",
+          "stop_confirmed": true,
+          "terminal_hold_audit": {
+            "version": "terminal-hold-snapshot/1",
+            "evaluated": true,
+            "hold_verified": false,
+            "sustained_stability_claim": false,
+            "checks": {
+              "no_contact": false,
+              "clearance": false,
+              "horizontal_speed": false,
+              "vertical_speed": false,
+              "tilt": true
+            },
+            "horizontal_speed_m_s": 0.6341615470030916,
+            "vertical_speed_m_s": -0.13230790197849274,
+            "tilt_rad": 0.030262864347147738,
+            "deck_clearance_m": 0.30780841588974
+          }
+        },
+        {
+          "seed": 12001,
+          "return": 30.720648886516777,
+          "status": "SUCCESS",
+          "steps": 73,
+          "elapsed_s": 7.784000369720161,
+          "backend": "isaac-px4-spatial",
+          "stop_confirmed": true,
+          "terminal_hold_audit": {
+            "version": "terminal-hold-snapshot/1",
+            "evaluated": true,
+            "hold_verified": false,
+            "sustained_stability_claim": false,
+            "checks": {
+              "no_contact": false,
+              "clearance": false,
+              "horizontal_speed": false,
+              "vertical_speed": false,
+              "tilt": true
+            },
+            "horizontal_speed_m_s": 0.9220556354244026,
+            "vertical_speed_m_s": -0.19061219692230225,
+            "tilt_rad": 0.012474666968194515,
+            "deck_clearance_m": 0.3081303405761719
+          }
+        }
+      ]
+    }
+  },
+  {
+    "mode": "ppo_ontology_rgat",
+    "seed": 828,
+    "signature": {
+      "schema": "spatial-reference/7",
+      "packet_registry": "b5ec469ce76fa6d3b98337b8e97ec79895db6c3a97d3991c3e87bf94417977ba",
+      "action": "spatial-enu-direct-net-acceleration-v2",
+      "config_sha256": "979ab7df0ab0590222d30eec2469d827fc700962684b9ccc635d68e5b769cf5e"
+    },
+    "checkpoint": "checkpoint_best.pt",
+    "checkpoint_sha256": "a66944ca90c7469e75e91c9d4d2f087fb25b2d8c7bf21fd2d0c8820cd445fdd3",
+    "episode_seeds": [
+      12000,
+      12001
+    ],
+    "cold_stack_per_episode": false,
+    "backend": "isaac",
+    "metrics": {
+      "episodes": 2,
+      "landing_rate": 1.0,
+      "unsafe_rate": 0.0,
+      "safe_abort_rate": 0.0,
+      "task_timeout_rate": 0.0,
+      "mean_return": 30.766012388470735,
+      "selection_score": 1030.7660123884707,
+      "selection_score_model": "outcome_weighted_v28",
+      "mean_abs_relation_residual": [
+        0.06397070735692978,
+        0.06306596100330353,
+        0.0013408432714641094
+      ],
+      "rows": [
+        {
+          "seed": 12000,
+          "return": 31.289661391235764,
+          "status": "SUCCESS",
+          "steps": 71,
+          "elapsed_s": 7.440000353381038,
+          "backend": "isaac-px4-spatial",
+          "stop_confirmed": true,
+          "terminal_hold_audit": {
+            "version": "terminal-hold-snapshot/1",
+            "evaluated": true,
+            "hold_verified": false,
+            "sustained_stability_claim": false,
+            "checks": {
+              "no_contact": false,
+              "clearance": false,
+              "horizontal_speed": false,
+              "vertical_speed": false,
+              "tilt": true
+            },
+            "horizontal_speed_m_s": 0.7474481494052789,
+            "vertical_speed_m_s": -0.23402255773544312,
+            "tilt_rad": 0.025707067828708685,
+            "deck_clearance_m": 0.3068449664115906
+          }
+        },
+        {
+          "seed": 12001,
+          "return": 30.2423633857057,
+          "status": "SUCCESS",
+          "steps": 71,
+          "elapsed_s": 7.416000352241099,
+          "backend": "isaac-px4-spatial",
+          "stop_confirmed": true,
+          "terminal_hold_audit": {
+            "version": "terminal-hold-snapshot/1",
+            "evaluated": true,
+            "hold_verified": false,
+            "sustained_stability_claim": false,
+            "checks": {
+              "no_contact": false,
+              "clearance": false,
+              "horizontal_speed": false,
+              "vertical_speed": false,
+              "tilt": true
+            },
+            "horizontal_speed_m_s": 0.9283860696088473,
+            "vertical_speed_m_s": -0.21584826707839966,
+            "tilt_rad": 0.022813215293410675,
+            "deck_clearance_m": 0.306027250289917
+          }
+        }
+      ]
+    }
+  },
+  {
+    "mode": "ppo_vector_canonical",
+    "seed": 829,
+    "signature": {
+      "schema": "spatial-reference/7",
+      "packet_registry": "b5ec469ce76fa6d3b98337b8e97ec79895db6c3a97d3991c3e87bf94417977ba",
+      "action": "spatial-enu-direct-net-acceleration-v2",
+      "config_sha256": "979ab7df0ab0590222d30eec2469d827fc700962684b9ccc635d68e5b769cf5e"
+    },
+    "checkpoint": "checkpoint_best.pt",
+    "checkpoint_sha256": "641f3cbd6a907abe6031afabd846d5cf98b958ba91c51a338e60105dd2d50bb3",
+    "episode_seeds": [
+      12000,
+      12001
+    ],
+    "cold_stack_per_episode": false,
+    "backend": "isaac",
+    "metrics": {
+      "episodes": 2,
+      "landing_rate": 0.5,
+      "unsafe_rate": 0.5,
+      "safe_abort_rate": 0.0,
+      "task_timeout_rate": 0.0,
+      "mean_return": -1.9333066473447573,
+      "selection_score": -751.9333066473448,
+      "selection_score_model": "outcome_weighted_v28",
+      "mean_abs_relation_residual": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "rows": [
+        {
+          "seed": 12000,
+          "return": -34.7498938085807,
+          "status": "UNSAFE_CONTACT",
+          "steps": 66,
+          "elapsed_s": 6.928000329062343,
+          "backend": "isaac-px4-spatial",
+          "stop_confirmed": true,
+          "terminal_hold_audit": {
+            "version": "terminal-hold-snapshot/1",
+            "evaluated": true,
+            "hold_verified": false,
+            "sustained_stability_claim": false,
+            "checks": {
+              "no_contact": false,
+              "clearance": false,
+              "horizontal_speed": false,
+              "vertical_speed": false,
+              "tilt": true
+            },
+            "horizontal_speed_m_s": 0.6970744666244227,
+            "vertical_speed_m_s": -0.3056609630584717,
+            "tilt_rad": 0.031434280113727175,
+            "deck_clearance_m": 0.30930854558944704
+          }
+        },
+        {
+          "seed": 12001,
+          "return": 30.883280513891187,
+          "status": "SUCCESS",
+          "steps": 73,
+          "elapsed_s": 7.612000361550599,
+          "backend": "isaac-px4-spatial",
+          "stop_confirmed": true,
+          "terminal_hold_audit": {
+            "version": "terminal-hold-snapshot/1",
+            "evaluated": true,
+            "hold_verified": false,
+            "sustained_stability_claim": false,
+            "checks": {
+              "no_contact": false,
+              "clearance": false,
+              "horizontal_speed": false,
+              "vertical_speed": false,
+              "tilt": true
+            },
+            "horizontal_speed_m_s": 0.9395938546338176,
+            "vertical_speed_m_s": -0.24104076623916626,
+            "tilt_rad": 0.02689614467209249,
+            "deck_clearance_m": 0.30919708490371706
+          }
+        }
+      ]
+    }
+  },
+  {
+    "mode": "ppo_semantic_flat",
+    "seed": 829,
+    "signature": {
+      "schema": "spatial-reference/7",
+      "packet_registry": "b5ec469ce76fa6d3b98337b8e97ec79895db6c3a97d3991c3e87bf94417977ba",
+      "action": "spatial-enu-direct-net-acceleration-v2",
+      "config_sha256": "979ab7df0ab0590222d30eec2469d827fc700962684b9ccc635d68e5b769cf5e"
+    },
+    "checkpoint": "checkpoint_best.pt",
+    "checkpoint_sha256": "ac7ea092e1c8238fae0197dd07608460a682426ee80899d455df5c8f797605db",
+    "episode_seeds": [
+      12000,
+      12001
+    ],
+    "cold_stack_per_episode": false,
+    "backend": "isaac",
+    "metrics": {
+      "episodes": 2,
+      "landing_rate": 1.0,
+      "unsafe_rate": 0.0,
+      "safe_abort_rate": 0.0,
+      "task_timeout_rate": 0.0,
+      "mean_return": 29.048028588138582,
+      "selection_score": 1029.0480285881385,
+      "selection_score_model": "outcome_weighted_v28",
+      "mean_abs_relation_residual": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "rows": [
+        {
+          "seed": 12000,
+          "return": 27.417513651919542,
+          "status": "SUCCESS",
+          "steps": 88,
+          "elapsed_s": 9.212000437546521,
+          "backend": "isaac-px4-spatial",
+          "stop_confirmed": true,
+          "terminal_hold_audit": {
+            "version": "terminal-hold-snapshot/1",
+            "evaluated": true,
+            "hold_verified": false,
+            "sustained_stability_claim": false,
+            "checks": {
+              "no_contact": false,
+              "clearance": false,
+              "horizontal_speed": false,
+              "vertical_speed": true,
+              "tilt": true
+            },
+            "horizontal_speed_m_s": 0.729113003877233,
+            "vertical_speed_m_s": 0.0155420433729887,
+            "tilt_rad": 0.021108052102384083,
+            "deck_clearance_m": 0.30712945938110353
+          }
+        },
+        {
+          "seed": 12001,
+          "return": 30.67854352435762,
+          "status": "SUCCESS",
+          "steps": 76,
+          "elapsed_s": 7.8560003731399775,
+          "backend": "isaac-px4-spatial",
+          "stop_confirmed": true,
+          "terminal_hold_audit": {
+            "version": "terminal-hold-snapshot/1",
+            "evaluated": true,
+            "hold_verified": false,
+            "sustained_stability_claim": false,
+            "checks": {
+              "no_contact": false,
+              "clearance": false,
+              "horizontal_speed": false,
+              "vertical_speed": false,
+              "tilt": true
+            },
+            "horizontal_speed_m_s": 0.9640861084815421,
+            "vertical_speed_m_s": -0.10949179530143738,
+            "tilt_rad": 0.018786555978196638,
+            "deck_clearance_m": 0.3054443168640137
+          }
+        }
+      ]
+    }
+  }
+]

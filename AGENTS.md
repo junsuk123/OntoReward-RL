@@ -187,9 +187,40 @@ The v1 config remains an explicit historical experiment; Isaac/PX4 remains
   `two_axis/config.py: DEFAULT_CONFIG_PATH` also still points at the retired v1
   config, so a bare `load_config()` quietly returns -40/-30/-50 with tau 350
   instead of the reference table. Always pass the config path explicitly.
-- The active spatial contract is `spatial-reference/6` (`REFERENCE_SCHEMA`,
-  2026-10-06 night, deployment profile `config/spatial-isaac-system-v11.yaml`).
-  It is `/5` plus exactly ONE law, the attitude servo's damping:
+- The active spatial contract is `spatial-reference/7` (`REFERENCE_SCHEMA`,
+  2026-10-06 late evening, deployment profile
+  `config/spatial-isaac-system-v11.yaml`). It is `/6` plus exactly ONE law,
+  the CONTACT VERDICT (`SpatialConfig.contact_verdict_by_speed`), and it is a
+  USER DECISION, not a measurement: of the six non-landing contacts in the
+  five-seed `/6` flight, four were vehicles sinking onto their legs from a low
+  hover under the supervisor's vertical hold (`vertical_stopping_margin`) at
+  |vz| 0.01-0.07 m/s -- two scored UNAUTHORIZED_CONTACT inside every touchdown
+  limit, two scored UNSAFE_CONTACT just outside the attitude band (body rate
+  10.47 deg/s; tilt 5.27 deg at 12.51 deg/s) -- and two touched inside the
+  terminal-descent corridor at vz -0.62 and -0.38 m/s against the 0.30 m/s
+  limit. The user ruled the four landings and the two not. The one rule that
+  draws that line is the impact speed: on `/7` a pad contact is UNSAFE_CONTACT
+  when |v_xy| > 0.35 or |vz| > 0.30 m/s, SAFETY_ENVELOPE_VIOLATION when the
+  thrust axis is past 21 deg at contact, UNAUTHORIZED_CONTACT only while the
+  abort hold owns the vehicle, and SUCCESS otherwise, whatever the inhibit
+  flag, tilt or body rate. Tilt and rate remain the corridor's `settled`
+  commit condition and the readiness term's price; the limit VALUES are
+  unchanged, and so are plant, packet, graph, ontology, supervisor, terminal
+  table and profile (guard `tests/test_contact_verdict_rung.py`, which
+  replays the six recorded contacts under both rungs). The earlier
+  description of two of the four as "boundary" cases (rate "exactly 10.0")
+  was wrong -- read `truth_relative_velocity` / `truth_roll_pitch` /
+  `truth_angular_rate` at the contact step of the per-run `isaac_*.jsonl`
+  before characterising a contact. Re-scoring the recorded `/6` flight under
+  `/7` gives 27 SUCCESS / 2 UNSAFE_CONTACT / 1 SAFE_ABORT, so acceptance would
+  still fail on the two corridor impacts; the open design question (the
+  corridor admits 1.5 x 0.30 m/s, landing requires 0.30) now concerns those
+  two only. `--contract-version` lists `spatial-reference/3..7`, so every
+  earlier rung's checkpoints stay loadable. First run:
+  `results/full_pipeline_20261006_v7_5seeds` (five seeds, `--isaac`).
+- `spatial-reference/6` (2026-10-06 night, deployment profile
+  `config/spatial-isaac-system-v11.yaml`) is `/5` plus exactly ONE law, the
+  attitude servo's damping:
   `SpatialConfig.attitude_omega / attitude_damping` = 10 rad/s at zeta 0.7
   (`REFERENCE_ATTITUDE_SERVO_6`), identified from the tilt traces of all four
   Isaac flights (46 episodes, 1360 steps) by simulating the local servo on the

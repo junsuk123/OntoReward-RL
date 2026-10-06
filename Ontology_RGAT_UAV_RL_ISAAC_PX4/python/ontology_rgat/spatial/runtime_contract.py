@@ -81,7 +81,8 @@ def deployment_profile(schema="spatial-causal-rgat/5"):
         # direct-acceleration action and seeded disturbances. Only the packet
         # layout and the per-axis graph changed, and neither is deployed state.
         filename = 'spatial-isaac-system-v9.yaml'
-    if schema in ("spatial-reference/4", "spatial-reference/5", "spatial-reference/6"):
+    if schema in ("spatial-reference/4", "spatial-reference/5", "spatial-reference/6",
+                  "spatial-reference/7"):
         # The Isaac-calibrated vehicle: landing gear and the 17-tag board.
         filename = 'spatial-isaac-system-v11.yaml'
     path = Path(__file__).resolve().parents[3] / "config" / filename

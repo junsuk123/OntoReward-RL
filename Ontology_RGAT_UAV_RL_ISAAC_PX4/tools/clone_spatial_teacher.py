@@ -83,6 +83,9 @@ TEACHER_GAINS_BY_SCHEMA = {
                                 align=0.15, anorm=0.3),
     "spatial-reference/6": dict(kp=0.4, kd=0.3, ki=0.1, kz=1.0, vdes=0.15,
                                 align=0.15, anorm=0.3),
+    # /7 changes the contact verdict only; the plant is /6's, so are the gains.
+    "spatial-reference/7": dict(kp=0.4, kd=0.3, ki=0.1, kz=1.0, vdes=0.15,
+                                align=0.15, anorm=0.3),
 }
 TEACHER_GAINS = dict(kp=0.4, kd=0.8, ki=0.4, kz=1.0, vdes=0.15, align=0.15,
                      anorm=0.3)
@@ -171,7 +174,10 @@ def main():
                         help="clone into the state-dependent-sigma actor")
     parser.add_argument("--contract-version",
                         choices=["5", "6", "7", "8", "9", "10",
-                                 "spatial-reference/1", "spatial-reference/2", "reference"],
+                                 "spatial-reference/1", "spatial-reference/2",
+                                 "spatial-reference/3", "spatial-reference/4",
+                                 "spatial-reference/5", "spatial-reference/6",
+                                 "spatial-reference/7", "reference"],
                         default="reference")
     args = parser.parse_args()
     if any(not 0.0 <= d <= 1.0 for d in args.difficulties):

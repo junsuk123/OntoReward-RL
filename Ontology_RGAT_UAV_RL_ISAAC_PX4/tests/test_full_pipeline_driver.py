@@ -30,6 +30,20 @@ def test_dry_run_plans_without_touching_anything(tmp_path):
     assert not root.exists(), "a dry run must not create the run root"
 
 
+def test_a_relative_run_root_is_resolved_against_the_launch_cwd(tmp_path):
+    """Stages run with cwd=ROOT; the driver reads with its own cwd. Measured
+    2026-10-06: `--run-root results/x` put the clones under the project's
+    results/ and the lock under the repository's, and the final table would
+    have read an empty root. One run, one tree."""
+    result = subprocess.run([sys.executable, str(DRIVER), "--run-root", "results/relative",
+                             "--dry-run"], capture_output=True, text=True,
+                            timeout=120, cwd=tmp_path)
+    assert result.returncode == 0, result.stdout + result.stderr
+    planned = result.stdout.split("run root :", 1)[1].splitlines()[0].strip()
+    assert Path(planned).is_absolute()
+    assert Path(planned) == (tmp_path / "results" / "relative").resolve()
+
+
 def test_isaac_is_off_by_default_and_named_when_on(tmp_path):
     """Flying by default would fail the run at its last step, every time.
 

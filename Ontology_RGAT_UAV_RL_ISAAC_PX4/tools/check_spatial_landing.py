@@ -118,7 +118,10 @@ def main():
     # brake); it is selectable so the two rungs can be flown back to back.
     parser.add_argument("--contract-version",
                         choices=["5", "6", "7", "8", "9", "10",
-                                 "spatial-reference/1", "reference"],
+                                 "spatial-reference/1", "spatial-reference/2",
+                                 "spatial-reference/3", "spatial-reference/4",
+                                 "spatial-reference/5", "spatial-reference/6",
+                                 "spatial-reference/7", "reference"],
                         default="reference")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()

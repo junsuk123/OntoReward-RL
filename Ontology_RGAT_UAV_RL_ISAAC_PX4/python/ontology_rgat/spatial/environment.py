@@ -83,11 +83,29 @@ class Evaluator:
         status = "RUNNING"
         # Contact/unsafe ordering always precedes benign timeouts/abort.
         if truth.contact:
+            fast = (np.linalg.norm(v[:2]) > cfg.touchdown_xy_speed
+                    or abs(v[2]) > cfg.touchdown_z_speed)
             if xy > cfg.pad_half_width:
                 status = "MISSED_PAD_CONTACT"
+            elif cfg.contact_verdict_by_speed:
+                # /7: the impact speed is the contact criterion. Tilt and body
+                # rate are the corridor's commit condition (safety.py
+                # ``settled``) and the readiness term's price, not a reason to
+                # score a 0.03 m/s settle onto the legs as a crash. The 21 deg
+                # envelope still applies at the contact instant, and a contact
+                # while the abort hold owns the vehicle is still unauthorized.
+                if fast:
+                    status = "UNSAFE_CONTACT"
+                elif math.acos(float(np.clip(
+                        math.cos(truth.roll_pitch[0]) * math.cos(truth.roll_pitch[1]),
+                        -1., 1.))) > math.radians(21):
+                    status = "SAFETY_ENVELOPE_VIOLATION"
+                elif safety.abort:
+                    status = "UNAUTHORIZED_CONTACT"
+                else:
+                    status = "SUCCESS"
             elif (
-                np.linalg.norm(v[:2]) > cfg.touchdown_xy_speed
-                or abs(v[2]) > cfg.touchdown_z_speed
+                fast
                 or np.linalg.norm(truth.roll_pitch) > cfg.touchdown_tilt
                 or np.linalg.norm(truth.angular_rate[:2]) > cfg.touchdown_rate
             ):

@@ -257,9 +257,11 @@ class LocalBackend:
                 return (1 - d) * easy + d * value
 
             self.position[:2] *= 0.15 + 0.85 * d
-            # The easy rung starts low; with landing gear the body touches
-            # down higher, so the start band shifts up by the same amount.
-            start_heights = tuple(v + self.cfg.landing_gear_extension_m
+            # The easy rung starts low. With landing gear the body touches
+            # down higher, and from /5 on the camera must see a tag at the
+            # band's low end, so the band is lifted (SpatialConfig
+            # .easy_start_lift_m: the gear on /4-/7, kept on /8 without it).
+            start_heights = tuple(v + self.cfg.easy_start_lift_m
                                   for v in c.start_height_range_m)
             self.position[2] = interpolate_sample(
                 self.position[2], self.cfg.initial_height, start_heights

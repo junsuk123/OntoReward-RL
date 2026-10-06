@@ -1,0 +1,11 @@
+{
+  "complete_matrix": false,
+  "no_unsafe_outcomes": null,
+  "landing_observed": null,
+  "passes": false,
+  "state": "incomplete",
+  "backend": "actual-isaac-px4",
+  "performance_parity_claim": false,
+  "error_type": "ArmingRefused",
+  "error": "PX4 refused to arm for 25 s (command 400 result 1); the vehicle never left the ground, so no entry pose is reachable. Check the simulator log for 'Preflight Fail': a degraded SITL EKF (high accelerometer bias, attitude failure) needs a fresh simulator, not another reset."
+}

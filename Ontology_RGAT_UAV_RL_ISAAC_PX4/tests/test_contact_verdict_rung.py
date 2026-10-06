@@ -71,10 +71,11 @@ RECORDED = (
 )
 
 
-def test_the_active_contract_is_the_verdict_rung():
-    assert REFERENCE_SCHEMA == "spatial-reference/7" == REFERENCE_SCHEMAS[-1]
+def test_the_verdict_rung_and_its_successor_carry_the_rule():
+    assert REFERENCE_SCHEMA == "spatial-reference/8" == REFERENCE_SCHEMAS[-1]
     assert _cfg("spatial-reference/7").contact_verdict_by_speed
-    for schema in REFERENCE_SCHEMAS[:-1] + ("spatial-causal-rgat/5", "spatial-causal-rgat/10"):
+    assert _cfg("spatial-reference/8").contact_verdict_by_speed
+    for schema in REFERENCE_SCHEMAS[:6] + ("spatial-causal-rgat/5", "spatial-causal-rgat/10"):
         assert not _cfg(schema).contact_verdict_by_speed, schema
 
 
@@ -135,6 +136,70 @@ def test_the_verdict_rung_differs_from_six_in_nothing_but_the_contact_rule():
     assert six.signature["config_sha256"] != seven.signature["config_sha256"]
 
 
+def test_the_legless_rung_differs_from_seven_in_nothing_but_the_gear_and_its_profile():
+    """/8 = /7 minus the landing gear (user decision, 2026-10-06).
+
+    The contact verdict, plant, packet, graph and board are /7's; the body
+    touches down at the stock height, the supervisor's heights shift with
+    it, the curriculum's low start follows, and the Isaac profile attaches
+    no legs.
+    """
+    from ontology_rgat.spatial.environment import LocalBackend, SpatialLandingEnv
+    from ontology_rgat.spatial.runtime_contract import deployment_profile
+    seven, eight = _cfg("spatial-reference/7"), _cfg("spatial-reference/8")
+    assert seven.landing_gear_extension_m == pytest.approx(0.18)
+    assert eight.landing_gear_extension_m == 0.0
+    assert eight.touchdown_height == eight.contact_height == pytest.approx(0.12)
+    assert seven.touchdown_height == pytest.approx(0.30)
+    assert seven.packet_fields == eight.packet_fields
+    assert seven.registry_hash == eight.registry_hash
+    assert _ontology(seven).node_names == _ontology(eight).node_names
+    assert _graph_planes(seven) == _graph_planes(eight)
+    for capability in ("direct_acceleration", "reference_tracking", "matched_disturbances",
+                       "reference_context", "reference_supervisor", "camera_transport_delay",
+                       "vertical_inhibit_holds", "actuation_delay_s", "attitude_omega",
+                       "attitude_damping", "optical_realism", "contact_verdict_by_speed",
+                       "touchdown_xy_speed", "touchdown_z_speed", "touchdown_tilt",
+                       "touchdown_rate"):
+        assert getattr(seven, capability) == getattr(eight, capability), capability
+    assert seven.signature["config_sha256"] != eight.signature["config_sha256"]
+    # v12 is v11 without legs: same 17-tag board, gear extension zero.
+    profile = deployment_profile("spatial-reference/8")
+    resolved = profile["resolved_scientific_configuration"]
+    assert profile["path"].endswith("spatial-isaac-system-v12.yaml")
+    assert resolved["vehicle"]["landing_gear"]["extension_m"] == 0.0
+    assert len(resolved["vision"]["board"]) == 17
+    assert resolved["vision"]["board"] == deployment_profile("spatial-reference/7")[
+        "resolved_scientific_configuration"]["vision"]["board"]
+    assert profile["sha256"] != deployment_profile("spatial-reference/7")["sha256"]
+    # The contact plane follows the gear back down; the easy start band does
+    # NOT: without legs the stock low end (body 0.20 m) puts the camera 0.04 m
+    # above the deck, blind, and the fixed-descent probe aborted 5 of 12 easy
+    # seeds there. The band keeps the camera geometry /4-/7 trained on.
+    assert eight.easy_start_lift_m == seven.easy_start_lift_m == pytest.approx(0.18)
+    assert _cfg("spatial-reference/3").easy_start_lift_m == 0.0
+    backend = LocalBackend(eight, difficulty=0.0)
+    for seed in range(5):
+        backend.reset(seed)
+        assert backend.position[2] > eight.touchdown_height + 0.05
+        assert backend.position[2] - 0.16 >= 0.20, backend.position[2]
+    env = SpatialLandingEnv(eight)
+    try:
+        env.reset(seed=11)
+        backend = env.backend
+        backend.position[:2] = backend.pad[:2]
+        backend.position[2] = backend.pad[2] + eight.touchdown_height + 0.02
+        backend.velocity[:] = [*backend.pad_velocity[:2], -0.4]
+        for _ in range(8):
+            _obs, _r, done, _t, info = env.step(np.array([0.0, 0.0, -0.5]))
+            if done:
+                break
+        assert done and info["truth_contact"], info["status"]
+        assert info["truth_relative_position"][2] == pytest.approx(eight.touchdown_height, abs=1e-6)
+    finally:
+        env.close()
+
+
 def test_adding_the_rung_did_not_move_six():
     """The /6 clones and cells (results/full_pipeline_20261006_v6_5seeds) must
     keep loading under their own schema."""
@@ -144,3 +209,7 @@ def test_adding_the_rung_did_not_move_six():
         pytest.skip("the /6 five-seed run is not on this machine")
     recorded = json.loads(plan.read_text())["signature"]["config_sha256"]
     assert _cfg("spatial-reference/6").signature["config_sha256"] == recorded
+    seven = plan.parent.parent.parent / "full_pipeline_20261006_v7_5seeds" / "low_sigma_kl" / "plan.json"
+    if seven.exists():
+        recorded = json.loads(seven.read_text())["signature"]["config_sha256"]
+        assert _cfg("spatial-reference/7").signature["config_sha256"] == recorded

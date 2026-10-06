@@ -212,6 +212,29 @@ The v1 config remains an explicit historical experiment; Isaac/PX4 remains
   therefore lifts the easy band by 0.18 m on /4-/8 (the gear on /4-/7, kept on
   /8 without the gear), which is byte-identical for /4-/7 and restores the
   probe to 11-12 of 12 on /8. Training-only; difficulty 1.0 never reads it.
+  **Measured, `/8` five seeds (`results/full_pipeline_20261006_v8_5seeds`,
+  2026-10-07 00:59, same recipe, 48 held-out seeds, deterministic):** clones
+  rgat 72.9 / flat 75.0 / vector 47.1 % (vector timeouts 41 %); after PPO
+  flat 77.9 +- 6.1, vector 77.9 +- 5.5, rgat 73.8 +- 15.6 % (seed 829 at
+  52 %, seed 832 at 92 %), unsafe 12-16 %. Against /7 on the same seeds that
+  is -10 to -15 points of landing and +5 of unsafe for every arm; over the
+  same 12 training runs SUCCESS fell 87.5 -> 75.2 % and TASK_TIMEOUT rose
+  6.6 -> 14.5 %. Isaac, 30 episodes, no restart needed: **16 SUCCESS**, 5
+  UNSAFE_CONTACT (vz -0.30 to -0.32), 2 SAFETY_ENVELOPE_VIOLATION at
+  0.9-1.3 s (tilt 21.3-21.5 deg, handover), 5 SAFE_ABORT, 2 TASK_TIMEOUT.
+  Per arm: `ppo_ontology_rgat` 8/10, `ppo_semantic_flat` 7/10,
+  `ppo_vector_canonical` 1/10 -- its five aborts and two timeouts all lost
+  the track at 0.10-0.25 m body height and hovered or drifted while the
+  pad drove off. EVERY one of the 16 landings touched down with
+  `optical_detected` False and a track age of 0.6-3.0 s: without the legs
+  the last 0.1-0.2 m is flown blind and only the corridor's 1.5 s commit
+  memory carries it, which the graph arms survive and the packet-only arm
+  does not. Acceptance fails on `no_unsafe_outcomes` and on
+  `proposed_landing_observed`, which requires every proposed-arm run to
+  land (seed 831 landed 0/2). Read this as a GEOMETRY measurement, not a
+  representation claim: the legs were worth ~7 of 30 Isaac landings and the
+  whole of the baseline's Isaac performance. Whether to restore them is the
+  user's call.
   The driver now passes `--isaac-reset-recoveries` (default 2) to the Isaac stage
   because the /7 flight died at run 7 of 15 on a PX4 "Preflight Fail: High
   Accelerometer Bias" arming refusal with no restart budget (infrastructure,

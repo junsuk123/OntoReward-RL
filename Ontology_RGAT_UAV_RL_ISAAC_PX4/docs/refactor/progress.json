@@ -1427,7 +1427,7 @@
   "experiment": "two_axis_context_rgat_v1",
   "algorithm_version": "two-axis-context-rgat-v1",
   "contract_revision": "planar-visibility-ppo-v2.5",
-  "performance_verified": "partial: /6 five seeds rgat 81 / vector 75 / flat 61 % held-out, Isaac 23/30; /7 five seeds vector 92.5 / rgat 90.4 / flat 84.6 % held-out (unsafe 7-15 %, all vertical-speed), Isaac 9/12 before a PX4 preflight arming refusal; acceptance not passed; /8 (legs removed on user instruction) five-seed run starting 2026-10-06 ~22:40 KST",
+  "performance_verified": "partial: /6 five seeds rgat 81 / vector 75 / flat 61 % held-out, Isaac 23/30; /7 vector 92.5 / rgat 90.4 / flat 84.6 %, Isaac 9/12 (preflight refusal); /8 (no legs) flat 77.9 / vector 77.9 / rgat 73.8 % held-out, Isaac 16/30 (rgat 8/10, flat 7/10, vector 1/10); acceptance not passed on any rung",
   "corrections": [
     {
       "id": "authorized-touchdown-reachable",
@@ -2073,10 +2073,120 @@
         "note": "infrastructure, not RL; driver had no restart budget"
       },
       "claim_allowed": "under the /7 verdict all three arms land 85-93 % held-out with unsafe 7-15 %, every unsafe is a vertical-speed exceedance at or just above the 0.30 m/s limit; arms within sd of each other"
+    },
+    "five_seed_spatial_reference_8_20261007": {
+      "root": "results/full_pipeline_20261006_v8_5seeds",
+      "training_seeds": [
+        828,
+        829,
+        830,
+        831,
+        832
+      ],
+      "held_out_seeds": "4100-4147",
+      "scored_under": "spatial-reference/8 (no legs, /7 verdict)",
+      "teacher_120": {
+        "SUCCESS": 108,
+        "TASK_TIMEOUT": 11,
+        "SAFE_ABORT": 1
+      },
+      "clones_mean_sd_land": {
+        "ppo_ontology_rgat": [
+          0.729,
+          0.062
+        ],
+        "ppo_semantic_flat": [
+          0.75,
+          0.066
+        ],
+        "ppo_vector_canonical": [
+          0.471,
+          0.099,
+          "timeout 0.41"
+        ]
+      },
+      "after_ppo_mean_sd": {
+        "ppo_ontology_rgat": {
+          "land": [
+            0.738,
+            0.156
+          ],
+          "unsafe": [
+            0.142,
+            0.112
+          ],
+          "timeout": 0.079,
+          "return": 16.8
+        },
+        "ppo_semantic_flat": {
+          "land": [
+            0.779,
+            0.061
+          ],
+          "unsafe": [
+            0.162,
+            0.091
+          ],
+          "timeout": 0.046,
+          "return": 17.7
+        },
+        "ppo_vector_canonical": {
+          "land": [
+            0.779,
+            0.055
+          ],
+          "unsafe": [
+            0.121,
+            0.06
+          ],
+          "timeout": 0.038,
+          "return": 17.8
+        }
+      },
+      "training_terminals_same_12_runs_v7_vs_v8": {
+        "SUCCESS": [
+          "87.5%",
+          "75.2%"
+        ],
+        "TASK_TIMEOUT": [
+          "6.6%",
+          "14.5%"
+        ],
+        "UNSAFE_CONTACT": [
+          "4.6%",
+          "6.9%"
+        ],
+        "SAFE_ABORT": [
+          "1.1%",
+          "3.1%"
+        ]
+      },
+      "isaac_30_episodes": {
+        "SUCCESS": 16,
+        "UNSAFE_CONTACT": 5,
+        "SAFETY_ENVELOPE_VIOLATION": 2,
+        "SAFE_ABORT": 5,
+        "TASK_TIMEOUT": 2,
+        "per_arm": {
+          "ppo_ontology_rgat": "8 SUCCESS, 2 UNSAFE (vz -0.32/-0.30, seed 831)",
+          "ppo_semantic_flat": "7 SUCCESS, 2 UNSAFE (vz -0.30/-0.30), 1 ENVELOPE at 1.3 s (tilt 21.3 deg)",
+          "ppo_vector_canonical": "1 SUCCESS, 1 UNSAFE (-0.30), 1 ENVELOPE at 0.9 s, 5 SAFE_ABORT (track lost at h 0.10-0.25 m, pad drove off 6-7 m), 2 TASK_TIMEOUT (hover ~0.2 m, track lost)"
+        },
+        "every_success_touched_blind": "optical_detected False at contact, track age 0.6-3.0 s; the corridor's 1.5 s commit memory carries the last 0.1-0.2 m",
+        "restarts_used": 0,
+        "acceptance": {
+          "passes": false,
+          "failed": [
+            "no_unsafe_outcomes",
+            "proposed_landing_observed (all five proposed runs must land; seed 831 landed 0/2)"
+          ]
+        }
+      },
+      "claim_allowed": "removing the legs costs 10-15 points of held-out landing for every arm, raises unsafe ~5 points, and in Isaac drops landing from 23/30 (/6) and 9/12 (/7 partial) to 16/30, with the packet-only baseline collapsing to 1/10 because the terminal phase is flown blind (camera below the pad plane). The graph arms land 8/10 and 7/10 on track memory. Not a representation claim; a geometry measurement"
     }
   },
   "pending": [
-    "acceptance gate: unsafe 0 over the Isaac matrix. Under /7 the only unsafe left is impact speed and the policies descend at the 0.30 m/s limit (held-out: 74/720 over, 49 of them within 0.30-0.35). The corridor admits 1.5 x 0.30 m/s while landing requires 0.30. Options, to be MEASURED on arms: tighten the corridor's descent allowance toward the landing limit, or price vz at contact. /8 (no legs) changes the touchdown geometry first; measure there before deciding",
+    "acceptance gate: unsafe 0 over the Isaac matrix. /7 and /8 both leave impact speed as the only unsafe (vz 0.30-0.33 at contact, corridor admits 0.45, landing requires 0.30) plus the handover tilt envelope on the weaker arms. /8 (legs removed on user instruction) measured 2026-10-07: every Isaac landing is flown blind in the last 0.1-0.2 m and the packet-only arm collapses (1/10). DECISION for the user: keep the legs off (and accept the blind terminal phase, or give the supervisor a terminal-coast law) or restore them (/7 geometry, 9/12 and 23/30). Then address the 0.15 m/s corridor/landing gap by measuring arms",
     "after the /5 flight: if the policy still over-commands, compare the remaining channels (tiltRate, sinTilt jitter) against their training-time spread the same way",
     "calibrate spatial/dynamics.py attitude/thrust response (ATTITUDE_OMEGA, THRUST_TAU) to Isaac's measured step response -- target gain ~0.97 at one 0.1 s step of lag -- or randomise it in training; snapshot the contract before/after, re-clone, re-run low_sigma_kl(_masked), re-fly",
     "re-run the three-arm comparison with >=5 training seeds under low_sigma_kl (and low_sigma_kl_masked, running 2026-10-06) before any representation claim; held-out unsafe after PPO is 6-31 % and needs its own study",

@@ -535,6 +535,21 @@ class SpatialConfig:
                                "spatial-reference/7", "spatial-reference/8")
 
     @property
+    def terminal_descent_speed_factor(self):
+        """Descent the supervisor admits inside the terminal corridor, as a
+        multiple of ``touchdown_z_speed``; it brakes only above this.
+
+        1.5 is the reference approach margin (two_axis/safety.py) and is what
+        every rung through /8 carries. The contact verdict needs |vz| <=
+        1.0 x, so the band between 1.0 x and 1.5 x is descent the supervisor
+        allows and the verdict then scores UNSAFE_CONTACT: on /7 and /8 every
+        held-out unsafe terminal (74 of 720 and the /8 set) was a contact in
+        that band, most of it within 0.05 m/s of the limit, and the five
+        Isaac UNSAFE_CONTACTs of the /8 flight touched at -0.30 to -0.32.
+        """
+        return 1.5
+
+    @property
     def contact_verdict_by_speed(self):
         """/7: a pad contact is judged by its impact speed.
 

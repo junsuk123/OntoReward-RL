@@ -107,9 +107,11 @@ class ReferenceSpatialSupervisor:
             elif applied[2] < 0:
                 applied[2] = min(limits[2],downward/delay)
         if self.terminal_descent:
-            # Same reference margin; mechanical SUCCESS still uses the
-            # unchanged stricter nominal limit, never this approach margin.
-            speed_limit = 1.5*cfg.touchdown_z_speed
+            # The reference approach margin (1.5x) on every rung through /8;
+            # mechanical SUCCESS still uses the unchanged stricter nominal
+            # limit, never this approach margin. SpatialConfig
+            # .terminal_descent_speed_factor is where a rung narrows it.
+            speed_limit = cfg.terminal_descent_speed_factor*cfg.touchdown_z_speed
             if downward > speed_limit:
                 applied[2] = max(applied[2],(downward-speed_limit)/delay)
         if safety.abort:

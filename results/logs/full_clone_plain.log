@@ -2,3 +2,14 @@
 [clone] ppo_vector_canonical seed=828 mse 0.03943->0.00364 holdout land=0.250 unsafe=0.125 | isaac preflight unsafe=0.000 ADMISSIBLE
 [clone] ppo_semantic_flat seed=828 mse 0.04066->0.00437 holdout land=0.833 unsafe=0.000 | isaac preflight unsafe=0.000 ADMISSIBLE
 [clone] ppo_ontology_rgat seed=828 mse 0.04065->0.00438 holdout land=0.792 unsafe=0.000 | isaac preflight unsafe=0.000 ADMISSIBLE | actor readout 0.5362 delta|max| 0.1799
+[clone] ppo_vector_canonical seed=829 mse 0.03709->0.00349 holdout land=0.417 unsafe=0.042 | isaac preflight unsafe=0.000 ADMISSIBLE
+[clone] ppo_semantic_flat seed=829 mse 0.03902->0.00434 holdout land=0.917 unsafe=0.000 | isaac preflight unsafe=0.000 ADMISSIBLE
+[clone] ppo_ontology_rgat seed=829 mse 0.03903->0.00433 holdout land=0.833 unsafe=0.000 | isaac preflight unsafe=0.000 ADMISSIBLE | actor readout 0.4411 delta|max| 0.1376
+[clone] ppo_vector_canonical seed=830 mse 0.03737->0.00364 holdout land=0.292 unsafe=0.000 | isaac preflight unsafe=0.000 ADMISSIBLE
+[clone] ppo_semantic_flat seed=830 mse 0.03957->0.00444 holdout land=0.708 unsafe=0.083 | isaac preflight unsafe=0.000 ADMISSIBLE
+[clone] ppo_ontology_rgat seed=830 mse 0.03955->0.00442 holdout land=0.750 unsafe=0.042 | isaac preflight unsafe=0.000 ADMISSIBLE | actor readout 0.5554 delta|max| 0.2522
+[clone] ppo_vector_canonical seed=831 mse 0.03874->0.00352 holdout land=0.500 unsafe=0.000 | isaac preflight unsafe=0.000 ADMISSIBLE
+[clone] ppo_semantic_flat seed=831 mse 0.03924->0.00452 holdout land=0.708 unsafe=0.042 | isaac preflight unsafe=0.000 ADMISSIBLE
+[clone] ppo_ontology_rgat seed=831 mse 0.03925->0.00456 holdout land=0.792 unsafe=0.000 | isaac preflight unsafe=0.000 ADMISSIBLE | actor readout 0.6921 delta|max| 0.2076
+[clone] ppo_vector_canonical seed=832 mse 0.03663->0.00357 holdout land=0.417 unsafe=0.125 | isaac preflight unsafe=0.000 ADMISSIBLE
+[clone] ppo_semantic_flat seed=832 mse 0.04010->0.00437 holdout land=0.917 unsafe=0.000 | isaac preflight unsafe=0.000 ADMISSIBLE

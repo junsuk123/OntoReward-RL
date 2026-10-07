@@ -689,14 +689,1158 @@
     "mode": "PPO fine-tuning, not exact optimizer-state resume",
     "contract_migration": null
   },
+  "completed_nominal_episodes": 1384,
+  "selected_checkpoint": "checkpoint_best.pt",
+  "environment_steps": 478775,
+  "total_training_environment_steps": 529975,
+  "training_backend": "local-spatial",
+  "curriculum_enabled": true,
   "curriculum_angular_scales": [
     1.0,
     1.0
   ],
-  "training_backend": "local-spatial",
-  "state_dependent_log_std": false,
-  "completed_nominal_episodes": 1384,
-  "wall_seconds": 2523.251904372999,
+  "adaptation_starts_at_iteration": 181,
+  "pretraining": {
+    "enabled": false,
+    "environment_steps": 0,
+    "reason": "eligible PPO checkpoint initialization"
+  },
+  "relation_activation": {
+    "accepted": false,
+    "selected_scale": 0.0,
+    "anchor_info": {
+      "episodes": 2,
+      "landing_rate": 1.0,
+      "unsafe_rate": 0.0,
+      "safe_abort_rate": 0.0,
+      "task_timeout_rate": 0.0,
+      "mean_return": 30.94669713849109,
+      "selection_score": 1030.9466971384911,
+      "selection_score_model": "outcome_weighted_v28",
+      "mean_abs_relation_residual": [
+        0.03318597376346588,
+        0.026560641825199127,
+        0.007683831267058849
+      ],
+      "rows": [
+        {
+          "seed": 2000,
+          "return": 31.022205084210857,
+          "status": "SUCCESS",
+          "steps": 155,
+          "elapsed_s": 15.474215051889882,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "terminal_hold_audit": {
+            "version": "terminal-hold-snapshot/1",
+            "evaluated": true,
+            "hold_verified": false,
+            "sustained_stability_claim": false,
+            "checks": {
+              "no_contact": false,
+              "clearance": false,
+              "horizontal_speed": false,
+              "vertical_speed": true,
+              "tilt": true
+            },
+            "horizontal_speed_m_s": 1.0963948013408054,
+            "vertical_speed_m_s": -0.07985190190421268,
+            "tilt_rad": 0.029164001429344978,
+            "deck_clearance_m": 0.12
+          }
+        },
+        {
+          "seed": 2001,
+          "return": 30.87118919277132,
+          "status": "SUCCESS",
+          "steps": 188,
+          "elapsed_s": 18.714468726307814,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "terminal_hold_audit": {
+            "version": "terminal-hold-snapshot/1",
+            "evaluated": true,
+            "hold_verified": false,
+            "sustained_stability_claim": false,
+            "checks": {
+              "no_contact": false,
+              "clearance": false,
+              "horizontal_speed": false,
+              "vertical_speed": true,
+              "tilt": true
+            },
+            "horizontal_speed_m_s": 1.1131541072136755,
+            "vertical_speed_m_s": -0.08640739402305331,
+            "tilt_rad": 0.03457647611537486,
+            "deck_clearance_m": 0.12
+          }
+        }
+      ]
+    },
+    "selected_info": {
+      "episodes": 2,
+      "landing_rate": 1.0,
+      "unsafe_rate": 0.0,
+      "safe_abort_rate": 0.0,
+      "task_timeout_rate": 0.0,
+      "mean_return": 30.94669713849109,
+      "selection_score": 1030.9466971384911,
+      "selection_score_model": "outcome_weighted_v28",
+      "mean_abs_relation_residual": [
+        0.03318597376346588,
+        0.026560641825199127,
+        0.007683831267058849
+      ],
+      "rows": [
+        {
+          "seed": 2000,
+          "return": 31.022205084210857,
+          "status": "SUCCESS",
+          "steps": 155,
+          "elapsed_s": 15.474215051889882,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "terminal_hold_audit": {
+            "version": "terminal-hold-snapshot/1",
+            "evaluated": true,
+            "hold_verified": false,
+            "sustained_stability_claim": false,
+            "checks": {
+              "no_contact": false,
+              "clearance": false,
+              "horizontal_speed": false,
+              "vertical_speed": true,
+              "tilt": true
+            },
+            "horizontal_speed_m_s": 1.0963948013408054,
+            "vertical_speed_m_s": -0.07985190190421268,
+            "tilt_rad": 0.029164001429344978,
+            "deck_clearance_m": 0.12
+          }
+        },
+        {
+          "seed": 2001,
+          "return": 30.87118919277132,
+          "status": "SUCCESS",
+          "steps": 188,
+          "elapsed_s": 18.714468726307814,
+          "backend": "local-spatial",
+          "stop_confirmed": true,
+          "terminal_hold_audit": {
+            "version": "terminal-hold-snapshot/1",
+            "evaluated": true,
+            "hold_verified": false,
+            "sustained_stability_claim": false,
+            "checks": {
+              "no_contact": false,
+              "clearance": false,
+              "horizontal_speed": false,
+              "vertical_speed": true,
+              "tilt": true
+            },
+            "horizontal_speed_m_s": 1.1131541072136755,
+            "vertical_speed_m_s": -0.08640739402305331,
+            "tilt_rad": 0.03457647611537486,
+            "deck_clearance_m": 0.12
+          }
+        }
+      ]
+    },
+    "options": {
+      "scale_grid": [
+        1.0,
+        0.75,
+        0.5,
+        0.25,
+        0.1,
+        0.05,
+        0.02,
+        0.01,
+        0.005,
+        0.002,
+        0.001
+      ],
+      "mean_return_tolerance": 0.25,
+      "selection_score_tolerance": 0.25,
+      "rate_tolerance": 0.0,
+      "min_residual_norm": 1e-06,
+      "max_residual_norm": 0.005,
+      "active_tolerance": 1e-10
+    },
+    "trials": [
+      {
+        "scale": 1.0,
+        "validation": {
+          "episodes": 2,
+          "landing_rate": 0.0,
+          "unsafe_rate": 0.0,
+          "safe_abort_rate": 0.0,
+          "task_timeout_rate": 1.0,
+          "mean_return": -12.394237918333877,
+          "selection_score": -22.39423791833388,
+          "selection_score_model": "outcome_weighted_v28",
+          "mean_abs_relation_residual": [
+            0.2651890218257904,
+            0.33333879709243774,
+            0.005405303556472063
+          ],
+          "rows": [
+            {
+              "seed": 2000,
+              "return": -12.535607665958063,
+              "status": "TASK_TIMEOUT",
+              "steps": 700,
+              "elapsed_s": 69.99999999999322,
+              "backend": "local-spatial",
+              "stop_confirmed": true,
+              "terminal_hold_audit": {
+                "version": "terminal-hold-snapshot/1",
+                "evaluated": true,
+                "hold_verified": false,
+                "sustained_stability_claim": false,
+                "checks": {
+                  "no_contact": true,
+                  "clearance": true,
+                  "horizontal_speed": false,
+                  "vertical_speed": true,
+                  "tilt": false
+                },
+                "horizontal_speed_m_s": 1.2634703097801783,
+                "vertical_speed_m_s": 0.07341108211809695,
+                "tilt_rad": 0.258209957354116,
+                "deck_clearance_m": 1.1004618260133272
+              }
+            },
+            {
+              "seed": 2001,
+              "return": -12.252868170709691,
+              "status": "TASK_TIMEOUT",
+              "steps": 700,
+              "elapsed_s": 69.99999999999322,
+              "backend": "local-spatial",
+              "stop_confirmed": true,
+              "terminal_hold_audit": {
+                "version": "terminal-hold-snapshot/1",
+                "evaluated": true,
+                "hold_verified": false,
+                "sustained_stability_claim": false,
+                "checks": {
+                  "no_contact": true,
+                  "clearance": true,
+                  "horizontal_speed": false,
+                  "vertical_speed": true,
+                  "tilt": false
+                },
+                "horizontal_speed_m_s": 0.8527863718924096,
+                "vertical_speed_m_s": -0.005764254870874267,
+                "tilt_rad": 0.12983913367150235,
+                "deck_clearance_m": 1.2240390771904928
+              }
+            }
+          ]
+        },
+        "audit": {
+          "required": true,
+          "parameter_path_active": true,
+          "tolerance": 1e-10,
+          "actor_readout_norm": 0.8638448715209961,
+          "actor_head_norm": 0.6519454717636108,
+          "critic_readout_norm": 2.1854231357574463,
+          "critic_head_norm": 4.688177585601807
+        },
+        "residual_norm": 0.4259920049138135,
+        "outcome_guard": false,
+        "score_guard": false,
+        "residual_guard": false,
+        "accepted": false
+      },
+      {
+        "scale": 0.75,
+        "validation": {
+          "episodes": 2,
+          "landing_rate": 0.0,
+          "unsafe_rate": 0.0,
+          "safe_abort_rate": 0.0,
+          "task_timeout_rate": 1.0,
+          "mean_return": -12.333039108892287,
+          "selection_score": -22.333039108892287,
+          "selection_score_model": "outcome_weighted_v28",
+          "mean_abs_relation_residual": [
+            0.19222261011600494,
+            0.23535186052322388,
+            0.007244186941534281
+          ],
+          "rows": [
+            {
+              "seed": 2000,
+              "return": -12.473301860042447,
+              "status": "TASK_TIMEOUT",
+              "steps": 700,
+              "elapsed_s": 69.99999999999322,
+              "backend": "local-spatial",
+              "stop_confirmed": true,
+              "terminal_hold_audit": {
+                "version": "terminal-hold-snapshot/1",
+                "evaluated": true,
+                "hold_verified": false,
+                "sustained_stability_claim": false,
+                "checks": {
+                  "no_contact": true,
+                  "clearance": true,
+                  "horizontal_speed": false,
+                  "vertical_speed": true,
+                  "tilt": true
+                },
+                "horizontal_speed_m_s": 0.8110126193418483,
+                "vertical_speed_m_s": 0.021369015057007397,
+                "tilt_rad": 0.06500756299030763,
+                "deck_clearance_m": 1.0824145263454508
+              }
+            },
+            {
+              "seed": 2001,
+              "return": -12.192776357742124,
+              "status": "TASK_TIMEOUT",
+              "steps": 700,
+              "elapsed_s": 69.99999999999322,
+              "backend": "local-spatial",
+              "stop_confirmed": true,
+              "terminal_hold_audit": {
+                "version": "terminal-hold-snapshot/1",
+                "evaluated": true,
+                "hold_verified": false,
+                "sustained_stability_claim": false,
+                "checks": {
+                  "no_contact": true,
+                  "clearance": true,
+                  "horizontal_speed": false,
+                  "vertical_speed": true,
+                  "tilt": true
+                },
+                "horizontal_speed_m_s": 1.461158686654226,
+                "vertical_speed_m_s": -0.013435301363437374,
+                "tilt_rad": 0.05204327994018535,
+                "deck_clearance_m": 1.1874069222552144
+              }
+            }
+          ]
+        },
+        "audit": {
+          "required": true,
+          "parameter_path_active": true,
+          "tolerance": 1e-10,
+          "actor_readout_norm": 0.6478836536407471,
+          "actor_head_norm": 0.6519454717636108,
+          "critic_readout_norm": 1.63906729221344,
+          "critic_head_norm": 4.688177585601807
+        },
+        "residual_norm": 0.30396135993904977,
+        "outcome_guard": false,
+        "score_guard": false,
+        "residual_guard": false,
+        "accepted": false
+      },
+      {
+        "scale": 0.5,
+        "validation": {
+          "episodes": 2,
+          "landing_rate": 0.0,
+          "unsafe_rate": 0.0,
+          "safe_abort_rate": 0.0,
+          "task_timeout_rate": 1.0,
+          "mean_return": -11.141167359492805,
+          "selection_score": -21.141167359492805,
+          "selection_score_model": "outcome_weighted_v28",
+          "mean_abs_relation_residual": [
+            0.048009708523750305,
+            0.028873132541775703,
+            0.025742171332240105
+          ],
+          "rows": [
+            {
+              "seed": 2000,
+              "return": -10.817958437156872,
+              "status": "TASK_TIMEOUT",
+              "steps": 700,
+              "elapsed_s": 69.99999999999322,
+              "backend": "local-spatial",
+              "stop_confirmed": true,
+              "terminal_hold_audit": {
+                "version": "terminal-hold-snapshot/1",
+                "evaluated": true,
+                "hold_verified": false,
+                "sustained_stability_claim": false,
+                "checks": {
+                  "no_contact": true,
+                  "clearance": true,
+                  "horizontal_speed": false,
+                  "vertical_speed": true,
+                  "tilt": true
+                },
+                "horizontal_speed_m_s": 1.0143307123627492,
+                "vertical_speed_m_s": 0.021433443172464418,
+                "tilt_rad": 0.016378387060700057,
+                "deck_clearance_m": 1.0675614135597957
+              }
+            },
+            {
+              "seed": 2001,
+              "return": -11.464376281828736,
+              "status": "TASK_TIMEOUT",
+              "steps": 700,
+              "elapsed_s": 69.99999999999322,
+              "backend": "local-spatial",
+              "stop_confirmed": true,
+              "terminal_hold_audit": {
+                "version": "terminal-hold-snapshot/1",
+                "evaluated": true,
+                "hold_verified": false,
+                "sustained_stability_claim": false,
+                "checks": {
+                  "no_contact": true,
+                  "clearance": true,
+                  "horizontal_speed": false,
+                  "vertical_speed": true,
+                  "tilt": true
+                },
+                "horizontal_speed_m_s": 1.1680041876481237,
+                "vertical_speed_m_s": -0.018194970000218292,
+                "tilt_rad": 0.061387219855155696,
+                "deck_clearance_m": 1.0332438922819522
+              }
+            }
+          ]
+        },
+        "audit": {
+          "required": true,
+          "parameter_path_active": true,
+          "tolerance": 1e-10,
+          "actor_readout_norm": 0.43192243576049805,
+          "actor_head_norm": 0.6519454717636108,
+          "critic_readout_norm": 1.0927115678787231,
+          "critic_head_norm": 4.688177585601807
+        },
+        "residual_norm": 0.061654272197543734,
+        "outcome_guard": false,
+        "score_guard": false,
+        "residual_guard": false,
+        "accepted": false
+      },
+      {
+        "scale": 0.25,
+        "validation": {
+          "episodes": 2,
+          "landing_rate": 0.0,
+          "unsafe_rate": 0.0,
+          "safe_abort_rate": 0.0,
+          "task_timeout_rate": 1.0,
+          "mean_return": -9.605200658081817,
+          "selection_score": -19.605200658081817,
+          "selection_score_model": "outcome_weighted_v28",
+          "mean_abs_relation_residual": [
+            0.02262825332581997,
+            0.016033822670578957,
+            0.015560517087578773
+          ],
+          "rows": [
+            {
+              "seed": 2000,
+              "return": -8.536356191381392,
+              "status": "TASK_TIMEOUT",
+              "steps": 700,
+              "elapsed_s": 69.99999999999322,
+              "backend": "local-spatial",
+              "stop_confirmed": true,
+              "terminal_hold_audit": {
+                "version": "terminal-hold-snapshot/1",
+                "evaluated": true,
+                "hold_verified": false,
+                "sustained_stability_claim": false,
+                "checks": {
+                  "no_contact": true,
+                  "clearance": true,
+                  "horizontal_speed": false,
+                  "vertical_speed": true,
+                  "tilt": true
+                },
+                "horizontal_speed_m_s": 1.0936115333525671,
+                "vertical_speed_m_s": 0.009807968354084194,
+                "tilt_rad": 0.021006588481086153,
+                "deck_clearance_m": 0.5897330985303033
+              }
+            },
+            {
+              "seed": 2001,
+              "return": -10.674045124782241,
+              "status": "TASK_TIMEOUT",
+              "steps": 700,
+              "elapsed_s": 69.99999999999322,
+              "backend": "local-spatial",
+              "stop_confirmed": true,
+              "terminal_hold_audit": {
+                "version": "terminal-hold-snapshot/1",
+                "evaluated": true,
+                "hold_verified": false,
+                "sustained_stability_claim": false,
+                "checks": {
+                  "no_contact": true,
+                  "clearance": true,
+                  "horizontal_speed": false,
+                  "vertical_speed": true,
+                  "tilt": true
+                },
+                "horizontal_speed_m_s": 1.1352928262793072,
+                "vertical_speed_m_s": 0.0919793062459902,
+                "tilt_rad": 0.033799640192132066,
+                "deck_clearance_m": 0.8529333489958326
+              }
+            }
+          ]
+        },
+        "audit": {
+          "required": true,
+          "parameter_path_active": true,
+          "tolerance": 1e-10,
+          "actor_readout_norm": 0.21596121788024902,
+          "actor_head_norm": 0.6519454717636108,
+          "critic_readout_norm": 0.5463557839393616,
+          "critic_head_norm": 4.688177585601807
+        },
+        "residual_norm": 0.03180017311339492,
+        "outcome_guard": false,
+        "score_guard": false,
+        "residual_guard": false,
+        "accepted": false
+      },
+      {
+        "scale": 0.1,
+        "validation": {
+          "episodes": 2,
+          "landing_rate": 0.0,
+          "unsafe_rate": 0.0,
+          "safe_abort_rate": 0.0,
+          "task_timeout_rate": 1.0,
+          "mean_return": -9.09766472973531,
+          "selection_score": -19.09766472973531,
+          "selection_score_model": "outcome_weighted_v28",
+          "mean_abs_relation_residual": [
+            0.013526604510843754,
+            0.010857269167900085,
+            0.00706486776471138
+          ],
+          "rows": [
+            {
+              "seed": 2000,
+              "return": -9.021823875194906,
+              "status": "TASK_TIMEOUT",
+              "steps": 700,
+              "elapsed_s": 69.99999999999322,
+              "backend": "local-spatial",
+              "stop_confirmed": true,
+              "terminal_hold_audit": {
+                "version": "terminal-hold-snapshot/1",
+                "evaluated": true,
+                "hold_verified": false,
+                "sustained_stability_claim": false,
+                "checks": {
+                  "no_contact": true,
+                  "clearance": true,
+                  "horizontal_speed": false,
+                  "vertical_speed": true,
+                  "tilt": true
+                },
+                "horizontal_speed_m_s": 1.0967187158489564,
+                "vertical_speed_m_s": 0.007938064481799017,
+                "tilt_rad": 0.024805754322697347,
+                "deck_clearance_m": 0.525138658425388
+              }
+            },
+            {
+              "seed": 2001,
+              "return": -9.173505584275713,
+              "status": "TASK_TIMEOUT",
+              "steps": 700,
+              "elapsed_s": 69.99999999999322,
+              "backend": "local-spatial",
+              "stop_confirmed": true,
+              "terminal_hold_audit": {
+                "version": "terminal-hold-snapshot/1",
+                "evaluated": true,
+                "hold_verified": false,
+                "sustained_stability_claim": false,
+                "checks": {
+                  "no_contact": true,
+                  "clearance": true,
+                  "horizontal_speed": false,
+                  "vertical_speed": true,
+                  "tilt": true
+                },
+                "horizontal_speed_m_s": 1.105089201013003,
+                "vertical_speed_m_s": 0.01795161566435433,
+                "tilt_rad": 0.03108746530664802,
+                "deck_clearance_m": 0.5800976220735264
+              }
+            }
+          ]
+        },
+        "audit": {
+          "required": true,
+          "parameter_path_active": true,
+          "tolerance": 1e-10,
+          "actor_readout_norm": 0.08638449013233185,
+          "actor_head_norm": 0.6519454717636108,
+          "critic_readout_norm": 0.21854232251644135,
+          "critic_head_norm": 4.688177585601807
+        },
+        "residual_norm": 0.018728632622534682,
+        "outcome_guard": false,
+        "score_guard": false,
+        "residual_guard": false,
+        "accepted": false
+      },
+      {
+        "scale": 0.05,
+        "validation": {
+          "episodes": 2,
+          "landing_rate": 0.0,
+          "unsafe_rate": 0.0,
+          "safe_abort_rate": 0.0,
+          "task_timeout_rate": 1.0,
+          "mean_return": -8.801359227010575,
+          "selection_score": -18.801359227010575,
+          "selection_score_model": "outcome_weighted_v28",
+          "mean_abs_relation_residual": [
+            0.007560822647064924,
+            0.0052289171144366264,
+            0.003353523788973689
+          ],
+          "rows": [
+            {
+              "seed": 2000,
+              "return": -8.057966008602376,
+              "status": "TASK_TIMEOUT",
+              "steps": 700,
+              "elapsed_s": 69.99999999999322,
+              "backend": "local-spatial",
+              "stop_confirmed": true,
+              "terminal_hold_audit": {
+                "version": "terminal-hold-snapshot/1",
+                "evaluated": true,
+                "hold_verified": false,
+                "sustained_stability_claim": false,
+                "checks": {
+                  "no_contact": true,
+                  "clearance": false,
+                  "horizontal_speed": false,
+                  "vertical_speed": true,
+                  "tilt": true
+                },
+                "horizontal_speed_m_s": 1.0772165675029397,
+                "vertical_speed_m_s": -0.042969674599266844,
+                "tilt_rad": 0.022179548788584982,
+                "deck_clearance_m": 0.4601302765347746
+              }
+            },
+            {
+              "seed": 2001,
+              "return": -9.544752445418773,
+              "status": "TASK_TIMEOUT",
+              "steps": 700,
+              "elapsed_s": 69.99999999999322,
+              "backend": "local-spatial",
+              "stop_confirmed": true,
+              "terminal_hold_audit": {
+                "version": "terminal-hold-snapshot/1",
+                "evaluated": true,
+                "hold_verified": false,
+                "sustained_stability_claim": false,
+                "checks": {
+                  "no_contact": true,
+                  "clearance": true,
+                  "horizontal_speed": false,
+                  "vertical_speed": true,
+                  "tilt": true
+                },
+                "horizontal_speed_m_s": 1.0520298871624787,
+                "vertical_speed_m_s": 0.08802605702985368,
+                "tilt_rad": 0.033014940917834336,
+                "deck_clearance_m": 0.5662276091190317
+              }
+            }
+          ]
+        },
+        "audit": {
+          "required": true,
+          "parameter_path_active": true,
+          "tolerance": 1e-10,
+          "actor_readout_norm": 0.043192245066165924,
+          "actor_head_norm": 0.6519454717636108,
+          "critic_readout_norm": 0.10927116125822067,
+          "critic_head_norm": 4.688177585601807
+        },
+        "residual_norm": 0.009785383747877779,
+        "outcome_guard": false,
+        "score_guard": false,
+        "residual_guard": false,
+        "accepted": false
+      },
+      {
+        "scale": 0.02,
+        "validation": {
+          "episodes": 2,
+          "landing_rate": 0.0,
+          "unsafe_rate": 0.0,
+          "safe_abort_rate": 0.0,
+          "task_timeout_rate": 1.0,
+          "mean_return": -9.248868330466898,
+          "selection_score": -19.248868330466898,
+          "selection_score_model": "outcome_weighted_v28",
+          "mean_abs_relation_residual": [
+            0.0030055760871618986,
+            0.001403433969244361,
+            0.0012952267425134778
+          ],
+          "rows": [
+            {
+              "seed": 2000,
+              "return": -8.25113505135921,
+              "status": "TASK_TIMEOUT",
+              "steps": 700,
+              "elapsed_s": 69.99999999999322,
+              "backend": "local-spatial",
+              "stop_confirmed": true,
+              "terminal_hold_audit": {
+                "version": "terminal-hold-snapshot/1",
+                "evaluated": true,
+                "hold_verified": false,
+                "sustained_stability_claim": false,
+                "checks": {
+                  "no_contact": true,
+                  "clearance": false,
+                  "horizontal_speed": false,
+                  "vertical_speed": true,
+                  "tilt": true
+                },
+                "horizontal_speed_m_s": 1.078442495079692,
+                "vertical_speed_m_s": -0.08306064352037738,
+                "tilt_rad": 0.019400939229081822,
+                "deck_clearance_m": 0.3927859515789543
+              }
+            },
+            {
+              "seed": 2001,
+              "return": -10.246601609574585,
+              "status": "TASK_TIMEOUT",
+              "steps": 700,
+              "elapsed_s": 69.99999999999322,
+              "backend": "local-spatial",
+              "stop_confirmed": true,
+              "terminal_hold_audit": {
+                "version": "terminal-hold-snapshot/1",
+                "evaluated": true,
+                "hold_verified": false,
+                "sustained_stability_claim": false,
+                "checks": {
+                  "no_contact": true,
+                  "clearance": true,
+                  "horizontal_speed": false,
+                  "vertical_speed": true,
+                  "tilt": true
+                },
+                "horizontal_speed_m_s": 1.112661078522103,
+                "vertical_speed_m_s": 0.08654350255409299,
+                "tilt_rad": 0.031859570040365506,
+                "deck_clearance_m": 1.0373299664497055
+              }
+            }
+          ]
+        },
+        "audit": {
+          "required": true,
+          "parameter_path_active": true,
+          "tolerance": 1e-10,
+          "actor_readout_norm": 0.01727689616382122,
+          "actor_head_norm": 0.6519454717636108,
+          "critic_readout_norm": 0.04370846226811409,
+          "critic_head_norm": 4.688177585601807
+        },
+        "residual_norm": 0.003561000819470628,
+        "outcome_guard": false,
+        "score_guard": false,
+        "residual_guard": true,
+        "accepted": false
+      },
+      {
+        "scale": 0.01,
+        "validation": {
+          "episodes": 2,
+          "landing_rate": 0.0,
+          "unsafe_rate": 0.0,
+          "safe_abort_rate": 0.0,
+          "task_timeout_rate": 1.0,
+          "mean_return": -8.739825583285118,
+          "selection_score": -18.739825583285118,
+          "selection_score_model": "outcome_weighted_v28",
+          "mean_abs_relation_residual": [
+            0.0017146647442132235,
+            0.001201004721224308,
+            0.0006579559412784874
+          ],
+          "rows": [
+            {
+              "seed": 2000,
+              "return": -8.426076577977401,
+              "status": "TASK_TIMEOUT",
+              "steps": 700,
+              "elapsed_s": 69.99999999999322,
+              "backend": "local-spatial",
+              "stop_confirmed": true,
+              "terminal_hold_audit": {
+                "version": "terminal-hold-snapshot/1",
+                "evaluated": true,
+                "hold_verified": false,
+                "sustained_stability_claim": false,
+                "checks": {
+                  "no_contact": true,
+                  "clearance": true,
+                  "horizontal_speed": false,
+                  "vertical_speed": true,
+                  "tilt": true
+                },
+                "horizontal_speed_m_s": 1.0559633171018876,
+                "vertical_speed_m_s": -0.05429450026587449,
+                "tilt_rad": 0.026302921690067496,
+                "deck_clearance_m": 0.64064057958079
+              }
+            },
+            {
+              "seed": 2001,
+              "return": -9.053574588592832,
+              "status": "TASK_TIMEOUT",
+              "steps": 700,
+              "elapsed_s": 69.99999999999322,
+              "backend": "local-spatial",
+              "stop_confirmed": true,
+              "terminal_hold_audit": {
+                "version": "terminal-hold-snapshot/1",
+                "evaluated": true,
+                "hold_verified": false,
+                "sustained_stability_claim": false,
+                "checks": {
+                  "no_contact": true,
+                  "clearance": false,
+                  "horizontal_speed": false,
+                  "vertical_speed": true,
+                  "tilt": true
+                },
+                "horizontal_speed_m_s": 1.0957528447937852,
+                "vertical_speed_m_s": -0.03527124870190334,
+                "tilt_rad": 0.04096239277717569,
+                "deck_clearance_m": 0.4244076915179188
+              }
+            }
+          ]
+        },
+        "audit": {
+          "required": true,
+          "parameter_path_active": true,
+          "tolerance": 1e-10,
+          "actor_readout_norm": 0.00863844808191061,
+          "actor_head_norm": 0.6519454717636108,
+          "critic_readout_norm": 0.021854231134057045,
+          "critic_head_norm": 4.688177585601807
+        },
+        "residual_norm": 0.0021944004981120785,
+        "outcome_guard": false,
+        "score_guard": false,
+        "residual_guard": true,
+        "accepted": false
+      },
+      {
+        "scale": 0.005,
+        "validation": {
+          "episodes": 2,
+          "landing_rate": 0.0,
+          "unsafe_rate": 0.0,
+          "safe_abort_rate": 0.0,
+          "task_timeout_rate": 1.0,
+          "mean_return": -8.544292469394598,
+          "selection_score": -18.5442924693946,
+          "selection_score_model": "outcome_weighted_v28",
+          "mean_abs_relation_residual": [
+            0.0008675525896251202,
+            0.0005690437974408269,
+            0.0003347730089444667
+          ],
+          "rows": [
+            {
+              "seed": 2000,
+              "return": -8.08781275707478,
+              "status": "TASK_TIMEOUT",
+              "steps": 700,
+              "elapsed_s": 69.99999999999322,
+              "backend": "local-spatial",
+              "stop_confirmed": true,
+              "terminal_hold_audit": {
+                "version": "terminal-hold-snapshot/1",
+                "evaluated": true,
+                "hold_verified": false,
+                "sustained_stability_claim": false,
+                "checks": {
+                  "no_contact": true,
+                  "clearance": false,
+                  "horizontal_speed": false,
+                  "vertical_speed": true,
+                  "tilt": true
+                },
+                "horizontal_speed_m_s": 1.0897119671984314,
+                "vertical_speed_m_s": -0.07623403032122687,
+                "tilt_rad": 0.025112728864427468,
+                "deck_clearance_m": 0.45373538819424586
+              }
+            },
+            {
+              "seed": 2001,
+              "return": -9.000772181714416,
+              "status": "TASK_TIMEOUT",
+              "steps": 700,
+              "elapsed_s": 69.99999999999322,
+              "backend": "local-spatial",
+              "stop_confirmed": true,
+              "terminal_hold_audit": {
+                "version": "terminal-hold-snapshot/1",
+                "evaluated": true,
+                "hold_verified": false,
+                "sustained_stability_claim": false,
+                "checks": {
+                  "no_contact": true,
+                  "clearance": true,
+                  "horizontal_speed": false,
+                  "vertical_speed": true,
+                  "tilt": true
+                },
+                "horizontal_speed_m_s": 1.089278485558399,
+                "vertical_speed_m_s": -0.016401856186200343,
+                "tilt_rad": 0.03251381791120192,
+                "deck_clearance_m": 0.5724669616841765
+              }
+            }
+          ]
+        },
+        "audit": {
+          "required": true,
+          "parameter_path_active": true,
+          "tolerance": 1e-10,
+          "actor_readout_norm": 0.004319224040955305,
+          "actor_head_norm": 0.6519454717636108,
+          "critic_readout_norm": 0.010927115567028522,
+          "critic_head_norm": 4.688177585601807
+        },
+        "residual_norm": 0.001090197829152517,
+        "outcome_guard": false,
+        "score_guard": false,
+        "residual_guard": true,
+        "accepted": false
+      },
+      {
+        "scale": 0.002,
+        "validation": {
+          "episodes": 2,
+          "landing_rate": 0.0,
+          "unsafe_rate": 0.0,
+          "safe_abort_rate": 0.0,
+          "task_timeout_rate": 1.0,
+          "mean_return": -10.029921255252807,
+          "selection_score": -20.02992125525281,
+          "selection_score_model": "outcome_weighted_v28",
+          "mean_abs_relation_residual": [
+            0.0003617257170844823,
+            0.00027610413962975144,
+            0.00013155658962205052
+          ],
+          "rows": [
+            {
+              "seed": 2000,
+              "return": -10.776577903628542,
+              "status": "TASK_TIMEOUT",
+              "steps": 700,
+              "elapsed_s": 69.99999999999322,
+              "backend": "local-spatial",
+              "stop_confirmed": true,
+              "terminal_hold_audit": {
+                "version": "terminal-hold-snapshot/1",
+                "evaluated": true,
+                "hold_verified": false,
+                "sustained_stability_claim": false,
+                "checks": {
+                  "no_contact": true,
+                  "clearance": true,
+                  "horizontal_speed": false,
+                  "vertical_speed": false,
+                  "tilt": true
+                },
+                "horizontal_speed_m_s": 1.0437325673264095,
+                "vertical_speed_m_s": 0.10360262119115819,
+                "tilt_rad": 0.03117671424724045,
+                "deck_clearance_m": 0.7764929487328099
+              }
+            },
+            {
+              "seed": 2001,
+              "return": -9.283264606877072,
+              "status": "TASK_TIMEOUT",
+              "steps": 700,
+              "elapsed_s": 69.99999999999322,
+              "backend": "local-spatial",
+              "stop_confirmed": true,
+              "terminal_hold_audit": {
+                "version": "terminal-hold-snapshot/1",
+                "evaluated": true,
+                "hold_verified": false,
+                "sustained_stability_claim": false,
+                "checks": {
+                  "no_contact": true,
+                  "clearance": false,
+                  "horizontal_speed": false,
+                  "vertical_speed": true,
+                  "tilt": true
+                },
+                "horizontal_speed_m_s": 1.1015914671500169,
+                "vertical_speed_m_s": -0.023779266432945066,
+                "tilt_rad": 0.039373471957641265,
+                "deck_clearance_m": 0.4900957171450755
+              }
+            }
+          ]
+        },
+        "audit": {
+          "required": true,
+          "parameter_path_active": true,
+          "tolerance": 1e-10,
+          "actor_readout_norm": 0.0017276897560805082,
+          "actor_head_norm": 0.6519454717636108,
+          "critic_readout_norm": 0.0043708463199436665,
+          "critic_head_norm": 4.688177585601807
+        },
+        "residual_norm": 0.0004736941276751833,
+        "outcome_guard": false,
+        "score_guard": false,
+        "residual_guard": true,
+        "accepted": false
+      },
+      {
+        "scale": 0.001,
+        "validation": {
+          "episodes": 2,
+          "landing_rate": 0.0,
+          "unsafe_rate": 0.0,
+          "safe_abort_rate": 0.0,
+          "task_timeout_rate": 1.0,
+          "mean_return": -9.31259388298916,
+          "selection_score": -19.312593882989162,
+          "selection_score_model": "outcome_weighted_v28",
+          "mean_abs_relation_residual": [
+            0.00017832904995884746,
+            0.0001364280324196443,
+            6.615575694013387e-05
+          ],
+          "rows": [
+            {
+              "seed": 2000,
+              "return": -9.324479898385984,
+              "status": "TASK_TIMEOUT",
+              "steps": 700,
+              "elapsed_s": 69.99999999999322,
+              "backend": "local-spatial",
+              "stop_confirmed": true,
+              "terminal_hold_audit": {
+                "version": "terminal-hold-snapshot/1",
+                "evaluated": true,
+                "hold_verified": false,
+                "sustained_stability_claim": false,
+                "checks": {
+                  "no_contact": true,
+                  "clearance": true,
+                  "horizontal_speed": false,
+                  "vertical_speed": true,
+                  "tilt": true
+                },
+                "horizontal_speed_m_s": 1.062456865850063,
+                "vertical_speed_m_s": -0.02901178030532314,
+                "tilt_rad": 0.026399563905891817,
+                "deck_clearance_m": 0.7777984247453024
+              }
+            },
+            {
+              "seed": 2001,
+              "return": -9.300707867592337,
+              "status": "TASK_TIMEOUT",
+              "steps": 700,
+              "elapsed_s": 69.99999999999322,
+              "backend": "local-spatial",
+              "stop_confirmed": true,
+              "terminal_hold_audit": {
+                "version": "terminal-hold-snapshot/1",
+                "evaluated": true,
+                "hold_verified": false,
+                "sustained_stability_claim": false,
+                "checks": {
+                  "no_contact": true,
+                  "clearance": false,
+                  "horizontal_speed": false,
+                  "vertical_speed": true,
+                  "tilt": true
+                },
+                "horizontal_speed_m_s": 1.1010124203648954,
+                "vertical_speed_m_s": -0.021739707117453846,
+                "tilt_rad": 0.03914796376396807,
+                "deck_clearance_m": 0.49740496386478195
+              }
+            }
+          ]
+        },
+        "audit": {
+          "required": true,
+          "parameter_path_active": true,
+          "tolerance": 1e-10,
+          "actor_readout_norm": 0.0008638448780402541,
+          "actor_head_norm": 0.6519454717636108,
+          "critic_readout_norm": 0.0021854231599718332,
+          "critic_head_norm": 4.688177585601807
+        },
+        "residual_norm": 0.00023407358301492012,
+        "outcome_guard": false,
+        "score_guard": false,
+        "residual_guard": true,
+        "accepted": false
+      }
+    ],
+    "selected_audit": {
+      "required": true,
+      "parameter_path_active": false,
+      "tolerance": 1e-10,
+      "actor_readout_norm": 0.4885316491127014,
+      "actor_head_norm": 0.48593685030937195,
+      "critic_readout_norm": 0.0,
+      "critic_head_norm": 0.10058795660734177
+    },
+    "environment_steps": 51200
+  },
+  "relational_health": {
+    "applicable": true,
+    "samples": 128,
+    "actor_readout_norm": 0.4885316491127014,
+    "critic_readout_norm": 0.0,
+    "actor_delta_max_abs": 0.1366976648569107,
+    "critic_delta_max_abs": 0.0,
+    "relation_active_on_probe": true,
+    "warning": "A zero output is flat-equivalent; nonzero output alone proves no benefit.",
+    "active": true,
+    "degenerate_to_semantic_flat": false,
+    "measured": true,
+    "adaptation_iterations": 20,
+    "adaptation_fraction_of_budget": 0.1
+  },
   "history": [
     {
       "actor_loss": -0.0022299113616375535,
@@ -27919,5 +29063,13 @@
         "sum": 98.49770553536709
       }
     }
+  ],
+  "wall_seconds": 2781.6946883889905,
+  "comparison_factors": [
+    "state_representation",
+    "causal_masked_pretraining",
+    "staged_graph_adaptation",
+    "guarded_relation_only_ppo",
+    "validation_readout_calibration"
   ]
 }

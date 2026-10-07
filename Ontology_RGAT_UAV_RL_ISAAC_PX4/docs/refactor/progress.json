@@ -1427,7 +1427,7 @@
   "experiment": "two_axis_context_rgat_v1",
   "algorithm_version": "two-axis-context-rgat-v1",
   "contract_revision": "planar-visibility-ppo-v2.5",
-  "performance_verified": "partial: /9 held-out flat 97.5 / vector 87.5 / rgat 85.0 %; Isaac 18/30 with 0 UNSAFE_CONTACT (rgat 9/10, flat 9/10, vector 0/10); acceptance fails on one handover tilt",
+  "performance_verified": "partial: /10 held-out rgat 95.8 / flat 97.1 / vector 87.5 %; Isaac 20/30 (rgat 10/10, flat 10/10, vector 0/10), 0 UNSAFE_CONTACT; acceptance fails on one baseline handover tilt",
   "corrections": [
     {
       "id": "authorized-touchdown-reachable",
@@ -1702,6 +1702,16 @@
       "fix": "spatial-reference/10 = /9 + terminal_gate_width_floor_m 0.2 + terminal_commit_window_s 3.0; /7-/9 snapshots identical, /9 hash pinned",
       "guard": "tests/test_corridor_brake_rung.py::test_the_gate_opens_low_and_off_centre_on_ten_and_not_on_nine",
       "run": "results/full_pipeline_20261007_v10_5seeds"
+    },
+    {
+      "id": "spatial-reference-11-handover-limit",
+      "date": "2026-10-07",
+      "decision": "user: 'fix that' (the handover tilt that failed /10 acceptance)",
+      "source_defect": "all 7 Isaac envelope violations (/2-/10) at 0.9-1.3 s after handover began with a near-full lateral command on an untrusted track; 5 one-step reversals overshot by PX4, 2 under seeded disturbance torque; local first-2-s peak tilt median 15.8, max 21.0",
+      "evidence": "what-if on 15 /10 checkpoints, 48 seeds: none 93.5 % land, peak max 21.0; brake-until-trusted 91.2/20.7; slew-only 90.8/20.7; tilt guard 92.6/20.7; cap 2.0 for 2 s 91.4/15.0; cap 1.5 90.3/11.4; cap 2.0 + slew 1.5 90.8/14.9",
+      "fix": "spatial-reference/11 = /10 + lateral cap 2.0 m/s^2 and slew 1.5 m/s^2 per decision for 2 s after handover; /7-/10 snapshots identical, /10 hash pinned",
+      "guard": "tests/test_handover_limit_rung.py",
+      "run": "results/full_pipeline_20261007_v11_5seeds"
     }
   ],
   "measurements": {
@@ -2251,10 +2261,54 @@
           ]
         }
       }
+    },
+    "five_seed_spatial_reference_10_20261007": {
+      "root": "results/full_pipeline_20261007_v10_5seeds",
+      "after_ppo_mean_sd": {
+        "ppo_ontology_rgat": {
+          "land": [
+            0.958,
+            0.013
+          ],
+          "unsafe": 0.033
+        },
+        "ppo_semantic_flat": {
+          "land": [
+            0.971,
+            0.021
+          ],
+          "unsafe": 0.029
+        },
+        "ppo_vector_canonical": {
+          "land": [
+            0.875,
+            0.078
+          ],
+          "unsafe": 0.083
+        }
+      },
+      "isaac_30": {
+        "SUCCESS": 20,
+        "UNSAFE_CONTACT": 0,
+        "SAFETY_ENVELOPE_VIOLATION": 1,
+        "TASK_TIMEOUT": 7,
+        "SAFE_ABORT": 2,
+        "per_arm": {
+          "ppo_ontology_rgat": "10/10",
+          "ppo_semantic_flat": "10/10",
+          "ppo_vector_canonical": "0/10 (7 timeout, 2 abort, 1 handover tilt 21.1 deg)"
+        },
+        "acceptance": {
+          "passes": false,
+          "failed": [
+            "no_unsafe_outcomes (one baseline handover tilt)"
+          ]
+        }
+      }
     }
   },
   "pending": [
-    "acceptance gate: /9 Isaac 18/30 with ZERO impact-speed unsafe; the only failing check is one handover tilt envelope violation (rgat 829, 21.9 deg at 1.1 s). Remaining: (a) the handover transient (seen on /6-/9 at 0.9-1.3 s), (b) the legless blind terminal phase that the packet-only arm cannot fly (0/10). Both need a user decision on approach",
+    "acceptance gate: /10 Isaac 20/30, graph arms 10/10 each, 0 impact unsafe; fails ONLY on one ppo_vector_canonical handover tilt (21.1 deg at 1.0 s). Open: the handover transient (seen on /6-/10 at 0.9-1.3 s, weaker arms), and the packet-only arm's Isaac 0/10 against held-out 87.5 %",
     "after the /5 flight: if the policy still over-commands, compare the remaining channels (tiltRate, sinTilt jitter) against their training-time spread the same way",
     "calibrate spatial/dynamics.py attitude/thrust response (ATTITUDE_OMEGA, THRUST_TAU) to Isaac's measured step response -- target gain ~0.97 at one 0.1 s step of lag -- or randomise it in training; snapshot the contract before/after, re-clone, re-run low_sigma_kl(_masked), re-fly",
     "re-run the three-arm comparison with >=5 training seeds under low_sigma_kl (and low_sigma_kl_masked, running 2026-10-06) before any representation claim; held-out unsafe after PPO is 6-31 % and needs its own study",

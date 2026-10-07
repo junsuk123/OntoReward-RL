@@ -187,8 +187,26 @@ The v1 config remains an explicit historical experiment; Isaac/PX4 remains
   `two_axis/config.py: DEFAULT_CONFIG_PATH` also still points at the retired v1
   config, so a bare `load_config()` quietly returns -40/-30/-50 with tau 350
   instead of the reference table. Always pass the config path explicitly.
-- The active spatial contract is `spatial-reference/10` (`REFERENCE_SCHEMA`,
-  2026-10-07, profile v12, no legs). It is `/9` plus ONE law, the
+- The active spatial contract is `spatial-reference/11` (`REFERENCE_SCHEMA`,
+  2026-10-07, profile v12, no legs). It is `/10` plus ONE law, the HANDOVER
+  LIMIT, on the user's instruction to fix the handover tilt that alone failed
+  /10's acceptance. All seven Isaac SAFETY_ENVELOPE_VIOLATIONs on record
+  (/2-/10) came 0.9-1.3 s after handover, each starting with a near-full
+  1.5-2.3 m/s^2 lateral command issued while the track was not yet trusted;
+  five then reversed it in one decision (-2.2 -> +2.3) and PX4 overshot past
+  21 deg, two held it under the seeded disturbance torque. Locally the
+  median first-2-s peak tilt is 15.8 deg and the max 21.0, no margin. For
+  the first 2 s after handover the supervisor caps the lateral command at
+  2.0 m/s^2 and its change at 1.5 m/s^2 per decision
+  (`handover_lateral_cap_m_s2`, `handover_window_s`,
+  `handover_lateral_slew_m_s2`). What-if on the 15 /10 checkpoints: none
+  93.5 % / peak max 21.0 deg; cap 2.0 91.4 % / 15.0; cap + slew 1.5 90.8 % /
+  14.9; braking until trusted, slew alone or a measured-tilt guard all left
+  the max at 20.5-20.7. The slew limit is kept for the Isaac reversal
+  mechanism the local plant cannot show. 20/21 deg limits unchanged. Guard
+  `tests/test_handover_limit_rung.py` (replays the /10 violation's commands).
+  Run `results/full_pipeline_20261007_v11_5seeds`.
+- `spatial-reference/10` (2026-10-07, profile v12, no legs). It is `/9` plus ONE law, the
   terminal-corridor GATE without legs, on the user's choice to address the
   blind terminal phase with the legs kept off. The corridor's lateral gate is
   the camera footprint and shrinks to zero near the pad; without legs, at
@@ -202,8 +220,23 @@ The v1 config remains an explicit historical experiment; Isaac/PX4 remains
   4.7 / 1.8, the proposed arm's timeouts 10.4 -> 5.4 %. The local optical
   model does NOT reproduce the Isaac low-altitude stall for the vector arm, so
   the Isaac flight is this law's real test. Guard
-  `tests/test_corridor_brake_rung.py` (replays the stalled state). Run
-  `results/full_pipeline_20261007_v10_5seeds`.
+  `tests/test_corridor_brake_rung.py` (replays the stalled state).
+  **Measured, `/10` five seeds (`results/full_pipeline_20261007_v10_5seeds`,
+  2026-10-07 10:48):** held-out after PPO `ppo_ontology_rgat` 95.8 +- 1.3 %
+  (unsafe 3.3, timeout 0.0; /9 85.0 +- 17.5), `ppo_semantic_flat` 97.1 +- 2.1
+  (2.9), `ppo_vector_canonical` 87.5 +- 7.8 (8.3). **Isaac, 30 episodes: 20
+  SUCCESS, the graph arms 10/10 EACH, zero UNSAFE_CONTACT.** The packet-only
+  arm is 0/10 (7 TASK_TIMEOUT, 2 SAFE_ABORT, 1 SAFETY_ENVELOPE_VIOLATION at
+  1.0 s, tilt 21.1 deg at 2 m right after handover). Its timeouts are no
+  longer the gate stall: it now enters the corridor and descends at the 0.24
+  brake target, but too late, or hovers at 0.6-0.8 m off-centre, or loses the
+  track at 0.14-0.27 m and holds. Acceptance fails on `no_unsafe_outcomes`
+  ALONE, from that one baseline handover tilt; every other check passes,
+  including `proposed_landing_observed`. The legless terminal phase is now a
+  property of the BASELINE's input, not of the task: both graph arms land it
+  every time in Isaac. Still not a superiority claim on five seeds and ten
+  Isaac episodes per arm, and the vector arm's held-out 87.5 % against its
+  Isaac 0 % is itself a sim-to-sim gap worth measuring.
 - `spatial-reference/9` (2026-10-07 ~01:30 KST, deployment profile
   `config/spatial-isaac-system-v12.yaml`). It is `/8` plus exactly ONE law,
   the terminal-corridor BRAKE, chosen on the user's instruction to close the

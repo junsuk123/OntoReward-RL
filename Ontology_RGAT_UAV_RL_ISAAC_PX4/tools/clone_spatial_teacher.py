@@ -96,6 +96,10 @@ TEACHER_GAINS_BY_SCHEMA = {
     # /10 widens the corridor gate near the pad; the plant is /9's.
     "spatial-reference/10": dict(kp=0.4, kd=0.3, ki=0.1, kz=1.0, vdes=0.15,
                                  align=0.15, anorm=0.3),
+    # /11 limits the post-handover lateral command; the teacher's anorm 0.3
+    # (0.75 m/s^2) never reaches the 2.0 cap.
+    "spatial-reference/11": dict(kp=0.4, kd=0.3, ki=0.1, kz=1.0, vdes=0.15,
+                                 align=0.15, anorm=0.3),
 }
 TEACHER_GAINS = dict(kp=0.4, kd=0.8, ki=0.4, kz=1.0, vdes=0.15, align=0.15,
                      anorm=0.3)
@@ -188,7 +192,7 @@ def main():
                                  "spatial-reference/3", "spatial-reference/4",
                                  "spatial-reference/5", "spatial-reference/6",
                                  "spatial-reference/7", "spatial-reference/8",
-                                 "spatial-reference/9", "spatial-reference/10", "reference"],
+                                 "spatial-reference/9", "spatial-reference/10", "spatial-reference/11", "reference"],
                         default="reference")
     args = parser.parse_args()
     if any(not 0.0 <= d <= 1.0 for d in args.difficulties):

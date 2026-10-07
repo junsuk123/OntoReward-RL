@@ -22,8 +22,12 @@ class ReferenceSpatialSupervisor:
         self.gate_satisfied_at_s = None
         self.terminal_descent = False
         self.stopping_margin = 0.
+        self.handover_t = None
+        self.previous_lateral = None
 
     def status(self, est, cfg):
+        if self.handover_t is None:
+            self.handover_t = float(est.last_t)
         own = est.own
         thrust_axis = Rotation.from_quat(own.quaternion[[1,2,3,0]]).apply([0,0,1])
         tilt = math.acos(float(np.clip(thrust_axis[2],-1.,1.)))
@@ -122,6 +126,26 @@ class ReferenceSpatialSupervisor:
                                                      (downward-speed_limit)/cfg.dt))
                 else:
                     applied[2] = max(applied[2],(downward-speed_limit)/delay)
+        if (cfg.handover_lateral_cap_m_s2 is not None and not safety.abort
+                and self.handover_t is not None
+                and float(est.last_t) - self.handover_t <= cfg.handover_window_s):
+            # /11: for the first seconds after handover the lateral command is
+            # capped in magnitude and in change per decision. Every Isaac
+            # envelope violation (7, /2-/10) began with a near-full lateral
+            # command issued on a not-yet-trusted track and ended past 21 deg
+            # either on a full reversal PX4 overshoots or under a seeded
+            # disturbance torque. Own-state only; no truth.
+            lateral = applied[:2].copy()
+            magnitude = float(np.linalg.norm(lateral))
+            if magnitude > cfg.handover_lateral_cap_m_s2:
+                lateral *= cfg.handover_lateral_cap_m_s2 / magnitude
+            if self.previous_lateral is not None:
+                step = lateral - self.previous_lateral
+                size = float(np.linalg.norm(step))
+                if size > cfg.handover_lateral_slew_m_s2:
+                    lateral = self.previous_lateral + step * cfg.handover_lateral_slew_m_s2 / size
+            applied[:2] = lateral
+        self.previous_lateral = applied[:2].copy()
         if safety.abort:
             if self.hold_position is None:
                 raise RuntimeError('abort requires a latched causal own-position anchor')

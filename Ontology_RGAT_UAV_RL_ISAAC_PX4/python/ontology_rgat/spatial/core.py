@@ -185,11 +185,32 @@ from ..two_axis.ontology_v28 import GRAPH_SCHEMA_HASH as TOPOLOGY_HASH
 #: proposed arm's timeouts fall 10.4 -> 5.4 %. The local optical model does
 #: not reproduce the Isaac low-altitude loss for the vector arm (0 % timeout
 #: locally either way), so the Isaac flight is the test of this law.
+#: /11 is /10 plus one law, the HANDOVER LIMIT, on the user's instruction of
+#: 2026-10-07 to fix the handover tilt that failed /10's acceptance. All seven
+#: recorded Isaac SAFETY_ENVELOPE_VIOLATIONs (/2-/10) happened 0.9-1.3 s after
+#: handover and all began the same way: while the track was still not
+#: trustworthy (0.1-0.4 s) the policy issued a near-full 1.5-2.3 m/s^2 lateral
+#: command; five then reversed it in one decision when the track was trusted
+#: (-2.2 -> +2.3) and PX4 overshot past 21 deg, two held it under the seeded
+#: disturbance torque and the tilt climbed 20-30 deg/s. Locally the median
+#: peak tilt in the first 2 s is 15.8 deg and the maximum 21.0 -- no margin.
+#: /11 caps the lateral command at 2.0 m/s^2 and its change at 1.5 m/s^2 per
+#: decision for the first 2 s after handover (``handover_lateral_cap_m_s2``,
+#: ``handover_window_s``, ``handover_lateral_slew_m_s2``). Measured on the 15
+#: /10 checkpoints, 48 held-out seeds, nothing retrained: none 93.5 % landing /
+#: 4.9 % unsafe / 1.1 % abort, peak tilt max 21.0; cap 2.0 91.4 / 3.9 / 4.3,
+#: max 15.0; cap 2.0 + slew 1.5 90.8 / 4.7 / 4.0, max 14.9; cap 1.5 max 11.4
+#: but 90.3 %; braking until the track is trusted, a slew limit alone, or a
+#: measured-tilt guard all left the max at 20.5-20.7. The slew limit is kept
+#: although the local plant cannot show its benefit, because the Isaac
+#: mechanism in five of seven violations is a one-step reversal it bounds.
+#: The command 20 deg / hard 21 deg limits are unchanged.
 REFERENCE_SCHEMAS = ("spatial-reference/1", "spatial-reference/2",
                      "spatial-reference/3", "spatial-reference/4",
                      "spatial-reference/5", "spatial-reference/6",
                      "spatial-reference/7", "spatial-reference/8",
-                     "spatial-reference/9", "spatial-reference/10")
+                     "spatial-reference/9", "spatial-reference/10",
+                     "spatial-reference/11")
 REFERENCE_SCHEMA = REFERENCE_SCHEMAS[-1]
 #: /6 attitude servo: natural frequency (rad/s) and damping ratio.
 REFERENCE_ATTITUDE_SERVO_6 = (10.0, 0.7)
@@ -504,7 +525,7 @@ class SpatialConfig:
                                "spatial-reference/4", "spatial-reference/5",
                                "spatial-reference/6", "spatial-reference/7",
                                "spatial-reference/8", "spatial-reference/9",
-                                   "spatial-reference/10")
+                                   "spatial-reference/10", "spatial-reference/11")
 
     @property
     def actuation_delay_s(self):
@@ -518,7 +539,8 @@ class SpatialConfig:
                 if self.schema in ("spatial-reference/3", "spatial-reference/4",
                                    "spatial-reference/5", "spatial-reference/6",
                                    "spatial-reference/7", "spatial-reference/8",
-                                   "spatial-reference/9", "spatial-reference/10") else 0.0)
+                                   "spatial-reference/9", "spatial-reference/10",
+                                   "spatial-reference/11") else 0.0)
 
     @property
     def attitude_omega(self):
@@ -526,7 +548,7 @@ class SpatialConfig:
         from .dynamics import ATTITUDE_OMEGA
         if self.schema in ("spatial-reference/6", "spatial-reference/7",
                            "spatial-reference/8", "spatial-reference/9",
-                                   "spatial-reference/10"):
+                                   "spatial-reference/10", "spatial-reference/11"):
             return REFERENCE_ATTITUDE_SERVO_6[0]
         return (REFERENCE_ATTITUDE_OMEGA_RAD_S
                 if self.schema in ("spatial-reference/4", "spatial-reference/5")
@@ -539,7 +561,7 @@ class SpatialConfig:
         return (REFERENCE_ATTITUDE_SERVO_6[1]
                 if self.schema in ("spatial-reference/6", "spatial-reference/7",
                                    "spatial-reference/8", "spatial-reference/9",
-                                   "spatial-reference/10")
+                                   "spatial-reference/10", "spatial-reference/11")
                 else ATTITUDE_DAMPING)
 
     @property
@@ -574,7 +596,7 @@ class SpatialConfig:
         if self.schema in ("spatial-reference/4", "spatial-reference/5",
                            "spatial-reference/6", "spatial-reference/7",
                            "spatial-reference/8", "spatial-reference/9",
-                                   "spatial-reference/10"):
+                                   "spatial-reference/10", "spatial-reference/11"):
             return REFERENCE_LANDING_GEAR_EXTENSION_M
         return self.landing_gear_extension_m
 
@@ -583,7 +605,8 @@ class SpatialConfig:
         """Tag-based detection and the detector's quality metric (/5 onward)."""
         return self.schema in ("spatial-reference/5", "spatial-reference/6",
                                "spatial-reference/7", "spatial-reference/8",
-                               "spatial-reference/9", "spatial-reference/10")
+                               "spatial-reference/9", "spatial-reference/10",
+                               "spatial-reference/11")
 
     @property
     def terminal_descent_speed_factor(self):
@@ -600,7 +623,23 @@ class SpatialConfig:
         /9 narrows it to 0.8 x, the reward's own sink target; see the /9
         note above REFERENCE_SCHEMAS for the what-if that chose it.
         """
-        return 0.8 if self.schema in ("spatial-reference/9", "spatial-reference/10") else 1.5
+        return 0.8 if self.schema in ("spatial-reference/9", "spatial-reference/10",
+                                       "spatial-reference/11") else 1.5
+
+    @property
+    def handover_lateral_cap_m_s2(self):
+        """/11: lateral command magnitude cap right after handover (None = off)."""
+        return 2.0 if self.schema == "spatial-reference/11" else None
+
+    @property
+    def handover_window_s(self):
+        """/11: how long after handover the cap and slew limit apply."""
+        return 2.0
+
+    @property
+    def handover_lateral_slew_m_s2(self):
+        """/11: largest change of the lateral command per decision, m/s^2."""
+        return 1.5
 
     @property
     def terminal_gate_width_floor_m(self):
@@ -617,7 +656,7 @@ class SpatialConfig:
         it aborted (6 of 10) or hovered to the limit. Zero keeps the
         reference law; see the /10 note above REFERENCE_SCHEMAS.
         """
-        return 0.2 if self.schema == "spatial-reference/10" else 0.0
+        return 0.2 if self.schema in ("spatial-reference/10", "spatial-reference/11") else 0.0
 
     @property
     def terminal_commit_window_s(self):
@@ -627,7 +666,7 @@ class SpatialConfig:
         the blind last 0.10-0.15 m at the 0.24 m/s /9 brake target with the
         track-memory conditions (lateral + 2 std inside the pad, settled,
         lateral speed) still enforced every step."""
-        return 3.0 if self.schema == "spatial-reference/10" else 1.5
+        return 3.0 if self.schema in ("spatial-reference/10", "spatial-reference/11") else 1.5
 
     @property
     def terminal_descent_brake_one_step(self):
@@ -636,7 +675,8 @@ class SpatialConfig:
         the response delay. Measured with the factor above: the one-step
         gain at 1.0 x changes little (unsafe 14.2 -> 11.5 %) and the 0.8 x
         factor with the delay gain little more (10.3 %); together 2.8 %."""
-        return self.schema in ("spatial-reference/9", "spatial-reference/10")
+        return self.schema in ("spatial-reference/9", "spatial-reference/10",
+                               "spatial-reference/11")
 
     @property
     def contact_verdict_by_speed(self):
@@ -648,7 +688,8 @@ class SpatialConfig:
         contacts this rule was drawn from.
         """
         return self.schema in ("spatial-reference/7", "spatial-reference/8",
-                               "spatial-reference/9", "spatial-reference/10")
+                               "spatial-reference/9", "spatial-reference/10",
+                               "spatial-reference/11")
 
     @property
     def touchdown_height(self):

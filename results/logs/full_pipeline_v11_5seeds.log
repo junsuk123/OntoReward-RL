@@ -1,0 +1,8 @@
+run root : /home/j/SynologyDrive/junsuk/학술대회/CICS2026/Ontology_RGAT_UAV_RL_ISAAC_PX4/results/full_pipeline_20261007_v11_5seeds
+cells    : low_sigma_kl
+arms     : 3   seeds: 828 829 830 831 832   iterations: 200   workers: 10
+Isaac/PX4 : ON -- will start a stack and fly eligible cells
+
+[clone:plain] behaviour-cloning the teacher
+  $ /usr/bin/python3 /home/j/SynologyDrive/junsuk/학술대회/CICS2026/Ontology_RGAT_UAV_RL_ISAAC_PX4/Ontology_RGAT_UAV_RL_ISAAC_PX4/tools/clone_spatial_teacher.py --output /home/j/SynologyDrive/junsuk/학술대회/CICS2026/Ontology_RGAT_UAV_RL_ISAAC_PX4/results/full_pipeline_20261007_v11_5seeds/clone_plain --seeds 828 829 830 831 832
+    log -> /home/j/SynologyDrive/junsuk/학술대회/CICS2026/Ontology_RGAT_UAV_RL_ISAAC_PX4/results/logs/full_clone_plain.log

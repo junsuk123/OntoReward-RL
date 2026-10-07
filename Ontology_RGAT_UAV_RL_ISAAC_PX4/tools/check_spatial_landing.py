@@ -122,7 +122,7 @@ def main():
                                  "spatial-reference/3", "spatial-reference/4",
                                  "spatial-reference/5", "spatial-reference/6",
                                  "spatial-reference/7", "spatial-reference/8",
-                                 "spatial-reference/9", "spatial-reference/10", "reference"],
+                                 "spatial-reference/9", "spatial-reference/10", "spatial-reference/11", "reference"],
                         default="reference")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()

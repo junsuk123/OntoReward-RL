@@ -72,11 +72,12 @@ RECORDED = (
 
 
 def test_the_verdict_rung_and_its_successors_carry_the_rule():
-    assert REFERENCE_SCHEMA == "spatial-reference/10" == REFERENCE_SCHEMAS[-1]
+    assert REFERENCE_SCHEMA == "spatial-reference/11" == REFERENCE_SCHEMAS[-1]
     assert _cfg("spatial-reference/7").contact_verdict_by_speed
     assert _cfg("spatial-reference/8").contact_verdict_by_speed
     assert _cfg("spatial-reference/9").contact_verdict_by_speed
     assert _cfg("spatial-reference/10").contact_verdict_by_speed
+    assert _cfg("spatial-reference/11").contact_verdict_by_speed
     for schema in REFERENCE_SCHEMAS[:6] + ("spatial-causal-rgat/5", "spatial-causal-rgat/10"):
         assert not _cfg(schema).contact_verdict_by_speed, schema
 

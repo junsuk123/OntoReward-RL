@@ -9,3 +9,45 @@ Isaac/PX4 : ON -- will start a stack and fly eligible cells
 [train:low_sigma_kl] --final-log-std -3.5 --log-std-anneal-fraction 0.02 --enforce-target-kl
   $ /usr/bin/python3 /home/j/SynologyDrive/junsuk/학술대회/CICS2026/Ontology_RGAT_UAV_RL_ISAAC_PX4/Ontology_RGAT_UAV_RL_ISAAC_PX4/python/run_spatial_pipeline.py --stage train --output /home/j/SynologyDrive/junsuk/학술대회/CICS2026/Ontology_RGAT_UAV_RL_ISAAC_PX4/results/full_pipeline_20261007_v10_5seeds/low_sigma_kl --initialize-from /home/j/SynologyDrive/junsuk/학술대회/CICS2026/Ontology_RGAT_UAV_RL_ISAAC_PX4/results/full_pipeline_20261007_v10_5seeds/clone_plain --seeds 828 829 830 831 832 --iterations 200 --episodes-per-iteration 12 --evaluation-every 20 --ppo-preset reference-v28-episodic --activation-iterations 25 --activation-decisions 2048 --workers 10 --final-log-std -3.5 --log-std-anneal-fraction 0.02 --enforce-target-kl
     log -> /home/j/SynologyDrive/junsuk/학술대회/CICS2026/Ontology_RGAT_UAV_RL_ISAAC_PX4/results/logs/full_train_low_sigma_kl.log
+  $ /usr/bin/python3 /home/j/SynologyDrive/junsuk/학술대회/CICS2026/Ontology_RGAT_UAV_RL_ISAAC_PX4/Ontology_RGAT_UAV_RL_ISAAC_PX4/tools/compare_spatial_arms.py /home/j/SynologyDrive/junsuk/학술대회/CICS2026/Ontology_RGAT_UAV_RL_ISAAC_PX4/results/full_pipeline_20261007_v10_5seeds/clone_plain /home/j/SynologyDrive/junsuk/학술대회/CICS2026/Ontology_RGAT_UAV_RL_ISAAC_PX4/results/full_pipeline_20261007_v10_5seeds/low_sigma_kl --seeds 4100 4148 --report /home/j/SynologyDrive/junsuk/학술대회/CICS2026/Ontology_RGAT_UAV_RL_ISAAC_PX4/results/full_pipeline_20261007_v10_5seeds/held_out.json
+    log -> /home/j/SynologyDrive/junsuk/학술대회/CICS2026/Ontology_RGAT_UAV_RL_ISAAC_PX4/results/logs/full_held_out.log
+[isaac:low_sigma_kl] flying 15 run(s)
+  $ /usr/bin/python3 /home/j/SynologyDrive/junsuk/학술대회/CICS2026/Ontology_RGAT_UAV_RL_ISAAC_PX4/Ontology_RGAT_UAV_RL_ISAAC_PX4/python/run_spatial_pipeline.py --stage isaac --output /home/j/SynologyDrive/junsuk/학술대회/CICS2026/Ontology_RGAT_UAV_RL_ISAAC_PX4/results/full_pipeline_20261007_v10_5seeds/low_sigma_kl --seeds 828 829 830 831 832 --workers 1 --isaac-episodes 2 --reset-recoveries 2
+    log -> /home/j/SynologyDrive/junsuk/학술대회/CICS2026/Ontology_RGAT_UAV_RL_ISAAC_PX4/results/logs/full_isaac_low_sigma_kl.log
+[isaac:low_sigma_kl] acceptance FAILED (read isaac_acceptance.json)
+    ppo_vector_canonical   seed828 SAFETY_ENVELOPE_VIOLATION TASK_TIMEOUT
+    ppo_semantic_flat      seed828 SUCCESS SUCCESS
+    ppo_ontology_rgat      seed828 SUCCESS SUCCESS
+    ppo_vector_canonical   seed829 SAFE_ABORT SAFE_ABORT
+    ppo_semantic_flat      seed829 SUCCESS SUCCESS
+    ppo_ontology_rgat      seed829 SUCCESS SUCCESS
+    ppo_vector_canonical   seed830 TASK_TIMEOUT TASK_TIMEOUT
+    ppo_semantic_flat      seed830 SUCCESS SUCCESS
+    ppo_ontology_rgat      seed830 SUCCESS SUCCESS
+    ppo_vector_canonical   seed831 TASK_TIMEOUT TASK_TIMEOUT
+    ppo_semantic_flat      seed831 SUCCESS SUCCESS
+    ppo_ontology_rgat      seed831 SUCCESS SUCCESS
+    ppo_vector_canonical   seed832 TASK_TIMEOUT TASK_TIMEOUT
+    ppo_semantic_flat      seed832 SUCCESS SUCCESS
+    ppo_ontology_rgat      seed832 SUCCESS SUCCESS
+
+held-out landing on 48 seeds 4100-4147, deterministic; 'relation' is whether the proposed arm's relational path was live in the deployed checkpoint
+
+cell                 run                             BC start  after PPO  unsafe   return  train SUCCESS  relation
+low_sigma_kl         ppo_ontology_rgat__seed828         77.1%      95.8%    4.2%    28.33   2120/2400         live
+low_sigma_kl         ppo_ontology_rgat__seed829         79.2%      95.8%    4.2%    28.34   2208/2400         live
+low_sigma_kl         ppo_ontology_rgat__seed830         87.5%      97.9%    2.1%    29.79   2229/2400         live
+low_sigma_kl         ppo_ontology_rgat__seed831         93.8%      93.8%    2.1%    27.55   2282/2400         live
+low_sigma_kl         ppo_ontology_rgat__seed832         75.0%      95.8%    4.2%    28.22   2071/2400         live
+low_sigma_kl         ppo_semantic_flat__seed828         72.9%     100.0%    0.0%    30.99   2162/2400            -
+low_sigma_kl         ppo_semantic_flat__seed829         79.2%      93.8%    6.2%    25.91   2188/2400            -
+low_sigma_kl         ppo_semantic_flat__seed830         87.5%      97.9%    2.1%    29.45   2231/2400            -
+low_sigma_kl         ppo_semantic_flat__seed831         93.8%      97.9%    2.1%    29.83   2263/2400            -
+low_sigma_kl         ppo_semantic_flat__seed832         75.0%      95.8%    4.2%    28.49   2159/2400            -
+low_sigma_kl         ppo_vector_canonical__seed828      58.3%      77.1%   18.8%    15.38   2029/2400            -
+low_sigma_kl         ppo_vector_canonical__seed829      58.3%      91.7%    0.0%    26.31   2039/2400            -
+low_sigma_kl         ppo_vector_canonical__seed830      56.2%      93.8%    6.2%    26.23   2060/2400            -
+low_sigma_kl         ppo_vector_canonical__seed831      70.8%      95.8%    4.2%    26.92   2007/2400            -
+low_sigma_kl         ppo_vector_canonical__seed832      62.5%      79.2%   12.5%    17.74   1844/2400            -
+
+wrote /home/j/SynologyDrive/junsuk/학술대회/CICS2026/Ontology_RGAT_UAV_RL_ISAAC_PX4/results/full_pipeline_20261007_v10_5seeds/summary.json

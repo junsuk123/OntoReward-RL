@@ -187,9 +187,61 @@ The v1 config remains an explicit historical experiment; Isaac/PX4 remains
   `two_axis/config.py: DEFAULT_CONFIG_PATH` also still points at the retired v1
   config, so a bare `load_config()` quietly returns -40/-30/-50 with tau 350
   instead of the reference table. Always pass the config path explicitly.
-- The active spatial contract is `spatial-reference/8` (`REFERENCE_SCHEMA`,
-  2026-10-06 ~22:30 KST, deployment profile
-  `config/spatial-isaac-system-v12.yaml`). It is `/7` MINUS one law: the /4
+- The active spatial contract is `spatial-reference/10` (`REFERENCE_SCHEMA`,
+  2026-10-07, profile v12, no legs). It is `/9` plus ONE law, the
+  terminal-corridor GATE without legs, on the user's choice to address the
+  blind terminal phase with the legs kept off. The corridor's lateral gate is
+  the camera footprint and shrinks to zero near the pad; without legs, at
+  0.20-0.25 m body height it is 0.03-0.07 m. In the /9 Isaac flight the
+  packet-only arm sat 0.10-0.17 m off-centre there with a FRESH track, the
+  vertical hold kept it up, and it aborted (6/10) or hovered to the limit
+  (4/10). `terminal_gate_width_floor_m` 0.2 (the commit still demands
+  lateral + 2 std inside the pad) and `terminal_commit_window_s` 3.0 (was
+  1.5). What-if on the 15 /9 checkpoints, 48 held-out seeds, nothing
+  retrained: (0, 1.5) 90.0 % / 4.3 % unsafe / 3.6 % timeout; (0.2, 3.0) 92.9 /
+  4.7 / 1.8, the proposed arm's timeouts 10.4 -> 5.4 %. The local optical
+  model does NOT reproduce the Isaac low-altitude stall for the vector arm, so
+  the Isaac flight is this law's real test. Guard
+  `tests/test_corridor_brake_rung.py` (replays the stalled state). Run
+  `results/full_pipeline_20261007_v10_5seeds`.
+- `spatial-reference/9` (2026-10-07 ~01:30 KST, deployment profile
+  `config/spatial-isaac-system-v12.yaml`). It is `/8` plus exactly ONE law,
+  the terminal-corridor BRAKE, chosen on the user's instruction to close the
+  gap between the descent the supervisor admits and the descent the verdict
+  accepts: `SpatialConfig.terminal_descent_speed_factor` 0.8 (was 1.5, the
+  2D reference's approach margin, which `two_axis/config.py` still carries as
+  `terminal_descent_speed_margin`) and
+  `terminal_descent_brake_one_step` (the excess is removed within one 0.1 s
+  decision step, bounded by the vertical authority, instead of over the
+  ~0.35 s response delay). It was MEASURED before it was written: on the SAME
+  15 `/8` checkpoints over 48 held-out seeds with nothing retrained, the
+  shipped brake gives 76.5 % landing / 14.2 % unsafe (96 of 101 unsafe
+  terminals are corridor contacts at a median 0.34 m/s); 0.8x with the
+  delay-paced gain 81.0 / 10.3; 1.0x with the one-step gain 79.6 / 11.5;
+  **0.8x with the one-step gain 87.9 / 2.8**, timeouts and aborts unchanged,
+  the 18 remaining contacts all at 0.31 m/s. Neither constant alone works.
+  0.8x is the sink speed the reward's readiness term already targets
+  (`desired_z = -0.8 * touchdown_z_speed`), so the supervisor now enforces
+  what the reward asks for. Guard `tests/test_corridor_brake_rung.py`; /8's
+  `config_sha256` is pinned there. **Measured, `/9` five seeds
+  (`results/full_pipeline_20261007_v9_5seeds`, same recipe, 48 held-out
+  seeds, deterministic):** after PPO `ppo_semantic_flat` 97.5 +- 2.0 %
+  (unsafe 1.7), `ppo_vector_canonical` 87.5 +- 10.9 (unsafe 10.8),
+  `ppo_ontology_rgat` 85.0 +- 17.5 (unsafe 0.4; one seed low, timeouts 10 %).
+  Training unsafe fell 7.5 -> 1.7 % against /8 on the same runs. **Isaac, 30
+  episodes: 18 SUCCESS and ZERO UNSAFE_CONTACT** -- the first flight with no
+  impact-speed failure. rgat 9/10, flat 9/10, vector 0/10. The one unsafe
+  outcome is a SAFETY_ENVELOPE_VIOLATION 1.1 s after handover (rgat 829,
+  tilt 21.9 deg at 2 m), the handover transient seen on /6-/8. Every vector
+  failure is the legless blind terminal phase: the track is lost at body
+  0.20-0.25 m, the vehicle holds or aborts while the pad drives 6-8 m away
+  (6 SAFE_ABORT), or hovers at 0.3-0.4 m to the 70 s limit (4 TIMEOUT); one
+  flat episode did the same. Acceptance fails on `no_unsafe_outcomes` alone
+  (that single handover tilt). Remaining work, both measured: the handover
+  tilt transient, and the blind last 0.2 m without legs that the packet-only
+  arm cannot fly.
+- `spatial-reference/8` (2026-10-06 ~22:30 KST, deployment profile
+  `config/spatial-isaac-system-v12.yaml`) is `/7` MINUS one law: the /4
   landing gear is removed on the user's instruction ("remove drone legs
   again"). `landing_gear_extension_m` is 0 on `/8`, so `touchdown_height` is
   the stock 0.12 m again, the supervisor's gate/corridor/stopping margin and

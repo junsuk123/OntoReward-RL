@@ -1427,7 +1427,7 @@
   "experiment": "two_axis_context_rgat_v1",
   "algorithm_version": "two-axis-context-rgat-v1",
   "contract_revision": "planar-visibility-ppo-v2.5",
-  "performance_verified": "partial: /6 five seeds rgat 81 / vector 75 / flat 61 % held-out, Isaac 23/30; /7 vector 92.5 / rgat 90.4 / flat 84.6 %, Isaac 9/12 (preflight refusal); /8 (no legs) flat 77.9 / vector 77.9 / rgat 73.8 % held-out, Isaac 16/30 (rgat 8/10, flat 7/10, vector 1/10); acceptance not passed on any rung",
+  "performance_verified": "partial: /9 held-out flat 97.5 / vector 87.5 / rgat 85.0 %; Isaac 18/30 with 0 UNSAFE_CONTACT (rgat 9/10, flat 9/10, vector 0/10); acceptance fails on one handover tilt",
   "corrections": [
     {
       "id": "authorized-touchdown-reachable",
@@ -1682,6 +1682,26 @@
         "easy_band_defect": "fixed-descent probe at difficulty 0.0: /7 12/12 SUCCESS, /8 7/12 (5 SAFE_ABORT) because the band's low end (body 0.20 m) puts the camera 0.04 m above the deck, blind; abort latched at step 1",
         "easy_band_fix": "SpatialConfig.easy_start_lift_m = 0.18 on /4-/8 (gear on /4-/7, kept on /8); probe on /8 -> 11 SUCCESS, 1 MISSED_PAD_CONTACT; /7 byte-identical; tests/test_exploration_reachability_tool.py passes again"
       }
+    },
+    {
+      "id": "spatial-reference-9-corridor-brake",
+      "date": "2026-10-07",
+      "decision": "user, 2026-10-07 ~01:05 KST: option 2, close the corridor/landing descent gap (legs stay off)",
+      "source_defect": "the terminal corridor brakes only above 1.5 x touchdown_z_speed (0.45 m/s) and spreads the correction over the ~0.35 s response delay, so policies touch at 0.30-0.45 m/s and the verdict scores UNSAFE_CONTACT: 96 of 101 held-out unsafe terminals on /8 were corridor contacts at a median 0.34 m/s; the five Isaac UNSAFE_CONTACTs of the /8 flight were at -0.30 to -0.32",
+      "evidence": "what-if on the SAME 15 /8 checkpoints, 48 held-out seeds, nothing retrained (scratchpad whatif_factor.py / whatif_brake.py): 1.5x delay-paced 76.5 % land / 14.2 % unsafe; 0.8x delay-paced 81.0 / 10.3; 1.0x one-step 79.6 / 11.5; 0.8x one-step 87.9 / 2.8 (graph arms 1.7 / 1.2 %), timeouts 5.4-5.8 % and aborts 3.2-3.9 % unchanged across all variants; remaining 18 contacts all at 0.31 m/s. Capping descent under the vertical hold as well adds 0.6 points and was not taken",
+      "fix": "spatial-reference/9 = /8 + terminal_descent_speed_factor 0.8 (reward's own sink target) + terminal_descent_brake_one_step; everything else /8 (no legs, v12, /7 verdict, easy band lift). /6-/8 hashes unchanged; snapshots of 2D, v5, /7, /8 byte-identical",
+      "guard": "tests/test_corridor_brake_rung.py",
+      "run": "results/full_pipeline_20261007_v9_5seeds: ./run.sh all --run-root <abs> --cells low_sigma_kl --seeds 828 829 830 831 832 --workers 10 --isaac --isaac-episodes 2"
+    },
+    {
+      "id": "spatial-reference-10-corridor-gate",
+      "date": "2026-10-07",
+      "decision": "user: option 2, address the legless blind terminal phase (legs stay off)",
+      "source_defect": "corridor gate width = camera footprint, 0.03-0.07 m at body 0.20-0.25 m without legs; /9 Isaac vector arm held there 0.10-0.17 m off-centre with a fresh track until it lost the pad (6 abort, 4 timeout)",
+      "evidence": "what-if on 15 /9 checkpoints, 48 seeds: floor/window (0,1.5) 90.0/4.3/3.6 land/unsafe/timeout; (0.105,1.5) 90.8/4.3/3.2; (0.105,3.0) 92.4/5.0/1.9; (0.2,3.0) 92.9/4.7/1.8; local plant does not reproduce the Isaac stall for the vector arm",
+      "fix": "spatial-reference/10 = /9 + terminal_gate_width_floor_m 0.2 + terminal_commit_window_s 3.0; /7-/9 snapshots identical, /9 hash pinned",
+      "guard": "tests/test_corridor_brake_rung.py::test_the_gate_opens_low_and_off_centre_on_ten_and_not_on_nine",
+      "run": "results/full_pipeline_20261007_v10_5seeds"
     }
   ],
   "measurements": {
@@ -2183,10 +2203,58 @@
         }
       },
       "claim_allowed": "removing the legs costs 10-15 points of held-out landing for every arm, raises unsafe ~5 points, and in Isaac drops landing from 23/30 (/6) and 9/12 (/7 partial) to 16/30, with the packet-only baseline collapsing to 1/10 because the terminal phase is flown blind (camera below the pad plane). The graph arms land 8/10 and 7/10 on track memory. Not a representation claim; a geometry measurement"
+    },
+    "five_seed_spatial_reference_9_20261007": {
+      "root": "results/full_pipeline_20261007_v9_5seeds",
+      "after_ppo_mean_sd": {
+        "ppo_ontology_rgat": {
+          "land": [
+            0.85,
+            0.175
+          ],
+          "unsafe": 0.004
+        },
+        "ppo_semantic_flat": {
+          "land": [
+            0.975,
+            0.02
+          ],
+          "unsafe": 0.017
+        },
+        "ppo_vector_canonical": {
+          "land": [
+            0.875,
+            0.109
+          ],
+          "unsafe": 0.108
+        }
+      },
+      "training_unsafe_same_8_runs": {
+        "/8": "7.5%",
+        "/9": "1.7%"
+      },
+      "isaac_30": {
+        "SUCCESS": 18,
+        "UNSAFE_CONTACT": 0,
+        "SAFETY_ENVELOPE_VIOLATION": 1,
+        "SAFE_ABORT": 7,
+        "TASK_TIMEOUT": 4,
+        "per_arm": {
+          "ppo_ontology_rgat": "9/10 (1 handover tilt 21.9 deg at 1.1 s)",
+          "ppo_semantic_flat": "9/10 (1 abort after blind loss)",
+          "ppo_vector_canonical": "0/10 (6 abort, 4 timeout; track lost at 0.20-0.25 m body height)"
+        },
+        "acceptance": {
+          "passes": false,
+          "failed": [
+            "no_unsafe_outcomes (the single handover envelope violation)"
+          ]
+        }
+      }
     }
   },
   "pending": [
-    "acceptance gate: unsafe 0 over the Isaac matrix. /7 and /8 both leave impact speed as the only unsafe (vz 0.30-0.33 at contact, corridor admits 0.45, landing requires 0.30) plus the handover tilt envelope on the weaker arms. /8 (legs removed on user instruction) measured 2026-10-07: every Isaac landing is flown blind in the last 0.1-0.2 m and the packet-only arm collapses (1/10). DECISION for the user: keep the legs off (and accept the blind terminal phase, or give the supervisor a terminal-coast law) or restore them (/7 geometry, 9/12 and 23/30). Then address the 0.15 m/s corridor/landing gap by measuring arms",
+    "acceptance gate: /9 Isaac 18/30 with ZERO impact-speed unsafe; the only failing check is one handover tilt envelope violation (rgat 829, 21.9 deg at 1.1 s). Remaining: (a) the handover transient (seen on /6-/9 at 0.9-1.3 s), (b) the legless blind terminal phase that the packet-only arm cannot fly (0/10). Both need a user decision on approach",
     "after the /5 flight: if the policy still over-commands, compare the remaining channels (tiltRate, sinTilt jitter) against their training-time spread the same way",
     "calibrate spatial/dynamics.py attitude/thrust response (ATTITUDE_OMEGA, THRUST_TAU) to Isaac's measured step response -- target gain ~0.97 at one 0.1 s step of lag -- or randomise it in training; snapshot the contract before/after, re-clone, re-run low_sigma_kl(_masked), re-fly",
     "re-run the three-arm comparison with >=5 training seeds under low_sigma_kl (and low_sigma_kl_masked, running 2026-10-06) before any representation claim; held-out unsafe after PPO is 6-31 % and needs its own study",

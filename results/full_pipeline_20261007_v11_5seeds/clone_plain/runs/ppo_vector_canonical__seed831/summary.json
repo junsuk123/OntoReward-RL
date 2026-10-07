@@ -1,0 +1,48 @@
+{
+  "mode": "ppo_vector_canonical",
+  "seed": 831,
+  "signature": {
+    "schema": "spatial-reference/11",
+    "packet_registry": "b5ec469ce76fa6d3b98337b8e97ec79895db6c3a97d3991c3e87bf94417977ba",
+    "action": "spatial-enu-direct-net-acceleration-v2",
+    "config_sha256": "02b005272e9215018dbd5b516acd6193bab7f89a6e3b27411c0a16928e2150be"
+  },
+  "learned_by": "behaviour_cloning",
+  "ppo_success_claim": false,
+  "publication_claim_allowed": false,
+  "selected_checkpoint": "checkpoint_cloned.pt",
+  "isaac_preflight": {
+    "seeds": [
+      2000,
+      2001
+    ],
+    "unsafe_rate": 0.0,
+    "statuses": [
+      "TASK_TIMEOUT",
+      "TASK_TIMEOUT"
+    ],
+    "admissible": true
+  },
+  "holdout": {
+    "episodes": 24,
+    "landing_rate": 0.5,
+    "unsafe_rate": 0.0,
+    "safe_abort_rate": 0.08333333333333333,
+    "task_timeout_rate": 0.4166666666666667,
+    "mean_return": 9.227114912008153
+  },
+  "relational_contribution": {
+    "applicable": false
+  },
+  "first_epoch_action_mse": 0.03874408444271812,
+  "last_epoch_action_mse": 0.0035168179959247383,
+  "demonstration_steps": 20224,
+  "hyperparameters": {
+    "epochs": 60,
+    "batch": 1024,
+    "lr": 0.001,
+    "state_dependent_log_std": false
+  },
+  "completed_nominal_episodes": 0,
+  "environment_steps": 0
+}

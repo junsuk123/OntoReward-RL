@@ -13,3 +13,21 @@
 [clone] ppo_ontology_rgat seed=831 mse 0.03925->0.00456 holdout land=0.792 unsafe=0.000 | isaac preflight unsafe=0.000 ADMISSIBLE | actor readout 0.6921 delta|max| 0.2076
 [clone] ppo_vector_canonical seed=832 mse 0.03663->0.00357 holdout land=0.417 unsafe=0.125 | isaac preflight unsafe=0.000 ADMISSIBLE
 [clone] ppo_semantic_flat seed=832 mse 0.04010->0.00437 holdout land=0.917 unsafe=0.000 | isaac preflight unsafe=0.000 ADMISSIBLE
+[clone] ppo_ontology_rgat seed=832 mse 0.04008->0.00437 holdout land=0.958 unsafe=0.000 | isaac preflight unsafe=0.000 ADMISSIBLE | actor readout 0.4809 delta|max| 0.1491
+
+[clone] 15/15 checkpoints pass the Isaac preflight
+   ok ppo_vector_canonical   seed828 ['TASK_TIMEOUT', 'TASK_TIMEOUT']
+   ok ppo_semantic_flat      seed828 ['TASK_TIMEOUT', 'TASK_TIMEOUT']
+   ok ppo_ontology_rgat      seed828 ['TASK_TIMEOUT', 'TASK_TIMEOUT']
+   ok ppo_vector_canonical   seed829 ['TASK_TIMEOUT', 'TASK_TIMEOUT']
+   ok ppo_semantic_flat      seed829 ['TASK_TIMEOUT', 'TASK_TIMEOUT']
+   ok ppo_ontology_rgat      seed829 ['TASK_TIMEOUT', 'TASK_TIMEOUT']
+   ok ppo_vector_canonical   seed830 ['TASK_TIMEOUT', 'TASK_TIMEOUT']
+   ok ppo_semantic_flat      seed830 ['TASK_TIMEOUT', 'TASK_TIMEOUT']
+   ok ppo_ontology_rgat      seed830 ['TASK_TIMEOUT', 'TASK_TIMEOUT']
+   ok ppo_vector_canonical   seed831 ['TASK_TIMEOUT', 'TASK_TIMEOUT']
+   ok ppo_semantic_flat      seed831 ['TASK_TIMEOUT', 'TASK_TIMEOUT']
+   ok ppo_ontology_rgat      seed831 ['TASK_TIMEOUT', 'TASK_TIMEOUT']
+   ok ppo_vector_canonical   seed832 ['TASK_TIMEOUT', 'TASK_TIMEOUT']
+   ok ppo_semantic_flat      seed832 ['TASK_TIMEOUT', 'TASK_TIMEOUT']
+   ok ppo_ontology_rgat      seed832 ['TASK_TIMEOUT', 'TASK_TIMEOUT']

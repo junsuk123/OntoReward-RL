@@ -187,9 +187,29 @@ The v1 config remains an explicit historical experiment; Isaac/PX4 remains
   `two_axis/config.py: DEFAULT_CONFIG_PATH` also still points at the retired v1
   config, so a bare `load_config()` quietly returns -40/-30/-50 with tau 350
   instead of the reference table. Always pass the config path explicitly.
-- The active spatial contract is `spatial-reference/11` (`REFERENCE_SCHEMA`,
-  2026-10-07, profile v12, no legs). It is `/10` plus ONE law, the HANDOVER
-  LIMIT, on the user's instruction to fix the handover tilt that alone failed
+- The active spatial contract is `spatial-reference/12` (`REFERENCE_SCHEMA`,
+  2026-10-07, profile v12, no legs). It is `/11` plus ONE law, the HANDOVER
+  THRUST FLOOR: applied vertical acceleration >= 0 for the 2 s handover
+  window (`handover_vertical_floor_m_s2`). /11's lateral cap did NOT stop the
+  violations -- its flight (`results/full_pipeline_20261007_v11_5seeds`:
+  held-out rgat 93.3 / flat 93.3 / vector 91.7 %, Isaac 19/30, rgat 9/10,
+  flat 9/10, vector 1/10) had two, rgat 830 at 26.7 deg and flat 829 at
+  21.7 deg, both inside the 2.0 cap with the tilt climbing 2 deg per
+  decision under a -1.8 m/s^2 downward command. Over all 209 Isaac episodes
+  on record the early (first 1.3 s) mean applied az separates them: < -0.6
+  -> 5/5 violated, -0.6..0 -> 4/151, >= 0 -> 0/53, i.e. reduced collective
+  thrust is reduced attitude authority against the seeded disturbance torque.
+  What-if on the 15 /11 checkpoints: /11 92.8 % landing, abort 4.7 %, peak
+  first-2-s tilt 19.7 deg; with the floor 95.7 %, abort 1.2 %, peak 12.1.
+  The floor does NOT apply inside the terminal corridor: applied
+  unconditionally it broke the curriculum's easy rung (hand-over at 0.4-0.7 m,
+  fixed-descent probe 11/12 -> 2/12 SUCCESS, caught by
+  `tests/test_exploration_reachability_tool.py`). With that exemption the
+  real law on the /11 checkpoints gives 95.7 % / unsafe 2.9 % / abort 1.2 %.
+  Guard in `tests/test_handover_limit_rung.py`. Run
+  `results/full_pipeline_20261007_v12_5seeds`.
+- `spatial-reference/11` (2026-10-07, profile v12, no legs) is `/10` plus ONE
+  law, the HANDOVER LIMIT, on the user's instruction to fix the handover tilt that alone failed
   /10's acceptance. All seven Isaac SAFETY_ENVELOPE_VIOLATIONs on record
   (/2-/10) came 0.9-1.3 s after handover, each starting with a near-full
   1.5-2.3 m/s^2 lateral command issued while the track was not yet trusted;

@@ -66,13 +66,14 @@ def _applied(schema, requested, vz):
 
 
 def test_the_active_contract_is_a_holding_rung():
-    assert REFERENCE_SCHEMA == "spatial-reference/11"
+    assert REFERENCE_SCHEMA == "spatial-reference/12"
     assert REFERENCE_SCHEMAS == ("spatial-reference/1", "spatial-reference/2",
                                  "spatial-reference/3", "spatial-reference/4",
                                  "spatial-reference/5", "spatial-reference/6",
                                  "spatial-reference/7", "spatial-reference/8",
                                  "spatial-reference/9", "spatial-reference/10",
-                                 "spatial-reference/11")
+                                 "spatial-reference/11",
+                                 "spatial-reference/12")
     for schema in REFERENCE_SCHEMAS[1:]:
         assert replace(SpatialConfig(), schema=schema).vertical_inhibit_holds, schema
     assert not replace(SpatialConfig(), schema="spatial-reference/1").vertical_inhibit_holds

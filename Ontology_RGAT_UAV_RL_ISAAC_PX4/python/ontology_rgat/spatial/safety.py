@@ -145,6 +145,15 @@ class ReferenceSpatialSupervisor:
                 if size > cfg.handover_lateral_slew_m_s2:
                     lateral = self.previous_lateral + step * cfg.handover_lateral_slew_m_s2 / size
             applied[:2] = lateral
+            if cfg.handover_vertical_floor_m_s2 is not None and not self.terminal_descent:
+                # Not inside the terminal corridor: the curriculum's easy
+                # rungs hand over at 0.4-0.7 m and land within 2 s, and
+                # there the corridor's own brake governs the descent.
+                # /12: no net downward acceleration in the window. Across all
+                # 209 Isaac episodes on record, every one whose mean applied az
+                # over the first 1.3 s was below -0.6 m/s^2 ended in an
+                # envelope violation (5/5), none with az >= 0 did (0/53).
+                applied[2] = max(applied[2], cfg.handover_vertical_floor_m_s2)
         self.previous_lateral = applied[:2].copy()
         if safety.abort:
             if self.hold_position is None:

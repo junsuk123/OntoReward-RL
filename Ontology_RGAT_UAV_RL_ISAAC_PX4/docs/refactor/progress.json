@@ -1712,6 +1712,15 @@
       "fix": "spatial-reference/11 = /10 + lateral cap 2.0 m/s^2 and slew 1.5 m/s^2 per decision for 2 s after handover; /7-/10 snapshots identical, /10 hash pinned",
       "guard": "tests/test_handover_limit_rung.py",
       "run": "results/full_pipeline_20261007_v11_5seeds"
+    },
+    {
+      "id": "spatial-reference-12-handover-thrust-floor",
+      "date": "2026-10-07",
+      "source_defect": "/11 lateral cap did not stop handover envelope violations; early applied az < -0.6 m/s^2 -> 5/5 violations over 209 Isaac episodes, az >= 0 -> 0/53",
+      "evidence": "what-if on /11 checkpoints: 92.8 -> 95.7 % landing, abort 4.7 -> 1.2 %, peak tilt 19.7 -> 12.1 deg",
+      "fix": "spatial-reference/12 = /11 + applied az >= 0 for the 2 s handover window",
+      "guard": "tests/test_handover_limit_rung.py::test_the_thrust_floor_rung_keeps_net_vertical_acceleration_non_negative_after_handover",
+      "run": "results/full_pipeline_20261007_v12_5seeds"
     }
   ],
   "measurements": {
@@ -2304,6 +2313,26 @@
             "no_unsafe_outcomes (one baseline handover tilt)"
           ]
         }
+      }
+    },
+    "five_seed_spatial_reference_11_20261007": {
+      "root": "results/full_pipeline_20261007_v11_5seeds",
+      "after_ppo_land": {
+        "ppo_ontology_rgat": 0.933,
+        "ppo_semantic_flat": 0.933,
+        "ppo_vector_canonical": 0.917
+      },
+      "isaac_30": {
+        "SUCCESS": 19,
+        "SAFETY_ENVELOPE_VIOLATION": 2,
+        "TASK_TIMEOUT": 6,
+        "SAFE_ABORT": 3,
+        "per_arm": {
+          "rgat": "9/10",
+          "flat": "9/10",
+          "vector": "1/10"
+        },
+        "violations": "rgat 830 26.7 deg, flat 829 21.7 deg; lateral inside the 2.0 cap, az -1.8"
       }
     }
   },

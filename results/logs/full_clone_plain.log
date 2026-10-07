@@ -1,19 +1,19 @@
-[clone] teacher: 20224 steps from 120 episodes, {'SUCCESS': 109, 'TASK_TIMEOUT': 8, 'SAFE_ABORT': 1, 'UNAUTHORIZED_CONTACT': 2}
-[clone] ppo_vector_canonical seed=828 mse 0.03943->0.00364 holdout land=0.250 unsafe=0.125 | isaac preflight unsafe=0.000 ADMISSIBLE
-[clone] ppo_semantic_flat seed=828 mse 0.04066->0.00437 holdout land=0.833 unsafe=0.000 | isaac preflight unsafe=0.000 ADMISSIBLE
-[clone] ppo_ontology_rgat seed=828 mse 0.04065->0.00438 holdout land=0.792 unsafe=0.000 | isaac preflight unsafe=0.000 ADMISSIBLE | actor readout 0.5362 delta|max| 0.1799
-[clone] ppo_vector_canonical seed=829 mse 0.03709->0.00349 holdout land=0.417 unsafe=0.042 | isaac preflight unsafe=0.000 ADMISSIBLE
-[clone] ppo_semantic_flat seed=829 mse 0.03902->0.00434 holdout land=0.917 unsafe=0.000 | isaac preflight unsafe=0.000 ADMISSIBLE
-[clone] ppo_ontology_rgat seed=829 mse 0.03903->0.00433 holdout land=0.833 unsafe=0.000 | isaac preflight unsafe=0.000 ADMISSIBLE | actor readout 0.4411 delta|max| 0.1376
-[clone] ppo_vector_canonical seed=830 mse 0.03737->0.00364 holdout land=0.292 unsafe=0.000 | isaac preflight unsafe=0.000 ADMISSIBLE
-[clone] ppo_semantic_flat seed=830 mse 0.03957->0.00444 holdout land=0.708 unsafe=0.083 | isaac preflight unsafe=0.000 ADMISSIBLE
-[clone] ppo_ontology_rgat seed=830 mse 0.03955->0.00442 holdout land=0.750 unsafe=0.042 | isaac preflight unsafe=0.000 ADMISSIBLE | actor readout 0.5554 delta|max| 0.2522
-[clone] ppo_vector_canonical seed=831 mse 0.03874->0.00352 holdout land=0.500 unsafe=0.000 | isaac preflight unsafe=0.000 ADMISSIBLE
-[clone] ppo_semantic_flat seed=831 mse 0.03924->0.00452 holdout land=0.708 unsafe=0.042 | isaac preflight unsafe=0.000 ADMISSIBLE
-[clone] ppo_ontology_rgat seed=831 mse 0.03925->0.00456 holdout land=0.792 unsafe=0.000 | isaac preflight unsafe=0.000 ADMISSIBLE | actor readout 0.6921 delta|max| 0.2076
-[clone] ppo_vector_canonical seed=832 mse 0.03663->0.00357 holdout land=0.417 unsafe=0.125 | isaac preflight unsafe=0.000 ADMISSIBLE
-[clone] ppo_semantic_flat seed=832 mse 0.04010->0.00437 holdout land=0.917 unsafe=0.000 | isaac preflight unsafe=0.000 ADMISSIBLE
-[clone] ppo_ontology_rgat seed=832 mse 0.04008->0.00437 holdout land=0.958 unsafe=0.000 | isaac preflight unsafe=0.000 ADMISSIBLE | actor readout 0.4809 delta|max| 0.1491
+[clone] teacher: 20095 steps from 120 episodes, {'SUCCESS': 109, 'TASK_TIMEOUT': 9, 'SAFE_ABORT': 1, 'UNAUTHORIZED_CONTACT': 1}
+[clone] ppo_vector_canonical seed=828 mse 0.05420->0.00387 holdout land=0.500 unsafe=0.250 | isaac preflight unsafe=0.000 ADMISSIBLE
+[clone] ppo_semantic_flat seed=828 mse 0.05591->0.00510 holdout land=0.917 unsafe=0.000 | isaac preflight unsafe=0.000 ADMISSIBLE
+[clone] ppo_ontology_rgat seed=828 mse 0.05591->0.00510 holdout land=0.833 unsafe=0.042 | isaac preflight unsafe=0.000 ADMISSIBLE | actor readout 0.5860 delta|max| 0.2927
+[clone] ppo_vector_canonical seed=829 mse 0.05152->0.00371 holdout land=0.333 unsafe=0.167 | isaac preflight unsafe=0.000 ADMISSIBLE
+[clone] ppo_semantic_flat seed=829 mse 0.05357->0.00457 holdout land=0.708 unsafe=0.000 | isaac preflight unsafe=0.000 ADMISSIBLE
+[clone] ppo_ontology_rgat seed=829 mse 0.05356->0.00457 holdout land=0.708 unsafe=0.000 | isaac preflight unsafe=0.000 ADMISSIBLE | actor readout 0.5187 delta|max| 0.1209
+[clone] ppo_vector_canonical seed=830 mse 0.05137->0.00382 holdout land=0.583 unsafe=0.042 | isaac preflight unsafe=0.000 ADMISSIBLE
+[clone] ppo_semantic_flat seed=830 mse 0.05450->0.00481 holdout land=0.792 unsafe=0.000 | isaac preflight unsafe=0.000 ADMISSIBLE
+[clone] ppo_ontology_rgat seed=830 mse 0.05446->0.00481 holdout land=0.792 unsafe=0.000 | isaac preflight unsafe=0.000 ADMISSIBLE | actor readout 0.6787 delta|max| 0.2945
+[clone] ppo_vector_canonical seed=831 mse 0.05361->0.00374 holdout land=0.375 unsafe=0.000 | isaac preflight unsafe=0.000 ADMISSIBLE
+[clone] ppo_semantic_flat seed=831 mse 0.05419->0.00453 holdout land=0.792 unsafe=0.000 | isaac preflight unsafe=0.000 ADMISSIBLE
+[clone] ppo_ontology_rgat seed=831 mse 0.05425->0.00454 holdout land=0.792 unsafe=0.000 | isaac preflight unsafe=0.000 ADMISSIBLE | actor readout 0.4490 delta|max| 0.1835
+[clone] ppo_vector_canonical seed=832 mse 0.04989->0.00374 holdout land=0.458 unsafe=0.125 | isaac preflight unsafe=0.000 ADMISSIBLE
+[clone] ppo_semantic_flat seed=832 mse 0.05509->0.00463 holdout land=0.750 unsafe=0.000 | isaac preflight unsafe=0.000 ADMISSIBLE
+[clone] ppo_ontology_rgat seed=832 mse 0.05509->0.00460 holdout land=0.708 unsafe=0.042 | isaac preflight unsafe=0.000 ADMISSIBLE | actor readout 0.7308 delta|max| 0.2402
 
 [clone] 15/15 checkpoints pass the Isaac preflight
    ok ppo_vector_canonical   seed828 ['TASK_TIMEOUT', 'TASK_TIMEOUT']

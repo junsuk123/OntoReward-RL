@@ -52,11 +52,11 @@ REVERSAL = [(0.0, -0.58, 0.0), (0.08, -0.58, 0.0), (0.19, -0.5, 0.0),
 
 
 def test_the_active_contract_is_the_handover_rung():
-    assert REFERENCE_SCHEMA == "spatial-reference/11" == REFERENCE_SCHEMAS[-1]
+    assert REFERENCE_SCHEMA == "spatial-reference/12" == REFERENCE_SCHEMAS[-1]
     eleven = _cfg("spatial-reference/11")
     assert (eleven.handover_lateral_cap_m_s2, eleven.handover_window_s,
             eleven.handover_lateral_slew_m_s2) == (2.0, 2.0, 1.5)
-    for schema in REFERENCE_SCHEMAS[:-1]:
+    for schema in REFERENCE_SCHEMAS[:-2]:
         assert _cfg(schema).handover_lateral_cap_m_s2 is None, schema
 
 
@@ -93,3 +93,39 @@ def test_adding_the_rung_did_not_move_ten():
         pytest.skip("the /10 five-seed run is not on this machine")
     recorded = json.loads(plan.read_text())["signature"]["config_sha256"]
     assert _cfg("spatial-reference/10").signature["config_sha256"] == recorded
+
+
+def test_the_thrust_floor_rung_keeps_net_vertical_acceleration_non_negative_after_handover():
+    """/12: across 209 recorded Isaac episodes, a first-1.3 s mean applied az
+    below -0.6 m/s^2 ended in an envelope violation 5 of 5 times, az >= 0
+    never (0 of 53). The /11 flight's two violations carried -1.8 m/s^2."""
+    descend = [(-0.45, -0.9, -0.9)] * 6
+    for schema, floor in (("spatial-reference/11", None), ("spatial-reference/12", 0.0)):
+        cfg = _cfg(schema)
+        assert cfg.handover_vertical_floor_m_s2 == floor
+        supervisor = ReferenceSpatialSupervisor()
+        vertical = []
+        for k, command in enumerate(descend):
+            est = _est(5.0 + 0.1 * k)
+            safety = supervisor.status(est, cfg)
+            vertical.append(supervisor.action(np.asarray(command), est, safety, cfg)[2]
+                            * cfg.max_acceleration[2])
+        if floor is None:
+            assert min(vertical) < -1.0
+        else:
+            assert min(vertical) >= 0.0
+    for schema in REFERENCE_SCHEMAS[:-1]:
+        assert _cfg(schema).handover_vertical_floor_m_s2 is None, schema
+    eleven, twelve = _cfg("spatial-reference/11"), _cfg("spatial-reference/12")
+    assert (eleven.handover_lateral_cap_m_s2, eleven.handover_lateral_slew_m_s2) == \
+           (twelve.handover_lateral_cap_m_s2, twelve.handover_lateral_slew_m_s2)
+    assert eleven.signature["config_sha256"] != twelve.signature["config_sha256"]
+
+
+def test_adding_the_rung_did_not_move_eleven():
+    plan = (Path(__file__).resolve().parents[2] / "results" / "full_pipeline_20261007_v11_5seeds"
+            / "low_sigma_kl" / "plan.json")
+    if not plan.exists():
+        pytest.skip("the /11 five-seed run is not on this machine")
+    recorded = json.loads(plan.read_text())["signature"]["config_sha256"]
+    assert _cfg("spatial-reference/11").signature["config_sha256"] == recorded

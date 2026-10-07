@@ -72,7 +72,7 @@ RECORDED = (
 
 
 def test_the_verdict_rung_and_its_successors_carry_the_rule():
-    assert REFERENCE_SCHEMA == "spatial-reference/11" == REFERENCE_SCHEMAS[-1]
+    assert REFERENCE_SCHEMA == "spatial-reference/12" == REFERENCE_SCHEMAS[-1]
     assert _cfg("spatial-reference/7").contact_verdict_by_speed
     assert _cfg("spatial-reference/8").contact_verdict_by_speed
     assert _cfg("spatial-reference/9").contact_verdict_by_speed

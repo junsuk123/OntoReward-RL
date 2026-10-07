@@ -57,13 +57,14 @@ def _brake(schema, vz, requested=(0.0, 0.0, -0.3)):
 
 
 def test_the_active_contract_is_the_brake_rung():
-    assert REFERENCE_SCHEMA == "spatial-reference/11" == REFERENCE_SCHEMAS[-1]
+    assert REFERENCE_SCHEMA == "spatial-reference/12" == REFERENCE_SCHEMAS[-1]
     for schema in ("spatial-reference/9", "spatial-reference/10",
-                   "spatial-reference/11"):
+                   "spatial-reference/11",
+                   "spatial-reference/12"):
         cfg = _cfg(schema)
         assert cfg.terminal_descent_speed_factor == pytest.approx(0.8)
         assert cfg.terminal_descent_brake_one_step
-    for schema in REFERENCE_SCHEMAS[:-3] + ("spatial-causal-rgat/5", "spatial-causal-rgat/10"):
+    for schema in REFERENCE_SCHEMAS[:-4] + ("spatial-causal-rgat/5", "spatial-causal-rgat/10"):
         cfg = _cfg(schema)
         assert cfg.terminal_descent_speed_factor == pytest.approx(1.5), schema
         assert not cfg.terminal_descent_brake_one_step, schema
@@ -130,7 +131,7 @@ def test_the_gate_rung_differs_from_nine_in_nothing_but_the_gate_and_commit():
     nine, ten = _cfg("spatial-reference/9"), _cfg("spatial-reference/10")
     assert (nine.terminal_gate_width_floor_m, nine.terminal_commit_window_s) == (0.0, 1.5)
     assert (ten.terminal_gate_width_floor_m, ten.terminal_commit_window_s) == (0.2, 3.0)
-    for schema in REFERENCE_SCHEMAS[:-2]:
+    for schema in REFERENCE_SCHEMAS[:-3]:
         cfg = _cfg(schema)
         assert (cfg.terminal_gate_width_floor_m, cfg.terminal_commit_window_s) == (0.0, 1.5), schema
     assert nine.packet_fields == ten.packet_fields and nine.registry_hash == ten.registry_hash

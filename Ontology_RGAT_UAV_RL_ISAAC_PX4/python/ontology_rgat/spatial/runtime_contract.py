@@ -86,7 +86,7 @@ def deployment_profile(schema="spatial-causal-rgat/5"):
         # The Isaac-calibrated vehicle: landing gear and the 17-tag board.
         filename = 'spatial-isaac-system-v11.yaml'
     if schema in ("spatial-reference/8", "spatial-reference/9", "spatial-reference/10",
-                  "spatial-reference/11"):
+                  "spatial-reference/11", "spatial-reference/12"):
         # v11 without the legs: the stock Iris gear and the same board.
         filename = 'spatial-isaac-system-v12.yaml'
     path = Path(__file__).resolve().parents[3] / "config" / filename

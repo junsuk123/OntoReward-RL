@@ -89,6 +89,13 @@ TEACHER_GAINS_BY_SCHEMA = {
     # /8 removes the legs; the /3 plant had none and landed on this same set.
     "spatial-reference/8": dict(kp=0.4, kd=0.3, ki=0.1, kz=1.0, vdes=0.15,
                                 align=0.15, anorm=0.3),
+    # /9 changes the corridor brake only; the teacher sinks at 0.15 m/s,
+    # under the 0.24 m/s the brake now holds, so it never meets it.
+    "spatial-reference/9": dict(kp=0.4, kd=0.3, ki=0.1, kz=1.0, vdes=0.15,
+                                align=0.15, anorm=0.3),
+    # /10 widens the corridor gate near the pad; the plant is /9's.
+    "spatial-reference/10": dict(kp=0.4, kd=0.3, ki=0.1, kz=1.0, vdes=0.15,
+                                 align=0.15, anorm=0.3),
 }
 TEACHER_GAINS = dict(kp=0.4, kd=0.8, ki=0.4, kz=1.0, vdes=0.15, align=0.15,
                      anorm=0.3)
@@ -180,7 +187,8 @@ def main():
                                  "spatial-reference/1", "spatial-reference/2",
                                  "spatial-reference/3", "spatial-reference/4",
                                  "spatial-reference/5", "spatial-reference/6",
-                                 "spatial-reference/7", "spatial-reference/8", "reference"],
+                                 "spatial-reference/7", "spatial-reference/8",
+                                 "spatial-reference/9", "spatial-reference/10", "reference"],
                         default="reference")
     args = parser.parse_args()
     if any(not 0.0 <= d <= 1.0 for d in args.difficulties):

@@ -141,10 +141,55 @@ from ..two_axis.ontology_v28 import GRAPH_SCHEMA_HASH as TOPOLOGY_HASH
 #: centre cluster of the v11 board and the /5 optical model carry that
 #: interval is what the /8 run measures; it was not measured before the legs
 #: were added.
+#: /9 is /8 plus one law, the terminal-corridor BRAKE, chosen on the user's
+#: instruction of 2026-10-07 to close the gap between the descent the
+#: supervisor admits in the corridor and the descent the contact verdict
+#: accepts. Through /8 the corridor brakes only above 1.5 x
+#: ``touchdown_z_speed`` (0.45 m/s, the 2D reference's approach margin) and
+#: removes the excess over the ~0.35 s response delay, so a policy may touch
+#: at 0.30-0.45 m/s and the verdict then scores it UNSAFE_CONTACT: on /8,
+#: 96 of 101 held-out unsafe terminals were corridor contacts at a median
+#: 0.34 m/s. Measured on the SAME 15 /8 checkpoints, 48 held-out seeds,
+#: nothing retrained (scratchpad what-if, 2026-10-07 01:19):
+#:
+#: ==========================  ========  ========  =========  ======
+#: corridor brake              landing   unsafe    timeout    abort
+#: ==========================  ========  ========  =========  ======
+#: 1.5 x, over the delay (/8)   76.5 %    14.2 %     5.4 %     3.9 %
+#: 0.8 x, over the delay        81.0 %    10.3 %     5.6 %     3.2 %
+#: 1.0 x, within one step       79.6 %    11.5 %     5.7 %     3.2 %
+#: 0.8 x, within one step       87.9 %     2.8 %     5.8 %     3.5 %
+#: ==========================  ========  ========  =========  ======
+#:
+#: Neither constant alone does it; together they leave 18 of 720 contacts
+#: unsafe, every one at 0.31 m/s, with timeouts and aborts unchanged, i.e.
+#: the brake costs no landings. 0.8 x is the sink speed the reward's
+#: readiness term already asks for (``desired_z = -0.8 * touchdown_z_speed``
+#: in environment.py), so the supervisor now enforces what the reward
+#: targets. Plant, packet, graph, verdict, gear (none) and profile (v12) are
+#: /8's. Guarded in tests/test_corridor_brake_rung.py.
+#: /10 is /9 plus one law, the terminal-corridor GATE without legs, on the
+#: user's instruction of 2026-10-07 to address the blind terminal phase (the
+#: legs stay off). The corridor's lateral gate is the camera footprint, which
+#: shrinks to zero as the camera nears the pad; without legs a vehicle at
+#: 0.20-0.25 m body height faces a 0.03-0.07 m gate. In the /9 Isaac flight
+#: the packet-only arm sat 0.10-0.17 m off-centre there with a FRESH track,
+#: the vertical hold kept it from descending, it sank slowly until the pad
+#: left the frame and aborted (6 of 10) or hovered to the 70 s limit (4). /10
+#: floors the gate at 0.2 m (``terminal_gate_width_floor_m``; the commit
+#: still demands lateral + 2 std inside the 0.5 m pad) and holds the commit
+#: for 3 s instead of 1.5 (``terminal_commit_window_s``). Measured on the 15
+#: /9 checkpoints over 48 held-out seeds, nothing retrained: (0, 1.5 s) 90.0 %
+#: landing / 4.3 % unsafe / 3.6 % timeout; (0.105, 1.5) 90.8 / 4.3 / 3.2;
+#: (0.105, 3.0) 92.4 / 5.0 / 1.9; (0.2, 3.0) 92.9 / 4.7 / 1.8 -- the
+#: proposed arm's timeouts fall 10.4 -> 5.4 %. The local optical model does
+#: not reproduce the Isaac low-altitude loss for the vector arm (0 % timeout
+#: locally either way), so the Isaac flight is the test of this law.
 REFERENCE_SCHEMAS = ("spatial-reference/1", "spatial-reference/2",
                      "spatial-reference/3", "spatial-reference/4",
                      "spatial-reference/5", "spatial-reference/6",
-                     "spatial-reference/7", "spatial-reference/8")
+                     "spatial-reference/7", "spatial-reference/8",
+                     "spatial-reference/9", "spatial-reference/10")
 REFERENCE_SCHEMA = REFERENCE_SCHEMAS[-1]
 #: /6 attitude servo: natural frequency (rad/s) and damping ratio.
 REFERENCE_ATTITUDE_SERVO_6 = (10.0, 0.7)
@@ -458,7 +503,8 @@ class SpatialConfig:
         return self.schema in ("spatial-reference/2", "spatial-reference/3",
                                "spatial-reference/4", "spatial-reference/5",
                                "spatial-reference/6", "spatial-reference/7",
-                               "spatial-reference/8")
+                               "spatial-reference/8", "spatial-reference/9",
+                                   "spatial-reference/10")
 
     @property
     def actuation_delay_s(self):
@@ -471,14 +517,16 @@ class SpatialConfig:
         return (REFERENCE_ACTUATION_DELAY_S
                 if self.schema in ("spatial-reference/3", "spatial-reference/4",
                                    "spatial-reference/5", "spatial-reference/6",
-                                   "spatial-reference/7", "spatial-reference/8") else 0.0)
+                                   "spatial-reference/7", "spatial-reference/8",
+                                   "spatial-reference/9", "spatial-reference/10") else 0.0)
 
     @property
     def attitude_omega(self):
         """Attitude servo bandwidth of the local plant, rad/s (/4: Isaac-fitted)."""
         from .dynamics import ATTITUDE_OMEGA
         if self.schema in ("spatial-reference/6", "spatial-reference/7",
-                           "spatial-reference/8"):
+                           "spatial-reference/8", "spatial-reference/9",
+                                   "spatial-reference/10"):
             return REFERENCE_ATTITUDE_SERVO_6[0]
         return (REFERENCE_ATTITUDE_OMEGA_RAD_S
                 if self.schema in ("spatial-reference/4", "spatial-reference/5")
@@ -490,7 +538,8 @@ class SpatialConfig:
         from .dynamics import ATTITUDE_DAMPING
         return (REFERENCE_ATTITUDE_SERVO_6[1]
                 if self.schema in ("spatial-reference/6", "spatial-reference/7",
-                                   "spatial-reference/8")
+                                   "spatial-reference/8", "spatial-reference/9",
+                                   "spatial-reference/10")
                 else ATTITUDE_DAMPING)
 
     @property
@@ -524,7 +573,8 @@ class SpatialConfig:
         """
         if self.schema in ("spatial-reference/4", "spatial-reference/5",
                            "spatial-reference/6", "spatial-reference/7",
-                           "spatial-reference/8"):
+                           "spatial-reference/8", "spatial-reference/9",
+                                   "spatial-reference/10"):
             return REFERENCE_LANDING_GEAR_EXTENSION_M
         return self.landing_gear_extension_m
 
@@ -532,7 +582,8 @@ class SpatialConfig:
     def optical_realism(self):
         """Tag-based detection and the detector's quality metric (/5 onward)."""
         return self.schema in ("spatial-reference/5", "spatial-reference/6",
-                               "spatial-reference/7", "spatial-reference/8")
+                               "spatial-reference/7", "spatial-reference/8",
+                               "spatial-reference/9", "spatial-reference/10")
 
     @property
     def terminal_descent_speed_factor(self):
@@ -546,8 +597,46 @@ class SpatialConfig:
         held-out unsafe terminal (74 of 720 and the /8 set) was a contact in
         that band, most of it within 0.05 m/s of the limit, and the five
         Isaac UNSAFE_CONTACTs of the /8 flight touched at -0.30 to -0.32.
+        /9 narrows it to 0.8 x, the reward's own sink target; see the /9
+        note above REFERENCE_SCHEMAS for the what-if that chose it.
         """
-        return 1.5
+        return 0.8 if self.schema in ("spatial-reference/9", "spatial-reference/10") else 1.5
+
+    @property
+    def terminal_gate_width_floor_m(self):
+        """Smallest lateral gate the terminal corridor may demand, metres.
+
+        The gate's width is the camera footprint, (body height - 0.16 m) x
+        tan(fov/2), so it shrinks to zero as the camera nears the pad. With
+        the /4-/7 legs the body never went below 0.30 m and the footprint
+        never below 0.105 m. Without them (/8, /9) a vehicle that reaches
+        0.20-0.25 m under the vertical hold faces a 0.03-0.07 m gate it cannot
+        meet, so the corridor never opens: measured in the /9 Isaac flight,
+        the packet-only arm sat 0.10-0.17 m off-centre at 0.22-0.26 m with a
+        fresh track, the hold kept it there until the pad left the frame, and
+        it aborted (6 of 10) or hovered to the limit. Zero keeps the
+        reference law; see the /10 note above REFERENCE_SCHEMAS.
+        """
+        return 0.2 if self.schema == "spatial-reference/10" else 0.0
+
+    @property
+    def terminal_commit_window_s(self):
+        """How long after the gate was last met the corridor stays committed.
+
+        1.5 s is the reference; /10 holds the commit for 3 s, enough to sink
+        the blind last 0.10-0.15 m at the 0.24 m/s /9 brake target with the
+        track-memory conditions (lateral + 2 std inside the pad, settled,
+        lateral speed) still enforced every step."""
+        return 3.0 if self.schema == "spatial-reference/10" else 1.5
+
+    @property
+    def terminal_descent_brake_one_step(self):
+        """/9: the corridor brake removes the excess descent within one
+        decision step (bounded by the vertical authority) instead of over
+        the response delay. Measured with the factor above: the one-step
+        gain at 1.0 x changes little (unsafe 14.2 -> 11.5 %) and the 0.8 x
+        factor with the delay gain little more (10.3 %); together 2.8 %."""
+        return self.schema in ("spatial-reference/9", "spatial-reference/10")
 
     @property
     def contact_verdict_by_speed(self):
@@ -558,7 +647,8 @@ class SpatialConfig:
         condition. See the /7 note above REFERENCE_SCHEMAS for the six Isaac
         contacts this rule was drawn from.
         """
-        return self.schema in ("spatial-reference/7", "spatial-reference/8")
+        return self.schema in ("spatial-reference/7", "spatial-reference/8",
+                               "spatial-reference/9", "spatial-reference/10")
 
     @property
     def touchdown_height(self):

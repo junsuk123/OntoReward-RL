@@ -50,7 +50,8 @@ class ReferenceSpatialSupervisor:
         # body whatever the gear.
         height = float(est.r[2]) - cfg.landing_gear_extension_m
         footprint = max(float(est.r[2])-.16,0.)*min(np.tan(np.asarray(cfg.fov)/2))
-        gate_width = min(cfg.pad_half_width,footprint)
+        gate_width = min(cfg.pad_half_width,
+                         max(footprint, cfg.terminal_gate_width_floor_m))
         gate = (trustworthy and 0 < height <= 1. and settled
                 and np.linalg.norm(est.r[:2]) <= gate_width
                 and np.linalg.norm(est.rv[:2]) <= 1.5*cfg.touchdown_xy_speed)
@@ -59,7 +60,7 @@ class ReferenceSpatialSupervisor:
         elif gate:
             self.gate_satisfied_at_s = est.last_t
         committed = (self.gate_satisfied_at_s is not None and settled
-                     and est.last_t-self.gate_satisfied_at_s <= 1.5
+                     and est.last_t-self.gate_satisfied_at_s <= cfg.terminal_commit_window_s
                      and np.linalg.norm(est.r[:2])+2*est.std <= cfg.pad_half_width
                      and np.linalg.norm(est.rv[:2]) <= 1.5*cfg.touchdown_xy_speed)
         self.terminal_descent = bool(not self.abort_latched and (gate or committed))
@@ -113,7 +114,14 @@ class ReferenceSpatialSupervisor:
             # .terminal_descent_speed_factor is where a rung narrows it.
             speed_limit = cfg.terminal_descent_speed_factor*cfg.touchdown_z_speed
             if downward > speed_limit:
-                applied[2] = max(applied[2],(downward-speed_limit)/delay)
+                if cfg.terminal_descent_brake_one_step:
+                    # /9: remove the excess within one decision step, not
+                    # over the response delay -- the delay-paced brake left
+                    # 0.34 m/s contacts on /8 (see core.py, the /9 note).
+                    applied[2] = max(applied[2], min(limits[2],
+                                                     (downward-speed_limit)/cfg.dt))
+                else:
+                    applied[2] = max(applied[2],(downward-speed_limit)/delay)
         if safety.abort:
             if self.hold_position is None:
                 raise RuntimeError('abort requires a latched causal own-position anchor')

@@ -759,6 +759,11 @@ class Measurement:
     optical_time_s: float | None = None
     optical_own_position: np.ndarray | None = None
     optical_quaternion: np.ndarray | None = None
+    #: Common-observation input: {marker id: (4, 2) pixel corners} of the
+    #: frame captured at ``marker_capture_time_s``. Never read by the
+    #: estimator, the supervisor or the packet.
+    marker_corners_px: dict | None = None
+    marker_capture_time_s: float | None = None
 
     def __post_init__(self):
         for value, size in (
@@ -823,7 +828,23 @@ class Measurement:
              if optical.get('own_position_at_capture_m') is not None else None),
             (np.asarray(optical['own_quaternion_at_capture_wxyz'])
              if optical.get('own_quaternion_at_capture_wxyz') is not None else None),
+            *cls._corners_from_wire(extra.get('marker_corners'), float(clock['sim_time_s'])),
         )
+
+    @staticmethod
+    def _corners_from_wire(payload, now):
+        """The detector's per-marker corners, if fresh and not from the future."""
+        if not isinstance(payload, dict):
+            return None, None
+        capture = payload.get('capture_time_s')
+        if capture is None or not math.isfinite(float(capture)) or float(capture) > now:
+            return None, None
+        corners = {}
+        for key, quad in (payload.get('markers') or {}).items():
+            quad = np.asarray(quad, dtype=float)
+            if quad.shape == (4, 2) and np.isfinite(quad).all():
+                corners[int(key)] = quad
+        return corners, float(capture)
 
 
 class Estimator:
@@ -1087,6 +1108,11 @@ class Graph:
 class Observation:
     packet: Packet
     graph: Graph
+    #: landing.common_observation.CommonObservation O_t = {P_t, D_t, H_t},
+    #: built by the environment from the same Measurement stream. Present on
+    #: rungs with a deployed marker board (optical realism, /5 onward); not
+    #: yet read by any arm.
+    common: object = None
 
 
 def observation(est, safety, elapsed, cfg):

@@ -187,6 +187,82 @@ The v1 config remains an explicit historical experiment; Isaac/PX4 remains
   `two_axis/config.py: DEFAULT_CONFIG_PATH` also still points at the retired v1
   config, so a bare `load_config()` quietly returns -40/-30/-50 with tau 350
   instead of the reference table. Always pass the config path explicitly.
+- The COMMON OBSERVATION O_t = {P_t, D_t, H_t} lives in
+  `python/ontology_rgat/landing/common_observation.py` (2026-10-07,
+  dimension-generic, instantiated for 3D). P_t: every registered board marker
+  in a FIXED id slot (profile order, 17 on v11/v12), its four image corners in
+  the detector's own order normalized by image size, a per-marker detection
+  mask, the frame's capture stamp and `frame_valid` (frame <= 0.5 s old).
+  D_t: own fused navigation state, 3D = ENU position, velocity, roll/pitch/yaw
+  sin/cos, body rate (15). H_t: previous K=2 (P, D) records plus the last
+  record with any detection; records are (P, D) only, never a previous O.
+  No estimate, tracker std, predicted bearing, descent permission or abort
+  flag enters it. `vector()` exposes ages, not stamps (687 values at M=17).
+  Sources: the local backend projects the same board through the same mount
+  and delay (corner noise 0.5 px from a SEPARATE RNG, an assumption, not a
+  measurement; the existing stream is untouched and every contract snapshot
+  is byte-identical), and the Isaac detector publishes
+  `perception/marker_corners` (JSON per frame, also when empty), forwarded
+  untouched by the gateway as `extra.marker_corners` into
+  `Measurement.marker_corners_px`. Guard `tests/test_common_observation.py`
+  (the Isaac detector's own PnP recovers the true pose from local corners
+  with noise off). It is attached as `Observation.common` on rungs with a
+  deployed board and is NOT yet read by any arm: switching the three arms to
+  it needs the graph mapping, which the design leaves to the ontology stage.
+  The Isaac publish path is compile-checked only, not yet flown.
+- The MINIMAL-OBSERVATION contract (2026-10-07, user's redesign; design and all
+  numbers in `docs/MINIMAL_OBSERVATION_ROS_PIPELINE_KO.md` section 11) is a
+  SEPARATE contract, not a spatial-reference rung: observation
+  `minimal-landing-obs/2` = ArUco pad position (ENU, held on a miss with its
+  age) + EKF own position AND velocity (13 values), ontology
+  `minimal-landing-ontology/4` (13 nodes, 6 relations, schema hash pinned in
+  `tests/test_minimal_observation_pipeline.py`), pure code in
+  `python/ontology_rgat/minimal/`, ROS nodes in `ros2_ws/src/ontology_rgat_landing`
+  (interfaces `ontology_rgat_interfaces`). The supervisor reads the
+  observation only and calls the SAME `pad_loss` classifier as the ontology
+  (terminal occlusion vs lost; LOST is absorbing until re-detection; no
+  TERMINAL without a known pad velocity). `TrackingBias` (integral of the
+  track error) is REQUIRED: without it the integrating teacher's clones land
+  0-4 % for every arm, with it 71-98 % held out; the teacher without
+  integrals lands 0/24. Current ontology is `/5` (section 12 of the doc): the
+  pad VELOCITY is estimated in an own-displacement frame (a relative-velocity
+  slope lagged a manoeuvring vehicle by 0.4 m/s and caused every remaining
+  TERMINAL-off-pad call), sink is capped at 0.24 m/s below the 0.40 m terminal
+  entry, the hold permits a bounded view-recovery climb, the supervisor
+  subtracts a causal disturbance estimate. Teacher 192/192 local; aggressive-
+  gain stress grid 0 unsafe / 0 missed-pad in 1152; clones rgat 100 %, flat
+  100 %, vector 56-60 % (own position removed from its input: locally own_z
+  equalled height above the pad, a shortcut that does not exist in Isaac).
+  Isaac 19/19 SUCCESS across /4 and /5, including 3/3 with the ROS chain as
+  the actual control path (`tools/minimal_isaac_flight.py --control ros`).
+  Episodes are few: an integration pass, not a superiority claim; no PPO yet.
+  A recoverable PX4 link failsafe during the spatial entry hover is now an
+  EntryResetError (owned restart, same seed) -- it once ended a whole run.
+  Full pipeline: `tools/minimal_full_pipeline.py` (teacher -> BC -> PPO
+  `minimal/ppo.py` -> 48 held-out -> opt-in Isaac). First run
+  `results/minimal_pipeline_20261007`: graph arms are already at ceiling after
+  BC (~100 %) and PPO moved them 0 to -6 points; flat degraded DURING training
+  (best checkpoints at iterations 20-30) while R-GAT stayed stable; PPO DID
+  improve the vector arm (sampled 48-58 -> 63-88 %). Isaac 8/8 incl. ROS-chain
+  control; 27/27 for this contract. Three seeds: no superiority claim.
+  Round 2 (5 seeds, 2026-10-08, doc section 14) adds evaluation-only STRESS
+  scenarios (`minimal/stress.py`; never used to train, validate or select):
+  under strong wind / poor vision / combined the FLAT arm beats R-GAT by
+  13-17 points, beyond the seed spread -- the proposed relational arm is the
+  LESS robust reader of the same graph here -- and PPO (nominal-only) lowers
+  every graph arm's stress robustness; the vector arm is worst on fast_pad
+  (14 %) and best on poor_vision (71 %, above the teacher's 58 %), cause
+  unmeasured. Isaac 42/43 for this contract (one vector-arm timeout).
+  Diagnosed (doc section 15, `tools/minimal_stress_diagnostics.py`): under
+  stress the decision/loss nodes leave the nominal band (LandingInhibit /
+  TargetLost ~20 % under poor vision) and R-GAT is 2.5-3.5x more sensitive
+  than flat to exactly those nodes, so message passing AMPLIFIES the shift;
+  the vector arm lacks pad velocity (fails fast pads) and is calmer than the
+  teacher under poor vision, where the teacher itself is not optimal.
+  Domain-randomized training (`--train-scenario dr`, validation/selection
+  still nominal) confirms it: R-GAT gains +12 to +23 points under wind/poor
+  vision and the gap to flat mostly closes; the vector arm loses 14-33 points;
+  `combined` stays 10-14 % for all arms with 5-7.5 % unsafe. Isaac 50/51.
 - The active spatial contract is `spatial-reference/12` (`REFERENCE_SCHEMA`,
   2026-10-07, profile v12, no legs). It is `/11` plus ONE law, the HANDOVER
   THRUST FLOOR: applied vertical acceleration >= 0 for the 2 s handover
@@ -604,7 +680,34 @@ The v1 config remains an explicit historical experiment; Isaac/PX4 remains
   and log_std, use real train-only PPO plus validation-only scale selection,
   record extra steps, and retain the anchor if no scale passes. Nonzero weights
   or residuals alone are not evidence of superiority.
-- Bare `run.sh` RUNS the whole local pipeline (`tools/run_full_pipeline.py`):
+- **Bare `./run.sh` (no arguments, or options only) now runs the WHOLE
+  minimal-observation system** (user decision 2026-10-08,
+  `scripts/run_minimal_system.sh`, doc section 16.3): build the two ROS
+  packages in the ASCII workspace `~/.local/share/ontology_rgat_uav_rl/minimal_ws`,
+  then `tools/minimal_full_pipeline.py` teacher -> BC -> PPO -> 48 held-out ->
+  stress -> Isaac/PX4 (in-process and ROS-chain control), DR training and five
+  seeds by default, run root `results/minimal_system_<ontology schema>`
+  (resumes; a contract change starts fresh). It flies only when Isaac, ROS and
+  the px4_msgs workspace are present and NO Isaac is already running; it never
+  takes over. `--no-isaac` and `--dry-run` never touch a stack. Guard
+  `tests/test_run_sh_system_route.py`. The paragraph below now describes
+  `./run.sh all`, which is unchanged.
+  Contract is `minimal-landing-ontology/6` (section 16): the terminal commit's
+  lateral is flown by the supervisor (velocity match + dead reckoning +
+  disturbance cancellation; the 0.5 m/s^2 policy cap lost to crosswinds), the
+  pad-velocity window is 0.7 s with a 0.2 s span, and the teacher is kp 0.6 /
+  kd 1.1 with the velocity boost only on fresh detections (a boost on a stale
+  estimate was why a calmer clone out-landed it under poor vision). Teacher on
+  seeds 5000-5095: combined 15.6 -> 51.0 %, poor vision 62.5 -> 84.4 %.
+  DAgger (`./run.sh --dagger-rounds 2`, `results/minimal_system_ontology-6_dagger`,
+  doc 16.5): the VECTOR arm after PPO goes 62.5 +- 10.3 -> 89.2 +- 4.6 % nominal
+  (worst DAgger seed above best non-DAgger seed), so most of its gap to the graph
+  arms was imitation distribution shift, not missing pad velocity; fast_pad still
+  54.6 vs 89-92 %. Graph arms gain nothing (already at ceiling). Isaac 8/8, 66/67
+  for this contract. The driver's BC stage is done only when the clone tool's
+  `summary.json` exists: DAgger overwrites .pt files per round, and a run killed
+  mid-round once left all 15 present and half stale.
+- `./run.sh all` RUNS the spatial-reference local pipeline (`tools/run_full_pipeline.py`):
   behaviour-clone the teacher, train one cell per exploration/objective control
   from those same clones, evaluate, and write `summary.json`. It is
   long-running and writes under `results/`. It is resumable -- a stage whose

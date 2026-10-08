@@ -1,0 +1,13 @@
+schema: matlab-direct-planar/1
+dimension: 2
+observation: matlab-planar-observation/1
+graph: matlab-minimal-observation-rgat-v3/2d
+action: [a_x, a_z]
+action_max_m_s2: [2.5, 2.0]
+reward: matlab-reward-v5/1
+termination: matlab-direct-termination/1
+training: matlab-direct-ppo-v1/1
+source_sha: ce2a3e5e5d8e9a95158e599a8730fe0307287ece
+backend: local
+control_profile: direct
+

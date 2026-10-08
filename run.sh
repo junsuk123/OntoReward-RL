@@ -28,6 +28,7 @@ case "$1" in
     echo '  ./run.sh reference --stage train|evaluate|aggregate|tune|all [options]'
     echo '  ./run.sh status'
     echo '  ./run.sh spatial --stage train|evaluate|isaac|all --output PATH [options]'
+    echo '  ./run.sh matlab-port --stage audit|parity|smoke|train|evaluate|report [options]'
     echo '  ./run.sh isaac-legacy [existing flight options]'
     echo 'Reference = two_axis_reference_v28_active.yaml, local dynamics, no Isaac/PX4.'
     echo 'Isaac legacy = planar_three_arm_comparison.yaml; NOT reference-equivalent.'
@@ -61,12 +62,16 @@ case "$1" in
     shift
     exec python3 "$project_root/python/run_spatial_pipeline.py" "$@"
     ;;
+  matlab-port)
+    shift
+    exec python3 "$project_root/python/run_matlab_port.py" "$@"
+    ;;
   isaac-legacy)
     shift
     exec bash "$project_root/scripts/run_isaac_legacy_entry.sh" "$@"
     ;;
   *)
-    echo 'Select system, all, reference, reference-smoke, spatial, status, or isaac-legacy. See ./run.sh --help.' >&2
+    echo 'Select system, all, reference, reference-smoke, spatial, matlab-port, status, or isaac-legacy. See ./run.sh --help.' >&2
     exit 2
     ;;
 esac

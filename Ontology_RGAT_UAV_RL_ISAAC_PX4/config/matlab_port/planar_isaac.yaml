@@ -1,0 +1,13 @@
+schema: matlab-direct-planar-isaac/1
+dimension: 2
+observation: matlab-planar-observation/1
+graph: matlab-minimal-observation-rgat-v3/2d
+action: [a_x, a_z]
+action_embedding_enu: [a_x, 0, a_z]
+action_max_m_s2: [2.5, 2.0]
+reward: matlab-reward-v5/1
+termination: matlab-direct-termination/1
+backend: isaac-explicit-opt-in
+control_profile: direct
+independent_controls: [y_hold, yaw_hold]
+

@@ -1,0 +1,11 @@
+schema: spatial-direct-v1/1
+dimension: 3
+observation: spatial-direct-observation/1
+graph: matlab-minimal-observation-rgat-v3/3d
+action: [a_x, a_y, a_z]
+action_max_m_s2: [2.5, 2.5, 2.0]
+reward: matlab-reward-v5/1-spatial-extension
+termination: matlab-direct-termination/1-spatial-extension
+backend: local
+control_profile: direct
+yaw_control: independent-fixed-heading

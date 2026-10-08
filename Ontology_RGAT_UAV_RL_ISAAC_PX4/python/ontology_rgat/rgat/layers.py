@@ -205,6 +205,7 @@ class RelationalGraphAttention(nn.Module):
 
     # --------------------------------------------------------------- forward
     def forward(self, H: torch.Tensor, *, relation_gates: torch.Tensor | None = None,
+                edge_weights: torch.Tensor | None = None,
                 return_attention: bool = False):
         if H.dim() == 2:
             H = H.unsqueeze(0)
@@ -256,6 +257,23 @@ class RelationalGraphAttention(nn.Module):
             if gates.shape[0] == 1 and B != 1:
                 gates = gates.expand(B, -1)
             weighted = weighted * gates[:, top.rel].unsqueeze(1).unsqueeze(-1)
+        if edge_weights is not None:
+            # Per-edge counterpart of the relation gates: a conditional
+            # relation is weakened in place, so the graph keeps its shape.
+            # Applied after the softmax, like the gates, so weight 0 removes the
+            # message without renormalising the remaining edges.
+            weights = torch.as_tensor(edge_weights, dtype=weighted.dtype,
+                                      device=weighted.device)
+            if weights.shape[-1] != E:
+                raise ValueError(
+                    f"edge weights must have width {E}, got {weights.shape[-1]}")
+            weights = weights.reshape(-1, E)
+            if weights.shape[0] not in (1, B):
+                raise ValueError(
+                    "edge weights must have one row or one row per graph")
+            if weights.shape[0] == 1 and B != 1:
+                weights = weights.expand(B, -1)
+            weighted = weighted * weights.unsqueeze(1).unsqueeze(-1)
         out = torch.zeros(B, Hd, N, U, dtype=weighted.dtype, device=weighted.device)
         out.index_add_(2, top.dst, weighted)
 

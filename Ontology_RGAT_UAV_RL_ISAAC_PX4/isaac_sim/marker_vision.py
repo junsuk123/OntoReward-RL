@@ -196,11 +196,16 @@ class MarkerObservation:
     reprojection_px: float
     marker_pixels: float                  # side of the largest tag, in pixels
     marker_ids: tuple[int, ...] = ()
+    #: {board marker id: (4, 2) pixel corners in the detector's order}, for
+    #: every registered tag the detector found -- kept even when the pose
+    #: solve fails, because the common observation records what was seen,
+    #: not whether a pose could be built from it.
+    marker_corners_px: dict = None
 
     @classmethod
-    def missed(cls) -> "MarkerObservation":
+    def missed(cls, corners=None) -> "MarkerObservation":
         return cls(False, np.zeros(3), np.array([1.0, 0.0, 0.0, 0.0]),
-                   0.0, float("nan"), 0.0, ())
+                   0.0, float("nan"), 0.0, (), dict(corners or {}))
 
 
 def _detector_parameters() -> "cv2.aruco.DetectorParameters":
@@ -293,15 +298,16 @@ class MarkerPoseEstimator:
             sides.append(np.sqrt(abs(cv2.contourArea(quad.astype(np.float32)))))
         if not seen:
             return MarkerObservation.missed(), markers, None
+        corners = {marker_id: quad.copy() for quad, marker_id in zip(image_points, seen)}
 
         object_points = np.concatenate(object_points, axis=0)
         image_points = np.concatenate(image_points, axis=0)
         pose = self._solve(object_points, image_points)
         if pose is None:
-            return MarkerObservation.missed(), markers, None
+            return MarkerObservation.missed(corners), markers, None
         rvec, tvec, reprojection = pose
         observation = self._observation(
-            rvec, tvec, reprojection, max(sides), tuple(sorted(seen)))
+            rvec, tvec, reprojection, max(sides), tuple(sorted(seen)), corners)
         return observation, markers, (rvec, tvec)
 
     def _annotate(self, rgb: np.ndarray, observation: MarkerObservation,
@@ -409,7 +415,8 @@ class MarkerPoseEstimator:
         return float(np.mean(np.linalg.norm(
             projected.reshape(-1, 2) - image_points, axis=1)))
 
-    def _observation(self, rvec, tvec, reprojection, side_px, seen) -> MarkerObservation:
+    def _observation(self, rvec, tvec, reprojection, side_px, seen,
+                     corners=None) -> MarkerObservation:
         r_optical_from_pad, _ = cv2.Rodrigues(rvec)
         r_pad_from_optical = r_optical_from_pad.T
         camera_in_pad = (-r_pad_from_optical @ tvec).reshape(3)
@@ -423,6 +430,7 @@ class MarkerPoseEstimator:
             reprojection_px=reprojection,
             marker_pixels=float(side_px),
             marker_ids=seen,
+            marker_corners_px=dict(corners or {}),
         )
 
     def _quality(self, reprojection_px: float, side_px: float, count: int) -> float:

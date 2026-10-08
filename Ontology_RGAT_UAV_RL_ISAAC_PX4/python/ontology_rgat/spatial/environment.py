@@ -164,6 +164,26 @@ class Evaluator:
 
 
 _BOARD_CACHE: dict = {}
+_BOARD_ID_CACHE: dict = {}
+
+
+def deployed_board_ids(cfg):
+    """Registered marker ids of the deployed board, in the profile's order.
+
+    This order is the common observation's fixed slot order; it never changes
+    with what a frame happens to detect.
+    """
+    if cfg.schema not in _BOARD_ID_CACHE:
+        from .runtime_contract import deployment_profile
+        board = deployment_profile(cfg.schema)["resolved_scientific_configuration"]["vision"]["board"]
+        _BOARD_ID_CACHE[cfg.schema] = tuple(int(m["id"]) for m in board)
+    return _BOARD_ID_CACHE[cfg.schema]
+
+
+#: Corner localisation noise of the local detector model, pixels (1 sigma).
+#: An assumption, not a measurement: Isaac's corner error is whatever its
+#: renderer and cv2 sub-pixel refinement produce, and no trace records it.
+LOCAL_CORNER_NOISE_PX = 0.5
 
 
 def deployed_board(cfg):
@@ -285,6 +305,11 @@ class LocalBackend:
         self.camera_time = -math.inf
         self.optical_position = None
         self.optical_confidence = 0.0
+        self.optical_corners = None
+        self.optical_corner_time = None
+        # A SEPARATE stream for corner noise, so adding the common observation
+        # moves no draw of the established sensor/plant stream.
+        self.corner_rng = np.random.default_rng([int(seed), 0xC0])
         # Actuation latency (/3): commands arrive at the plant after
         # cfg.actuation_delay_s. Until the first one lands the vehicle keeps
         # the hover it was handed over in, as the entry hover does in Isaac.
@@ -325,8 +350,10 @@ class LocalBackend:
                 confidence = .98 if visible else 0.
             self.camera_time = self.t
             self.camera_sequence += 1
+            corners = (self._marker_corners(r, q, visible)
+                       if self.board is not None else None)
             frame = (self.camera_sequence,self.t,r+noise if visible else None,
-                     confidence,self.position.copy(),q.copy())
+                     confidence,self.position.copy(),q.copy(),corners)
             if self.cfg.reference_context and self.t > 0:
                 self.camera_pending.append(frame)
             else:
@@ -348,11 +375,61 @@ class LocalBackend:
             self.optical_capture_time if self.cfg.reference_context else None,
             self.optical_own_position.copy() if self.cfg.reference_context else None,
             self.optical_quaternion.copy() if self.cfg.reference_context else None,
+            self.optical_corners,
+            self.optical_corner_time,
         )
 
     def _receive_camera(self, frame):
         (self.sensor_id,self.optical_capture_time,self.optical_position,
-         self.optical_confidence,self.optical_own_position,self.optical_quaternion)=frame
+         self.optical_confidence,self.optical_own_position,self.optical_quaternion,
+         self.optical_corners)=frame
+        self.optical_corner_time = (None if self.optical_corners is None
+                                    else self.optical_capture_time)
+
+    def _marker_corners(self, r, q, visible):
+        """{marker id: (4, 2) pixel corners} of every decodable board tag.
+
+        Corners in the detector's own order (marker_vision.BoardMarker): from
+        the marker image's top-left clockwise, image "up" along pad +Y. A tag
+        counts when its padded quad (the white quiet zone) projects fully into
+        the 640x480 frame at >= 12 px, the rule the local confidence already
+        uses, and only in a frame the local detector did not miss. Noise is
+        drawn for every registered tag every frame so the stream does not
+        depend on geometry.
+        """
+        from .core import REFERENCE_OPTICAL_IMAGE_PX, REFERENCE_OPTICAL_MIN_TAG_PX
+        from scipy.spatial.transform import Rotation
+        width, height = REFERENCE_OPTICAL_IMAGE_PX
+        fx = (width / 2) / math.tan(self.cfg.fov[0] / 2)
+        body_from_world = Rotation.from_quat(np.asarray(q)[[1, 2, 3, 0]]).inv()
+        noise = self.corner_rng.normal(0.0, LOCAL_CORNER_NOISE_PX, (len(self.board), 4, 2))
+        ids = deployed_board_ids(self.cfg)
+
+        def project(points):
+            body = body_from_world.apply(points - r)          # pad points from the body
+            optical = (body - np.array([0, 0, -0.16])) * np.array([1, -1, -1])
+            if np.any(optical[:, 2] <= 1e-6):
+                return None
+            return np.column_stack([width / 2 + fx * optical[:, 0] / optical[:, 2],
+                                    height / 2 + fx * optical[:, 1] / optical[:, 2]])
+        out = {}
+        if not visible:
+            return out
+        for k, (tx, ty, side) in enumerate(self.board):
+            def square(s):
+                h = s / 2
+                return np.array([[tx - h, ty + h, 0.0], [tx + h, ty + h, 0.0],
+                                 [tx + h, ty - h, 0.0], [tx - h, ty - h, 0.0]])
+            padded = project(square(side * 4.0 / 3.0))
+            quad = project(square(side))
+            if padded is None or quad is None:
+                continue
+            inside = (np.all(padded[:, 0] >= 0) and np.all(padded[:, 0] <= width - 1)
+                      and np.all(padded[:, 1] >= 0) and np.all(padded[:, 1] <= height - 1))
+            side_px = math.sqrt(abs(0.5 * np.cross(quad[2] - quad[0], quad[3] - quad[1])))
+            if inside and side_px >= REFERENCE_OPTICAL_MIN_TAG_PX:
+                out[int(ids[k])] = quad + noise[k]
+        return out
 
     def pad_state(self, t):
         """Exact CV–CA–CV trajectory, continuous in both position and velocity."""
@@ -522,13 +599,27 @@ class IsaacBackend:
         self.finished = True
 
     def reset(self, seed):
-        from ..bridge import EntryResetError
+        from ..bridge import EntryResetError, PX4Failsafe
         from .lifecycle import recover_refused_reset, prepare_isolated_episode
         if prepare_isolated_episode(seed=seed,release=self.bridge.close):
             self.__init__(self.cfg,pair=self.pair,scenario=self.scenario)
         while True:
             try:
-                return self._reset_once(seed)
+                try:
+                    return self._reset_once(seed)
+                except PX4Failsafe as failsafe:
+                    # Raised during the entry hover, before any policy step:
+                    # a gateway-classified link failsafe that outlived the
+                    # bridge's grace is an entry failure, the same
+                    # infrastructure outcome EntryResetError names, so it uses
+                    # the same owned-restart budget and same-seed retry. A hard
+                    # failsafe (battery, estimator, geofence) still propagates.
+                    # Measured 2026-10-07: one such failsafe ended a whole
+                    # minimal-contract Isaac run at its fifth entry.
+                    if not failsafe.recoverable:
+                        raise
+                    raise EntryResetError(
+                        f"pre-policy link failsafe did not clear: {failsafe}") from failsafe
             except EntryResetError as exc:
                 def release():
                     # The owned stack takes responsibility for stopping SITL.
@@ -758,9 +849,28 @@ class SpatialLandingEnv:
         self.safety = (safety_status(self.estimator, self.task_cfg) if self.supervisor is None
                        else self.supervisor.status(self.estimator, self.task_cfg))
         self.done = False
-        return observation(self.estimator, self.safety, 0.0, self.cfg), {
+        self.common_builder = None
+        if self.cfg.optical_realism:
+            from ..landing.common_observation import CommonObservationBuilder
+            from .core import REFERENCE_OPTICAL_IMAGE_PX
+            self.common_builder = CommonObservationBuilder(
+                deployed_board_ids(self.cfg), REFERENCE_OPTICAL_IMAGE_PX)
+        return self._with_common(observation(self.estimator, self.safety, 0.0, self.cfg)), {
             "backend": self.backend.name
         }
+
+    def _with_common(self, obs):
+        """Attach O_t built from the latest allowlisted Measurement only."""
+        if self.common_builder is None:
+            return obs
+        from ..landing.common_observation import drone_state_3d
+        m = self.estimator.own
+        pad = self.common_builder.pad_observation(
+            m.marker_corners_px, m.marker_capture_time_s, m.time_s)
+        drone = drone_state_3d(m.own_position, m.own_velocity, m.quaternion,
+                               m.angular_rate, m.time_s)
+        self.common_observation = self.common_builder.observe(pad, drone)
+        return replace(obs, common=self.common_observation)
 
     def step(self, action):
         if self.done:
@@ -872,8 +982,11 @@ class SpatialLandingEnv:
             # Own commanded acceleration, for the causal disturbance observer.
             # It is what the vehicle asked for, not what the world did.
             est.observe_actuation(command.acceleration_enu_m_s2)
+        obs = self._with_common(observation(est, self.safety, elapsed, self.cfg))
+        if self.common_builder is not None:
+            info["common_markers_detected"] = int(np.sum(obs.common.pad.detected_mask))
         return (
-            observation(est, self.safety, elapsed, self.cfg),
+            obs,
             reward,
             self.done,
             False,

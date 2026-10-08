@@ -1,0 +1,13 @@
+# Static TBox of the landing ontology. Called once by every graph subscriber
+# at startup; the returned schema_hash must equal SemanticGraph.schema_hash.
+---
+string schema_id
+string schema_hash
+string observation_schema_id        # LandingObservation.schema_id this graph is built from
+string[] node_names
+string[] node_classes
+string[] relation_names
+string[] feature_channels
+uint16[] edge_source
+uint16[] edge_target
+uint8[] edge_relation

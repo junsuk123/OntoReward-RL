@@ -1531,6 +1531,10 @@ class LandingWorld:
             (CONFIG.get("vision") or {}).get("operator_overlay", True))
         self.marker_pub = node.create_publisher(Float32, ns + "/perception/marker_quality", 10)
         self.pad_pose_pub = node.create_publisher(PoseStamped, ns + "/perception/uav_pose_in_pad", 10)
+        # Common-observation input: every registered tag's four pixel corners,
+        # one JSON message per rendered frame (also when nothing was seen).
+        self.marker_corners_pub = node.create_publisher(
+            String, ns + "/perception/marker_corners", 10)
         # Training-label-only: the simulator's pad-relative UAV pose, stamped
         # with the frame it belongs to, so keypoint supervision can project the
         # known landmarks. Never consumed by the actor, the reward or the
@@ -2423,8 +2427,10 @@ class LandingWorld:
         to the PX4 estimate.
         """
         observation = self.camera.observe()
-        self._publish_actor_camera(stamp)
+        self._publish_actor_camera(self._spatial_capture_stamp(stamp))
         self._publish_annotated_camera(stamp)
+        if observation is not None:
+            self._publish_marker_corners(observation)
         marker = Float32()
         if observation is None or not observation.detected:
             marker.data = 0.0
@@ -2471,6 +2477,46 @@ class LandingWorld:
         pose.pose.orientation.y = float(qy)
         pose.pose.orientation.z = float(qz)
         self.pad_pose_pub.publish(pose)
+
+    def _spatial_capture_stamp(self, stamp):
+        """The frame's renderer acquisition time (sim seconds) on the spatial route.
+
+        The raw frame feeds an external detector (the minimal-observation
+        ``aruco_pad_detector``), whose output must carry the time the pixels
+        were captured, exactly as ``uav_pose_in_pad`` already does; the publish
+        time would hide the transport delay. Same timebase as
+        ``simulation/clock``. Elsewhere (planar, keypoint) the stamp is unchanged.
+        """
+        if (self.spatial_clock_pub is None
+                or not CONFIG['isaac'].get('spatial_optical_capture_timing', False)):
+            return stamp
+        capture = getattr(self.camera, "capture_time_s", None)
+        if capture is None or not math.isfinite(float(capture)) or capture < 0:
+            return stamp
+        capture_ns = int(round(float(capture) * 1e9))
+        out = type(stamp)()
+        out.sec, out.nanosec = capture_ns // 1000000000, capture_ns % 1000000000
+        return out
+
+    def _publish_marker_corners(self, observation) -> None:
+        """Per-marker pixel corners of this frame, stamped with its capture.
+
+        Detector output only (no truth, no pose): ``markers`` maps a board id
+        to its four corners in the detector's order. A frame with no tag
+        publishes an empty map, so "seen nothing" differs from "no frame".
+        """
+        capture = getattr(self.camera, "capture_time_s", None)
+        if capture is None or not math.isfinite(float(capture)) or capture < 0:
+            return
+        payload = {
+            "capture_time_s": float(capture),
+            "image_size": [int(self.camera.width), int(self.camera.height)],
+            "markers": {str(int(k)): np.asarray(v, dtype=float).round(3).tolist()
+                        for k, v in (observation.marker_corners_px or {}).items()},
+        }
+        message = String()
+        message.data = json.dumps(payload, separators=(",", ":"))
+        self.marker_corners_pub.publish(message)
 
     def _publish_keypoint_perception(self, stamp) -> None:
         """Publish the actor frame plus its training-only geometric labels.

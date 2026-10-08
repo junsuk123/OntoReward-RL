@@ -802,6 +802,9 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             self.create_subscription(Float32, _landing_topic(
                                      cfg, "/landing_uav0/perception/marker_quality", "uav/perception/marker_quality"),
                                      self._on_marker_quality, sensor_qos)
+            self.create_subscription(String, _landing_topic(
+                                     cfg, "/landing_uav0/perception/marker_corners", "uav/perception/marker_corners"),
+                                     self._on_marker_corners, sensor_qos)
             self.create_subscription(Bool, _landing_topic(
                                      cfg, "/landing_uav0/perception/pad_contact", "uav/perception/pad_contact"),
                                      self._on_pad_contact, sensor_qos)
@@ -1950,6 +1953,27 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             self.sample.aero_force_enu = (float(msg.vector.x), float(msg.vector.y), float(msg.vector.z))
             self.sample.extra["aero_force_source"] = "simulator_truth"
 
+        def _on_marker_corners(self, msg) -> None:
+            """Forward the detector's per-marker corners untouched.
+
+            The gateway does not interpret, filter or fuse them; the learner's
+            common observation decides freshness against its own clock.
+            """
+            try:
+                payload = json.loads(msg.data)
+                capture = float(payload["capture_time_s"])
+            except (ValueError, KeyError, TypeError):
+                return
+            if not math.isfinite(capture) or capture < 0:
+                return
+            previous = getattr(self, "marker_corners", None)
+            if previous is not None and capture <= previous["capture_time_s"]:
+                return  # one rendered frame is one observation
+            self.marker_corners = {"capture_time_s": capture,
+                                   "image_size": payload.get("image_size"),
+                                   "markers": payload.get("markers") or {}}
+            self.marker_corners_received_ns = now_ns()
+
         def _on_marker_quality(self, msg) -> None:
             self.sample.marker_quality = float(np.clip(msg.data, 0.0, 1.0))
 
@@ -2648,6 +2672,11 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                     capture_time_s=self.optical_capture_time_s,
                     own_position_at_capture_m=self.optical_capture_own_position,
                     own_quaternion_at_capture_wxyz=self.optical_capture_own_quaternion)
+            corners = getattr(self, "marker_corners", None)
+            self.sample.extra['marker_corners'] = (
+                corners if corners is not None and
+                (stamp - getattr(self, "marker_corners_received_ns", 0)) * 1e-9
+                <= cfg.state_timeout_s else None)
             if ((stamp - self.sample.timestamp_ns) * 1e-9 > cfg.state_timeout_s):
                 self.sample.estimator_valid = False
             self._refresh_land_detector(stamp)

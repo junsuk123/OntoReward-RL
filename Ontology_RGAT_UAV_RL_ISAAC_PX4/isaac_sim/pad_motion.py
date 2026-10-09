@@ -889,7 +889,8 @@ class PadTrajectory:
         return position, np.zeros(3, dtype=float)
 
     def reset(self, seed: int, sim_time: float, speed_scale: float = 1.0,
-              scenario: str = "training_random_walk") -> dict[str, Any]:
+              scenario: str = "training_random_walk", *,
+              hard_reset: bool = False) -> dict[str, Any]:
         """Draw this episode's deck motion from the episode seed.
 
         SPEED_SCALE multiplies the drawn speed, which is what an evaluation
@@ -899,6 +900,15 @@ class PadTrajectory:
         """
         rng = np.random.default_rng(int(seed) + 977)
         cfg = self.cfg
+        carry_route = bool(
+            cfg.route_start == "continue" and self._driven and not hard_reset)
+        if hard_reset:
+            # A cold episode is independent of every flight before it.  In
+            # particular, do not retain the direction bit used by the bounded
+            # straight-line shuttle or the open-route origin.  Keeping either
+            # is what made reset distance grow with episode count even though
+            # the learner supplied an independent seed.
+            self._segmented_cruise_reversed = False
         if scenario not in BENCHMARK_SCENARIOS:
             raise ValueError(f"unknown benchmark platform scenario {scenario!r}")
         if scenario in ('spatial_reference_cv_ca_cv', 'matlab_planar_cv_ca_cv'):
@@ -906,7 +916,7 @@ class PadTrajectory:
                 sample_planar_scenario, sample_spatial_scenario)
             if cfg.mode != 'random_walk' or float(speed_scale) != 1.:
                 raise ValueError('spatial reference motion needs random_walk mode and nominal scale 1')
-            origin = (np.asarray(self.pose(sim_time)[0],dtype=float) if self._driven and cfg.route_start=='continue'
+            origin = (np.asarray(self.pose(sim_time)[0],dtype=float) if carry_route
                       else self.start+np.array([0.,0.,cfg.deck_height_m]))
             self.spatial_motion = (sample_planar_scenario(seed)
                                    if scenario == 'matlab_planar_cv_ca_cv'
@@ -943,7 +953,7 @@ class PadTrajectory:
         # episode continue the same lap. The draw still happens either way, so
         # the seed consumes identically and a paired sweep stays paired.
         on_closed_track = scenario in CLOSED_TRACK_SCENARIOS
-        carried_track = cfg.route_start == "continue" and self._driven
+        carried_track = carry_route
         if on_closed_track and carried_track:
             self.track_phase_m = self.track_phase_at(sim_time)
         else:
@@ -953,7 +963,7 @@ class PadTrajectory:
         # Drawn either way, so the two modes consume the seed identically and a
         # sweep stays paired across them.
         seeded_s0 = float(rng.uniform(0.0, self.route.perimeter))
-        self.s0 = carried if cfg.route_start == "continue" else seeded_s0
+        self.s0 = carried if carry_route else seeded_s0
         self.stop_phase = float(rng.uniform(0.0, cfg.stop_interval_s))
         # A short cycle of stop depths, indexed modulo its length: the lorry
         # meets a different light each time without the profile needing an
@@ -970,8 +980,7 @@ class PadTrajectory:
         # in -- including a lane change it has already made. Redrawing this
         # would slide the deck sideways by up to a full lane width under
         # whatever is parked on its roof.
-        self.lane_base = (carried_lane if cfg.route_start == "continue"
-                          and self._driven else seeded_lane)
+        self.lane_base = carried_lane if carry_route else seeded_lane
         # Late enough that the smooth step is still flat at t = 0, so the
         # lateral position is continuous across the reset as well.
         self.lane_change_at = float(rng.uniform(6.0, 30.0))
@@ -983,11 +992,11 @@ class PadTrajectory:
         if cfg.mode == "waypoints":
             self.waypoint_phase = (
                 self._waypoint_phase_for(*carried_waypoint)
-                if cfg.route_start == "continue" and self._driven
+                if carry_route
                 else self._waypoint_phase_for(
                     self.initial_waypoint_distance, 1.0)
             )
-        if cfg.route_start == "continue" and self._driven:
+        if carry_route:
             # Advance the phase by the time that has passed, so the wander picks
             # up exactly where it was rather than snapping back to its own t=0.
             self.wander_phase = float(
@@ -999,7 +1008,7 @@ class PadTrajectory:
         # Read before t0 moves and before the track is rebuilt: this is where
         # the deck actually stands right now.
         carried_offset = (np.asarray(self.pose(sim_time)[0], dtype=float)
-                          - self.start if self._driven else np.zeros(3))
+                          - self.start if carry_route else np.zeros(3))
         self.t0 = float(sim_time)
         self._driven = True
         self._yaw_initialised = False
@@ -1014,7 +1023,7 @@ class PadTrajectory:
             # route: leave the deck where it stands rather than teleporting it
             # under whatever is parked on its roof. Only the horizontal anchor
             # carries; height is re-derived from the start and the deck height.
-            if cfg.route_start == "continue":
+            if carry_route:
                 self.random_walk_origin = np.array(
                     [carried_offset[0], carried_offset[1], 0.0])
                 # Leaving the deck where it stands turns the episode sequence

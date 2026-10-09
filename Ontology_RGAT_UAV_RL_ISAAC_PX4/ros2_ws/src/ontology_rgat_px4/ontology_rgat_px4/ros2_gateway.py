@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 from contextlib import contextmanager
-from dataclasses import replace
+from dataclasses import dataclass, replace
 import json
 import math
 from pathlib import Path
@@ -415,6 +415,26 @@ class ContinuousPx4Clock:
         return int(self.logical_time_us), False
 
 
+@dataclass
+class ColdResetReadiness:
+    """Require sustained fresh EKF output before reset can reach the learner."""
+
+    generation: int
+    acknowledged_at: float
+    minimum_settle_s: float = 1.0
+    minimum_valid_odometry: int = 3
+    valid_odometry: int = 0
+
+    def observe(self, estimator_valid: bool, now: float) -> bool:
+        if estimator_valid:
+            self.valid_odometry += 1
+        else:
+            self.valid_odometry = 0
+        return bool(
+            self.valid_odometry >= self.minimum_valid_odometry
+            and float(now) - self.acknowledged_at >= self.minimum_settle_s)
+
+
 def px4_direct_acceleration_input(net_acceleration_enu):
     """Invert this PX4 PositionControl::_accelerationControl thrust mapping.
 
@@ -646,6 +666,8 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             self.px4_clock = ContinuousPx4Clock()
             self.pending_reset_seq = -1
             self.pending_reset_peer: tuple[str, int] | None = None
+            self.cold_reset_readiness: ColdResetReadiness | None = None
+            self.cold_reset_payload: dict[str, Any] | None = None
             self.pad_position_enu: np.ndarray | None = None
             self.pad_pose_time_ns = 0
             self.optical_capture_time_s = None
@@ -1066,6 +1088,10 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                 self.last_command_seq = seq
                 self.pending_reset_seq = seq
                 self.pending_reset_peer = self.udp.peer
+                # No state from the previous EKF may satisfy a reset. Isaac's
+                # acknowledgement either starts the cold-readiness gate below
+                # or follows the legacy immediate path for older worlds.
+                self.sample.estimator_valid = False
                 # ``finish_episode`` installs this bounded pad-relative hold.
                 # Keep it streaming until the freshly seeded entry goto
                 # replaces it.  Clearing the target while the photoreal scene
@@ -1083,19 +1109,15 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                 if self.sample.landed or not self.sample.armed:
                     self._vehicle_command(VehicleCommand.VEHICLE_CMD_COMPONENT_ARM_DISARM, 0.0)
                 elif cfg.start_airborne:
-                    # The controlled benchmark ends one airborne episode by
-                    # flying a bounded position hold. Keep that continuous
-                    # flight state: AUTO.LAND cannot be cancelled reliably
-                    # enough to establish the next entry pose inside its reset
-                    # deadline, and every measured episode begins only after
-                    # the following goto has settled at an airborne hover.
+                    # Keep the bounded hold alive until Isaac receives the
+                    # request and stops PX4. The subsequent pose reset happens
+                    # only while that estimator is offline.
                     self.get_logger().info(
-                        "reset while airborne; retaining flight for next entry hover")
+                        "reset while airborne; holding until cold PX4 reset")
                 else:
-                    # Cutting power to an airborne vehicle used to be harmless
-                    # because Isaac teleported it anyway. It no longer does, so
-                    # a reset mid-flight has to be a commanded landing; the
-                    # climb that follows simply takes control back.
+                    # A non-airborne-start profile remains conservative while
+                    # the reset request crosses DDS; Isaac stops PX4 before it
+                    # moves the body.
                     self._vehicle_command(VehicleCommand.VEHICLE_CMD_NAV_LAND)
                     self.get_logger().info(
                         "reset while airborne; commanded landing instead of disarm")
@@ -1355,8 +1377,8 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             self.offboard_pub.publish(mode)
 
         def _publish_position_setpoint(self) -> None:
-            # PX4 flies the episode entry pose itself: no teleport, so the
-            # estimator never sees a jump it cannot explain.
+            # The vehicle was repositioned only while the previous PX4 was
+            # offline. This fresh estimator flies the drawn entry pose itself.
             # Chasing a moving deck with a position-only setpoint costs a
             # standing lag of v_deck / MPC_XY_P, which is most of the entry
             # tolerance at full platform speed. Feed the deck's own velocity
@@ -1631,6 +1653,7 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                 # instead of reporting a stale target as if it were live.
                 and (cfg.pad_is_static or deck_fresh)
             )
+            self._observe_cold_reset()
             self.sample.extra["position_source"] = (
                 "vision_imu_fused" if use_pad_pose else "imu_dr_gnss_bounded")
             self.sample.extra["position_fusion_residual_m"] = float(
@@ -2589,19 +2612,113 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                 return
             if seq == self.pending_reset_seq:
                 peer = self.pending_reset_peer
+                if (payload.get("reset_contract") == "isaac-px4-ekf-cold/1"
+                        and bool(payload.get("hard_reset", False))):
+                    self._begin_cold_reset(payload)
+                    self.get_logger().info(
+                        "Isaac reset complete; waiting for fresh PX4/EKF "
+                        f"boot {int(payload['px4_boot_generation'])}")
+                    return
                 self.pending_reset_seq = -1
                 self.pending_reset_peer = None
-                # Isaac draws the episode's starting reserve from the same seed
-                # as the entry pose, so energy is reproducible with the rest of
-                # the initial condition rather than being a second RNG.
-                hover_s = payload.get("battery_hover_seconds")
-                if hover_s is not None and math.isfinite(float(hover_s)):
-                    self.pending_battery_hover_s = float(hover_s)
-                self.battery.reset(self.pending_battery_hover_s)
-                self.battery_armed = False
-                self.battery_time_us = 0
-                self.sample.battery = self.battery.sample()
-                self._send_ack(seq, "reset_complete", payload, peer=peer)
+                self._finish_reset_ack(seq, payload, peer)
+
+        def _reset_episode_navigation_state(self) -> None:
+            """Drop every PX4-derived value from the preceding boot."""
+            self.sample = VehicleSample()
+            self.sample.extra["reset_contract"] = "isaac-px4-ekf-cold/1"
+            self.action = (0.0, 0.0, 0.0, 0.0)
+            self.velocity_action = (0.0, 0.0, 0.0, 0.0)
+            self.last_velocity = None
+            self.last_velocity_ns = 0
+            self.px4_clock = ContinuousPx4Clock()
+            self.world_from_px4 = np.zeros(3)
+            self.world_origin_known = False
+            self.px4_world_position = None
+            self.pad_position_enu = None
+            self.pad_pose_time_ns = 0
+            self.pad_track_position = np.zeros(3)
+            self.pad_track_ns = 0
+            self._last_source_was_optical = None
+            self._last_policy_position = np.zeros(3)
+            self._source_offset = np.zeros(3)
+            self._source_offset_ns = 0
+            self.own_optical_history = OwnStateHistory()
+            self.estimator_healthy = False
+            self.estimator_health_ns = 0
+            self.px4_landed = False
+            self.land_detected_ns = 0
+            self.px4_failsafe = False
+            self.px4_failsafe_detail = {
+                "reasons": [], "battery_warning": 0,
+                "recoverable_infrastructure": False,
+                "attitude_failure": False,
+            }
+            self.reported_failsafe_signature = None
+            self.clock_skew_baseline_us = None
+            self.prestream = 0
+            self.offboard_requested = False
+            self.goto_target_enu = None
+            self.goto_pad_relative = False
+            self.velocity_position_target_enu = None
+            self.velocity_position_time_us = 0
+            self.last_action_ns = 0
+            self.last_action_px4_time_us = 0
+            self.pad_contact_raw = False
+            self.pad_contact_latched = False
+            self.pad_contact_armed_clear = False
+            self.pad_contact_ns = 0
+
+        def _begin_cold_reset(self, payload: dict[str, Any]) -> None:
+            generation = int(payload["px4_boot_generation"])
+            if generation < 1:
+                raise ValueError("cold reset PX4 generation must be positive")
+            self._reset_episode_navigation_state()
+            self.cold_reset_payload = dict(payload)
+            self.cold_reset_readiness = ColdResetReadiness(
+                generation=generation, acknowledged_at=time.monotonic())
+            # Seeded energy is reset at the physical reset boundary, not when
+            # the learner eventually receives its completion reply.
+            hover_s = payload.get("battery_hover_seconds")
+            if hover_s is not None and math.isfinite(float(hover_s)):
+                self.pending_battery_hover_s = float(hover_s)
+            self.battery.reset(self.pending_battery_hover_s)
+            self.battery_armed = False
+            self.battery_time_us = 0
+            self.sample.battery = self.battery.sample()
+
+        def _observe_cold_reset(self) -> None:
+            gate = self.cold_reset_readiness
+            if gate is None:
+                return
+            self.sample.extra["px4_boot_generation"] = int(gate.generation)
+            self.sample.extra["reset_contract"] = "isaac-px4-ekf-cold/1"
+            if not gate.observe(self.sample.estimator_valid, time.monotonic()):
+                return
+            payload = self.cold_reset_payload
+            if payload is None:
+                raise RuntimeError("cold reset readiness lost its acknowledgement")
+            seq, peer = self.pending_reset_seq, self.pending_reset_peer
+            self.pending_reset_seq = -1
+            self.pending_reset_peer = None
+            self.cold_reset_readiness = None
+            self.cold_reset_payload = None
+            self.get_logger().info(
+                f"fresh PX4/EKF boot {gate.generation} is valid; reset complete")
+            self._finish_reset_ack(seq, payload, peer)
+
+        def _finish_reset_ack(self, seq: int, payload: dict[str, Any], peer) -> None:
+            # Isaac draws the episode's starting reserve from the same seed as
+            # the entry pose, so energy is reproducible with the rest of the
+            # initial condition rather than being a second RNG.
+            hover_s = payload.get("battery_hover_seconds")
+            if hover_s is not None and math.isfinite(float(hover_s)):
+                self.pending_battery_hover_s = float(hover_s)
+            self.battery.reset(self.pending_battery_hover_s)
+            self.battery_armed = False
+            self.battery_time_us = 0
+            self.sample.battery = self.battery.sample()
+            self._send_ack(seq, "reset_complete", payload, peer=peer)
 
         def _send_ack(self, ack_seq: int, status: str, detail: Any = None,
                       peer: tuple[str, int] | None = None) -> None:

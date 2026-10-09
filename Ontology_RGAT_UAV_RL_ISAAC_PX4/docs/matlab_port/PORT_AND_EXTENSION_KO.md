@@ -50,9 +50,13 @@ parity, smoke, 별도 deterministic/sampled local evaluation 및 차원별 repor
 프로세스 내부에 남는다. 차원 비교가 필요하면 `--dimensions 2 3`을 명시하고,
 전체 이관 검증이 필요할 때만 `matlab-port-all`을 쓴다.
 
-최종 경로는 episode 사이에 PX4/EKF와 움직이는 pad 상태가 누적되지 않도록
-각 episode를 fresh owned stack에서 시작한다. `checkpoint_last.pt`는 PPO update마다
-저장된다. 중단 후 같은 run root를 계속할 때는 `--resume-training`을 명시한다.
+최종 경로는 하나의 Isaac world를 유지한다. 각 episode reset은 패드 궤적을 seed
+시작점으로 되돌리고, 기체 pose/속도와 센서를 초기화한 뒤 PX4를 새 rootfs/boot
+generation에서 재기동한다. 따라서 EKF, actuator, HIL clock과 이전 명령은 이어지지
+않는다. gateway가 새 EKF의 연속 유효 odometry를 확인한 뒤에만 learner에
+`reset_complete`를 반환한다. `--fresh-stack-per-episode`는 Isaac world 자체의 문제를
+분리할 때만 쓰는 명시적 fallback이다. `checkpoint_last.pt`는 PPO update마다 저장되며,
+중단 후 같은 run root를 계속할 때는 `--resume-training`을 명시한다.
 
 `matlab-port-all`의 기본값은 arm별 750 update,
 update당 sampled episode 6개, validation 100 seed, test 200 seed(3001--3200),

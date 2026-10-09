@@ -165,6 +165,31 @@ class TrainingSpec:
 
 
 @dataclass(frozen=True)
+class StableTrainingSpec(TrainingSpec):
+    """Opt-in Isaac recipe that keeps sampled rollouts physically reachable.
+
+    The source-parity profile above remains byte-for-byte representable.  This
+    profile is a new algorithm contract: it removes the random network's
+    vertical bias with a data-free analytic tracking prior, batches
+    complete episodes, lowers exploration noise and bounds every accepted
+    actor step by its post-update KL.  It uses no BC or DAgger data.
+    """
+    version: str = "matlab-direct-ppo-stable-v5/1"
+    episodes_per_update: int = 12
+    policy_lr: float = 2e-5
+    encoder_lr: float = 2e-5
+    entropy_weight: float = 0.0
+    initial_log_std: float = -4.0
+    minimum_log_std: float = -5.5
+    pretraining: bool = False
+    zero_last_layer_initialization: bool = True
+    analytic_tracking_prior: bool = True
+    target_kl: float = 0.02
+    enforce_target_kl: bool = True
+    maximum_log_std: float = -4.0
+
+
+@dataclass(frozen=True)
 class ScenarioManifest:
     version: str = "matlab-planar-scenario/1"
     base_seed: int = 20261002
@@ -290,43 +315,64 @@ SEMANTIC_EDGES = (
 )
 
 
-def graph_schema(dimension: int = 2) -> GraphSchema:
+def graph_schema(dimension: int = 2, *, tracking_bias: bool = False) -> GraphSchema:
     if dimension not in (2, 3):
         raise ValueError("dimension must be 2 or 3")
     features = (("primary", "signed", "secondary", "validity", "age", "typeId")
                 if dimension == 2 else
                 ("primary", "signed_x", "secondary_x", "signed_y", "secondary_y",
                  "validity", "age", "typeId"))
+    if tracking_bias:
+        features += (("tracking_bias_x",) if dimension == 2 else
+                     ("tracking_bias_x", "tracking_bias_y"))
     self_edges = tuple((node, node, "self") for node in NODES)
     return GraphSchema(
-        version=f"matlab-minimal-observation-rgat-v3/{dimension}d",
+        version=(f"matlab-minimal-observation-rgat-v4/{dimension}d"
+                 if tracking_bias else
+                 f"matlab-minimal-observation-rgat-v3/{dimension}d"),
         nodes=NODES, relations=RELATIONS, edges=SEMANTIC_EDGES + self_edges,
         feature_names=features, readout_groups=tuple((i,) for i in range(len(NODES))))
 
 
 def make_contract(dimension: int = 2, *, backend: str = "local",
-                  safety_profile: str = "direct") -> ContractBundle:
+                  safety_profile: str = "direct",
+                  training_profile: str = "source") -> ContractBundle:
     if dimension not in (2, 3):
         raise ValueError("dimension must be 2 or 3")
     if safety_profile not in ("direct", "shielded"):
         raise ValueError("safety_profile must be direct or shielded")
+    if training_profile not in ("source", "stable"):
+        raise ValueError("training_profile must be source or stable")
     fields = PLANAR_FIELDS if dimension == 2 else SPATIAL_FIELDS
+    if training_profile == "stable":
+        fields += ((ObservationField("tracking_bias_x", "integral(relative_x)", 3.0),)
+                   if dimension == 2 else
+                   (ObservationField("tracking_bias_x", "integral(relative_x)", 3.0),
+                    ObservationField("tracking_bias_y", "integral(relative_y)", 3.0)))
     observation = ObservationSchema(
-        version=("matlab-planar-observation/1" if dimension == 2
-                 else "spatial-direct-observation/1"),
+        version=(("matlab-planar-observation/2" if dimension == 2
+                  else "spatial-direct-observation/2")
+                 if training_profile == "stable" else
+                 ("matlab-planar-observation/1" if dimension == 2
+                  else "spatial-direct-observation/1")),
         dimension=len(fields), fields=fields)
     action = ActionSpec(
         version=f"matlab-direct-action/{dimension}d",
         names=(("a_x", "a_z") if dimension == 2 else ("a_x", "a_y", "a_z")),
         maximum=((2.5, 2.0) if dimension == 2 else (2.5, 2.5, 2.0)))
     return ContractBundle(
-        observation=observation, graph=graph_schema(dimension), action=action,
-        reward=RewardSpec(), termination=TerminationSpec(), training=TrainingSpec(),
+        observation=observation,
+        graph=graph_schema(dimension, tracking_bias=training_profile == "stable"),
+        action=action, reward=RewardSpec(), termination=TerminationSpec(),
+        training=(TrainingSpec() if training_profile == "source"
+                  else StableTrainingSpec()),
         scenarios=ScenarioManifest(),
         backend=BackendSpec(name=backend, version=f"{backend}-matlab-port/1"),
         safety=RuntimeSafetySpec(profile=safety_profile,
                                  rewrites_policy_action=safety_profile == "shielded"),
-        metadata={"dimension": dimension, "running_normalization": False})
+        metadata={"dimension": dimension, "running_normalization": False,
+                  "training_profile": training_profile,
+                  "base_observation_dimension": (12 if dimension == 2 else 21)})
 
 
 def validate_checkpoint_metadata(payload: dict[str, Any], contract: ContractBundle) -> None:

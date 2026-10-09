@@ -186,28 +186,47 @@ class _KeptRootFs:
         return None
 
 
-_PX4_LOG_STAMP = datetime.now().strftime("%Y%m%d-%H%M")
+_PX4_LOG_STAMP = datetime.now().strftime("%Y%m%d-%H%M%S") + f"-{os.getpid()}"
 
 
-def _px4_root_fs(vehicle_id) -> _KeptRootFs:
+def _px4_root_fs(vehicle_id, boot_generation: int = 0) -> _KeptRootFs:
     override = os.environ.get("ONTOLOGY_RGAT_LOG_DIR")
     root = (Path(override).expanduser() if override
             else Path(__file__).resolve().parents[1] / "logs" / "runs")
-    return _KeptRootFs(root / f"run-{_PX4_LOG_STAMP}" / "px4" / f"px4_{vehicle_id}")
+    return _KeptRootFs(
+        root / f"run-{_PX4_LOG_STAMP}" / "px4" / f"px4_{vehicle_id}"
+        / f"boot_{int(boot_generation):04d}")
 
 
 class ParameterizedPX4LaunchTool(PX4LaunchTool):
     """Pegasus launcher using a kept rcS wrapper and root fs owned by this run."""
 
-    def __init__(self, px4_dir, vehicle_id, px4_model, parameters):
+    def __init__(self, px4_dir, vehicle_id, px4_model, parameters,
+                 boot_generation: int = 0):
         super().__init__(px4_dir, vehicle_id, px4_model)
         # Replace the temporary root filesystem before anything is written to
         # it; the base class only created it, PX4 has not started yet.
         self.root_fs.cleanup()
-        self.root_fs = _px4_root_fs(vehicle_id)
+        self.root_fs = _px4_root_fs(vehicle_id, boot_generation)
         wrapper = Path(self.root_fs.name) / "ontology_rgat_rcS"
         wrapper.write_text(px4_rc_script(self.rc_script, parameters), encoding="utf-8")
         self.rc_script = str(wrapper)
+
+    def kill_px4(self):
+        """Kill and reap this boot before its TCP port is reused.
+
+        Pegasus' implementation drops the ``Popen`` immediately after
+        ``kill()``.  An in-process cold reset then races the old process on the
+        MAVLink port and can attach the fresh interface to the dying boot.
+        """
+        process = self.px4_process
+        if process is None:
+            return
+        process.kill()
+        try:
+            process.wait(timeout=10.0)
+        finally:
+            self.px4_process = None
 
 
 class ParameterizedPX4MavlinkBackend(PX4MavlinkBackend):
@@ -216,6 +235,7 @@ class ParameterizedPX4MavlinkBackend(PX4MavlinkBackend):
     def __init__(self, config, parameters):
         super().__init__(config)
         self._startup_parameters = parameters
+        self.boot_generation = 0
 
     def start(self):
         if self._is_running:
@@ -227,8 +247,26 @@ class ParameterizedPX4MavlinkBackend(PX4MavlinkBackend):
             carb.log_info("Attempting to launch configured PX4 in background process")
             self.px4_tool = ParameterizedPX4LaunchTool(
                 self.px4_dir, self._vehicle_id, self.px4_vehicle_model,
-                self._startup_parameters)
+                self._startup_parameters, self.boot_generation)
             self.px4_tool.launch_px4()
+
+    def cold_restart(self, runtime_parameters: dict[str, float] | None = None) -> int:
+        """Restart PX4/EKF while the Isaac stage and physics world stay alive."""
+        if not self.px4_autolaunch:
+            raise RuntimeError("in-process PX4 reset requires px4_autolaunch")
+        self.stop()
+        self.boot_generation += 1
+        configured = {item.name: item.value for item in self._startup_parameters}
+        configured.update(runtime_parameters or {})
+        self._startup_parameters = configured_px4_parameters(configured)
+        # Pegasus reset is a no-op.  Reset every transport/actuator clock here
+        # before opening the new boot so no command or HIL timestamp survives.
+        self._rotor_data.zero_input_reference()
+        self._input_reference = np.zeros((self._num_inputs,))
+        self._armed = False
+        self._current_utime = 0
+        self.start()
+        return self.boot_generation
 
     def set_runtime_parameters(self, values: dict[str, float]) -> None:
         """Send episode gain randomization over the live HIL MAVLink link."""
@@ -873,8 +911,10 @@ class LandingDeck:
         return True
 
     def reset(self, seed: int, sim_time: float, speed_scale: float = 1.0,
-              scenario: str = "training_random_walk") -> dict:
-        info = self.trajectory.reset(seed, sim_time, speed_scale, scenario)
+              scenario: str = "training_random_walk", *,
+              hard_reset: bool = False) -> dict:
+        info = self.trajectory.reset(
+            seed, sim_time, speed_scale, scenario, hard_reset=hard_reset)
         position, self.velocity = self.trajectory.pose(sim_time)
         self.position = np.asarray(position, dtype=float) + self.world_offset
         self.yaw = float(info["yaw_rad"])
@@ -1712,13 +1752,10 @@ class LandingWorld:
     def _perform_reset(self) -> None:
         """Reseed the episode and report the pose the vehicle must fly to.
 
-        Teleporting a running vehicle is not an option here: Pegasus'
-        ``PX4MavlinkBackend.reset`` is a documented no-op, so PX4's EKF keeps
-        integrating through the jump and diverges for seconds afterwards. The
-        controller is contractually fed PX4 estimator data, so a diverged
-        estimator makes the episode meaningless. The entry pose is therefore
-        drawn here -- keeping the seeded initial-condition distribution of the
-        original in-process simulator -- and flown by PX4 itself.
+        Pegasus' reset hook is a no-op, so this path explicitly stops PX4,
+        restores pad/vehicle/sensors, and boots a new PX4/EKF before publishing
+        its acknowledgement. The entry pose is drawn here -- keeping the
+        seeded initial-condition distribution -- and flown by the fresh PX4.
         """
         req, self.pending_reset = self.pending_reset, None
         self.spatial_previous_free = None
@@ -1743,7 +1780,6 @@ class LandingWorld:
             self.domain_px4_gains = px4_gain_parameters(
                 self.domain_randomization,
                 dict(domain_cfg.get("px4_nominal_gains") or {}))
-            self.px4_backend.set_runtime_parameters(self.domain_px4_gains)
             if self.camera is not None:
                 self.camera.configure_domain_randomization(
                     self.domain_randomization)
@@ -1763,9 +1799,10 @@ class LandingWorld:
         # flies the entry climb over a deck that is standing still and only the
         # landing -- the part being measured -- has to track a moving one. See
         # _on_flight_state.
-        deck = self.deck.reset(req["seed"], self.world.current_time,
-                               req.get("pad_scale", 1.0),
-                               req.get("scenario", "training_random_walk"))
+        deck = self.deck.reset(
+            req["seed"], self.world.current_time,
+            req.get("pad_scale", 1.0),
+            req.get("scenario", "training_random_walk"), hard_reset=True)
         initial = benchmark.get("initial_conditions") or {}
         planar_entry = bool(benchmark.get("planar_entry", False))
         if str(benchmark.get("profile", "")).lower() == "shin2026":
@@ -1868,9 +1905,7 @@ class LandingWorld:
         # Drawn from the same generator as the entry pose so the whole initial
         # condition -- geometry, wind, deck motion and energy -- is one seed.
         hover_seconds = float(rng.uniform(*self.battery_hover_range))
-        reseated = self._seat_on_deck()
-        for backend in (self.px4_backend, self.ros_backend):
-            backend.reset()
+        reset_position, px4_boot_generation = self._cold_reset_vehicle_and_px4()
         self.wind.reset(req["seed"], self.world.current_time, req["wind_scale"])
         self.wind_sensor.reset(req["seed"], self.world.current_time)
         entry_yaw_enu = (self.deck.yaw + math.radians(float(rpy_deg[2]))
@@ -1908,7 +1943,13 @@ class LandingWorld:
                                            "live camera photometric/procedural texture",
                                    }),
                                "pad": deck,
-                               "reseated_on_deck": bool(reseated)})
+                               "reseated_on_deck": False,
+                               "reset_contract": "isaac-px4-ekf-cold/1",
+                               "hard_reset": True,
+                               "vehicle_reset_position_enu_m":
+                                   reset_position.tolist(),
+                               "px4_boot_generation":
+                                   int(px4_boot_generation)})
         self.reset_ack_pub.publish(ack)
         self.overlay.reset(self.pair_index if self.parallel else None)
         carb.log_info(f"Landing episode reset: seq={req['seq']} seed={req['seed']} "
@@ -1916,7 +1957,36 @@ class LandingWorld:
                       f"{deck['speed_m_s']:.2f} m/s battery={hover_seconds:.1f} s "
                       f"gnss={self.gnss.uav.last.satellites_tracked} sats "
                       f"({self.gnss.uav.last.satellites_nlos} NLOS, "
-                      f"q={self.gnss.uav.last.quality:.2f}) reseated={reseated}")
+                      f"q={self.gnss.uav.last.quality:.2f}) "
+                      f"cold_px4_boot={px4_boot_generation}")
+
+    def _cold_reset_vehicle_and_px4(self) -> tuple[np.ndarray, int]:
+        """Reset physics, sensors, PX4 and EKF without rebuilding Isaac.
+
+        PX4 is stopped before the pose changes, so no live estimator ever sees
+        a teleport.  A new process then starts against a fresh root filesystem
+        and aligns its EKF from the reset sensor stream at the new pad-relative
+        hover.  The Isaac stage, camera assets and ROS bridge remain alive.
+        """
+        self.autopilot_flying = False
+        self.autopilot_armed = False
+        self.hover_hold_release_started = None
+        self.policy_handover = False
+        self.has_policy_handover = False
+        self.px4_normalized_thrust = 0.0
+        reset_offset = (self.hover_start_pad_m if self.start_airborne
+                        else self.deck_clearance_pad_m)
+        position = self.deck.world_from_pad(reset_offset)
+        # Isaac Robot.set_world_pose uses scalar-first [w,x,y,z].
+        self.vehicle.set_world_pose(
+            position=position, orientation=np.array([1.0, 0.0, 0.0, 0.0]))
+        self.vehicle.set_linear_velocity(np.zeros(3))
+        self.vehicle.set_angular_velocity(np.zeros(3))
+        for sensor in self.vehicle._sensors:
+            sensor.reset()
+        self.ros_backend.reset()
+        generation = self.px4_backend.cold_restart(self.domain_px4_gains)
+        return np.asarray(position, dtype=float), int(generation)
 
     def _entry_within_camera(self, offset: np.ndarray) -> np.ndarray:
         """Pull the entry point in until the pad is inside the camera frame.

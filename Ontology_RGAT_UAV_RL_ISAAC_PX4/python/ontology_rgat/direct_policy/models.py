@@ -156,6 +156,11 @@ class DirectActorCritic(nn.Module):
                 seed=seed + 2202, relation_override=relation)
         self.actor = _mlp(self.actor_encoder.output_dim, training.hidden_size,
                           len(contract.action.names))
+        if getattr(training, "zero_last_layer_initialization", False):
+            final = self.actor[-1]
+            with torch.no_grad():
+                final.weight.zero_()
+                final.bias.zero_()
         self.critic = _mlp(self.critic_encoder.output_dim, training.hidden_size, 1)
         self.log_std = nn.Parameter(torch.full((len(contract.action.names),),
                                                training.initial_log_std))
@@ -176,10 +181,88 @@ class DirectActorCritic(nn.Module):
         actor_state = self.actor_encoder(policy_input)
         critic_state = self.critic_encoder(policy_input)
         latent_mean = self.actor(actor_state)
+        if getattr(self.contract.training, "analytic_tracking_prior", False):
+            latent_mean = latent_mean + self._tracking_prior(policy_input)
         value = self.critic(critic_state).squeeze(-1)
-        log_std = self.log_std.clamp(min=self.contract.training.minimum_log_std)
+        maximum = getattr(self.contract.training, "maximum_log_std", None)
+        log_std = self.log_std.clamp(
+            min=self.contract.training.minimum_log_std, max=maximum)
         log_std = log_std.expand_as(latent_mean)
         return PolicyOutput(latent_mean, log_std, value)
+
+    @staticmethod
+    def _inverse_signed(value, scale: float):
+        value = value.clamp(-1+1e-6, 1-1e-6)
+        return scale*value/(1-value.abs())
+
+    def _tracking_prior(self, policy_input):
+        """Observation-only PD tracking/descent mean; PPO learns the residual."""
+        dimension = int(self.contract.metadata["dimension"])
+        if self.method == "ppo":
+            height_index = 1 if dimension == 2 else 2
+            vz_index = 4 if dimension == 2 else 7
+            height_value = policy_input[..., height_index]
+            vz_value = policy_input[..., vz_index]
+            relative_x = policy_input[..., 0]
+            relative_vx = policy_input[..., 2 if dimension == 2 else 3]
+            bias_x = policy_input[..., -1 if dimension == 2 else -2]
+            if dimension == 3:
+                relative_y = policy_input[..., 1]
+                relative_vy = policy_input[..., 4]
+                bias_y = policy_input[..., -1]
+        else:
+            # Reconstruct the registered normalised horizontal values from the
+            # graph.  RelativePosition stores cross_x = rel_x-slope*height;
+            # RelativeVelocity retains rel_v in its secondary channels.
+            vz_value = policy_input[..., 3, 1]
+            height_value = policy_input[..., 3, 2]
+            slope = math.tan(math.pi/6)
+            relative_x = policy_input[..., 0, 1] + slope*height_value
+            relative_vx = policy_input[..., 1, 2]
+            bias_x = policy_input[..., 0, -1 if dimension == 2 else -2]
+            if dimension == 3:
+                relative_y = policy_input[..., 0, 3]
+                relative_vy = policy_input[..., 1, 4]
+                bias_y = policy_input[..., 0, -1]
+        physical_x = self._inverse_signed(relative_x, 3.0)
+        physical_vx = self._inverse_signed(relative_vx, 10.0)
+        physical_bias_x = self._inverse_signed(bias_x, 3.0)
+        # Keep the measured-safe v4 authority cap.  A deliberately small
+        # integral term removes the steady following error that held the
+        # Isaac vehicle behind the moving pad for a full 70-second episode.
+        action_x = 0.4*physical_x + 0.3*physical_vx + 0.05*physical_bias_x
+        horizontal = [action_x]
+        if dimension == 3:
+            physical_y = self._inverse_signed(relative_y, 3.0)
+            physical_vy = self._inverse_signed(relative_vy, 10.0)
+            physical_bias_y = self._inverse_signed(bias_y, 3.0)
+            action_y = 0.4*physical_y + 0.3*physical_vy + 0.05*physical_bias_y
+            horizontal.append(action_y)
+            position_norm = torch.sqrt(physical_x.square()+physical_y.square())
+        else:
+            position_norm = physical_x.abs()
+        horizontal = torch.stack(horizontal, dim=-1)
+        horizontal_norm = torch.linalg.vector_norm(horizontal, dim=-1, keepdim=True)
+        horizontal = horizontal * torch.clamp(0.75/(horizontal_norm+1e-8), max=1.0)
+        height = self._inverse_signed(height_value, 8.0).clamp(min=0.0)
+        own_vz = self._inverse_signed(vz_value, 1.5)
+        landing_vz = -torch.minimum(
+            torch.full_like(height, 0.18), 0.6*(height-0.04).clamp(min=0.0))
+        # The deployed CV estimate's velocity is intentionally slow/noisy.
+        # Gating descent on it held a well-centred vehicle aloft for 70 s.
+        # Position plus the bounded horizontal command is the causal gate;
+        # velocity and TrackingBias remain available to the learned residual.
+        aligned = position_norm < 0.35
+        recovery_vz = torch.minimum(
+            torch.full_like(height, 0.20), (1.0-height).clamp(min=0.0))
+        desired_vz = torch.where(aligned, landing_vz, recovery_vz)
+        vertical_action = (3.0*(desired_vz-own_vz)).clamp(
+            -0.98*float(self.action_scale[-1]),
+            0.98*float(self.action_scale[-1]))
+        action = torch.cat((horizontal, vertical_action.unsqueeze(-1)), dim=-1)
+        limit = 0.98*self.action_scale
+        action = torch.maximum(torch.minimum(action, limit), -limit)
+        return torch.atanh(action/self.action_scale)
 
     def action_from_latent(self, latent):
         return torch.tanh(latent) * self.action_scale

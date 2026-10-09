@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import copy
 import math
 
 import numpy as np
@@ -71,7 +72,17 @@ class DirectPPO:
         ]
         self.actor_optimizer = torch.optim.Adam(actor_groups)
         self.critic_optimizer = torch.optim.Adam(critic_groups)
+        self.maximum_actor_lrs = [float(group["lr"])
+                                  for group in self.actor_optimizer.param_groups]
         self.policy_version = 0
+
+    @staticmethod
+    def _gaussian_kl(old_mean, old_log_std, new_mean, new_log_std):
+        """Mean analytic KL(old || new), summed over action dimensions."""
+        variance_ratio = torch.exp(2 * (old_log_std-new_log_std))
+        mean_term = (old_mean-new_mean).square() * torch.exp(-2*new_log_std)
+        return (new_log_std-old_log_std
+                + 0.5*(variance_ratio+mean_term-1)).sum(-1).mean()
 
     def update(self, batch: RolloutBatch, *, generator: torch.Generator | None = None):
         cfg = self.model.contract.training
@@ -81,6 +92,8 @@ class DirectPPO:
         advantage = (advantage - advantage.mean()) / (advantage.std() + 1e-8)
         count = len(advantage)
         actor_losses, critic_losses, entropies = [], [], []
+        accepted_steps = rejected_steps = 0
+        post_step_kls = []
         for _ in range(cfg.epochs):
             order = torch.randperm(count, generator=generator)
             for start in range(0, count, cfg.minibatch_size):
@@ -96,6 +109,12 @@ class DirectPPO:
                 entropy = (output.log_std + 0.5*math.log(2*math.pi*math.e)).sum(-1).mean()
                 actor_loss = -torch.minimum(unclipped, clipped).mean() \
                     - cfg.entropy_weight * entropy
+                enforce_kl = bool(getattr(cfg, "enforce_target_kl", False))
+                if enforce_kl:
+                    model_before = copy.deepcopy(self.model.state_dict())
+                    optimizer_before = copy.deepcopy(self.actor_optimizer.state_dict())
+                    old_mean = output.latent_mean.detach().clone()
+                    old_log_std = output.log_std.detach().clone()
                 self.actor_optimizer.zero_grad(set_to_none=True)
                 actor_loss.backward()
                 torch.nn.utils.clip_grad_norm_(
@@ -103,7 +122,27 @@ class DirectPPO:
                     + list(self.model.actor_encoder.parameters()) + [self.model.log_std], 1.0)
                 self.actor_optimizer.step()
                 with torch.no_grad():
-                    self.model.log_std.clamp_(min=cfg.minimum_log_std)
+                    self.model.log_std.clamp_(
+                        min=cfg.minimum_log_std,
+                        max=getattr(cfg, "maximum_log_std", None))
+                rejected = False
+                if enforce_kl:
+                    with torch.no_grad():
+                        after = self.model(batch.policy_input[index])
+                        post_kl = float(self._gaussian_kl(
+                            old_mean, old_log_std,
+                            after.latent_mean, after.log_std))
+                    post_step_kls.append(post_kl)
+                    if (not math.isfinite(post_kl)
+                            or post_kl > 1.5*float(cfg.target_kl)):
+                        self.model.load_state_dict(model_before)
+                        self.actor_optimizer.load_state_dict(optimizer_before)
+                        rejected = True
+                        rejected_steps += 1
+                    else:
+                        accepted_steps += 1
+                else:
+                    accepted_steps += 1
 
                 # Recompute because the actor and critic have independent encoders.
                 prediction = self.model(batch.policy_input[index]).value
@@ -117,11 +156,24 @@ class DirectPPO:
                 actor_losses.append(float(actor_loss.detach()))
                 critic_losses.append(float(critic_loss.detach()))
                 entropies.append(float(entropy.detach()))
+        if bool(getattr(cfg, "enforce_target_kl", False)):
+            if accepted_steps == 0:
+                for group in self.actor_optimizer.param_groups:
+                    group["lr"] *= 0.5
+            elif post_step_kls and max(post_step_kls) < float(cfg.target_kl)/2:
+                for group, maximum in zip(self.actor_optimizer.param_groups,
+                                          self.maximum_actor_lrs):
+                    group["lr"] = min(maximum, group["lr"]*1.5)
         self.policy_version += 1
         return {"policy_version": self.policy_version, "samples": count,
                 "actor_loss": float(np.mean(actor_losses)),
                 "critic_loss": float(np.mean(critic_losses)),
                 "entropy": float(np.mean(entropies)),
+                "accepted_steps": accepted_steps,
+                "rejected_steps": rejected_steps,
+                "post_step_kl": (float(max(post_step_kls))
+                                 if post_step_kls else 0.0),
+                "actor_lr": float(self.actor_optimizer.param_groups[0]["lr"]),
                 "actor_encoder_grad": _gradient_norm(self.model.actor_encoder),
                 "critic_encoder_grad": _gradient_norm(self.model.critic_encoder)}
 

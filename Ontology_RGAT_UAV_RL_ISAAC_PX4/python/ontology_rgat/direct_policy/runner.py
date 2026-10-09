@@ -12,7 +12,7 @@ import torch
 
 from .backends import backend_factory as make_backend_factory
 from .contracts import make_contract
-from .graph import planar_graph, spatial_graph
+from .graph import GraphState, planar_graph, spatial_graph
 from .models import DirectActorCritic, load_checkpoint, save_checkpoint
 from .observation import PlanarEstimate, planar_vector
 from .ppo import DirectPPO, RolloutBatch
@@ -25,15 +25,33 @@ def _graph(observation, dimension):
     return planar_graph(observation) if dimension == 2 else spatial_graph(observation)
 
 
-def _input(observation, dimension, method):
+def _input(observation, dimension, method, *, contract=None, tracking_bias=None):
+    observation = np.asarray(observation, np.float32)
+    tracking_bias = np.zeros(dimension-1, np.float32) if tracking_bias is None \
+        else np.asarray(tracking_bias, np.float32)
+    tracking_bias = tracking_bias/(np.abs(tracking_bias)+3.0)
     if method == "ppo":
-        return np.asarray(observation, np.float32)
-    return _graph(observation, dimension).features.astype(np.float32)
+        return (np.concatenate((observation, tracking_bias))
+                if contract is not None and contract.metadata["training_profile"] == "stable"
+                else observation)
+    graph = _graph(observation, dimension)
+    if contract is not None and contract.metadata["training_profile"] == "stable":
+        repeated = np.broadcast_to(tracking_bias, (len(graph.features), len(tracking_bias)))
+        graph = GraphState(np.concatenate((graph.features, repeated), axis=1),
+                           graph.source, graph.target, graph.relation, contract.graph)
+    return graph.features.astype(np.float32)
 
 
 def _model(contract, method, seed, graph_seed=0):
-    zeros = np.zeros(contract.observation.dimension)
-    example = None if method == "ppo" else _graph(zeros, contract.metadata["dimension"])
+    dimension = contract.metadata["dimension"]
+    zeros = np.zeros(contract.metadata["base_observation_dimension"])
+    if method == "ppo":
+        example = None
+    else:
+        features = _input(zeros, dimension, method, contract=contract)
+        base = _graph(zeros, dimension)
+        example = GraphState(features, base.source, base.target,
+                             base.relation, contract.graph)
     return DirectActorCritic(contract, method, example, seed=seed, graph_seed=graph_seed)
 
 
@@ -54,10 +72,21 @@ def _rollout(contract, model, seed, *, deterministic, max_steps, policy_version=
         observation, reset_info = env.reset(seed)
         generator = torch.Generator().manual_seed(seed + 2_000_000)
         rows, total, status, trace = [], 0.0, "RUNNING", []
+        tracking_bias = np.zeros(contract.metadata["dimension"]-1, dtype=np.float32)
         started = time.perf_counter()
         for decision in range(max_steps):
+            if contract.metadata["training_profile"] == "stable":
+                indices = (0,) if contract.metadata["dimension"] == 2 else (0, 1)
+                scales = (3.0,)*len(indices)
+                physical = [scales[i]*float(observation[index]) /
+                            max(1.0-abs(float(observation[index])), 1e-6)
+                            for i, index in enumerate(indices)]
+                tracking_bias = np.clip(
+                    tracking_bias + contract.scenarios.policy_dt_s*np.asarray(physical),
+                    -3.0, 3.0).astype(np.float32)
             x = torch.as_tensor(_input(
-                observation, contract.metadata["dimension"], model.method))
+                observation, contract.metadata["dimension"], model.method,
+                contract=contract, tracking_bias=tracking_bias))
             with torch.no_grad():
                 action, latent, logp, value = model.act(
                     x, deterministic=deterministic, generator=generator)
@@ -79,7 +108,8 @@ def _rollout(contract, model, seed, *, deterministic, max_steps, policy_version=
         if not rows:
             raise RuntimeError("backend produced no policy transitions")
         final_x = torch.as_tensor(_input(
-            observation, contract.metadata["dimension"], model.method))
+            observation, contract.metadata["dimension"], model.method,
+            contract=contract, tracking_bias=tracking_bias))
         with torch.no_grad():
             final_value = float(model(final_x).value) if status == "RUNNING" else 0.0
         count = len(rows)
@@ -400,6 +430,8 @@ def build_parser():
     parser.add_argument("--backend", choices=("replay", "local", "isaac"), default="local")
     parser.add_argument("--dimension", type=int, choices=(2, 3), default=2)
     parser.add_argument("--control-profile", choices=("direct", "shielded"), default="direct")
+    parser.add_argument("--training-profile", choices=("source", "stable"),
+                        default="source")
     parser.add_argument("--methods", nargs="+", choices=METHODS,
                         default=["ppo", "onto_rgat_ppo"])
     parser.add_argument("--seed", type=int, default=1)
@@ -431,9 +463,14 @@ def build_parser():
 def main(argv=None):
     args = build_parser().parse_args(argv)
     contract = make_contract(args.dimension, backend=args.backend,
-                             safety_profile=args.control_profile)
+                             safety_profile=args.control_profile,
+                             training_profile=args.training_profile)
+    if (args.stage == "train" and args.training_profile == "stable"
+            and args.episodes_per_update < 12):
+        raise SystemExit("stable training requires --episodes-per-update >= 12")
     plan = {"stage": args.stage, "backend": args.backend, "dimension": args.dimension,
             "control_profile": args.control_profile, "methods": args.methods,
+            "training_profile": args.training_profile,
             "allow_isaac": args.allow_isaac, "contract": contract.manifest()}
     if args.dry_run:
         print(json.dumps({"status": "NOT_RUN", "reason": "dry-run", **plan}, indent=2))

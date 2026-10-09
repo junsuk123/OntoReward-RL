@@ -15,22 +15,50 @@ class Vn100Imu(Sensor):
 
     def __init__(self, config):
         super().__init__(sensor_type="IMU", update_rate=float(config["update_rate"]))
-        self._rng = np.random.default_rng(int(config.get("seed", 101)))
+        self._seed = int(config.get("seed", 101))
+        self._rng = np.random.default_rng(self._seed)
         gyro = config["gyroscope"]
         accel = config["accelerometer"]
         self._gyro_noise = float(gyro["noise_density"])
         self._gyro_walk = float(gyro["random_walk"])
         self._gyro_tau = float(gyro["bias_correlation_time"])
         self._gyro_range = float(gyro["measurement_range"])
+        self._gyro_turn_on_sigma = float(gyro["turn_on_bias_sigma"])
         self._gyro_bias = self._rng.normal(
-            0.0, float(gyro["turn_on_bias_sigma"]), size=3)
+            0.0, self._gyro_turn_on_sigma, size=3)
         self._accel_noise = float(accel["noise_density"])
         self._accel_walk = float(accel["random_walk"])
         self._accel_tau = float(accel["bias_correlation_time"])
         self._accel_range = float(accel["measurement_range"])
+        self._accel_turn_on_sigma = float(accel["turn_on_bias_sigma"])
         self._accel_bias = self._rng.normal(
-            0.0, float(accel["turn_on_bias_sigma"]), size=3)
+            0.0, self._accel_turn_on_sigma, size=3)
         self._previous_velocity = np.zeros(3)
+        self._state = {
+            "orientation": np.array([1.0, 0.0, 0.0, 0.0]),
+            "angular_velocity": np.zeros(3),
+            "linear_acceleration": np.zeros(3),
+        }
+
+    def reset(self):
+        """Restore the same deterministic turn-on state as a fresh world."""
+        self._rng = np.random.default_rng(self._seed)
+        # Bias standard deviations are recoverable from the already sampled
+        # model only if retained explicitly; save them on first construction.
+        gyro_sigma = getattr(self, "_gyro_turn_on_sigma", None)
+        accel_sigma = getattr(self, "_accel_turn_on_sigma", None)
+        if gyro_sigma is None or accel_sigma is None:
+            # Older live objects (during source hot reload) cannot reconstruct
+            # these values safely. Their next process boot takes the new path.
+            self._first_update = True
+            self._total_time = 0.0
+            self._previous_velocity = np.zeros(3)
+            return
+        self._gyro_bias = self._rng.normal(0.0, gyro_sigma, size=3)
+        self._accel_bias = self._rng.normal(0.0, accel_sigma, size=3)
+        self._previous_velocity = np.zeros(3)
+        self._first_update = True
+        self._total_time = 0.0
         self._state = {
             "orientation": np.array([1.0, 0.0, 0.0, 0.0]),
             "angular_velocity": np.zeros(3),

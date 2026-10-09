@@ -10,7 +10,7 @@ import time
 import numpy as np
 import torch
 
-from .backends import DirectIsaacBackend, LocalReferenceBackend, ReferenceReplayBackend
+from .backends import backend_factory as make_backend_factory
 from .contracts import make_contract
 from .graph import planar_graph, spatial_graph
 from .models import DirectActorCritic, load_checkpoint, save_checkpoint
@@ -46,61 +46,68 @@ def _write_json(path, payload):
 
 def _rollout(contract, model, seed, *, deterministic, max_steps, policy_version=0,
              backend_factory=None, collect_trace=False):
-    env = (backend_factory() if backend_factory is not None
-           else LocalReferenceBackend(contract))
+    factory = backend_factory or make_backend_factory(contract)
+    env = factory()
     try:
+        if hasattr(env, "set_policy_version"):
+            env.set_policy_version(policy_version)
         observation, reset_info = env.reset(seed)
-    except BaseException:
-        env.close()
-        raise
-    generator = torch.Generator().manual_seed(seed + 2_000_000)
-    rows, total, status, trace = [], 0.0, "RUNNING", []
-    started = time.perf_counter()
-    for decision in range(max_steps):
-        x = torch.as_tensor(_input(observation, contract.metadata["dimension"], model.method))
-        with torch.no_grad():
-            action, latent, logp, value = model.act(
-                x, deterministic=deterministic, generator=generator)
-        try:
+        generator = torch.Generator().manual_seed(seed + 2_000_000)
+        rows, total, status, trace = [], 0.0, "RUNNING", []
+        started = time.perf_counter()
+        for decision in range(max_steps):
+            x = torch.as_tensor(_input(
+                observation, contract.metadata["dimension"], model.method))
+            with torch.no_grad():
+                action, latent, logp, value = model.act(
+                    x, deterministic=deterministic, generator=generator)
             result = env.step(action.numpy())
-        except BaseException:
-            env.close()
-            raise
+            if collect_trace:
+                trace.append(result.info)
+            terminal = result.terminated
+            transition_s = float(result.info.get(
+                "transition_s", contract.scenarios.policy_dt_s))
+            if not np.isfinite(transition_s) or transition_s <= 0:
+                raise ValueError("backend returned an invalid transition duration")
+            rows.append((x.numpy(), latent.numpy(), float(logp), float(value),
+                         result.reward, terminal,
+                         terminal or decision == max_steps-1, transition_s))
+            total += result.reward
+            observation, status = result.observation, result.status
+            if terminal:
+                break
+        if not rows:
+            raise RuntimeError("backend produced no policy transitions")
+        final_x = torch.as_tensor(_input(
+            observation, contract.metadata["dimension"], model.method))
+        with torch.no_grad():
+            final_value = float(model(final_x).value) if status == "RUNNING" else 0.0
+        count = len(rows)
+        bootstrap = np.zeros(count, np.float32)
+        if status == "RUNNING":
+            bootstrap[-1] = final_value
+        batch = RolloutBatch(
+            policy_input=torch.as_tensor(np.stack([row[0] for row in rows])),
+            latent_action=torch.as_tensor(np.stack([row[1] for row in rows])),
+            old_log_probability=torch.as_tensor([row[2] for row in rows]),
+            value=torch.as_tensor([row[3] for row in rows]),
+            reward=torch.as_tensor([row[4] for row in rows]),
+            discount=torch.as_tensor([
+                np.exp(-row[7]/contract.reward.discount_tau_s) for row in rows],
+                dtype=torch.float32),
+            terminated=torch.as_tensor([row[5] for row in rows]),
+            episode_end=torch.as_tensor([row[6] for row in rows]),
+            bootstrap_value=torch.as_tensor(bootstrap), policy_version=policy_version)
+        episode = {"seed": seed, "status": status, "return": total, "steps": count,
+                   "wall_seconds": time.perf_counter()-started,
+                   "simulated_seconds": float(sum(row[7] for row in rows)),
+                   "backend": getattr(env, "name", type(env).__name__),
+                   "reset": reset_info}
         if collect_trace:
-            trace.append(result.info)
-        terminal = result.terminated
-        rows.append((x.numpy(), latent.numpy(), float(logp), float(value), result.reward,
-                     terminal, terminal or decision == max_steps-1))
-        total += result.reward
-        observation, status = result.observation, result.status
-        if terminal:
-            break
-    final_x = torch.as_tensor(_input(observation, contract.metadata["dimension"], model.method))
-    with torch.no_grad():
-        final_value = float(model(final_x).value) if status == "RUNNING" else 0.0
-    count = len(rows)
-    bootstrap = np.zeros(count, np.float32)
-    if rows and status == "RUNNING":
-        bootstrap[-1] = final_value
-    batch = RolloutBatch(
-        policy_input=torch.as_tensor(np.stack([row[0] for row in rows])),
-        latent_action=torch.as_tensor(np.stack([row[1] for row in rows])),
-        old_log_probability=torch.as_tensor([row[2] for row in rows]),
-        value=torch.as_tensor([row[3] for row in rows]),
-        reward=torch.as_tensor([row[4] for row in rows]),
-        discount=torch.full((count,), np.exp(-contract.scenarios.policy_dt_s
-                                              / contract.reward.discount_tau_s)),
-        terminated=torch.as_tensor([row[5] for row in rows]),
-        episode_end=torch.as_tensor([row[6] for row in rows]),
-        bootstrap_value=torch.as_tensor(bootstrap), policy_version=policy_version)
-    episode = {"seed": seed, "status": status, "return": total, "steps": count,
-               "wall_seconds": time.perf_counter()-started,
-               "backend": getattr(env, "name", type(env).__name__),
-               "reset": reset_info}
-    if collect_trace:
-        episode["trace"] = trace
-    env.close()
-    return batch, episode
+            episode["trace"] = trace
+        return batch, episode
+    finally:
+        env.close()
 
 
 def _join(batches, policy_version):
@@ -129,45 +136,94 @@ def run_smoke(args, contract):
     if args.backend == "isaac":
         if not args.allow_isaac:
             raise SystemExit("Isaac backend requires --allow-isaac")
-        result.update(status="BLOCKED", reason=(
-            "adapter is compile-tested; no owned Isaac/PX4 stack was acquired by smoke"))
-        return result
-    for offset, method in enumerate(args.methods):
-        model = _model(contract, method, args.seed+offset, args.graph_seed)
-        batch, episode = _rollout(contract, model, args.seed, deterministic=False,
-                                  max_steps=args.steps)
-        result["methods"][method] = {"episode": episode,
-                                     "parameters": model.parameter_report(),
-                                     "method_hash": model.method_hash,
-                                     "finite": bool(torch.isfinite(batch.reward).all())}
+        stack, factory, deployment = _isaac_resources(args, contract)
+        result["backend"] = "actual-isaac-px4-direct"
+        result["deployment"] = deployment
+    else:
+        try:
+            factory = make_backend_factory(contract, replay_path=args.replay_fixture)
+        except ValueError as exc:
+            return {**result, "status": "BLOCKED", "reason": str(exc)}
+        stack = None
+
+    def execute():
+        for offset, method in enumerate(args.methods):
+            model = _model(contract, method, args.seed+offset, args.graph_seed)
+            batch, episode = _rollout(
+                contract, model, args.seed, deterministic=False,
+                max_steps=args.steps, backend_factory=factory,
+                collect_trace=args.backend == "isaac")
+            result["methods"][method] = {
+                "episode": episode, "parameters": model.parameter_report(),
+                "method_hash": model.method_hash,
+                "finite": bool(torch.isfinite(batch.reward).all())}
+    if stack is None:
+        execute()
+    else:
+        with stack:
+            execute()
     return result
 
 
-def run_train(args, contract):
-    if args.backend != "local":
-        return {"status": "BLOCKED", "reason": "training is enabled only on local backend"}
+def _train_with_factory(args, contract, factory, *, backend_name):
     output = Path(args.output)
-    summary = {"status": "PASSED", "methods": {}, "task_contract_hash": contract.task_contract_hash}
+    summary = {"status": "PASSED", "backend": backend_name, "methods": {},
+               "task_contract_hash": contract.task_contract_hash,
+               "execution_hash": contract.execution_hash}
     for offset, method in enumerate(args.methods):
         model = _model(contract, method, args.seed+offset, args.graph_seed)
         trainer = DirectPPO(model)
+        history_path = output/method/"history.json"
         history = []
         best = None
-        for update in range(1, args.updates+1):
+        first_update = 1
+        if args.resume_checkpoint_root:
+            resume_root = Path(args.resume_checkpoint_root)
+            if resume_root.resolve() != output.resolve():
+                raise ValueError("resume checkpoint root must equal --output")
+            checkpoint_path = resume_root/method/"checkpoint_last.pt"
+            if checkpoint_path.is_file():
+                metadata = load_checkpoint(checkpoint_path, model)
+                step = int(metadata["training_step"])
+                trainer.load_optimizer_state(
+                    metadata["optimizer_state"], policy_version=step)
+                torch.set_rng_state(metadata["rng_state"])
+                first_update = step+1
+                if history_path.is_file():
+                    history = json.loads(history_path.read_text(encoding="utf-8"))
+                    history = [row for row in history if int(row["update"]) <= step]
+            elif history_path.is_file():
+                raise ValueError(
+                    f"cannot resume {method}: history exists without checkpoint_last.pt")
+            for old in history:
+                if "validation" not in old:
+                    continue
+                validation = old["validation"]
+                score = (validation["success_rate"], -validation["unsafe_rate"],
+                         validation["mean_return"])
+                if best is None or score > best[0]:
+                    best = (score, int(old["update"]), validation)
+        if first_update > args.updates+1:
+            raise ValueError("checkpoint training step exceeds requested --updates")
+        for update in range(first_update, args.updates+1):
             batches, episodes = [], []
             for episode in range(args.episodes_per_update):
                 batch, row = _rollout(
                     contract, model,
                     args.seed*100_000+update*args.episodes_per_update+episode,
                     deterministic=False, max_steps=args.steps,
-                    policy_version=trainer.policy_version)
+                    policy_version=trainer.policy_version,
+                    backend_factory=factory)
                 batches.append(batch); episodes.append(row)
             stats = trainer.update(_join(batches, trainer.policy_version),
                                    generator=torch.Generator().manual_seed(args.seed+update))
             row = {"update": update, "episodes": episodes, **stats}
             if update % args.evaluate_every == 0 or update == args.updates:
-                validation = evaluate(contract, model, range(2001, 2001+args.validation_episodes),
-                                      max_steps=args.steps)
+                validation_start = (2001 if args.backend == "local"
+                                    else max(10000, args.seed+1_000_000))
+                validation = evaluate(contract, model, range(
+                    validation_start, validation_start+args.validation_episodes),
+                                      max_steps=args.steps, backend_factory=factory)
                 row["validation"] = validation
                 score = (validation["success_rate"], -validation["unsafe_rate"],
                          validation["mean_return"])
@@ -179,6 +235,13 @@ def run_train(args, contract):
                                     rng_state=torch.get_rng_state())
             history.append(row)
             _write_json(output/method/"history.json", history)
+            # Actual-Isaac campaigns are long and infrastructure can require a
+            # cold restart. Persist every accepted PPO update, not only the
+            # final update, so a pre-policy failure never discards learning.
+            save_checkpoint(output/method/"checkpoint_last.pt", model,
+                            training_step=update,
+                            optimizer_state=trainer.optimizer_state(),
+                            rng_state=torch.get_rng_state())
             if update == 1 or "validation" in row:
                 progress = {"method": method, "update": update,
                             "episodes_complete": update*args.episodes_per_update,
@@ -190,15 +253,51 @@ def run_train(args, contract):
                         if key != "episodes"
                     }
                 print(json.dumps({"progress": progress}, default=float), flush=True)
-        save_checkpoint(output/method/"checkpoint_last.pt", model,
-                        training_step=args.updates, optimizer_state=trainer.optimizer_state(),
-                        rng_state=torch.get_rng_state())
+        if not (output/method/"checkpoint_last.pt").is_file():
+            raise RuntimeError(f"{method} produced no resumable checkpoint")
         summary["methods"][method] = {"best": None if best is None else
                                       {"update": best[1], "validation": best[2]},
                                       "method_hash": model.method_hash,
                                       "parameters": model.parameter_report()}
     _write_json(output/"summary.json", summary)
     return summary
+
+
+def _isaac_resources(args, contract):
+    from ontology_rgat.spatial.runtime_contract import (deployment_manifest,
+                                                        deployment_profile)
+    from run_spatial_pipeline import live_stack
+    root = Path(__file__).resolve().parents[3]
+    profile = (root/"config"/"matlab-port-planar-isaac.yaml"
+               if args.dimension == 2 else
+               Path(deployment_profile("spatial-reference/12")["path"]))
+    deployment = deployment_manifest(profile)
+    factory = make_backend_factory(contract, deployment=deployment, pair=0)
+    stack = live_stack(
+        Path(args.output), adopt=args.adopt_stack, headless=args.headless,
+        schema="spatial-reference/12", reset_recoveries=args.reset_recoveries,
+        isolate_episodes=args.fresh_stack_per_episode, profile_path=profile)
+    return stack, factory, deployment
+
+
+def run_train(args, contract):
+    if args.backend == "local":
+        return _train_with_factory(
+            args, contract, make_backend_factory(contract),
+            backend_name="local-reference")
+    if args.backend == "replay":
+        return {"status": "BLOCKED", "backend": "replay", "reason": (
+            "fixed replay trajectories are an evaluation/parity backend, not a training plant")}
+    if not args.allow_isaac:
+        raise SystemExit("Isaac backend requires --allow-isaac")
+    if args.control_profile != "direct":
+        raise SystemExit("live MATLAB-port training currently requires --control-profile direct")
+    stack, factory, deployment = _isaac_resources(args, contract)
+    with stack:
+        result = _train_with_factory(
+            args, contract, factory, backend_name="actual-isaac-px4-direct")
+    result["deployment"] = deployment
+    return result
 
 
 def run_evaluate(args, contract):
@@ -209,30 +308,17 @@ def run_evaluate(args, contract):
             raise SystemExit("Isaac evaluation requires seed >=10000 and 1..1000 episodes")
         if args.control_profile != "direct":
             raise SystemExit("live MATLAB-port evaluation currently requires --control-profile direct")
-        from ontology_rgat.spatial.runtime_contract import (deployment_manifest,
-                                                            deployment_profile)
-        from run_spatial_pipeline import live_stack
-        root = Path(__file__).resolve().parents[3]
-        profile = (root/"config"/"matlab-port-planar-isaac.yaml"
-                   if args.dimension == 2 else
-                   Path(deployment_profile("spatial-reference/12")["path"]))
-        deployment = deployment_manifest(profile)
+        if not args.checkpoint_root:
+            raise SystemExit("Isaac evaluation requires --checkpoint-root")
         output = Path(args.output)
+        stack, factory, deployment = _isaac_resources(args, contract)
         result = {"status": "PASSED", "backend": "actual-isaac-px4",
                   "deployment": deployment, "methods": {}}
-        with live_stack(output, adopt=args.adopt_stack, headless=args.headless,
-                        schema="spatial-reference/12",
-                        reset_recoveries=args.reset_recoveries,
-                        isolate_episodes=args.fresh_stack_per_episode,
-                        profile_path=profile):
+        with stack:
             for offset, method in enumerate(args.methods):
                 model = _model(contract, method, args.seed+offset, args.graph_seed)
-                if not args.checkpoint_root:
-                    raise SystemExit("Isaac evaluation requires --checkpoint-root")
                 load_checkpoint(Path(args.checkpoint_root)/method/"checkpoint_best.pt", model,
                                 allow_execution_transfer=True)
-                factory = lambda: DirectIsaacBackend(
-                    contract, deployment=deployment, pair=0)
                 evaluated = evaluate(
                     contract, model,
                     range(args.seed, args.seed+args.evaluation_episodes), args.steps,
@@ -253,17 +339,22 @@ def run_evaluate(args, contract):
                         output/"isaac_traces"/f"{method}.json"),
                 }
         return result
-    if args.backend != "local":
+    if args.backend not in {"local", "replay"}:
         return {"status": "BLOCKED", "backend": args.backend, "methods": {},
-                "reason": "evaluation is enabled only on the local backend"}
-    result = {"status": "PASSED", "methods": {}}
+                "reason": "selected backend is not available for evaluation"}
+    try:
+        factory = make_backend_factory(contract, replay_path=args.replay_fixture)
+    except ValueError as exc:
+        return {"status": "BLOCKED", "backend": args.backend, "methods": {},
+                "reason": str(exc)}
+    result = {"status": "PASSED", "backend": args.backend, "methods": {}}
     for offset, method in enumerate(args.methods):
         model = _model(contract, method, args.seed+offset, args.graph_seed)
         if args.checkpoint_root:
             load_checkpoint(Path(args.checkpoint_root)/method/"checkpoint_best.pt", model)
         result["methods"][method] = evaluate(
             contract, model, range(args.seed, args.seed+args.evaluation_episodes), args.steps,
-            deterministic=not args.sample_actions)
+            deterministic=not args.sample_actions, backend_factory=factory)
     return result
 
 
@@ -316,6 +407,10 @@ def build_parser():
     parser.add_argument("--output", default="results/matlab_port/run")
     parser.add_argument("--fixture")
     parser.add_argument("--checkpoint-root")
+    parser.add_argument("--resume-checkpoint-root",
+                        help="resume model, optimizers and update number in --output")
+    parser.add_argument("--replay-fixture",
+                        help="NPZ/JSON observation trajectory required by --backend replay")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--allow-isaac", action="store_true")
     parser.add_argument("--headless", action="store_true")

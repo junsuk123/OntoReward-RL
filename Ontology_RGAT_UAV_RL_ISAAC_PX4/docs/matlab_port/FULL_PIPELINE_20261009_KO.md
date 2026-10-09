@@ -1,5 +1,17 @@
 # MATLAB-port 전체 파이프라인 실행 보고서
 
+최종 Isaac 실행은 `./run.sh matlab-port-final`을 사용한다. 이 명령은 별도
+2D 전체와 2D/3D local validation을 포함한 검증 전용 단계들을 생략하고 최종
+3D owned Isaac/PX4 학습과 평가만 남긴다. 아래 `matlab-port-all`은
+이관/회귀 검증용이다.
+최종 경로의 episode는 fresh owned stack으로 격리하며, 실제 Isaac 장기 실행을
+재개할 수 있도록 매 PPO update 뒤 `checkpoint_last.pt`를 기록한다.
+
+> 이 문서는 아래에 적힌 `ce2a3e5` / `5a12d93` pin으로 수행한 역사적 결과다.
+> 현재 재감사 pin은 source `6082258`, destination baseline `3fc2a9f`이며 기존
+> checkpoint는 자동 승격하지 않는다. 현재 gate는 `MIGRATION_ACCEPTANCE.json`을
+> 따른다.
+
 실행일은 2026-10-09 KST다. MATLAB 원본 SHA는
 `ce2a3e5e5d8e9a95158e599a8730fe0307287ece`, 대상 기준 SHA는
 `5a12d937333996a47a6e605a413eb037519a69aa`다. 로컬 학습은 arm별로

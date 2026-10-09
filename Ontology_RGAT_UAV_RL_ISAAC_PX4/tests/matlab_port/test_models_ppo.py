@@ -1,10 +1,12 @@
 import numpy as np
 import torch
+import json
 
 from ontology_rgat.direct_policy.contracts import make_contract
 from ontology_rgat.direct_policy.graph import planar_graph
 from ontology_rgat.direct_policy.models import DirectActorCritic
 from ontology_rgat.direct_policy.ppo import DirectPPO, RolloutBatch
+from ontology_rgat.direct_policy.runner import _model, _rollout
 
 
 def make_model(method="onto_rgat_ppo"):
@@ -99,3 +101,26 @@ def test_one_ppo_update_is_finite_and_versioned():
     stats = trainer.update(batch, generator=torch.Generator().manual_seed(3))
     assert stats["policy_version"] == 1
     assert np.isfinite([stats["actor_loss"], stats["critic_loss"], stats["entropy"]]).all()
+
+
+def test_replay_rollout_uses_recorded_transition_durations(tmp_path):
+    fixture = tmp_path / "replay.json"
+    fixture.write_text(json.dumps({
+        "observations": [np.zeros(12).tolist() for _ in range(3)],
+        "rewards": [0.0, 1.0, 2.0],
+        "statuses": ["RUNNING", "RUNNING", "TASK_TIMEOUT"],
+        "transition_s": [0.1, 0.2, 0.4],
+    }))
+    contract = make_contract(2, backend="replay")
+    model = _model(contract, "ppo", 7)
+    from ontology_rgat.direct_policy.backends import backend_factory
+    batch, episode = _rollout(
+        contract, model, 3, deterministic=True, max_steps=4,
+        policy_version=5, backend_factory=backend_factory(
+            contract, replay_path=fixture))
+    torch.testing.assert_close(
+        batch.discount,
+        torch.tensor([np.exp(-0.2/70), np.exp(-0.4/70)], dtype=torch.float32))
+    assert batch.policy_version == 5
+    assert episode["backend"] == "replay"
+    assert np.isclose(episode["simulated_seconds"], 0.6)

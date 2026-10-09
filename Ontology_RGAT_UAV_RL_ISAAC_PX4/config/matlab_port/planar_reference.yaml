@@ -7,7 +7,6 @@ action_max_m_s2: [2.5, 2.0]
 reward: matlab-reward-v5/1
 termination: matlab-direct-termination/1
 training: matlab-direct-ppo-v1/1
-source_sha: ce2a3e5e5d8e9a95158e599a8730fe0307287ece
+source_sha: 608225805fa447c2f8e2756e33378c32fd975797
 backend: local
 control_profile: direct
-

@@ -129,6 +129,13 @@ class DirectPPO:
         return {"actor": self.actor_optimizer.state_dict(),
                 "critic": self.critic_optimizer.state_dict()}
 
+    def load_optimizer_state(self, state, *, policy_version: int):
+        if set(state) != {"actor", "critic"}:
+            raise ValueError("checkpoint optimizer state is incomplete")
+        self.actor_optimizer.load_state_dict(state["actor"])
+        self.critic_optimizer.load_state_dict(state["critic"])
+        self.policy_version = int(policy_version)
+
 
 def _gradient_norm(module):
     return math.sqrt(sum(float(torch.sum(parameter.grad.detach()**2))

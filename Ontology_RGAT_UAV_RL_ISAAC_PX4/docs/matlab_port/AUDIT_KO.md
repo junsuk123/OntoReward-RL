@@ -1,9 +1,9 @@
 # MATLAB direct-policy 이식 감사
 
-감사일은 2026-10-09(KST)이다. 대상 저장소의 작업 시작 HEAD는
-`5a12d937333996a47a6e605a413eb037519a69aa`이고 작업 시작 시 추적 파일 변경은
-없었다. 원본은 GitHub에서 별도 임시 checkout하여
-`ce2a3e5e5d8e9a95158e599a8730fe0307287ece`를 확인했다. 인접한
+감사일은 2026-10-09(KST)이다. 이번 재감사의 대상 저장소 작업 시작 HEAD는
+`3fc2a9fa659f0f933706b5da6918aafec6239a20`이고 작업 시작 시 추적 파일 변경은
+없었다. 원본 remote HEAD를 다시 조회하고 별도 임시 checkout하여
+`608225805fa447c2f8e2756e33378c32fd975797`를 고정했다. 인접한
 `codes/ugv_landing_2d_workspace`는 `.git`이 없는 복사본이며 manifest의 파일 배치와
 달랐으므로 기준 자료로 사용하지 않았다.
 
@@ -11,12 +11,14 @@
 
 - 저장소 루트: 이 프로젝트의 상위 디렉터리, 진입점 `run.sh`
 - Python 프로젝트 루트: `Ontology_RGAT_UAV_RL_ISAAC_PX4/`
-- 기존 무인자 경로: `scripts/run_minimal_system.sh`; 변경하지 않음
+- 기존 무인자 경로: `scripts/run_minimal_system.sh`; MATLAB-port가 잠시 이 경로를
+  덮어쓴 회귀를 수정했고 launcher guard로 고정함
 - 기존 reference 경로: `run_two_axis_experiment.py` 및
   `two_axis_reference_v28_active.yaml`; MATLAB direct-policy와 다른 9노드 계약
 - 기존 spatial 경로: `run_spatial_pipeline.py`; reference supervisor가 있는 별도 계약
 - 기존 Isaac 경로: `isaac-legacy`; 새 MATLAB 계약 구현으로 간주하지 않음
-- 새 경로: `./run.sh matlab-port ...`; 무인자 실행이나 기존 routing과 분리
+- 새 경로: `./run.sh matlab-port ...` 및 전체 `./run.sh matlab-port-all ...`;
+  무인자 실행이나 기존 routing과 분리
 
 원본의 실제 활성 분기는 `primaryConfig.m`의 `trainingRegime='direct_ppo_v1'`이다.
 정책 관측은 README의 과거 24D/26D 설명이 아니라 `vectorSchema.m`과 `toVector.m`의
@@ -44,6 +46,11 @@ OpenCV 4.11.0, PyYAML 6.0.3이다. 감사 시 Isaac, PX4, XRCE-DDS, ROS2 실행 
 - 원본 commit의 PnP는 자체 Gauss-Newton이다. Python은 동일 corner/ID/캘리브레이션
   경계와 capture stamp를 유지하되 OpenCV iterative PnP를 사용한다. 따라서 실제
   MATLAB golden fixture 비교 전에는 PnP 수치 정합을 PASSED로 표시하지 않는다.
-- 초기 감사 시점에는 Isaac을 NOT_RUN으로 남겼다. 후속 구현에서
-  `run.sh matlab-port-all`의 명시적 opt-in 경로로 2D/3D 실제 비행과
-  command-owner/timestamp/cleanup을 검증했다.
+- `6082258` checkout에서 MATLAB golden fixture를 실제 재생성했다. 이전 fixture와
+  `source_sha` 외 payload가 동일했고 Python parity 오차는 observation/graph 모두
+  `1.1102230246251565e-16`이었다.
+- 이전 pin에서 수행한 Isaac 비행 기록은 보존하지만 새 source/destination pin의
+  검증으로 재해석하지 않는다. 이번 변경에서는 실제 stack을 시작하지 않았다.
+- shared rollout의 implicit local fallback을 제거했다. contract가 replay면 fixture가,
+  Isaac이면 resolved deployment가 없을 때 즉시 실패한다. 실제 transition 간격으로
+  discount를 계산하며 authority record에 PPO policy version을 기록한다.

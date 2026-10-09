@@ -1,9 +1,10 @@
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from ontology_rgat.direct_policy.isaac_adapter import CausalIsaacObservation
-from ontology_rgat.direct_policy.backends import DirectIsaacBackend
+from ontology_rgat.direct_policy.backends import DirectIsaacBackend, backend_factory
 from ontology_rgat.direct_policy.contracts import make_contract
 from ontology_rgat.spatial.environment import Truth
 from ontology_rgat.spatial.core import Measurement
@@ -55,6 +56,16 @@ def test_planar_profile_is_explicit_and_resolved():
     assert benchmark["planar_entry"] is True
 
 
+def test_backend_factory_fails_closed_instead_of_substituting_local(tmp_path):
+    with pytest.raises(ValueError, match="deployment manifest"):
+        backend_factory(make_contract(3, backend="isaac"))
+    with pytest.raises(ValueError, match="replay-fixture"):
+        backend_factory(make_contract(2, backend="replay"))
+    local = backend_factory(make_contract(2, backend="local"))()
+    assert local.name == "local-reference"
+    local.close()
+
+
 class FakeFlight:
     def __init__(self):
         self.m = measurement()
@@ -82,11 +93,17 @@ class FakeFlight:
 def test_authority_uses_the_observation_that_caused_the_command(tmp_path):
     root = Path(__file__).resolve().parents[2]
     deployment = deployment_manifest(root/"config"/"matlab-port-planar-isaac.yaml")
+    flight = FakeFlight()
     backend = DirectIsaacBackend(make_contract(2, backend="isaac"),
-                                 deployment=deployment, flight=FakeFlight())
+                                 deployment=deployment, flight=flight)
+    backend.set_policy_version(7)
     backend.reset(10000)
     result = backend.step(np.zeros(2))
     authority = result.info["authority"]
+    assert result.info["transition_s"] > 0.0
+    assert authority["policy_version"] == 7
     assert authority["capture_stamp_s"] == 0.95
     assert authority["capture_stamp_s"] <= authority["receive_stamp_s"]
     assert authority["receive_stamp_s"] <= authority["decision_stamp_s"]
+    backend.close()
+    assert flight.finished, "truncated/failed rollouts must still invoke owned cleanup"

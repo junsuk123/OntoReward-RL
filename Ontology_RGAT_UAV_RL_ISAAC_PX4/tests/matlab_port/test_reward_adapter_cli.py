@@ -1,3 +1,4 @@
+import json
 import math
 import subprocess
 import sys
@@ -61,6 +62,58 @@ def test_cli_requires_a_checkpoint_before_actual_isaac(tmp_path, request):
     result = subprocess.run(command, cwd=root, text=True, capture_output=True)
     assert result.returncode != 0
     assert "--checkpoint-root" in result.stderr
+
+
+def test_complete_pipeline_is_explicit_and_dry_run_is_non_mutating(tmp_path, request):
+    project = request.config.rootpath
+    output = tmp_path / "matlab-port"
+    result = subprocess.run(
+        ["bash", str(project.parent/"run.sh"), "matlab-port-all", "--dry-run",
+         "--no-isaac", "--run-root", str(output)],
+        cwd=project.parent, text=True, capture_output=True, check=True)
+    assert '"status": "NOT_RUN"' in result.stdout
+    assert "matlab_port_golden_6082258.json" in result.stdout
+    assert not output.exists()
+
+
+def test_final_isaac_pipeline_omits_non_deployment_stages(tmp_path, request):
+    project = request.config.rootpath
+    output = tmp_path / "matlab-port-final"
+    result = subprocess.run(
+        ["bash", str(project.parent/"run.sh"), "matlab-port-final", "--dry-run",
+         "--run-root", str(output)],
+        cwd=project.parent, text=True, capture_output=True, check=True)
+    assert '"workflow": "final-isaac"' in result.stdout
+    assert '"dimensions": [\n    3\n  ]' in result.stdout
+    for retained in ("train-3d", "isaac-3d"):
+        assert f'"name": "{retained}"' in result.stdout
+    train_line = next(line for line in result.stdout.splitlines()
+                      if '"pipeline_stage": "train-3d"' in line)
+    assert '"--backend", "isaac"' in train_line
+    assert '"--allow-isaac"' in train_line
+    assert '"--control-profile", "direct"' in train_line
+    assert '"--fresh-stack-per-episode"' in train_line
+    for omitted in ("train-2d", "isaac-2d", "audit-", "matlab-parity", "smoke-",
+                    "evaluate-deterministic-", "evaluate-sampled-", "report-"):
+        assert f'"name": "{omitted}' not in result.stdout
+    assert not output.exists()
+
+
+def test_training_checkpoints_every_update_and_resumes(tmp_path, request):
+    project = request.config.rootpath
+    runner = project/"python/run_matlab_port.py"
+    output = tmp_path/"resume"
+    common = [sys.executable, str(runner), "--stage", "train", "--dimension", "2",
+              "--output", str(output), "--methods", "ppo",
+              "--episodes-per-update", "1", "--validation-episodes", "1",
+              "--steps", "2"]
+    subprocess.run([*common, "--updates", "1"], cwd=project, check=True,
+                   text=True, capture_output=True)
+    assert (output/"ppo/checkpoint_last.pt").is_file()
+    subprocess.run([*common, "--updates", "2", "--resume-checkpoint-root", str(output)],
+                   cwd=project, check=True, text=True, capture_output=True)
+    history = json.loads((output/"ppo/history.json").read_text())
+    assert [row["update"] for row in history] == [1, 2]
 
 
 def test_authority_metrics_and_matlab_exports(tmp_path):

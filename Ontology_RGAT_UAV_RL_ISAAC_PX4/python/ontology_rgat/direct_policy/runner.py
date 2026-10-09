@@ -10,7 +10,7 @@ import time
 import numpy as np
 import torch
 
-from .backends import LocalReferenceBackend, ReferenceReplayBackend
+from .backends import DirectIsaacBackend, LocalReferenceBackend, ReferenceReplayBackend
 from .contracts import make_contract
 from .graph import planar_graph, spatial_graph
 from .models import DirectActorCritic, load_checkpoint, save_checkpoint
@@ -44,18 +44,30 @@ def _write_json(path, payload):
                     encoding="utf-8")
 
 
-def _rollout(contract, model, seed, *, deterministic, max_steps, policy_version=0):
-    env = LocalReferenceBackend(contract)
-    observation, _ = env.reset(seed)
+def _rollout(contract, model, seed, *, deterministic, max_steps, policy_version=0,
+             backend_factory=None, collect_trace=False):
+    env = (backend_factory() if backend_factory is not None
+           else LocalReferenceBackend(contract))
+    try:
+        observation, reset_info = env.reset(seed)
+    except BaseException:
+        env.close()
+        raise
     generator = torch.Generator().manual_seed(seed + 2_000_000)
-    rows, total, status = [], 0.0, "RUNNING"
+    rows, total, status, trace = [], 0.0, "RUNNING", []
     started = time.perf_counter()
     for decision in range(max_steps):
         x = torch.as_tensor(_input(observation, contract.metadata["dimension"], model.method))
         with torch.no_grad():
             action, latent, logp, value = model.act(
                 x, deterministic=deterministic, generator=generator)
-        result = env.step(action.numpy())
+        try:
+            result = env.step(action.numpy())
+        except BaseException:
+            env.close()
+            raise
+        if collect_trace:
+            trace.append(result.info)
         terminal = result.terminated
         rows.append((x.numpy(), latent.numpy(), float(logp), float(value), result.reward,
                      terminal, terminal or decision == max_steps-1))
@@ -81,8 +93,14 @@ def _rollout(contract, model, seed, *, deterministic, max_steps, policy_version=
         terminated=torch.as_tensor([row[5] for row in rows]),
         episode_end=torch.as_tensor([row[6] for row in rows]),
         bootstrap_value=torch.as_tensor(bootstrap), policy_version=policy_version)
-    return batch, {"seed": seed, "status": status, "return": total, "steps": count,
-                   "wall_seconds": time.perf_counter()-started}
+    episode = {"seed": seed, "status": status, "return": total, "steps": count,
+               "wall_seconds": time.perf_counter()-started,
+               "backend": getattr(env, "name", type(env).__name__),
+               "reset": reset_info}
+    if collect_trace:
+        episode["trace"] = trace
+    env.close()
+    return batch, episode
 
 
 def _join(batches, policy_version):
@@ -92,10 +110,12 @@ def _join(batches, policy_version):
                            for name in names}, policy_version=policy_version)
 
 
-def evaluate(contract, model, seeds, max_steps=700):
-    episodes = [_rollout(contract, model, seed, deterministic=True,
-                         max_steps=max_steps)[1] for seed in seeds]
-    return {"episodes": episodes,
+def evaluate(contract, model, seeds, max_steps=700, *, deterministic=True,
+             backend_factory=None, collect_trace=False):
+    episodes = [_rollout(contract, model, seed, deterministic=deterministic,
+                         max_steps=max_steps, backend_factory=backend_factory,
+                         collect_trace=collect_trace)[1] for seed in seeds]
+    return {"deterministic": bool(deterministic), "episodes": episodes,
             "success_rate": sum(row["status"] == "SUCCESS" for row in episodes)/len(episodes),
             "unsafe_rate": sum(row["status"] in {"UNSAFE_CONTACT", "MISSED_PAD_CONTACT",
                                                    "SAFETY_ENVELOPE_VIOLATION"}
@@ -159,6 +179,17 @@ def run_train(args, contract):
                                     rng_state=torch.get_rng_state())
             history.append(row)
             _write_json(output/method/"history.json", history)
+            if update == 1 or "validation" in row:
+                progress = {"method": method, "update": update,
+                            "episodes_complete": update*args.episodes_per_update,
+                            "mean_train_return": float(np.mean(
+                                [episode["return"] for episode in episodes]))}
+                if "validation" in row:
+                    progress["validation"] = {
+                        key: value for key, value in row["validation"].items()
+                        if key != "episodes"
+                    }
+                print(json.dumps({"progress": progress}, default=float), flush=True)
         save_checkpoint(output/method/"checkpoint_last.pt", model,
                         training_step=args.updates, optimizer_state=trainer.optimizer_state(),
                         rng_state=torch.get_rng_state())
@@ -171,13 +202,68 @@ def run_train(args, contract):
 
 
 def run_evaluate(args, contract):
+    if args.backend == "isaac":
+        if not args.allow_isaac:
+            raise SystemExit("Isaac backend requires --allow-isaac")
+        if args.seed < 10000 or not 1 <= args.evaluation_episodes <= 1000:
+            raise SystemExit("Isaac evaluation requires seed >=10000 and 1..1000 episodes")
+        if args.control_profile != "direct":
+            raise SystemExit("live MATLAB-port evaluation currently requires --control-profile direct")
+        from ontology_rgat.spatial.runtime_contract import (deployment_manifest,
+                                                            deployment_profile)
+        from run_spatial_pipeline import live_stack
+        root = Path(__file__).resolve().parents[3]
+        profile = (root/"config"/"matlab-port-planar-isaac.yaml"
+                   if args.dimension == 2 else
+                   Path(deployment_profile("spatial-reference/12")["path"]))
+        deployment = deployment_manifest(profile)
+        output = Path(args.output)
+        result = {"status": "PASSED", "backend": "actual-isaac-px4",
+                  "deployment": deployment, "methods": {}}
+        with live_stack(output, adopt=args.adopt_stack, headless=args.headless,
+                        schema="spatial-reference/12",
+                        reset_recoveries=args.reset_recoveries,
+                        isolate_episodes=args.fresh_stack_per_episode,
+                        profile_path=profile):
+            for offset, method in enumerate(args.methods):
+                model = _model(contract, method, args.seed+offset, args.graph_seed)
+                if not args.checkpoint_root:
+                    raise SystemExit("Isaac evaluation requires --checkpoint-root")
+                load_checkpoint(Path(args.checkpoint_root)/method/"checkpoint_best.pt", model,
+                                allow_execution_transfer=True)
+                factory = lambda: DirectIsaacBackend(
+                    contract, deployment=deployment, pair=0)
+                evaluated = evaluate(
+                    contract, model,
+                    range(args.seed, args.seed+args.evaluation_episodes), args.steps,
+                    deterministic=not args.sample_actions,
+                    backend_factory=factory, collect_trace=True)
+                _write_json(output/"isaac_traces"/f"{method}.json", evaluated)
+                # The full per-decision authority trace belongs in its own
+                # artifact, not duplicated into the summary or stdout.
+                result["methods"][method] = {
+                    **{key: value for key, value in evaluated.items()
+                       if key != "episodes"},
+                    "episodes": [
+                        {key: value for key, value in episode.items()
+                         if key != "trace"}
+                        for episode in evaluated["episodes"]
+                    ],
+                    "trace_artifact": str(
+                        output/"isaac_traces"/f"{method}.json"),
+                }
+        return result
+    if args.backend != "local":
+        return {"status": "BLOCKED", "backend": args.backend, "methods": {},
+                "reason": "evaluation is enabled only on the local backend"}
     result = {"status": "PASSED", "methods": {}}
     for offset, method in enumerate(args.methods):
         model = _model(contract, method, args.seed+offset, args.graph_seed)
         if args.checkpoint_root:
             load_checkpoint(Path(args.checkpoint_root)/method/"checkpoint_best.pt", model)
         result["methods"][method] = evaluate(
-            contract, model, range(args.seed, args.seed+args.evaluation_episodes), args.steps)
+            contract, model, range(args.seed, args.seed+args.evaluation_episodes), args.steps,
+            deterministic=not args.sample_actions)
     return result
 
 
@@ -232,12 +318,18 @@ def build_parser():
     parser.add_argument("--checkpoint-root")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--allow-isaac", action="store_true")
+    parser.add_argument("--headless", action="store_true")
+    parser.add_argument("--adopt-stack", action="store_true")
+    parser.add_argument("--reset-recoveries", type=int, default=2)
+    parser.add_argument("--fresh-stack-per-episode", action="store_true")
     parser.add_argument("--steps", type=int, default=32)
     parser.add_argument("--updates", type=int, default=750)
     parser.add_argument("--episodes-per-update", type=int, default=6)
     parser.add_argument("--evaluate-every", type=int, default=25)
     parser.add_argument("--validation-episodes", type=int, default=8)
     parser.add_argument("--evaluation-episodes", type=int, default=16)
+    parser.add_argument("--sample-actions", action="store_true",
+                        help="sample the checkpoint policy instead of using its mean action")
     return parser
 
 
@@ -265,5 +357,15 @@ def main(argv=None):
         result = {"status": "PASSED", "note": "acceptance report is generated from recorded gates",
                   **plan}
     _write_json(Path(args.output)/f"{args.stage}.json", result)
-    print(json.dumps(result, indent=2, default=float))
+    console_result = result
+    if args.stage == "evaluate" and "methods" in result:
+        console_result = {
+            **{key: value for key, value in result.items() if key != "methods"},
+            "methods": {
+                method: {key: value for key, value in row.items()
+                         if key != "episodes"}
+                for method, row in result["methods"].items()
+            },
+        }
+    print(json.dumps(console_result, indent=2, default=float))
     return 1 if result.get("status") == "FAILED" else 0

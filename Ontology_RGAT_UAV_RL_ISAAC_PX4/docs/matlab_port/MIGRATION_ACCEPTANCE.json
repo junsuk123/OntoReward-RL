@@ -1,0 +1,92 @@
+{
+  "schema_version": "sensor-realistic-migration-acceptance/1",
+  "generated_date_kst": "2026-10-09",
+  "overall": "FAILED",
+  "source_sha": "608225805fa447c2f8e2756e33378c32fd975797",
+  "destination_baseline_sha": "3fc2a9fa659f0f933706b5da6918aafec6239a20",
+  "dirty_state_at_start": "clean",
+  "verification": {
+    "full_suite": {
+      "status": "PASSED",
+      "passed": 1530,
+      "skipped": 2,
+      "warnings": 15,
+      "elapsed_s": 343.70,
+      "command": "PYTHONPATH=python:. python -m pytest -q"
+    },
+    "shared_contract_snapshot": "PASSED; two_axis and spatial-causal-rgat/5 byte-identical",
+    "matlab_golden": {
+      "status": "PASSED",
+      "observation_max_abs_error": 1.1102230246251565e-16,
+      "graph_max_abs_error": 1.1102230246251565e-16
+    }
+  },
+  "gates": {
+    "P0_freeze_and_audit": {
+      "status": "PASSED",
+      "evidence": [
+        "docs/matlab_port/BASELINE_MANIFEST.json",
+        "docs/matlab_port/MIGRATION_AUDIT_MATRIX.md"
+      ]
+    },
+    "P1_execution_integrity_and_algorithm_parity": {
+      "status": "FAILED",
+      "passed": [
+        "contract-driven backend factory with no Isaac-to-local fallback",
+        "MATLAB-generated 6082258 observation/graph golden parity",
+        "separate actor and critic R-GAT encoders",
+        "latent-action PPO and variable-time discounting",
+        "checkpoint optimizer/update/RNG resume wiring"
+      ],
+      "remaining": [
+        "MATLAB fixed-weight actor/critic forward fixture",
+        "MATLAB loss and gradient fixture",
+        "MATLAB optimizer-step fixture"
+      ]
+    },
+    "P2_spatial_sensing_and_estimation": {
+      "status": "FAILED",
+      "passed": [
+        "rendered marker detector integration",
+        "causal capture/receive/decision timestamps",
+        "position and velocity tracking with outage propagation"
+      ],
+      "remaining": [
+        "pad orientation and angular-motion estimate",
+        "explicit pose-ambiguity and reprojection-outlier acceptance evidence",
+        "navigation uncertainty provenance"
+      ]
+    },
+    "P3_expanded_observation_and_graph": {
+      "status": "FAILED",
+      "reason": "the current fixed 21D spatial schema is provisional and lacks required pad attitude/angular motion and uncertainty coverage"
+    },
+    "P4_full_spatial_closed_loop": {
+      "status": "NOT_RUN",
+      "reason": "historical Isaac flights used older pins and were not reinterpreted"
+    },
+    "P5_actual_ppo_training_and_evaluation": {
+      "status": "NOT_RUN",
+      "reason": "the opt-in actual-Isaac train/evaluate code path is implemented but no new campaign was started in this refactor"
+    },
+    "P6_reproducible_evidence": {
+      "status": "FAILED",
+      "passed": [
+        "versioned current golden fixture",
+        "audit and fidelity matrices",
+        "machine-readable gate report"
+      ],
+      "remaining": [
+        "current-pin actual-Isaac traces",
+        "multi-seed matched comparison",
+        "turning/tilting and physical sensor-degradation campaign"
+      ]
+    }
+  },
+  "claims_not_made": [
+    "complete sensor-realistic spatial migration",
+    "current-pin Isaac/PX4 acceptance",
+    "MATLAB end-to-end numerical parity",
+    "ontology-RGAT superiority"
+  ]
+}

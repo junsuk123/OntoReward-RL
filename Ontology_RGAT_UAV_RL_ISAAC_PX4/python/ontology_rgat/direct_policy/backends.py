@@ -43,6 +43,16 @@ class ReferenceReplayBackend:
             self.observations = np.asarray(payload["observations"], dtype=np.float64)
             self.rewards = np.asarray(payload.get("rewards", [0]*len(self.observations)))
             self.statuses = payload.get("statuses", ["RUNNING"]*len(self.observations))
+            self.transition_s = np.asarray(payload.get(
+                "transition_s", [0.1]*len(self.observations)), dtype=float)
+        if path.suffix == ".npz":
+            self.transition_s = np.asarray(payload.get(
+                "transition_s", np.full(len(self.observations), 0.1)), dtype=float)
+        if len(self.observations) < 2:
+            raise ValueError("replay fixture needs an initial observation and one transition")
+        if not (len(self.rewards) == len(self.statuses) == len(self.transition_s)
+                == len(self.observations)):
+            raise ValueError("replay fields must have the same length")
         self.index = 0
 
     def reset(self, seed=None):
@@ -57,7 +67,8 @@ class ReferenceReplayBackend:
         return StepResult(self.observations[self.index].copy(),
                           float(self.rewards[self.index]), status != "RUNNING", status,
                           {"backend": self.name, "requested_acceleration": list(action),
-                           "applied_acceleration": list(action), "intervened": False})
+                           "applied_acceleration": list(action), "intervened": False,
+                           "transition_s": float(self.transition_s[self.index])})
 
     def close(self):
         pass
@@ -94,7 +105,11 @@ class LocalReferenceBackend:
         self.estimated_velocity = self.pad_velocity.copy()
         observation = self._observation(updated=True)
         return observation, {"backend": self.name, "seed": seed,
-                             "policy_version": 0, "decision_id": 0}
+                             "policy_version": getattr(self, "policy_version", 0),
+                             "decision_id": 0}
+
+    def set_policy_version(self, version: int):
+        self.policy_version = int(version)
 
     def _truth(self):
         relative = self.pad_position-self.own_position
@@ -183,7 +198,7 @@ class LocalReferenceBackend:
                           {"backend": self.name, "requested_acceleration": requested.tolist(),
                            "applied_acceleration": applied.tolist(),
                            "intervened": intervened, "reward_components": components,
-                           "elapsed_s": self.elapsed})
+                           "elapsed_s": self.elapsed, "transition_s": self.dt})
 
     def close(self):
         pass
@@ -225,6 +240,11 @@ class DirectIsaacBackend:
             self.dimension, pad_offset_z_m=contract.scenarios.pad_height_m)
         self.ownership = CommandOwnership(contract.safety.command_owner)
         self.closed = False
+        self.episode_active = False
+        self.policy_version = 0
+
+    def set_policy_version(self, version: int):
+        self.policy_version = int(version)
 
     @staticmethod
     def _yaw(measurement):
@@ -246,6 +266,7 @@ class DirectIsaacBackend:
 
     def reset(self, seed: int):
         measurement, truth = self.flight.reset(int(seed))
+        self.episode_active = True
         self.episode_id = f"matlab-port-{self.dimension}d-{int(seed)}"
         self.ownership.reset(self.episode_id)
         self.observer.reset(self.episode_id)
@@ -285,11 +306,12 @@ class DirectIsaacBackend:
         payload = direct_acceleration_payload(
             requested, heading_rad=command.yaw_enu_rad,
             decision_id=self.decision_id, episode_id=self.episode_id,
-            policy_version=0, stamp_s=self.decision_s)
+            policy_version=self.policy_version, stamp_s=self.decision_s)
         self.ownership.validate(payload, writer=self.contract.safety.command_owner)
         truth = self.flight.advance(command, self.observer.ingest)
         observation, provenance = self.observer.vector()
         new_measurement = self.observer.last_measurement
+        transition_s = float(new_measurement.time_s-self.decision_s)
         elapsed = float(new_measurement.time_s-self.start_s)
         current_truth = self._truth(truth)
         tilt = float(np.linalg.norm(truth.roll_pitch))
@@ -314,7 +336,7 @@ class DirectIsaacBackend:
                     / max(float(new_measurement.time_s-self.decision_s), 1e-6))
         record = AuthorityRecord(
             episode_id=self.episode_id, decision_id=self.decision_id,
-            policy_version=0,
+            policy_version=self.policy_version,
             capture_stamp_s=command_provenance["capture_stamp_s"],
             receive_stamp_s=command_provenance["receive_stamp_s"],
             decision_stamp_s=self.decision_s,
@@ -333,6 +355,7 @@ class DirectIsaacBackend:
         status = event.reason if event.occurred else "RUNNING"
         if event.occurred:
             self.flight.finish()
+            self.episode_active = False
         return StepResult(
             observation, reward, event.occurred, status,
             {"backend": self.name,
@@ -342,11 +365,39 @@ class DirectIsaacBackend:
              "intervened": bool(command.constrained),
              "planar_y_hold_active": self.dimension == 2,
              "yaw_hold_rad": command.yaw_enu_rad,
-             "reward_components": components,
-             "observation_provenance": provenance,
-             "authority": record.to_dict(), "elapsed_s": elapsed})
+            "reward_components": components,
+            "observation_provenance": provenance,
+             "authority": record.to_dict(), "elapsed_s": elapsed,
+             "transition_s": transition_s})
 
     def close(self):
         if not self.closed:
             self.closed = True
-            self.flight.close()
+            try:
+                if self.episode_active:
+                    self.flight.finish()
+                    self.episode_active = False
+            finally:
+                self.flight.close()
+
+
+def backend_factory(contract: ContractBundle, *, replay_path=None, deployment=None,
+                    pair=0, flight=None):
+    """Return a zero-argument factory for the backend named by the contract.
+
+    Missing replay data or Isaac deployment state is an error.  In particular,
+    an Isaac contract can never fall back to the local reference plant.
+    """
+    name = contract.backend.name
+    if name == "local":
+        return lambda: LocalReferenceBackend(contract)
+    if name == "replay":
+        if replay_path is None:
+            raise ValueError("replay backend requires --replay-fixture")
+        return lambda: ReferenceReplayBackend(replay_path)
+    if name == "isaac":
+        if deployment is None:
+            raise ValueError("Isaac backend requires a resolved deployment manifest")
+        return lambda: DirectIsaacBackend(
+            contract, deployment=deployment, pair=pair, flight=flight)
+    raise ValueError(f"unknown direct-policy backend: {name}")

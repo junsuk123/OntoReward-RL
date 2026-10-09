@@ -3,12 +3,12 @@
   "audit_date_kst": "2026-10-09",
   "source": {
     "url": "https://github.com/junsuk123/ugv_landing_2d_workspace",
-    "sha": "ce2a3e5e5d8e9a95158e599a8730fe0307287ece",
+    "sha": "608225805fa447c2f8e2756e33378c32fd975797",
     "checkout_verified": true
   },
   "target": {
     "url": "https://github.com/junsuk123/OntoReward-RL",
-    "sha_at_start": "5a12d937333996a47a6e605a413eb037519a69aa",
+    "sha_at_start": "3fc2a9fa659f0f933706b5da6918aafec6239a20",
     "worktree_at_start": "clean",
     "project_root": "Ontology_RGAT_UAV_RL_ISAAC_PX4"
   },
@@ -36,7 +36,6 @@
   },
   "external_execution": {
     "matlab": "NOT_RUN",
-    "isaac_px4": "NOT_RUN"
+    "isaac_px4": "HISTORICAL_RUN_ONLY; NOT_RERUN_FOR_6082258"
   }
 }
-

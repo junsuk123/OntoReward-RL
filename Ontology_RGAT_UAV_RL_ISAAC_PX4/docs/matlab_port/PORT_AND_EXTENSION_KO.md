@@ -27,8 +27,8 @@ contract hash는 세 종류다. algorithm hash는 관측/그래프/행동/학습
 저장소 루트에서 다음처럼 실행한다. `--dry-run`은 Isaac/PX4를 시작하지 않는다.
 
 ```bash
-# 기본: 2D/3D 신규 학습 -> validation -> test -> Isaac/PX4 -> analysis
-./run.sh
+# 기본 무인자 경로는 minimal-observation system이며 이 migration과 분리됨
+./run.sh --dry-run
 
 ./run.sh matlab-port --stage parity --backend replay --dimension 2
 ./run.sh matlab-port --stage smoke --backend local --dimension 2
@@ -37,7 +37,24 @@ contract hash는 세 종류다. algorithm hash는 관측/그래프/행동/학습
 ./run.sh matlab-port-all --run-root results/matlab_port/my_run --headless
 ```
 
-무인자 `./run.sh`는 `matlab-port-all`과 같다. 기본값은 arm별 750 update,
+최종 Isaac 운용에는 검증 전용 하위 프로세스를 제외한 경량 경로를 사용한다.
+
+```bash
+./run.sh matlab-port-final --run-root results/matlab_port/final_run
+```
+
+이 경로는 최종 3D의 `Isaac/PX4 train -> Isaac/PX4 evaluate`만 실행한다.
+학습과 평가 모두 `backend=isaac`, `control-profile=direct`를 사용한다. 2D 전체와 `audit`, MATLAB
+parity, smoke, 별도 deterministic/sampled local evaluation 및 차원별 report는
+생성하지 않는다. 학습 중 best checkpoint 선택에 필요한 validation은 학습
+프로세스 내부에 남는다. 차원 비교가 필요하면 `--dimensions 2 3`을 명시하고,
+전체 이관 검증이 필요할 때만 `matlab-port-all`을 쓴다.
+
+최종 경로는 episode 사이에 PX4/EKF와 움직이는 pad 상태가 누적되지 않도록
+각 episode를 fresh owned stack에서 시작한다. `checkpoint_last.pt`는 PPO update마다
+저장된다. 중단 후 같은 run root를 계속할 때는 `--resume-training`을 명시한다.
+
+`matlab-port-all`의 기본값은 arm별 750 update,
 update당 sampled episode 6개, validation 100 seed, test 200 seed(3001--3200),
 그리고 arm별 Isaac seed 12000 1회다. 기존 minimal 시스템은
 `./run.sh system`으로 실행한다. 실행 루트의 `analysis.json`이 validation,
@@ -66,3 +83,8 @@ MATLAB golden은 `tools/matlab_port/export_golden_fixture.m`로 만든 뒤 parit
 OpenCV PnP와 MATLAB 자체 Gauss-Newton PnP의 수치 차이는 별도 gate다. 실제
 Isaac 실행은 `--allow-isaac`이 있는 명시적 경로에서만 가능하고, 기존
 stack을 임의로 takeover하지 않는다.
+
+실제 Isaac PPO update 경로도 같은 CLI의 `--stage train --backend isaac
+--allow-isaac`으로 연결되어 있다. 이는 구현된 opt-in 경로이지 이번 재감사에서
+실행한 장기 학습 결과가 아니다. `--resume-checkpoint-root`는 동일 output root의
+model/optimizer/update/RNG 상태를 검증 후 복원한다.

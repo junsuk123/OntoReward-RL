@@ -27,11 +27,21 @@ contract hash는 세 종류다. algorithm hash는 관측/그래프/행동/학습
 저장소 루트에서 다음처럼 실행한다. `--dry-run`은 Isaac/PX4를 시작하지 않는다.
 
 ```bash
+# 기본: 2D/3D 신규 학습 -> validation -> test -> Isaac/PX4 -> analysis
+./run.sh
+
 ./run.sh matlab-port --stage parity --backend replay --dimension 2
 ./run.sh matlab-port --stage smoke --backend local --dimension 2
 ./run.sh matlab-port --stage evaluate --backend isaac --dimension 2 --control-profile direct --allow-isaac
 ./run.sh matlab-port --stage train --backend local --dimension 3 --methods ppo onto_rgat_ppo
+./run.sh matlab-port-all --run-root results/matlab_port/my_run --headless
 ```
+
+무인자 `./run.sh`는 `matlab-port-all`과 같다. 기본값은 arm별 750 update,
+update당 sampled episode 6개, validation 100 seed, test 200 seed(3001--3200),
+그리고 arm별 Isaac seed 12000 1회다. 기존 minimal 시스템은
+`./run.sh system`으로 실행한다. 실행 루트의 `analysis.json`이 validation,
+deterministic/sampled test, Isaac 결과를 합친다.
 
 MATLAB golden은 `tools/matlab_port/export_golden_fixture.m`로 만든 뒤 parity 단계의
 `--fixture`에 전달한다. MATLAB과 NumPy seed가 같은 난수열을 만든다고 가정하지
@@ -41,11 +51,18 @@ MATLAB golden은 `tools/matlab_port/export_golden_fixture.m`로 만든 뒤 parit
 
 - Python 계약/관측/그래프/gradient/PPO/reward/좌표 adapter: PASSED
 - local 2D/3D smoke와 CLI dry-run: PASSED
-- pinned MATLAB이 생성한 golden과의 수치 비교: NOT_RUN (MATLAB fixture 없음)
-- 전체 750-update 학습, validation/test/stress: NOT_RUN
-- Isaac/PX4 실제 비행 및 ROS control path: NOT_RUN
-- R-GAT 우월성: NOT_RUN이며 구현 또는 smoke 결과로 주장하지 않음
+- pinned MATLAB이 생성한 golden과의 수치 비교: PASSED (최대 절대 오차
+  `1.1102230246251565e-16`)
+- 전체 750-update 학습과 deterministic/sampled test: PASSED (단일 학습 seed)
+- seed-only stress split: PASSED. 물리 stress 분포는 아직 구현되지 않음
+- Isaac/PX4 실제 비행: PASSED. owned stack, 기존 ArUco PnP/EKF,
+  acceleration-only gateway, reset/stop/cleanup을 재사용하여 2D/3D의 PPO/R-GAT
+  각 1회를 비행했다. 1 seed이므로 성능 수용 게이트는 아니다.
+- R-GAT 우월성: 주장하지 않음. 3D deterministic 결과는 우세했지만 sampled
+  test는 모든 arm이 성공 0%이며 2D R-GAT은 unsafe 98%였음
 
-OpenCV PnP와 MATLAB 자체 Gauss-Newton PnP의 수치 차이는 golden fixture가 생길 때
-별도 gate로 판정해야 한다. 실제 Isaac 실행은 command-owner, acceleration-only,
-timestamp 기록을 연결한 다음 owned stack에서만 수행한다.
+실행 수치와 제한은 `FULL_PIPELINE_20261009_KO.md`에 기록한다.
+
+OpenCV PnP와 MATLAB 자체 Gauss-Newton PnP의 수치 차이는 별도 gate다. 실제
+Isaac 실행은 `--allow-isaac`이 있는 명시적 경로에서만 가능하고, 기존
+stack을 임의로 takeover하지 않는다.

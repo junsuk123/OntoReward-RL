@@ -31,7 +31,7 @@ BENCHMARK_SCENARIOS = {
     # the fastest segment of the fastest deck is 1.00 m/s
     # (isaac_sim/pad_motion.py, 2026-09-23).
     "segmented_cruise_slow", "segmented_cruise_medium", "segmented_cruise_fast",
-    "spatial_reference_cv_ca_cv",
+    "spatial_reference_cv_ca_cv", "matlab_planar_cv_ca_cv",
 }
 
 

@@ -15,7 +15,6 @@ src/algorithms/+landing2d/+rl/ppoTrain.m,python/ontology_rgat/direct_policy/ppo.
 src/algorithms/+landing2d/+rl/computeReward.m,python/ontology_rgat/direct_policy/reward.py,new,"reward_v5 and 3D role-preserving extension"
 src/simulations/+landing2d/+environment/evaluateTermination.m,python/ontology_rgat/direct_policy/reward.py,new,"direct contact verdict"
 src/orchestration/+landing2d/+config/methodRegistry.m,python/ontology_rgat/direct_policy/runner.py,new,"ppo/onto_rgat plus opt-in shuffled ablation"
-target spatial.environment.IsaacBackend,python/ontology_rgat/direct_policy/isaac_adapter.py,reuse-boundary,"message/frame adapter only; flight NOT_RUN"
+target spatial.environment.IsaacBackend,python/ontology_rgat/direct_policy/backends.py,reuse-boundary,"owned live flight composed through DirectIsaacBackend; actual 2D/3D run complete"
 target ros2_gateway direct acceleration,python/ontology_rgat/direct_policy/isaac_adapter.py,reuse-boundary,"ENU to NED and NaN inactive fields"
 target minimal/spatial/reference/isaac-legacy,unchanged,preserve,"no overwrite"
-

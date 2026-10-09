@@ -53,6 +53,16 @@ def test_cli_dry_run_is_non_mutating_and_does_not_require_isaac(tmp_path, reques
     assert '"status": "NOT_RUN"' in result.stdout
 
 
+def test_cli_requires_a_checkpoint_before_actual_isaac(tmp_path, request):
+    root = request.config.rootpath
+    command = [sys.executable, str(root/"python/run_matlab_port.py"),
+               "--stage", "evaluate", "--backend", "isaac", "--dimension", "2",
+               "--allow-isaac", "--seed", "10000", "--output", str(tmp_path)]
+    result = subprocess.run(command, cwd=root, text=True, capture_output=True)
+    assert result.returncode != 0
+    assert "--checkpoint-root" in result.stderr
+
+
 def test_authority_metrics_and_matlab_exports(tmp_path):
     records = [
         {"time_s": 0.0, "horizontal_distance_m": 1.0, "height_m": 2.0,

@@ -531,12 +531,13 @@ class LocalBackend:
 class IsaacBackend:
     name = "isaac-px4-spatial"
 
-    def __init__(self, cfg, *, pair=0, scenario=None):
+    def __init__(self, cfg, *, pair=0, scenario=None, deployment=None):
         from ..config import default_config
         from ..bridge import PX4Bridge
         from .runtime_contract import deployment_profile, runtime_source_hash, wait_runtime_identity
 
-        self.profile_sha256 = deployment_profile(cfg.schema)["sha256"]
+        self.deployment = deployment or deployment_profile(cfg.schema)
+        self.profile_sha256 = self.deployment["sha256"]
         if cfg.isaac_profile_sha256 and cfg.isaac_profile_sha256 != self.profile_sha256:
             raise ValueError(
                 "Isaac scientific profile differs from checkpoint deployment contract"
@@ -602,7 +603,9 @@ class IsaacBackend:
         from ..bridge import EntryResetError, PX4Failsafe
         from .lifecycle import recover_refused_reset, prepare_isolated_episode
         if prepare_isolated_episode(seed=seed,release=self.bridge.close):
-            self.__init__(self.cfg,pair=self.pair,scenario=self.scenario)
+            deployment = getattr(self, "deployment", None)
+            self.__init__(self.cfg,pair=self.pair,scenario=self.scenario,
+                          deployment=deployment)
         while True:
             try:
                 try:
@@ -628,7 +631,9 @@ class IsaacBackend:
                     self.bridge.close()
                 if not recover_refused_reset(exc, seed=seed, release=release):
                     raise
-                self.__init__(self.cfg, pair=self.pair, scenario=self.scenario)
+                deployment = getattr(self, "deployment", None)
+                self.__init__(self.cfg, pair=self.pair, scenario=self.scenario,
+                              deployment=deployment)
 
     def _reset_once(self, seed):
         self.finished = False

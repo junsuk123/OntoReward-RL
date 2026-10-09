@@ -32,7 +32,9 @@ def main(argv=None):
     parser.add_argument("--dimensions", nargs="+", type=int, choices=(2, 3),
                         help="dimensions to run; final-Isaac defaults to 3, verification to 2 3")
     parser.add_argument("--updates", type=int, default=750)
-    parser.add_argument("--episodes-per-update", type=int, default=6)
+    parser.add_argument("--episodes-per-update", type=int, default=12)
+    parser.add_argument("--training-profile", choices=("source", "stable"),
+                        default="stable")
     parser.add_argument("--validation-episodes", type=int, default=100)
     parser.add_argument("--evaluation-episodes", type=int, default=200)
     parser.add_argument("--test-seed-start", type=int, default=3001)
@@ -101,6 +103,7 @@ def main(argv=None):
             train_extra = [
                 "--updates", args.updates,
                 "--episodes-per-update", args.episodes_per_update,
+                "--training-profile", args.training_profile,
                 "--validation-episodes", args.validation_episodes,
                 "--steps", args.steps,
             ]
@@ -109,13 +112,12 @@ def main(argv=None):
                     "--backend", "isaac", "--allow-isaac",
                     "--control-profile", "direct",
                     "--reset-recoveries", args.reset_recoveries,
-                    "--fresh-stack-per-episode",
                 ])
                 if args.headless:
                     train_extra.append("--headless")
                 if args.adopt_stack:
                     train_extra.append("--adopt-stack")
-                if args.fresh_stack_per_episode and "--fresh-stack-per-episode" not in train_extra:
+                if args.fresh_stack_per_episode:
                     train_extra.append("--fresh-stack-per-episode")
             if args.resume_training:
                 train_extra.extend(["--resume-checkpoint-root", checkpoint_root])
@@ -123,6 +125,7 @@ def main(argv=None):
                 "train", dimension, checkpoint_root, args, *train_extra))
         if not args.final_isaac_only:
             common = ("--checkpoint-root", checkpoint_root,
+                      "--training-profile", args.training_profile,
                       "--evaluation-episodes", args.evaluation_episodes,
                       "--seed", args.test_seed_start,
                       "--steps", args.steps)
@@ -133,6 +136,7 @@ def main(argv=None):
                 *common, "--sample-actions"))
         if not args.no_isaac:
             isaac_extra = ["--backend", "isaac", "--allow-isaac",
+                           "--training-profile", args.training_profile,
                            "--checkpoint-root", checkpoint_root,
                            "--evaluation-episodes", args.isaac_episodes,
                            "--seed", args.isaac_seed_start,
@@ -142,7 +146,7 @@ def main(argv=None):
                 isaac_extra.append("--headless")
             if args.adopt_stack:
                 isaac_extra.append("--adopt-stack")
-            if args.final_isaac_only or args.fresh_stack_per_episode:
+            if args.fresh_stack_per_episode:
                 isaac_extra.append("--fresh-stack-per-episode")
             run(f"isaac-{dimension}d", command(
                 "evaluate", dimension, base/"isaac", args, *isaac_extra))

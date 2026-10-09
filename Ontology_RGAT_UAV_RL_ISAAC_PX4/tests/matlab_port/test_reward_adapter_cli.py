@@ -92,7 +92,12 @@ def test_final_isaac_pipeline_omits_non_deployment_stages(tmp_path, request):
     assert '"--backend", "isaac"' in train_line
     assert '"--allow-isaac"' in train_line
     assert '"--control-profile", "direct"' in train_line
-    assert '"--fresh-stack-per-episode"' in train_line
+    assert '"--training-profile", "stable"' in train_line
+    assert '"--episodes-per-update", "12"' in train_line
+    isaac_line = next(line for line in result.stdout.splitlines()
+                       if '"pipeline_stage": "isaac-3d"' in line)
+    assert '"--training-profile", "stable"' in isaac_line
+    assert '"--fresh-stack-per-episode"' not in train_line
     for omitted in ("train-2d", "isaac-2d", "audit-", "matlab-parity", "smoke-",
                     "evaluate-deterministic-", "evaluate-sampled-", "report-"):
         assert f'"name": "{omitted}' not in result.stdout

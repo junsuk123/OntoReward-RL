@@ -19,7 +19,8 @@ from ontology_rgat_px4.protocol import (
     validate_goto,
 )
 from ontology_rgat_px4.udp_server import DatagramServer
-from ontology_rgat_px4.ros2_gateway import (ContinuousPx4Clock,
+from ontology_rgat_px4.ros2_gateway import (ColdResetReadiness,
+                                            ContinuousPx4Clock,
                                             spatial_command_timestamp_us,
                                             action_age_seconds,
                                             advance_velocity_position_target,
@@ -215,6 +216,19 @@ def test_xrce_clock_rebase_preserves_simulated_time_deltas():
     assert clock.update(epoch + 60_000) == (epoch + 40_000, True)
     assert clock.update(epoch + 80_000) == (epoch + 60_000, False)
     assert clock.discontinuities == 2
+
+
+def test_cold_reset_ack_waits_for_sustained_valid_new_ekf_output():
+    gate = ColdResetReadiness(4, acknowledged_at=10.0,
+                              minimum_settle_s=1.0,
+                              minimum_valid_odometry=3)
+    assert not gate.observe(True, 10.2)
+    assert not gate.observe(True, 10.4)
+    # One invalid sample breaks the streak; old queued odometry cannot open it.
+    assert not gate.observe(False, 10.8)
+    assert not gate.observe(True, 11.0)
+    assert not gate.observe(True, 11.1)
+    assert gate.observe(True, 11.2)
 
 
 def test_bridge_pacing_reanchors_instead_of_failing_on_raw_clock_reset():

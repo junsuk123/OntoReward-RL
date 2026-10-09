@@ -437,12 +437,11 @@ class PX4Bridge:
               initial_condition_scale: float | None = None) -> dict[str, Any]:
         """Reseed the episode and hand back the first valid state.
 
-        The entry pose is flown by PX4, never teleported: Pegasus cannot reset
-        the PX4 estimator, so a jump would leave the policy reading a diverged
-        EKF for the whole episode. It is an offset in the pad frame, and the
-        gateway re-aims it at the live deck every control tick, so PX4 chases a
-        moving entry point instead of holding a point the rover has already
-        driven away from.
+        Isaac keeps its loaded world but cold-restarts PX4/EKF while the
+        vehicle and pad are reset. The gateway withholds ``reset_complete``
+        until the new estimator has produced sustained valid odometry. The
+        entry pose is then flown by that fresh PX4 instance; no live estimator
+        is ever asked to integrate through a teleport.
         """
         reset_fields = {"seed": float(seed),
                         "wind_scale": float(self.cfg.wind_scale),
@@ -462,6 +461,16 @@ class PX4Bridge:
         self.last_reset_ack = ack
         time.sleep(float(self.cfg.reset_settle))
         state = self.wait_valid_state()
+        detail = ack.get("detail") if isinstance(ack.get("detail"), dict) else {}
+        if detail.get("reset_contract") == "isaac-px4-ekf-cold/1":
+            expected_generation = int(detail.get("px4_boot_generation", -1))
+            observed_generation = int((state.get("extra") or {}).get(
+                "px4_boot_generation", -2))
+            if observed_generation != expected_generation:
+                raise BridgeError(
+                    "gateway returned state from a different PX4 boot after "
+                    f"reset (expected {expected_generation}, got "
+                    f"{observed_generation}).")
         if not self.cfg.auto_arm:
             return state
         entry = self.entry_pose(ack)

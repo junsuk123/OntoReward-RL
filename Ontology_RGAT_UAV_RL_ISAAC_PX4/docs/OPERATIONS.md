@@ -452,9 +452,15 @@ PYTHONPATH=python python tools/summarize_spatial_run.py \
 실제 acceptance v2는 제안 R-GAT의 착륙·비영 관계 출력까지 요구한다. 적은 횟수의
 통과와 robustness/reference-parity 검증은 별개이며 보고서에 항상 구분한다.
 
-실제 비교의 PX4 EKF/HTE 이력을 분리하려면 `--fresh-stack-per-episode`를 명시한다.
-자신이 소유한 스택만 매 episode 경계에서 다시 시작하며 직전 flight stop 확인이
-필수다. `--adopt-stack`과 함께 사용할 수 없다. 예정된 분리는 실패 복구와 다르며
+현재 기본 reset은 Isaac world를 재시작하지 않는
+`isaac-px4-ekf-cold/1`이다. 패드 꿐적·기체 pose/속도·센서를 초기화하고,
+PX4를 episode별 새 rootfs/boot generation에서 재기동한다. gateway는 새
+EKF의 유효 odometry가 연속 확인되기 전에는 `reset_complete`를 보내지
+않는다. 따라서 일반 실제 비교에 `--fresh-stack-per-episode`는 필요하지 않다.
+
+`--fresh-stack-per-episode`는 Isaac stage/렌더러 자체의 오염을 분리 진단하는
+fallback으로만 남아 있다. 자신이 소유한 스택과 직전 flight stop 확인이
+필수이며 `--adopt-stack`과 함께 사용할 수 없다. 예정된 world 분리는
 `episode_isolation.jsonl`에 비용을 기록한다. `--reset-recoveries`는 여전히 별도의
 정책 전 인계 오류 예산이고, 같은 시드 재시도·0 transitions 원칙을 지킨다.
 

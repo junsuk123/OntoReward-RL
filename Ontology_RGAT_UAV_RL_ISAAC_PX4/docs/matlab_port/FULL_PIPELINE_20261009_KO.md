@@ -4,8 +4,17 @@
 2D 전체와 2D/3D local validation을 포함한 검증 전용 단계들을 생략하고 최종
 3D owned Isaac/PX4 학습과 평가만 남긴다. 아래 `matlab-port-all`은
 이관/회귀 검증용이다.
-최종 경로의 episode는 fresh owned stack으로 격리하며, 실제 Isaac 장기 실행을
-재개할 수 있도록 매 PPO update 뒤 `checkpoint_last.pt`를 기록한다.
+현재 최종 경로는 Isaac world를 한 번만 올린다. 매 episode reset에서 패드와 기체
+물리 상태를 seed 기준 자세로 되돌리고 PX4를 새 rootfs에서 재기동하여 EKF를
+재초기화한다. gateway는 새 EKF의 유효 odometry가 연속 확인되기 전에는
+`reset_complete`를 반환하지 않는다. 실제 Isaac 장기 실행을 재개할 수 있도록 매
+PPO update 뒤 `checkpoint_last.pt`도 기록한다.
+
+2026-10-09 in-process reset 검증은 같은 Isaac process에서 seed 13000/13001 두
+episode를 실행했다. PX4 boot generation 1과 2 모두 새 EKF gate를 통과했고,
+`results/validation/matlab_port_inprocess_reset_smoke_20261009/`에 로그가 있다.
+전체 회귀는 `1534 passed, 2 skipped`다. `--fresh-stack-per-episode`는 기본값이
+아니며, Isaac 자체 오염을 분리 진단할 때만 쓰는 비싼 fallback이다.
 
 > 이 문서는 아래에 적힌 `ce2a3e5` / `5a12d93` pin으로 수행한 역사적 결과다.
 > 현재 재감사 pin은 source `6082258`, destination baseline `3fc2a9f`이며 기존

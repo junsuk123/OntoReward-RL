@@ -43,3 +43,16 @@ def test_new_episode_preserves_deck_position_but_restarts_its_clock():
     trajectory.reset(43,15.,1.,SCENARIO)
     now,_=trajectory.pose(15.)
     np.testing.assert_allclose(now,prior)
+
+
+def test_hard_reset_restarts_pad_instead_of_carrying_prior_episode_position():
+    profile=deployment_profile('spatial-causal-rgat/9')['resolved_scientific_configuration']
+    cfg=PadMotionConfig.from_mapping(profile)
+    used=PadTrajectory(cfg);used.reset(42,0.,1.,SCENARIO)
+    prior,_=used.pose(15.)
+    hard=used.reset(43,15.,1.,SCENARIO,hard_reset=True)
+    fresh=PadTrajectory(cfg)
+    expected=fresh.reset(43,15.,1.,SCENARIO,hard_reset=True)
+    assert np.linalg.norm(np.asarray(hard['position_enu_m'])-prior) > 0.1
+    np.testing.assert_allclose(hard['position_enu_m'],expected['position_enu_m'])
+    np.testing.assert_allclose(used.pose(20.)[0],fresh.pose(20.)[0])

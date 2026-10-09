@@ -103,6 +103,52 @@ def test_one_ppo_update_is_finite_and_versioned():
     assert np.isfinite([stats["actor_loss"], stats["critic_loss"], stats["entropy"]]).all()
 
 
+def test_stable_profile_initializes_tracking_prior_without_training_data():
+    source = make_contract(3)
+    stable = make_contract(3, training_profile="stable")
+    assert source.algorithm_hash != stable.algorithm_hash
+    assert stable.training.episodes_per_update == 12
+    assert stable.training.enforce_target_kl
+    model = _model(stable, "ppo", 4)
+    high = torch.zeros(stable.observation.dimension)
+    high[2] = 2/(2+8)
+    high[0] = 1/(1+3)
+    high[3] = .5/(.5+10)
+    descending = high.clone()
+    descending[2] = .05/(.05+8)
+    descending[7] = -.2/(.2+1.5)
+    high_action = model.action_from_latent(model(high).latent_mean)
+    brake_action = model.action_from_latent(model(descending).latent_mean)
+    assert high_action[0] > 0
+    torch.testing.assert_close(high_action[1], torch.tensor(0.0))
+    torch.testing.assert_close(high_action[2], torch.tensor(0.0))
+    assert brake_action[2] > 0
+    aligned = high.clone()
+    aligned[0] = aligned[3] = 0.0
+    assert model.action_from_latent(model(aligned).latent_mean)[2] < 0
+
+
+def test_stable_ppo_rejects_an_excessive_post_step_kl():
+    contract = make_contract(2, training_profile="stable")
+    model = _model(contract, "ppo", 4)
+    trainer = DirectPPO(model)
+    for group in trainer.actor_optimizer.param_groups:
+        group["lr"] = 1.0
+    count = 32
+    x = torch.randn(count, contract.observation.dimension)
+    with torch.no_grad():
+        out = model(x)
+        latent = out.latent_mean + out.log_std.exp()*torch.randn_like(out.latent_mean)
+        old = model.latent_log_prob(latent, out.latent_mean, out.log_std)
+    batch = RolloutBatch(x, latent, old, torch.linspace(-3, 3, count), out.value,
+                         torch.full((count,), np.exp(-0.1/70)),
+                         torch.tensor([False]*31+[True]),
+                         torch.tensor([False]*31+[True]), torch.zeros(count))
+    stats = trainer.update(batch, generator=torch.Generator().manual_seed(3))
+    assert stats["rejected_steps"] > 0
+    assert stats["post_step_kl"] > 1.5*contract.training.target_kl
+
+
 def test_replay_rollout_uses_recorded_transition_durations(tmp_path):
     fixture = tmp_path / "replay.json"
     fixture.write_text(json.dumps({

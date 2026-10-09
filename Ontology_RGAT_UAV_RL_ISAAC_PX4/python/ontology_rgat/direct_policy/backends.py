@@ -1,4 +1,4 @@
-"""Replay and lightweight local backends for pre-Isaac regression gates."""
+"""Replay, local reference, and owned live Isaac/PX4 backends."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -12,6 +12,9 @@ from .contracts import ContractBundle
 from .observation import PlanarEstimate, SpatialEstimate, planar_vector, spatial_vector
 from .reward import (TerminalEvent, TruthState, ViewMeasurement, classify_terminal,
                      reward_v5)
+from .isaac_adapter import (AuthorityRecord, CausalIsaacObservation,
+                            CommandOwnership, direct_acceleration_payload,
+                            embed_planar_action, enu_to_ned)
 
 
 @dataclass(frozen=True)
@@ -55,6 +58,9 @@ class ReferenceReplayBackend:
                           float(self.rewards[self.index]), status != "RUNNING", status,
                           {"backend": self.name, "requested_acceleration": list(action),
                            "applied_acceleration": list(action), "intervened": False})
+
+    def close(self):
+        pass
 
 
 class LocalReferenceBackend:
@@ -178,3 +184,169 @@ class LocalReferenceBackend:
                            "applied_acceleration": applied.tolist(),
                            "intervened": intervened, "reward_components": components,
                            "elapsed_s": self.elapsed})
+
+    def close(self):
+        pass
+
+
+class DirectIsaacBackend:
+    """Direct-policy adapter over the repository's owned Isaac/PX4 backend.
+
+    The policy owns x-z (planar) or x-y-z (spatial) acceleration.  In planar
+    mode only, a separate own-navigation y hold keeps the vehicle in the
+    profile's fixed y plane.  No landing supervisor or truth-fed correction is
+    inserted into the action path.
+    """
+    name = "actual-isaac-px4-direct"
+
+    def __init__(self, contract: ContractBundle, *, deployment, pair=0,
+                 flight=None):
+        if contract.safety.profile != "direct":
+            raise ValueError("live MATLAB-port adapter currently supports direct profile only")
+        from ..controllers.spatial_controller import SpatialAccelerationController
+        from ..spatial.core import SpatialConfig
+        from ..spatial.environment import IsaacBackend
+
+        self.contract = contract
+        self.dimension = int(contract.metadata["dimension"])
+        self.dt = contract.scenarios.policy_dt_s
+        self.deployment = deployment
+        cfg = SpatialConfig(schema="spatial-reference/12",
+                            isaac_profile_sha256=deployment["sha256"])
+        scenario = ("matlab_planar_cv_ca_cv" if self.dimension == 2
+                    else "spatial_reference_cv_ca_cv")
+        self.flight = flight or IsaacBackend(
+            cfg, pair=pair, scenario=scenario, deployment=deployment)
+        self.controller = SpatialAccelerationController(
+            max_velocity=cfg.max_velocity,
+            max_acceleration=cfg.max_acceleration,
+            dt=self.dt, acceleration_only=True, max_tilt_deg=25.)
+        self.observer = CausalIsaacObservation(
+            self.dimension, pad_offset_z_m=contract.scenarios.pad_height_m)
+        self.ownership = CommandOwnership(contract.safety.command_owner)
+        self.closed = False
+
+    @staticmethod
+    def _yaw(measurement):
+        from scipy.spatial.transform import Rotation
+        q = np.asarray(measurement.quaternion)
+        return float(Rotation.from_quat(q[[1, 2, 3, 0]]).as_euler("xyz")[2])
+
+    def _truth(self, truth):
+        r, v = np.asarray(truth.relative_position), np.asarray(truth.relative_velocity)
+        if self.dimension == 2:
+            return TruthState((-float(r[0]), float(r[2])),
+                              (-float(v[0]), float(v[2])),
+                              (float(truth.roll_pitch[1]),),
+                              (float(truth.angular_rate[1]),))
+        return TruthState((-float(r[0]), -float(r[1]), float(r[2])),
+                          (-float(v[0]), -float(v[1]), float(v[2])),
+                          tuple(float(x) for x in truth.roll_pitch),
+                          tuple(float(x) for x in truth.angular_rate[:2]))
+
+    def reset(self, seed: int):
+        measurement, truth = self.flight.reset(int(seed))
+        self.episode_id = f"matlab-port-{self.dimension}d-{int(seed)}"
+        self.ownership.reset(self.episode_id)
+        self.observer.reset(self.episode_id)
+        self.observer.ingest(measurement)
+        self.controller.reset(own_velocity_enu_m_s=measurement.own_velocity,
+                              yaw_enu_rad=self._yaw(measurement))
+        self.initial_y = float(measurement.own_position[1])
+        self.previous_truth = self._truth(truth)
+        self.previous_velocity = np.asarray(measurement.own_velocity).copy()
+        self.start_s = self.decision_s = float(measurement.time_s)
+        self.decision_id = 0
+        observation, provenance = self.observer.vector()
+        self.decision_provenance = provenance
+        return observation, {"backend": self.name, "seed": int(seed),
+                             "episode_id": self.episode_id,
+                             "observation_provenance": provenance}
+
+    def _planar_hold(self, measurement):
+        error = float(measurement.own_position[1])-self.initial_y
+        return float(np.clip(-2.0*error-1.5*measurement.own_velocity[1], -2.5, 2.5))
+
+    def step(self, action) -> StepResult:
+        measurement = self.observer.last_measurement
+        command_provenance = self.decision_provenance
+        policy_action = np.asarray(action, dtype=float)
+        expected = (self.dimension,)
+        if policy_action.shape != expected or not np.isfinite(policy_action).all():
+            raise ValueError(f"expected finite {self.dimension}D acceleration")
+        requested = (embed_planar_action(policy_action) if self.dimension == 2
+                     else policy_action.copy())
+        if self.dimension == 2:
+            requested[1] = self._planar_hold(measurement)
+        maximum = np.array([2.5, 2.5, 2.0])
+        normalized = requested/maximum
+        command = self.controller.command(
+            normalized, own_velocity_enu_m_s=measurement.own_velocity)
+        payload = direct_acceleration_payload(
+            requested, heading_rad=command.yaw_enu_rad,
+            decision_id=self.decision_id, episode_id=self.episode_id,
+            policy_version=0, stamp_s=self.decision_s)
+        self.ownership.validate(payload, writer=self.contract.safety.command_owner)
+        truth = self.flight.advance(command, self.observer.ingest)
+        observation, provenance = self.observer.vector()
+        new_measurement = self.observer.last_measurement
+        elapsed = float(new_measurement.time_s-self.start_s)
+        current_truth = self._truth(truth)
+        tilt = float(np.linalg.norm(truth.roll_pitch))
+        event = classify_terminal(
+            current_truth, elapsed_s=elapsed, contact=bool(truth.contact),
+            hard_envelope_violation=tilt > math.radians(25.0),
+            terminal=self.contract.termination)
+        optical = new_measurement.optical_position
+        bearings = ()
+        if optical is not None:
+            relative = -np.asarray(optical)
+            depth = max(abs(float(relative[2])), 1e-6)
+            axes = (relative[:1] if self.dimension == 2 else relative[:2])
+            bearings = tuple(float(math.atan2(x, depth)) for x in axes)
+        reward, components = reward_v5(
+            self.previous_truth, current_truth,
+            ViewMeasurement(optical is not None, bearings,
+                            tuple([math.radians(90)]*max(1, len(bearings)))),
+            policy_action/np.asarray(self.contract.action.maximum), self.dt,
+            event, self.contract.reward, self.contract.termination)
+        measured = ((np.asarray(new_measurement.own_velocity)-self.previous_velocity)
+                    / max(float(new_measurement.time_s-self.decision_s), 1e-6))
+        record = AuthorityRecord(
+            episode_id=self.episode_id, decision_id=self.decision_id,
+            policy_version=0,
+            capture_stamp_s=command_provenance["capture_stamp_s"],
+            receive_stamp_s=command_provenance["receive_stamp_s"],
+            decision_stamp_s=self.decision_s,
+            command_stamp_s=self.decision_s,
+            requested_acceleration_enu_m_s2=tuple(float(x) for x in requested),
+            limited_acceleration_enu_m_s2=tuple(float(x) for x in command.acceleration_enu_m_s2),
+            gateway_acceleration_ned_m_s2=tuple(float(x) for x in enu_to_ned(
+                command.acceleration_enu_m_s2)),
+            measured_acceleration_enu_m_s2=tuple(float(x) for x in measured),
+            control_profile="direct", emergency_intervention=False)
+        self.previous_truth = current_truth
+        self.previous_velocity = np.asarray(new_measurement.own_velocity).copy()
+        self.decision_s = float(new_measurement.time_s)
+        self.decision_provenance = provenance
+        self.decision_id += 1
+        status = event.reason if event.occurred else "RUNNING"
+        if event.occurred:
+            self.flight.finish()
+        return StepResult(
+            observation, reward, event.occurred, status,
+            {"backend": self.name,
+             "policy_requested_acceleration": policy_action.tolist(),
+             "requested_acceleration": requested.tolist(),
+             "applied_acceleration": command.acceleration_enu_m_s2.tolist(),
+             "intervened": bool(command.constrained),
+             "planar_y_hold_active": self.dimension == 2,
+             "yaw_hold_rad": command.yaw_enu_rad,
+             "reward_components": components,
+             "observation_provenance": provenance,
+             "authority": record.to_dict(), "elapsed_s": elapsed})
+
+    def close(self):
+        if not self.closed:
+            self.closed = True
+            self.flight.close()

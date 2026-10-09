@@ -44,6 +44,6 @@ OpenCV 4.11.0, PyYAML 6.0.3이다. 감사 시 Isaac, PX4, XRCE-DDS, ROS2 실행 
 - 원본 commit의 PnP는 자체 Gauss-Newton이다. Python은 동일 corner/ID/캘리브레이션
   경계와 capture stamp를 유지하되 OpenCV iterative PnP를 사용한다. 따라서 실제
   MATLAB golden fixture 비교 전에는 PnP 수치 정합을 PASSED로 표시하지 않는다.
-- Isaac profile은 메시지/축/command-owner adapter까지만 구현·검사했다. 실제 비행은
-  opt-in이며 현재 NOT_RUN이다.
-
+- 초기 감사 시점에는 Isaac을 NOT_RUN으로 남겼다. 후속 구현에서
+  `run.sh matlab-port-all`의 명시적 opt-in 경로로 2D/3D 실제 비행과
+  command-owner/timestamp/cleanup을 검증했다.

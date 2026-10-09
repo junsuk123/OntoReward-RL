@@ -11,6 +11,9 @@ addpath(fullfile(sourceRoot,'src','orchestration'));
 addpath(fullfile(sourceRoot,'src','simulations'));
 addpath(fullfile(sourceRoot,'src','algorithms'));
 c=landing2d.config.primaryConfig(sourceRoot);
+% primaryConfig defaults to the plain PPO arm.  The graph fixture must select
+% the proposed arm explicitly, exactly as trainEvaluate/applyMethod does.
+c.graphState.stateRepresentation='context_rgat';
 G=landing2d.observation.staticContext(c);
 O=fixtureObservation(G.version);
 v=landing2d.observation.toVector(O,G);

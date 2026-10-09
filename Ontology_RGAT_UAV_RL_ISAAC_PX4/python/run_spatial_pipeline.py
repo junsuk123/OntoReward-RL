@@ -20,7 +20,7 @@ import torch
 from ontology_rgat.spatial.core import SpatialConfig, schema_for
 from ontology_rgat.spatial.environment import SpatialLandingEnv, IsaacBackend
 from ontology_rgat.spatial.training import train_arm, load_agent, evaluate, TEST_SEEDS
-from ontology_rgat.spatial.runtime_contract import deployment_profile
+from ontology_rgat.spatial.runtime_contract import deployment_manifest, deployment_profile
 from ontology_rgat.spatial.validation import actual_acceptance
 from ontology_rgat.spatial.lifecycle import used_reset_recoveries
 from ontology_rgat.two_axis.models import POLICY_MODES
@@ -77,12 +77,14 @@ def incomplete_isaac_report(output):
 
 @contextmanager
 def live_stack(output, *, adopt=False, headless=False, schema="spatial-causal-rgat/5",
-               reset_recoveries=0, isolate_episodes=False):
+               reset_recoveries=0, isolate_episodes=False, profile_path=None):
     if isolate_episodes and adopt:
         raise ValueError('fresh-stack episodes require ownership, never adoption')
     if not 0 <= reset_recoveries <= 5:
         raise ValueError('reset recovery budget must be in [0,5]')
-    profile = Path(deployment_profile(schema)["path"])
+    manifest = (deployment_manifest(profile_path) if profile_path is not None
+                else deployment_profile(schema))
+    profile = Path(manifest["path"])
     with open("/tmp/ontology_rgat_flight_pipeline.lock", "a+") as lock:
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)

@@ -47,14 +47,20 @@ class SourceRelationalLayer(nn.Module):
         joined = torch.cat((src_h, dst_h, rel_e), dim=-1)
         raw = (joined * self.attention[relation].unsqueeze(0)).sum(-1)
         score = torch.where(raw >= 0, raw, 0.2 * raw)
-        alpha = torch.zeros_like(score)
-        for node in range(nodes):
-            mask = target == node
-            alpha[:, mask] = torch.softmax(score[:, mask], dim=1)
+        target_index = target.unsqueeze(0).expand(batch, -1)
+        node_max = torch.full((batch, nodes), -torch.inf, dtype=score.dtype,
+                              device=score.device)
+        node_max.scatter_reduce_(1, target_index, score, reduce="amax",
+                                 include_self=True)
+        exponential = torch.exp(score - node_max.gather(1, target_index))
+        denominator = torch.zeros_like(node_max)
+        denominator.scatter_add_(1, target_index, exponential)
+        alpha = exponential / denominator.gather(1, target_index)
         output = torch.zeros(batch, nodes, self.hidden_dim,
                              dtype=features.dtype, device=features.device)
-        for edge in range(source.numel()):
-            output[:, target[edge]] += alpha[:, edge, None] * src_h[:, edge]
+        output.scatter_add_(
+            1, target_index.unsqueeze(-1).expand(-1, -1, self.hidden_dim),
+            alpha.unsqueeze(-1) * src_h)
         return output[0] if squeeze else output
 
 

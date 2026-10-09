@@ -97,3 +97,15 @@ def deployment_profile(schema="spatial-causal-rgat/5"):
         "resolved_scientific_configuration": scientific,
         "world_source_sha256": runtime_source_hash(),
     }
+
+
+def deployment_manifest(path):
+    """Resolve an explicit opt-in deployment without changing schema routing."""
+    path = Path(path).resolve()
+    scientific = scientific_configuration(load_experiment(path))
+    return {
+        "path": str(path),
+        "sha256": configuration_hash(scientific),
+        "resolved_scientific_configuration": scientific,
+        "world_source_sha256": runtime_source_hash(),
+    }

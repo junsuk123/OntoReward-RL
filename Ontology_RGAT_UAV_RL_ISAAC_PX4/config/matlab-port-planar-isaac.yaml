@@ -1,0 +1,6 @@
+# Explicit MATLAB-port planar deployment. This never replaces the active
+# spatial-reference profile and is selected only by `run.sh matlab-port-all`.
+extends: spatial-isaac-system-v12.yaml
+benchmark:
+  spatial_scenario: matlab_planar_cv_ca_cv
+  planar_entry: true

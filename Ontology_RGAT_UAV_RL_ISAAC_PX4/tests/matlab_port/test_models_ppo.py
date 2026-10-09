@@ -44,6 +44,33 @@ def test_graph_policy_reads_graph_only_and_relations_receive_gradient():
     assert float(gradient.norm()) > 0
 
 
+def test_vectorized_relation_layer_matches_incoming_edge_reference():
+    model = make_model()
+    layer = model.actor_encoder.layer
+    source = model.actor_encoder.source
+    target = model.actor_encoder.target
+    relation = model.actor_encoder.relation
+    features = torch.randn(9, 7, 6)
+    actual = layer(features, source, target, relation)
+
+    projected = torch.einsum("rhi,bni->brnh", layer.weight, features)
+    source_state = projected[:, relation, source]
+    target_state = projected[:, relation, target]
+    relation_state = layer.embedding[relation].unsqueeze(0).expand(len(features), -1, -1)
+    joined = torch.cat((source_state, target_state, relation_state), dim=-1)
+    raw = (joined * layer.attention[relation].unsqueeze(0)).sum(-1)
+    score = torch.where(raw >= 0, raw, 0.2 * raw)
+    alpha = torch.zeros_like(score)
+    for node in range(features.shape[1]):
+        mask = target == node
+        alpha[:, mask] = torch.softmax(score[:, mask], dim=1)
+    expected = torch.zeros_like(actual)
+    for edge in range(source.numel()):
+        expected[:, target[edge]] += alpha[:, edge, None] * source_state[:, edge]
+
+    torch.testing.assert_close(actual, expected, atol=1e-7, rtol=1e-6)
+
+
 def test_latent_distribution_and_tanh_action_are_consistent():
     model = make_model("ppo")
     x = torch.zeros(12)

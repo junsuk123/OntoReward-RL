@@ -25,19 +25,22 @@ def _graph(observation, dimension):
     return planar_graph(observation) if dimension == 2 else spatial_graph(observation)
 
 
-def _input(observation, dimension, method, *, contract=None, tracking_bias=None):
+def _input(observation, dimension, method, *, contract=None, tracking_bias=None,
+           handover_progress=0.0):
     observation = np.asarray(observation, np.float32)
     tracking_bias = np.zeros(dimension-1, np.float32) if tracking_bias is None \
         else np.asarray(tracking_bias, np.float32)
     tracking_bias = tracking_bias/(np.abs(tracking_bias)+3.0)
     if method == "ppo":
-        return (np.concatenate((observation, tracking_bias))
+        return (np.concatenate((observation, tracking_bias,
+                                np.asarray([handover_progress], np.float32)))
                 if contract is not None and contract.metadata["training_profile"] == "stable"
                 else observation)
     graph = _graph(observation, dimension)
     if contract is not None and contract.metadata["training_profile"] == "stable":
         repeated = np.broadcast_to(tracking_bias, (len(graph.features), len(tracking_bias)))
-        graph = GraphState(np.concatenate((graph.features, repeated), axis=1),
+        progress = np.full((len(graph.features), 1), handover_progress, np.float32)
+        graph = GraphState(np.concatenate((graph.features, repeated, progress), axis=1),
                            graph.source, graph.target, graph.relation, contract.graph)
     return graph.features.astype(np.float32)
 
@@ -73,6 +76,7 @@ def _rollout(contract, model, seed, *, deterministic, max_steps, policy_version=
         generator = torch.Generator().manual_seed(seed + 2_000_000)
         rows, total, status, trace = [], 0.0, "RUNNING", []
         tracking_bias = np.zeros(contract.metadata["dimension"]-1, dtype=np.float32)
+        policy_elapsed = 0.0
         started = time.perf_counter()
         for decision in range(max_steps):
             if contract.metadata["training_profile"] == "stable":
@@ -86,7 +90,10 @@ def _rollout(contract, model, seed, *, deterministic, max_steps, policy_version=
                     -3.0, 3.0).astype(np.float32)
             x = torch.as_tensor(_input(
                 observation, contract.metadata["dimension"], model.method,
-                contract=contract, tracking_bias=tracking_bias))
+                contract=contract, tracking_bias=tracking_bias,
+                handover_progress=(min(
+                    policy_elapsed/contract.training.tracking_handover_s, 1.0)
+                    if contract.metadata["training_profile"] == "stable" else 1.0)))
             with torch.no_grad():
                 action, latent, logp, value = model.act(
                     x, deterministic=deterministic, generator=generator)
@@ -98,6 +105,7 @@ def _rollout(contract, model, seed, *, deterministic, max_steps, policy_version=
                 "transition_s", contract.scenarios.policy_dt_s))
             if not np.isfinite(transition_s) or transition_s <= 0:
                 raise ValueError("backend returned an invalid transition duration")
+            policy_elapsed += transition_s
             rows.append((x.numpy(), latent.numpy(), float(logp), float(value),
                          result.reward, terminal,
                          terminal or decision == max_steps-1, transition_s))
@@ -109,7 +117,10 @@ def _rollout(contract, model, seed, *, deterministic, max_steps, policy_version=
             raise RuntimeError("backend produced no policy transitions")
         final_x = torch.as_tensor(_input(
             observation, contract.metadata["dimension"], model.method,
-            contract=contract, tracking_bias=tracking_bias))
+            contract=contract, tracking_bias=tracking_bias,
+            handover_progress=(min(
+                policy_elapsed/contract.training.tracking_handover_s, 1.0)
+                if contract.metadata["training_profile"] == "stable" else 1.0)))
         with torch.no_grad():
             final_value = float(model(final_x).value) if status == "RUNNING" else 0.0
         count = len(rows)

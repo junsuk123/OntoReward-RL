@@ -174,7 +174,7 @@ class StableTrainingSpec(TrainingSpec):
     complete episodes, lowers exploration noise and bounds every accepted
     actor step by its post-update KL.  It uses no BC or DAgger data.
     """
-    version: str = "matlab-direct-ppo-stable-v5/1"
+    version: str = "matlab-direct-ppo-stable-v14/1"
     episodes_per_update: int = 12
     policy_lr: float = 2e-5
     encoder_lr: float = 2e-5
@@ -187,6 +187,19 @@ class StableTrainingSpec(TrainingSpec):
     target_kl: float = 0.02
     enforce_target_kl: bool = True
     maximum_log_std: float = -4.0
+    tracking_kp: float = 0.5
+    tracking_kd: float = 0.5
+    tracking_ki: float = 0.1
+    tracking_horizontal_cap_m_s2: float = 0.75
+    tracking_descent_gate_m: float = 0.35
+    tracking_max_vision_age_s: float = 2.0
+    tracking_recovery_height_m: float = 1.2
+    tracking_terminal_sink_m_s: float = 0.18
+    tracking_handover_s: float = 2.0
+    tracking_handover_climb_m_s2: float = 0.2
+    tracking_stale_full_authority_s: float = 8.0
+    tracking_stale_horizontal_cap_m_s2: float = 0.3
+    tracking_stale_vertical_floor_m_s2: float = 0.4
 
 
 @dataclass(frozen=True)
@@ -325,6 +338,7 @@ def graph_schema(dimension: int = 2, *, tracking_bias: bool = False) -> GraphSch
     if tracking_bias:
         features += (("tracking_bias_x",) if dimension == 2 else
                      ("tracking_bias_x", "tracking_bias_y"))
+        features += ("handover_progress",)
     self_edges = tuple((node, node, "self") for node in NODES)
     return GraphSchema(
         version=(f"matlab-minimal-observation-rgat-v4/{dimension}d"
@@ -349,6 +363,8 @@ def make_contract(dimension: int = 2, *, backend: str = "local",
                    if dimension == 2 else
                    (ObservationField("tracking_bias_x", "integral(relative_x)", 3.0),
                     ObservationField("tracking_bias_y", "integral(relative_y)", 3.0)))
+        fields += (ObservationField(
+            "handover_progress", "clip(episode_elapsed/tracking_handover_s,0,1)"),)
     observation = ObservationSchema(
         version=(("matlab-planar-observation/2" if dimension == 2
                   else "spatial-direct-observation/2")

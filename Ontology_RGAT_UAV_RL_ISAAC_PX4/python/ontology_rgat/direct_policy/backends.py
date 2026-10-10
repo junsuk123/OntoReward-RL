@@ -363,10 +363,17 @@ class DirectIsaacBackend:
              "requested_acceleration": requested.tolist(),
              "applied_acceleration": command.acceleration_enu_m_s2.tolist(),
              "intervened": bool(command.constrained),
-             "planar_y_hold_active": self.dimension == 2,
-             "yaw_hold_rad": command.yaw_enu_rad,
-            "reward_components": components,
-            "observation_provenance": provenance,
+            "planar_y_hold_active": self.dimension == 2,
+            "yaw_hold_rad": command.yaw_enu_rad,
+             "reward_components": components,
+             # Evaluation-only diagnostics.  These are emitted after the
+             # action is fixed and never feed the policy, reward or terminal
+             # classifier.  Keeping both values in the trace distinguishes a
+             # causal-estimator error from an actuation/tracking failure.
+             "policy_observation": observation.tolist(),
+             "truth_relative_position": list(current_truth.relative_position),
+             "truth_relative_velocity": list(current_truth.relative_velocity),
+             "observation_provenance": provenance,
              "authority": record.to_dict(), "elapsed_s": elapsed,
              "transition_s": transition_s})
 

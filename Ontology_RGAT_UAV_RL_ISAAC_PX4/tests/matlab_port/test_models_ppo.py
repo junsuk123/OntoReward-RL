@@ -118,8 +118,12 @@ def test_stable_profile_initializes_tracking_prior_without_training_data():
     descending[2] = .05/(.05+8)
     descending[7] = -.2/(.2+1.5)
     high_action = model.action_from_latent(model(high).latent_mean)
+    biased = high.clone()
+    biased[-2] = 1/(1+3)
+    biased_action = model.action_from_latent(model(biased).latent_mean)
     brake_action = model.action_from_latent(model(descending).latent_mean)
     assert high_action[0] > 0
+    assert biased_action[0] > high_action[0]
     torch.testing.assert_close(high_action[1], torch.tensor(0.0))
     torch.testing.assert_close(high_action[2], torch.tensor(0.0))
     assert brake_action[2] > 0

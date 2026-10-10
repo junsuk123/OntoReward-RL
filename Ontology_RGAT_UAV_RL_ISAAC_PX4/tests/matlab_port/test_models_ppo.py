@@ -114,22 +114,34 @@ def test_stable_profile_initializes_tracking_prior_without_training_data():
     high[2] = 2/(2+8)
     high[0] = 1/(1+3)
     high[3] = .5/(.5+10)
+    high[-1] = 1.0
     descending = high.clone()
     descending[2] = .05/(.05+8)
     descending[7] = -.2/(.2+1.5)
     high_action = model.action_from_latent(model(high).latent_mean)
     biased = high.clone()
-    biased[-2] = 1/(1+3)
+    biased[0] = .2/(.2+3)
+    biased[3] = .1/(.1+10)
+    unbiased = biased.clone()
+    biased[-3] = 1/(1+3)
     biased_action = model.action_from_latent(model(biased).latent_mean)
+    unbiased_action = model.action_from_latent(model(unbiased).latent_mean)
     brake_action = model.action_from_latent(model(descending).latent_mean)
     assert high_action[0] > 0
-    assert biased_action[0] > high_action[0]
+    assert biased_action[0] > unbiased_action[0]
     torch.testing.assert_close(high_action[1], torch.tensor(0.0))
     torch.testing.assert_close(high_action[2], torch.tensor(0.0))
     assert brake_action[2] > 0
     aligned = high.clone()
     aligned[0] = aligned[3] = 0.0
     assert model.action_from_latent(model(aligned).latent_mean)[2] < 0
+    stale = aligned.clone()
+    stale[2] = .1/(.1+8)
+    stale[18] = 3/(3+3)
+    assert model.action_from_latent(model(stale).latent_mean)[2] > 0
+    handover = aligned.clone()
+    handover[-1] = 0.0
+    assert model.action_from_latent(model(handover).latent_mean)[2] >= .19
 
 
 def test_stable_ppo_rejects_an_excessive_post_step_kl():
@@ -151,6 +163,31 @@ def test_stable_ppo_rejects_an_excessive_post_step_kl():
     stats = trainer.update(batch, generator=torch.Generator().manual_seed(3))
     assert stats["rejected_steps"] > 0
     assert stats["post_step_kl"] > 1.5*contract.training.target_kl
+
+
+def test_stable_action_transform_enforces_handover_and_stale_track_limits():
+    contract = make_contract(3, training_profile="stable")
+    model = _model(contract, "ppo", 4)
+    x = torch.zeros(contract.observation.dimension)
+    x[18] = 10/(10+3)
+    x[7] = -.1/(.1+1.5)
+    x[-1] = 1.0
+    action = model.action_from_latent(torch.tensor([10.0, 10.0, -10.0]), x)
+    assert torch.linalg.vector_norm(action[:2]) <= \
+        contract.training.tracking_stale_horizontal_cap_m_s2 + 1e-6
+    assert action[2] >= contract.training.tracking_stale_vertical_floor_m_s2
+    x[7] = .1/(.1+1.5)
+    action = model.action_from_latent(torch.tensor([10.0, 10.0, -10.0]), x)
+    assert action[2] < contract.training.tracking_stale_vertical_floor_m_s2
+    x[18] = 3/(3+3)
+    action = model.action_from_latent(torch.tensor([10.0, 10.0, -10.0]), x)
+    assert torch.linalg.vector_norm(action[:2]) > \
+        contract.training.tracking_stale_horizontal_cap_m_s2
+    assert torch.linalg.vector_norm(action[:2]) <= \
+        contract.training.tracking_horizontal_cap_m_s2 + 1e-6
+    x[-1] = 0.0
+    action = model.action_from_latent(torch.tensor([10.0, 10.0, -10.0]), x)
+    assert action[2] >= contract.training.tracking_handover_climb_m_s2
 
 
 def test_replay_rollout_uses_recorded_transition_durations(tmp_path):

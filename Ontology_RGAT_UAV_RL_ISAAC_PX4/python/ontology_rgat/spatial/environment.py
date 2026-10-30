@@ -598,6 +598,7 @@ class IsaacBackend:
         self.bridge.control_period_us = 0
         self.last_state = None
         self.finished = True
+        self.cleanup_attempted = False
 
     def reset(self, seed):
         from ..bridge import EntryResetError, PX4Failsafe
@@ -637,6 +638,7 @@ class IsaacBackend:
 
     def _reset_once(self, seed):
         self.finished = False
+        self.cleanup_attempted = False
         self.seed = int(seed)
         self.start_s = math.inf
         self.last_state = self.bridge.reset(
@@ -752,6 +754,9 @@ class IsaacBackend:
 
     def finish(self):
         from .lifecycle import record_confirmed_stop, record_flight_event
+        if self.cleanup_attempted:
+            return self.finished
+        self.cleanup_attempted = True
         self.finished = False
         started = time.monotonic()
         try:
@@ -765,7 +770,9 @@ class IsaacBackend:
     def close(self):
         try:
             if not self.finished and not self.finish():
-                raise RuntimeError("spatial flight stop was not confirmed")
+                from ..bridge import CleanupStopUnconfirmed
+                raise CleanupStopUnconfirmed(
+                    "spatial flight stop was not confirmed")
         finally:
             self.bridge.close()
 
@@ -927,7 +934,8 @@ class SpatialLandingEnv:
                 requested_action=np.asarray(action).tolist(),
                 applied_acceleration=command.acceleration_enu_m_s2.tolist()))
         if self.done and not self.backend.finish():
-            raise RuntimeError(
+            from ..bridge import CleanupStopUnconfirmed
+            raise CleanupStopUnconfirmed(
                 "spatial terminal was scored but PX4 stop is unconfirmed"
             )
         if self.done:

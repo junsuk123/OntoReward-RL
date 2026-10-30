@@ -21,6 +21,7 @@ from .mathx import quat_to_euler_zyx
 
 __all__ = ["PX4Bridge", "BridgeError", "EntryResetError", "GatewayRejected",
            "GatewayTimeout", "PX4Failsafe", "PX4EstimatorInvalid",
+           "CleanupStopUnconfirmed",
            "pacing_anchor_us"]
 
 
@@ -107,6 +108,15 @@ class SimulatorFrameTimeout(BridgeError):
 
 class PX4EstimatorInvalid(BridgeError):
     """PX4 temporarily stopped publishing a control-valid local estimate."""
+
+
+class CleanupStopUnconfirmed(BridgeError):
+    """Post-policy landing/stop could not be confirmed within its deadline.
+
+    This is deliberately distinct from a policy-time estimator or vehicle
+    failure.  A caller may preserve an already completed rollout, audit the
+    failed cleanup, and replace an owned SITL stack before the next episode.
+    """
 
 
 # ``marker_quality`` stays in the wire contract for the legacy ArUco profile

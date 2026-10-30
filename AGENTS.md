@@ -680,6 +680,265 @@ The v1 config remains an explicit historical experiment; Isaac/PX4 remains
   and log_std, use real train-only PPO plus validation-only scale selection,
   record extra steps, and retain the anchor if no scale passes. Nonzero weights
   or residuals alone are not evidence of superiority.
+- **`spatial_current_semantics_v1` (2026-10-28, `./run.sh current-semantics-3d`)**
+  is a SEPARATE current-observation 3D study built from the user's guide
+  `docs/current_semantics/CURRENT_SEMANTICS_3D_REFACTOR_GUIDE_KO.md`; code in
+  `python/ontology_rgat/current_semantics/`, status in
+  `docs/current_semantics/G0_G4_STATUS_KO.md`, audit in `SOURCE_AUDIT_KO.md`.
+  Policy input is the current 21D vector only (no history, integral, teacher,
+  prior or supervisor); four budget-matched arms (raw 4022 / phi44 MLP 4008 /
+  untyped GNN 4020 / ontology R-GAT 4016 parameters) with one common raw21
+  critic. USER DECISION 2026-10-28: the environment is Isaac-linked -- train on
+  the `spatial-reference/12` LocalBackend (Isaac-calibrated) and run G3 and
+  every selected-checkpoint evaluation on Isaac/PX4; the direct_policy local
+  toy is refused (its attitude is axis-swapped and pitch-flipped vs Isaac).
+  Gates: G0/G1 blocked (the 2D v1 evidence bundle and commit 5853781 are not
+  on this machine), G2 partial, G3 PASSED (local half on 8 pilot seeds; Isaac
+  half `--stage coupling --backend isaac --allow-isaac`, flown 2026-10-28 on an
+  owned stack after user approval: 6 episodes, all stops confirmed, axis corr
+  0.89/-0.84, Isaac contact body height 0.068-0.070 m vs the calibrated 0.0672),
+  G4 FAILED. Later the same day the user waived G0/G1 and the two G2 items
+  (recorded as `waived`, never as passed) and ran the registered G4 pilot (Raw PPO,
+  2 model seeds x 300 updates x 12 episodes, criteria registered first): 0 % on
+  48 test seeds deterministic AND sampled, all TASK_TIMEOUT; 0 SUCCESS in 7,200
+  training episodes. Cause, measured: the random-init mean action carries a small
+  constant bias that integrates (net acceleration) into the 20 m / 60 m envelope
+  within ~15 s, so the time-based curriculum's easy rungs were spent removing that
+  drift; by then difficulty was >= 0.6 and the policy settled in the hover-to-
+  timeout optimum (-12 beats a crashed attempt's -40). Landing IS reachable under
+  the pilot's own exploration: a pad-tracking descent mean lands 15/24 at latent
+  sigma 0.35 on the easy rung (24/24 noiseless). No arm comparison may be read
+  from this (guide 13). The development and
+  confirmation stages always exit 3. Second pass the same day (user: "edit all
+  as you recommend"): task contract = the spatial-reference/12 Evaluator
+  unchanged on the actual transition time, no supervisor (`task_hash`, bound
+  into checkpoints); local contact height 0.0672 m (median of 78 legless Isaac
+  first contacts); local handover waits for the first accepted frame; W_r init
+  N(0, 1/d) (g8 RMS 0.004 -> 0.05-0.07). Thinning local frames to the
+  decision-level "~10.6 Hz" was MEASURED AND REJECTED: the reference ABG track
+  locked out on 11/16 local episodes vs 0/16 at 20 Hz and 1/161 in Isaac, so
+  `local_plant.optical_cadence` stays identity. The Isaac half then measured
+  ~1 frame per decision at the observer (spacing 0.092-0.096 s, i.e. ~10.4 Hz
+  is real), yet the 21D flag/age statistics already match local 20 Hz (updated
+  in view 0.988 vs 0.977, age at update 0.100 s both); why the same track locks
+  out locally at 10 Hz but not in Isaac is unexplained.
+  **G4 pilot 2 (`g4-pilot/2`, user "all")** -- actor output init x0.01,
+  success-gated curriculum, 600 updates -- FAILED too: neither seed ever left
+  difficulty 0, so no checkpoint was testable; 3 SUCCESS in 14,400 training
+  episodes. Removing the init drift exposed the deeper cause, measured on
+  diagnostic seeds 996001-996024 (`results/.../g4_pilot2_diagnostics/`):
+  zero-mean exploration on the net-acceleration double integrator lands
+  0-2/24 at d=0 for EVERY sigma 0.05-0.37, pad static or moving (disturbances
+  are already x0 at d=0) -- sigma only rescales time, so landing is set by
+  geometry (descend 0.4-0.7 m without drifting 0.5 m). With no success in the
+  batch PPO drifted to a SATURATED flee policy (seed 0 mean [+2.47, +2.00,
+  +1.93] m/s^2, 60 m lateral exit at 8.5 s) that is WORSE on its own
+  discounted objective (-40.6 vs -34.0 from s0); a one-step bandit confirms
+  the update direction is correct. Every spatial PPO policy in this repo that
+  lands held out started from a BC clone; from-scratch PPO under the guide's
+  no-teacher rule had never produced one.
+  **G4 PASSED with pilot 3 (`g4-pilot/3`, 2026-10-28, user: reshape the common
+  reward/observation so PPO lands without BC).** Same PPO, budget and criteria
+  as pilot 2; only two common changes, both still truth-free in the policy
+  path: task v2 = the /12 Evaluator's VERDICT and terminal table unchanged, but
+  the dense part replaced by `current_semantics/reward.py`
+  (`spatial-current-reward/2`): undiscounted Phi(s') - Phi(s) of
+  Phi = -(2*dist + 4*|v_rel - v_des|) on an approach velocity field (align,
+  then sink to 0.2 m/s), Phi kept at the terminal, time 0.3/s + control cost;
+  observation v2 = same 21 channels with landing-regime scales (position 1 m,
+  height 2 m, velocities 1 m/s; `OBSERVATION_SCALE_OVERRIDES`, `from_source`).
+  Measured BEFORE training: under the Evaluator's own dense terms an action's
+  projection on the approach direction correlates -0.05..0.08 with the next
+  1-10 rewards (position potential = double integration away; readiness flat
+  beyond ~1 m), so the advantage carried no direction; under v2 0.10-0.46.
+  Result, 48 held-out test seeds at d = 1: seed 0 det 48/48, sampled 46/48;
+  seed 1 det 46/48, sampled 44/48; every failure UNSAFE_CONTACT; first
+  training SUCCESS at update 4-9, d = 1.0 by update 69-71 (pilot 2: 3 SUCCESS
+  in 14,400). The policy beats the memoryless field-follower it was shaped
+  toward (20/24 nominal). LOCAL plant only, Raw arm only, reward and
+  observation changed together (contributions not separated). Pilot 2
+  archived in `g4_pilot_v2/`.
+  **Isaac evaluation of the two selected checkpoints (`isaac-eval/1`,
+  `--stage isaac-eval --allow-isaac`, owned stack, flown 2026-10-28 on the
+  user's approval): 4/10 and 3/10 deterministic, criterion 50 % NOT met**
+  (same seeds 994001-994010 locally: 20/20). The 7 landings are clean (0.15-
+  0.21 m off centre, 0.12-0.22 m/s). Failures: 3 tilt > 21 deg within 1.1 s of
+  handover (21.5-23.4 deg; local max 17.7 deg even with a 1.5x kick), 10 a
+  missed first approach with no recovery (seed 0 hovers at 0.5 m while the
+  pad drives 60 m away; seed 1 descends below the pad plane 4-11 m off).
+  Outcome is set by the SEED, not the checkpoint (9/10 seeds agree): handover
+  lateral velocity kick 0.08-0.55 m/s -> both land, 0.62-0.98 -> both fail.
+  Locally the policies keep 70-80 % at a 1.5x velocity kick, so the margin is
+  small AND Isaac's post-handover attitude response is harsher than the local
+  plant's -- the gap /11-/12 closed with SUPERVISOR laws, which this path does
+  not have. **Traced diagnostic re-flight (`--stage isaac-trace --allow-isaac
+  --pairs ...`, user chose it; status doc 10.7; `results/.../isaac_trace/`):**
+  6 pairs reproduce the registered outcomes; every local counterpart lands.
+  Mechanism, measured: right after handover Isaac's EKF own velocity jumps
+  +-0.6 m/s between decisions (first-step "measured accel" +5.97 / -5.84
+  m/s^2), so the estimated relative velocity takes the WRONG SIGN for
+  0.2-0.4 s (+0.64 vs truth -0.78; 0/6 locally) and the height estimate lags
+  0.43 m in a fast descent (local 0.12); the policy answers with +-2 m/s^2 and
+  reverses 0.3-0.5 s later, and PX4 overshoots: realized/commanded tilt
+  1.50-1.68 on the failing pairs vs 0.80-0.94 locally (994006: local's
+  command change was LARGER, 3.09 vs 2.21, yet tilt 11.6 vs 23.6 deg). Tilt
+  past 21 deg ends it (B); a -2 m/s^2 descent instead lands 0.8 m off the pad
+  plane, the camera loses the pad, the estimate freezes and the policy never
+  climbs to re-acquire (A). Not the verdict, reward ordering or missing
+  information. Proposed (user decides): training-only DR of a decaying
+  own-state error after handover (~0.6 m/s, ~0.3 s) and of servo overshoot,
+  plus a command-change/tilt cost in the common reward (the /11 slew limit as
+  a reward, no supervisor), then re-evaluate on NEW Isaac seeds (994001-994010
+  are now diagnostic).
+  **Replication `isaac-eval/2` (user "c": same checkpoints, fresh seeds
+  994011-994020, traces on; `/1` archived in `isaac_eval_v1/`): 2/10 and 3/10,
+  criterion not met; 12/40 over both.** One PX4 failsafe (gcs/battery) cut a
+  flight with no verdict; `isaac-eval` now RESUMES an interrupted protocol
+  (keeps every verdict, re-flies only the unjudged pair, logs
+  `interruptions.jsonl`) and refuses to re-fly a complete one. Outcomes
+  pre-registered from each seed's handover lateral kick were right on 15/16
+  definite calls (the miss had a +0.91 m/s VERTICAL kick). New, measured: in
+  8 of 14 missed-approach failures the reference ABG track LOCKS OUT 1.6-2.0 s
+  after handover -- detections rejected for > 1 s while the pad sits well
+  inside the camera footprint -- because the transient pushed the estimate
+  > 0.5 m off; it never re-acquires (994017: 70 s). Same lockout G3 saw at
+  local 10 Hz. Proposed (user decides): re-acquire the track after repeated
+  rejected detections (common observation, truth-free), handover-transient
+  DR, command-change/tilt cost, then new seeds.
+  **observation/3 + pilot 4 (user "a", 2026-10-29; status doc 11).** Cause in
+  code: `ReferenceSpatialTrack` initialises the PAD velocity to the OWN
+  velocity and corrects it by 0.02/gap per frame, so after a handover kick,
+  or at Isaac's ~10 Hz frame spacing even without one, its prediction leaves
+  the innovation gate and it never accepts again (synthetic: locks out at
+  0.4-0.8 s). The shared track is untouched; `CurrentObserver` now restarts
+  it after 3 consecutive rejected fresh detections from their least-squares
+  position/velocity (`TRACK_REACQUIRE_RULE`, in the observation manifest);
+  bit-identical while frames are accepted. Pilot-3 policies locally: 20 Hz
+  48/48, 47/48 either way; thinned to 10 Hz 31/48, 30/48 without the rule
+  (Isaac-like failures) vs 48/48, 47/48 with it. Pilot 4 (pilot 3's protocol,
+  only observation/3) PASSED: test det 48/48, 47/48, sampled 47/48, 47/48;
+  10 Hz local 47/48, 48/48, 0 lockouts. G3 local re-run under the new
+  observer: passed. **`isaac-eval/3` (fresh seeds 994021-994030, user "go"):
+  PASSED, 6/10 and 7/10 (13/20 vs 12/40 for the pilot-3 checkpoints), every
+  cleanup confirmed, no interruption, ZERO lockouts; both policies landed a
+  1.04 m/s-kick seed that the old pipeline always lost.** 5 of the 7 failures
+  are tilt > 21 deg within 1 s of handover (21.9-23.2 deg) -- the EKF
+  transient / PX4 overshoot path, untouched by this fix; 2 descend below the
+  pad plane 2-7 m off without lockout. Small sample, criterion barely passed:
+  not robustness, not an arm comparison. A 10 Hz training cadence is now
+  viable (it was rejected only for the lockout) but was not adopted.
+  **Pilot 5 (user, 2026-10-29: training-only handover own-state error + reward
+  /3 command-change and tilt costs; status doc 12).** The error (own velocity
+  e0 exp(-t/tau), |e0_xy| <= 1.5 m/s, tau 0.15-0.5 s, position its integral,
+  training episodes only) reproduces Isaac's wrong-sign transient locally
+  (15-18/48 episodes, ~0.27 s). DESIGN FLAW, measured: the command-change
+  cost charges the SAMPLED action, so at the initial sigma exploration noise
+  alone costs ~-0.75 per decision and the policy dived into the pad (12/12
+  UNSAFE in ~1 s) for ~340 updates until sigma shrank -- the design checks had
+  used deterministic policies only. I stopped the first run prematurely at
+  update 414 (it had already recovered; archived `g4_pilot5_stopped/`) and
+  re-ran it unchanged (deterministic: identical path). PASSED with only ~190
+  updates at d=1: test det 40/48, 46/48. Behaviour changed as intended: first
+  1.5 s command jump 2.4-2.6 -> 1.2-1.3 m/s^2, max tilt p90 19-20 -> 14-15 deg.
+  **`isaac-eval/4` (994031-994040, harsher kicks): PASSED 6/10, 5/10.** Tilt
+  failures within 1.5 s fell 5/20 -> 2/20 (command-jump median 2.88 -> 1.19,
+  tilt p90 22.1 -> 19.6 deg) but missed approaches rose 2 -> 7: after a big
+  kick or a ~1.1 m/s estimate error the smoother policy drifts 1.6-2.5 m,
+  loses the pad at 0.8-1.2 m and keeps DESCENDING on the frozen estimate,
+  ending below the pad plane 3-4 m off; it never climbs to re-acquire.
+  **Paired re-flight (user "a"; doc 12.5): pilot 4 on the same 994031-994040,
+  12/20 vs pilot 5's 11/20 -- no difference** (both land 11, pilot 4 only 1,
+  pilot 5 only 0, both fail 8). The /3 -> /4 drop was the HARDER SEED SET,
+  not the policy. Pilot 5 survived the handover on 3 of pilot 4's 5 tilt
+  failures and then lost the pad later, so reward /3 moved failures from
+  handover tilt to failed recovery without adding landings. Diagnostic flights
+  of archived checkpoints: `--stage isaac-trace --checkpoint-root <archived
+  pilot> --pairs all` (loads a checkpoint trained on another TASK only when
+  every other hash matches -- `load_checkpoint(allow_foreign_task=True)`,
+  never in isaac-eval -- and checks the stored update against that pilot's
+  record, because an archived g4_pilot.json's checkpoint path may point at a
+  LATER pilot's file). Bottleneck now: no re-acquisition after losing the pad;
+  remaining options: a vision-age-aware climb in the field, and removing the
+  command-change cost's noise tax.
+  **Pilot 6 (user "go" on both, 2026-10-29; status doc 13; measurements in
+  `results/.../pilot6_design_checks/`, diagnostic seeds 995001-995048).**
+  Reward /4 (task v4): (1) `VelocityField.lost_view` -- past 0.5 s of the
+  policy's OWN vision age (full at 1.0 s) v_des_z turns from the sink into a
+  climb toward 2.5 m above contact, except below 0.5 m AND within 0.75 m of
+  the centre (every local landing goes blind below 0.43 m within 0.56 m).
+  Replayed on the 60 recorded Isaac episodes it fires in 0/36 landings and
+  10/10 late envelope violations, 4.3-15.9 s before each ended. (2) The
+  command-change cost is REMOVED: any cost on the SAMPLED action's change
+  taxes exploration noise, and no deadzone separates them (the jumps worth
+  pricing, 0.5-1.2 normalised, are the size of the noise, Delta-u sd 0.47);
+  a difficulty ramp fails too (log sigma is still -1.15..-1.3 when pilot 4
+  reached d=1, tax 0.42/decision); a smoothness LOSS (CAPS) is excluded by the
+  guide ("추가 head/loss"). The tilt cost stays: the plant filters the noise
+  (0.000/decision untrained, 0.05 rough pilot 4, 0.007 smooth pilot 5); body
+  rate does not (noise p99 73 deg/s vs pilot-4 handover median 76). (3)
+  Training-only `vision_blackout` (half the episodes, no frames for 1-3 s
+  starting 0.5-4 s after handover): trained policies lost the pad at altitude
+  in only 0-5/48 local episodes, too rare to learn a reward from. With a
+  forced blackout the pilot-4/-5 policies descend on the stale track and land
+  30-37/48; the same policies with only "climb when age > 0.5 s above 0.5 m"
+  overlaid land 46-48/48 and score higher under /4 (+23..+27 vs -4..+13).
+  Pilot 5 archived in `g4_pilot_v5/` (+ reconstructed config snapshot),
+  isaac-eval/4 in `isaac_eval_v4/`. Registered: `g4-pilot/6`, `isaac-eval/5`
+  on 994041-994050, plus a paired pilot-6 re-flight on 994031-994040
+  (pilot 4 12/20, pilot 5 11/20 there). Three changes at once: their effects
+  are not separable.
+  **Result: G4 PASSED** (test det 46/48, 48/48; sampled 43/48, 47/48; d=1.0
+  at update 77/70 -- pilot 5's 405/411 delay is gone, no dive). The climb
+  was NOT learned: 0 % of lost-view decisions at 0.5-3 m climb, locally or in
+  Isaac. Cause is structural: the dense term is an UNDISCOUNTED potential
+  difference and PPO discounts with tau 70 s (gamma 0.9986/decision), so the
+  field moves the optimum only by (1-gamma)*Phi ~ -0.004/decision for a
+  0.7 m/s mismatch, 1/8 of the time cost; it steers credit assignment, not
+  the optimum. What PPO learned instead: slow the descent (-0.30 -> -0.20 m/s)
+  and stay over the estimate (decisions > 1 m off: 0-6 vs 123-201), blackout
+  landings 44-45/48 vs 33-40. **`isaac-eval/5` (994041-994050) PASSED 6/10,
+  6/10**, every seed agreeing between the two policies. **Paired re-flight on
+  994031-994040: 15/20 vs pilot 4 12/20 and pilot 5 11/20** (discordant 4:1
+  and 5:1, exact p 0.38 / 0.22 -- a direction, not proof). All four newly
+  landed pairs lost the pad at 1.0-1.3 m, 1.2-1.5 m off, HELD altitude
+  (>= 0.64 m) and re-acquired, where pilots 4/5 kept descending. Pilot 6 in
+  Isaac: 27/40. Remaining failures: handover tilt 6/40, and losses > 2 m off
+  that need a real climb (994034). Over 100 traced Isaac episodes, mean
+  applied az over the first 1.3 s < -0.6 -> 14/46 handover-tilt failures,
+  -0.6..0 -> 4/46, >= 0 -> 0/8 (the /12 thrust-floor split). Diagnostic
+  re-flights may now use already-diagnostic seeds (`DIAGNOSTIC_SEED_RANGES`)
+  and are checked BEFORE a stack starts (`isaac_eval.check_pairs`); the first
+  paired attempt booted Isaac and was refused with zero episodes.
+  **Development stage (user "c" + "확장", 2026-10-29; status doc 14).** Task v5
+  (`scenario.py`): pad bearing A and travel heading B over the full circle in 4
+  sectors, held-out combos [[0,0],[1,2],[2,3],[3,1]] (balanced, not a cyclic
+  shift) for the composition test -- the /12 draw (heading +-11.5 deg) gave the
+  Raw policy 96/96 nominal and 0/96 at 90/180 deg, so composition had nothing to
+  measure. `ScenarioLocalBackend` re-draws offset/heading after the /12 reset
+  without touching shared files; Isaac cannot fly it yet (needs an Isaac-side
+  scenario before guide 11.6). G4 pilot 7 (task v5, Raw) PASSED (45/48, 41/48).
+  OOD levels fixed on Raw only by a pre-declared rule (mildest level with Raw in
+  20-80 %): a2 0.6-0.9, dropout 3-4 s, optical noise x5. Raw is 0.91 on
+  composition-OOD vs 0.94 nominal: little headroom on the primary metric.
+  Registered `development/1` (plan d6be7db0, `config/current_semantics/
+  development_v1.yaml`): 4 arms x seeds 10-14, 600 x 12 each, 10 cells x 100
+  per seed, guide 11.5 gate; `--stage develop` (resumable, refuses any change)
+  starts a live dashboard (`dashboard.py`, http://127.0.0.1:8773/;
+  `--stage dashboard` read-only).
+  **Result (2026-10-30, 8.3 h, local, status doc 14.4): the registered gate
+  PASSED** (all 20 validated; composition-OOD R-GAT - MLP +1.8, - Untyped
+  +2.4, - Raw +4.0 pp; ID +4.4, four-OOD +0.95, OOD unsafe -0.5 pp vs Raw).
+  Read it as "superiority NOT established": per-seed R-GAT - MLP is
+  [+9, -3, 0, +4, -1] pp (t 0.84), - Untyped [+6, -4, -3, +6, +7] (t 0.99);
+  the held-out combinations are NOT harder (every arm scores composition-OOD
+  >= its nominal ID, +0.6..+2.7 pp), so the composition margin equals the
+  general ID margin (R-GAT - MLP +1.8 both) and does not isolate compositional
+  generalization; at the dev mean/sd a 20-seed confirmation clears each
+  97.5 % CI with p ~0.25 / 0.36. In the OOD cells R-GAT has the most SUCCESS
+  and the fewest envelope/unsafe/timeout but the MOST MISSED_PAD_CONTACT
+  (639 vs Raw 470) -- the no-re-acquisition failure. Combined-OOD is 6-8 %
+  for every arm. Confirmation stage is not implemented; it and the Isaac
+  11.6 evaluation each need the user's approval.
 - **Bare `./run.sh` (no arguments, or options only) now runs the WHOLE
   minimal-observation system** (user decision 2026-10-08,
   `scripts/run_minimal_system.sh`, doc section 16.3): build the two ROS

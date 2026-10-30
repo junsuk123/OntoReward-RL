@@ -31,6 +31,11 @@ case "$1" in
     echo '                               deterministic/sampled -> owned Isaac/PX4 -> report'
     echo '  ./run.sh matlab-port-final [options]'
     echo '                               lean final 3D route: train -> owned Isaac/PX4 only'
+    echo '  ./run.sh matlab-port-dashboard --run-root PATH [--port 8772]'
+    echo '                               live training state and result analysis'
+    echo '  ./run.sh current-semantics-3d --stage audit|fixtures|smoke|coupling|report [--dry-run]'
+    echo '                               current-observation 3D study: gates G0-G4; Isaac'
+    echo '                               G3 only via coupling --backend isaac --allow-isaac'
     echo '  ./run.sh isaac-legacy [existing flight options]'
     echo 'Reference = two_axis_reference_v28_active.yaml, local dynamics, no Isaac/PX4.'
     echo 'Isaac legacy = planar_three_arm_comparison.yaml; NOT reference-equivalent.'
@@ -84,12 +89,22 @@ case "$1" in
     exec python3 "$project_root/python/run_matlab_port_pipeline.py" \
       --final-isaac-only "$@"
     ;;
+  matlab-port-dashboard)
+    shift
+    exec python3 "$project_root/tools/matlab_port_dashboard.py" "$@"
+    ;;
+  current-semantics-3d)
+    shift
+    export OMP_NUM_THREADS="${OMP_NUM_THREADS:-1}"
+    export MKL_NUM_THREADS="${MKL_NUM_THREADS:-1}"
+    exec python3 "$project_root/python/run_current_semantics_3d.py" "$@"
+    ;;
   isaac-legacy)
     shift
     exec bash "$project_root/scripts/run_isaac_legacy_entry.sh" "$@"
     ;;
   *)
-    echo 'Select system, all, reference, reference-smoke, spatial, matlab-port, matlab-port-all, matlab-port-final, status, or isaac-legacy. See ./run.sh --help.' >&2
+    echo 'Select system, all, reference, reference-smoke, spatial, matlab-port, matlab-port-all, matlab-port-final, matlab-port-dashboard, current-semantics-3d, status, or isaac-legacy. See ./run.sh --help.' >&2
     exit 2
     ;;
 esac

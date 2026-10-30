@@ -1,0 +1,33 @@
+# spatial_current_semantics_v1, guide 11.6: the development models on Isaac/PX4.
+# Registered by `./run.sh current-semantics-3d --stage register-isaac-development`
+# (after the development gate PASSED, 2026-10-30) and flown by
+# `--stage isaac-development --allow-isaac` on the user's approval ("3", 2026-10-30).
+#
+# Every development model (training seeds 10-14 x four arms = 20, each its
+# validation-selected best.pt) flies EVERY case below, deterministically: 20 x 30
+# = 600 episodes, paired across arms and seeds on the same Isaac environments.
+# A condition names a registered development cell, so split, dropout and pad
+# acceleration are that cell's own definition (development_v1.yaml); the task-v5
+# draw is the learner's and Isaac's acknowledgement is checked against it.
+#
+# Conditions, chosen before any development model flew on Isaac (guide 11.6.3:
+# "ID / Composition / Combined"):
+#   composition_id   the in-distribution reference of the primary metric
+#   composition_ood  the held-out bearing x heading combinations (primary metric)
+#   combined_id      every factor at its trained range, i.e. the trained 1-3 s
+#                    exogenous dropout on Isaac -- the pad-loss recovery that every
+#                    earlier Isaac flight showed is the bottleneck.
+# combined_ood is NOT flown: locally every arm lands 6-8 % of it with 77-88 %
+# unsafe (development.json), so 200 Isaac episodes would measure the floor, and its
+# optical-noise factor exists only in the local plant.
+#
+# Seeds: fresh, outside every audited, diagnostic, registered and development range
+# (the loader re-checks).  Wall time is not promised (guide 11.6.4): the recorded
+# isaac-eval flights took ~40 s per landed episode and ~2.5 min per 70 s timeout.
+protocol: isaac-development/1
+development_protocol: development/1
+mode: deterministic
+conditions:
+  composition_id: [994101, 994102, 994103, 994104, 994105, 994106, 994107, 994108, 994109, 994110]
+  composition_ood: [994111, 994112, 994113, 994114, 994115, 994116, 994117, 994118, 994119, 994120]
+  combined_id: [994121, 994122, 994123, 994124, 994125, 994126, 994127, 994128, 994129, 994130]

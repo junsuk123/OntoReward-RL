@@ -12,19 +12,23 @@ def used_reset_recoveries(output):
 Each restart has a start and a final event; count starts, not JSONL lines.
 An interrupted journal fails closed instead of silently granting new retries.
 """
-    path = output/'reset_recovery.jsonl'
-    if not path.exists():
+    paths = (output/'reset_recovery.jsonl', output/'episode_recovery.jsonl',
+             output/'cleanup_recovery.jsonl')
+    if not any(path.exists() for path in paths):
         return 0
     starts, highest = 0, 0
     try:
-        for line in path.read_text().splitlines():
-            row = json.loads(line)
-            attempt = row['attempt']
-            if (type(attempt) is not int or attempt <= 0 or
-                    row['state'] not in ('restarting','restarted','failed')):
-                raise ValueError('invalid recovery event')
-            starts += row['state'] == 'restarting'
-            highest = max(highest,attempt)
+        for path in paths:
+            if not path.exists():
+                continue
+            for line in path.read_text().splitlines():
+                row = json.loads(line)
+                attempt = row['attempt']
+                if (type(attempt) is not int or attempt <= 0 or
+                        row['state'] not in ('restarting','restarted','failed')):
+                    raise ValueError('invalid recovery event')
+                starts += row['state'] == 'restarting'
+                highest = max(highest,attempt)
     except (ValueError, KeyError, TypeError) as exc:
         raise ValueError('reset recovery journal is incomplete or invalid') from exc
     # Count old repeated attempt IDs conservatively as separate consumed starts.
@@ -116,6 +120,110 @@ def recover_refused_reset(error, *, seed, release):
         replaced = stack.restart()
         if not replaced:
             raise RuntimeError('owned spatial reset recovery did not replace simulator')
+        event['state'] = 'restarted'
+        return True
+    except BaseException as exc:
+        event.update(state='failed', recovery_error=repr(exc))
+        raise
+    finally:
+        event['wall_seconds'] = time.monotonic()-started
+        persist()
+
+
+def recover_interrupted_episode(error, *, seed, transitions_collected):
+    """Replace owned SITL after a recoverable fault during policy execution.
+
+    Unlike :func:`recover_refused_reset`, this path explicitly records that a
+    partial trajectory existed and was discarded.  The same run-wide recovery
+    budget is used, the same policy seed is retried, and no task terminal is
+    invented for infrastructure downtime.
+    """
+    from ..bridge import (EntryResetError, GatewayTimeout, PX4Failsafe,
+                          SimulatorFrameTimeout)
+    recoverable = (
+        isinstance(error, (EntryResetError, GatewayTimeout, SimulatorFrameTimeout))
+        or (isinstance(error, PX4Failsafe) and error.recoverable)
+    )
+    if not recoverable:
+        return False
+    stack = current()
+    if stack is None or stack.adopted_simulator:
+        return False
+    used = getattr(stack, 'spatial_recoveries_used', 0)
+    if used >= getattr(stack, 'spatial_recovery_budget', 0):
+        return False
+    stack.spatial_recoveries_used = used + 1
+    event = dict(
+        seed=int(seed), attempt=used + 1, error_type=type(error).__name__,
+        error=str(error), transitions_collected=max(0, int(transitions_collected)),
+        transitions_discarded=max(0, int(transitions_collected)),
+        counted_as_rl_episode=False,
+        started_utc=datetime.now(timezone.utc).isoformat(), state='restarting')
+    path = stack.log_dir.parent/'episode_recovery.jsonl'
+
+    def persist():
+        with path.open('a') as handle:
+            handle.write(json.dumps(event)+'\n')
+
+    persist()
+    started = time.monotonic()
+    print(
+        f"[spatial episode recovery] seed={seed}, owned restart {used+1}/"
+        f"{stack.spatial_recovery_budget}; discarded {event['transitions_discarded']} "
+        "partial RL transitions and will retry the same seed",
+        flush=True)
+    try:
+        if not stack.restart():
+            raise RuntimeError('owned spatial episode recovery did not replace simulator')
+        event['state'] = 'restarted'
+        return True
+    except BaseException as exc:
+        event.update(state='failed', recovery_error=repr(exc))
+        raise
+    finally:
+        event['wall_seconds'] = time.monotonic()-started
+        persist()
+
+
+def recover_failed_cleanup(error, *, seed, transitions_collected):
+    """Replace owned SITL after cleanup failed for a completed rollout.
+
+    The completed episode remains part of training/evaluation.  This path is
+    therefore separate from interrupted-episode recovery, which discards a
+    partial trajectory and retries the same seed.  Both consume the explicit
+    run-wide restart allowance and both are durably auditable.
+    """
+    from ..bridge import CleanupStopUnconfirmed
+    if not isinstance(error, CleanupStopUnconfirmed):
+        raise TypeError("cleanup recovery requires CleanupStopUnconfirmed")
+    stack = current()
+    if stack is None or stack.adopted_simulator:
+        return False
+    used = getattr(stack, 'spatial_recoveries_used', 0)
+    if used >= getattr(stack, 'spatial_recovery_budget', 0):
+        return False
+    stack.spatial_recoveries_used = used + 1
+    event = dict(
+        seed=int(seed), attempt=used + 1, error_type=type(error).__name__,
+        error=str(error), transitions_collected=max(0, int(transitions_collected)),
+        transitions_discarded=0, counted_as_rl_episode=True,
+        started_utc=datetime.now(timezone.utc).isoformat(), state='restarting')
+    path = stack.log_dir.parent/'cleanup_recovery.jsonl'
+
+    def persist():
+        with path.open('a') as handle:
+            handle.write(json.dumps(event)+'\n')
+
+    persist()
+    started = time.monotonic()
+    print(
+        f"[spatial cleanup recovery] seed={seed}, owned restart {used+1}/"
+        f"{stack.spatial_recovery_budget}; preserving {event['transitions_collected']} "
+        "completed RL transitions and continuing with the next episode",
+        flush=True)
+    try:
+        if not stack.restart():
+            raise RuntimeError('owned cleanup recovery did not replace simulator')
         event['state'] = 'restarted'
         return True
     except BaseException as exc:

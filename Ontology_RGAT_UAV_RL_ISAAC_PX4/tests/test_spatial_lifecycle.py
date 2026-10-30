@@ -2,8 +2,11 @@ from types import SimpleNamespace
 import json
 import pytest
 
-from ontology_rgat.bridge import ArmingRefused
-from ontology_rgat.spatial.lifecycle import recover_refused_reset
+from ontology_rgat.bridge import (ArmingRefused, CleanupStopUnconfirmed,
+                                  PX4Failsafe)
+from ontology_rgat.spatial.lifecycle import (recover_failed_cleanup,
+                                             recover_interrupted_episode,
+                                             recover_refused_reset)
 
 
 def test_terminal_and_failed_cleanup_remain_distinct_in_durable_audit(tmp_path, monkeypatch):
@@ -43,6 +46,69 @@ def test_reset_recovery_budget_is_run_wide_and_failed_attempt_is_audited(tmp_pat
 def test_reset_recovery_does_not_retry_policy_time_failures():
     with pytest.raises(TypeError):
         recover_refused_reset(RuntimeError('policy disarmed'), seed=42, release=lambda:None)
+
+
+def test_recoverable_policy_time_failsafe_restarts_same_seed_and_audits_discard(
+        tmp_path, monkeypatch):
+    calls = []
+    stack = SimpleNamespace(adopted_simulator=False, spatial_recovery_budget=2,
+        spatial_recoveries_used=0, log_dir=tmp_path/'stack',
+        restart=lambda:calls.append('restart') or True)
+    monkeypatch.setattr('ontology_rgat.spatial.lifecycle.current', lambda:stack)
+    error = PX4Failsafe(['gcs_connection_lost'], recoverable=True)
+    assert recover_interrupted_episode(
+        error, seed=100088, transitions_collected=17)
+    assert calls == ['restart'] and stack.spatial_recoveries_used == 1
+    rows = [json.loads(x) for x in
+            (tmp_path/'episode_recovery.jsonl').read_text().splitlines()]
+    assert [row['state'] for row in rows] == ['restarting', 'restarted']
+    assert all(row['seed'] == 100088 and row['transitions_discarded'] == 17
+               and row['counted_as_rl_episode'] is False for row in rows)
+
+
+def test_hard_policy_time_failsafe_is_never_recovered(tmp_path, monkeypatch):
+    stack = SimpleNamespace(adopted_simulator=False, spatial_recovery_budget=2,
+        spatial_recoveries_used=0, log_dir=tmp_path/'stack',
+        restart=lambda:pytest.fail('must not restart'))
+    monkeypatch.setattr('ontology_rgat.spatial.lifecycle.current', lambda:stack)
+    assert not recover_interrupted_episode(
+        PX4Failsafe(['battery_warning_2'], recoverable=False),
+        seed=100088, transitions_collected=2)
+
+
+def test_failed_cleanup_restart_preserves_completed_episode(tmp_path, monkeypatch):
+    calls = []
+    stack = SimpleNamespace(adopted_simulator=False, spatial_recovery_budget=2,
+        spatial_recoveries_used=0, log_dir=tmp_path/'stack',
+        restart=lambda:calls.append('restart') or True)
+    monkeypatch.setattr('ontology_rgat.spatial.lifecycle.current', lambda:stack)
+    error = CleanupStopUnconfirmed('cleanup timeout')
+    assert recover_failed_cleanup(
+        error, seed=100031, transitions_collected=670)
+    rows = [json.loads(x) for x in
+            (tmp_path/'cleanup_recovery.jsonl').read_text().splitlines()]
+    assert calls == ['restart']
+    assert [row['state'] for row in rows] == ['restarting', 'restarted']
+    assert all(row['counted_as_rl_episode'] is True
+               and row['transitions_discarded'] == 0
+               and row['transitions_collected'] == 670 for row in rows)
+
+
+def test_failed_cleanup_is_attempted_once_even_when_backend_closes(monkeypatch):
+    from ontology_rgat.spatial.environment import IsaacBackend
+    calls = []
+    backend = IsaacBackend.__new__(IsaacBackend)
+    backend.seed = 100031
+    backend.finished = False
+    backend.cleanup_attempted = False
+    backend.bridge = SimpleNamespace(
+        stop_after_outcome=lambda timeout:calls.append(('stop', timeout)) or False,
+        close=lambda:calls.append('close'))
+    assert backend.finish() is False
+    assert backend.finish() is False
+    with pytest.raises(CleanupStopUnconfirmed, match='not confirmed'):
+        backend.close()
+    assert calls == [('stop', 180.0), 'close']
 
 
 def test_new_stack_context_cannot_reset_run_wide_recovery_allowance(tmp_path,monkeypatch):

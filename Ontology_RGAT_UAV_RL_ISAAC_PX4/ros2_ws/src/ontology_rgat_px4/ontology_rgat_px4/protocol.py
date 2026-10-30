@@ -33,6 +33,17 @@ BENCHMARK_SCENARIOS = {
     "segmented_cruise_slow", "segmented_cruise_medium", "segmented_cruise_fast",
     "spatial_reference_cv_ca_cv", "matlab_planar_cv_ca_cv",
 }
+# spatial_current_semantics_v1 task v5: the learner's composition draw carried in
+# the name, "spatial_current_omni/1:heading:bearing:radius:a2". The gateway only
+# forwards it; the strict parse is ontology_rgat.spatial.scenarios.parse_current_omni,
+# run by Isaac's pad_motion.py, and the learner checks Isaac's acknowledgement.
+CURRENT_OMNI_PREFIX = "spatial_current_omni/1:"
+
+
+def is_benchmark_scenario(scenario: str) -> bool:
+    return scenario in BENCHMARK_SCENARIOS or (
+        scenario.startswith(CURRENT_OMNI_PREFIX) and len(scenario) <= 160
+        and scenario.count(":") == 4)
 
 
 class ProtocolError(ValueError):

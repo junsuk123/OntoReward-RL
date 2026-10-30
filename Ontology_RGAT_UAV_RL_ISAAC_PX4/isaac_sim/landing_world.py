@@ -143,8 +143,8 @@ from marker_vision import (
     intrinsics_from_fov,
     texture_side_ratio,
 )
-from pad_motion import (BENCHMARK_SCENARIOS, escape_burst_due, PadMotionConfig, PadTrajectory,
-                        lorry_parts, ugv_parts)
+from pad_motion import (BENCHMARK_SCENARIOS, escape_burst_due, is_benchmark_scenario,
+                        PadMotionConfig, PadTrajectory, lorry_parts, ugv_parts)
 from urban_scene import UrbanConfig, UrbanLayout, UrbanScene
 from gnss import GnssConfig, UrbanGnss
 from px4_gnss import UrbanGnssSensor
@@ -1737,7 +1737,7 @@ class LandingWorld:
             if not math.isfinite(gnss_scale) or not 0.0 <= gnss_scale <= 4.0:
                 raise ValueError("gnss_scale outside [0,4]")
             scenario = str(req.get("scenario", "training_random_walk"))
-            if scenario not in BENCHMARK_SCENARIOS:
+            if not is_benchmark_scenario(scenario):
                 raise ValueError(f"unknown benchmark scenario {scenario!r}")
             self.pending_reset = {"seq": int(req["seq"]), "seed": int(req.get("seed", 0)),
                                   "episode_id": str(req.get('episode_id','')),
@@ -1805,6 +1805,15 @@ class LandingWorld:
             req.get("scenario", "training_random_walk"), hard_reset=True)
         initial = benchmark.get("initial_conditions") or {}
         planar_entry = bool(benchmark.get("planar_entry", False))
+        # spatial_current_semantics_v1 task v5: the learner's draw fixes the entry
+        # bearing and radius (own minus pad = -r (cos b, sin b), ENU) and the deck
+        # heading; the seed still draws the altitude and the yaw misalignment.
+        current_omni = deck.get("current_omni")
+        if current_omni is not None and (
+                str(benchmark.get("profile", "")).lower() != "shin2026" or planar_entry
+                or float(req.get("initial_condition_scale", 1.0)) != 1.0):
+            raise ValueError("the current-omni entry needs the spatial shin2026 entry at "
+                             "initial_condition_scale 1")
         if str(benchmark.get("profile", "")).lower() == "shin2026":
             # Draw the Table-I box first. During training its curriculum starts
             # at the supported airborne hover and blends toward that draw;
@@ -1844,6 +1853,13 @@ class LandingWorld:
                 offset = np.array([rng.uniform(*x_range), rng.uniform(*y_range),
                                    rng.uniform(*z_range)])
                 rpy_deg = np.array([0.0, 0.0, rng.uniform(*yaw_range)])
+            if current_omni is not None:
+                # The lateral draws above are spent and replaced, so the altitude,
+                # yaw and every later draw keep their stream positions.
+                bearing = float(current_omni["bearing_rad"])
+                radius = float(current_omni["radius_m"])
+                offset = np.array([-radius * math.cos(bearing),
+                                   -radius * math.sin(bearing), float(offset[2])])
             offset, rpy_deg[2] = curriculum_camera_entry(
                 offset, rpy_deg[2],
                 req.get("initial_condition_scale", min(
@@ -1857,7 +1873,12 @@ class LandingWorld:
                     self.hover_start_pad_m, self.deck.yaw),
             )
             camera_cfg = (CONFIG.get("vision") or {}).get("camera", {}) or {}
-            offset = constrain_camera_visible_entry(
+            # Not for the current-omni entry: with the whole 1.5 m deck required
+            # in view, this pulled every spatial entry to within ~0.1 m of the
+            # centre (132 recorded Isaac episodes, median 0.07 m), erasing the
+            # task's offset radius. The bridge's entry-view gate still checks
+            # that the pad centre is in frame before handover.
+            offset = offset if current_omni is not None else constrain_camera_visible_entry(
                 offset, self.deck.yaw + math.radians(float(rpy_deg[2])),
                 image_size=camera_cfg.get("resolution", (512, 320)),
                 horizontal_fov_deg=float(camera_cfg.get(
@@ -1908,8 +1929,11 @@ class LandingWorld:
         reset_position, px4_boot_generation = self._cold_reset_vehicle_and_px4()
         self.wind.reset(req["seed"], self.world.current_time, req["wind_scale"])
         self.wind_sensor.reset(req["seed"], self.world.current_time)
+        # The current-omni entry yaw is the world's 0 plus the seed's misalignment,
+        # not the deck heading: the local plant flies at yaw 0 for every heading.
         entry_yaw_enu = (self.deck.yaw + math.radians(float(rpy_deg[2]))
-                         if str(benchmark.get("profile", "")).lower() == "shin2026"
+                         if (str(benchmark.get("profile", "")).lower() == "shin2026"
+                             and current_omni is None)
                          else math.radians(float(rpy_deg[2])))
         self.gnss.reset(req["seed"], req.get("gnss_scale", 1.0))
         self.gnss_time = float(self.world.current_time)

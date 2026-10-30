@@ -141,6 +141,17 @@ BENCHMARK_SCENARIOS = (
 # the arena's inward steering never applies to them: the path is bounded by
 # construction, so pulling it inward would only bend a straight into a curve.
 CLOSED_TRACK_SCENARIOS = (STRAIGHT_ESCAPE_BURST_TRACK_SCENARIO,)
+
+
+def is_benchmark_scenario(scenario: str) -> bool:
+    """A registered scenario name, or a well-formed current-omni name: the
+    spatial_current_semantics_v1 task-v5 draw made by the learner and carried in the
+    name (ontology_rgat.spatial.scenarios.encode_current_omni).  A malformed
+    current-omni name raises ValueError."""
+    if scenario in BENCHMARK_SCENARIOS:
+        return True
+    from ontology_rgat.spatial.scenarios import parse_current_omni
+    return parse_current_omni(scenario) is not None
 # How the dash is started (``pad.escape_burst_trigger``).
 #   following -- Isaac fires it the moment the vehicle is actually following
 #                the deck: within ESCAPE_BURST_FOLLOW_LATERAL_M and inside the
@@ -909,16 +920,26 @@ class PadTrajectory:
             # is what made reset distance grow with episode count even though
             # the learner supplied an independent seed.
             self._segmented_cruise_reversed = False
-        if scenario not in BENCHMARK_SCENARIOS:
+        if not is_benchmark_scenario(scenario):
             raise ValueError(f"unknown benchmark platform scenario {scenario!r}")
-        if scenario in ('spatial_reference_cv_ca_cv', 'matlab_planar_cv_ca_cv'):
+        # Registered names never import the learner package (legacy worlds).
+        current_omni = None
+        if scenario not in BENCHMARK_SCENARIOS:
+            from ontology_rgat.spatial.scenarios import parse_current_omni
+            current_omni = parse_current_omni(scenario)
+        if (scenario in ('spatial_reference_cv_ca_cv', 'matlab_planar_cv_ca_cv')
+                or current_omni is not None):
             from ontology_rgat.spatial.scenarios import (
-                sample_planar_scenario, sample_spatial_scenario)
+                current_omni_motion, sample_planar_scenario, sample_spatial_scenario)
             if cfg.mode != 'random_walk' or float(speed_scale) != 1.:
                 raise ValueError('spatial reference motion needs random_walk mode and nominal scale 1')
             origin = (np.asarray(self.pose(sim_time)[0],dtype=float) if carry_route
                       else self.start+np.array([0.,0.,cfg.deck_height_m]))
-            self.spatial_motion = (sample_planar_scenario(seed)
+            # The current-omni deck drives the learner's heading (any direction)
+            # with the seed's own CV-CA-CV profile; the deck faces its travel.
+            self.spatial_motion = (current_omni_motion(seed, current_omni)
+                                   if current_omni is not None
+                                   else sample_planar_scenario(seed)
                                    if scenario == 'matlab_planar_cv_ca_cv'
                                    else sample_spatial_scenario(seed))
             self.spatial_origin = origin.copy()
@@ -934,7 +955,8 @@ class PadTrajectory:
                         position_enu_m=position.tolist(),velocity_enu_m_s=velocity.tolist(),
                         yaw_rad=self.yaw,route_start=cfg.route_start,arc_length_m=0.,lane_offset_m=0.,
                         benchmark_scenario=scenario,escape_burst=None,
-                        spatial_motion=self.spatial_motion.manifest(schema=scenario))
+                        spatial_motion=self.spatial_motion.manifest(schema=scenario),
+                        **({} if current_omni is None else {'current_omni': current_omni}))
         if self.spatial_motion is not None:
             raise ValueError('switching a spatial trajectory to a legacy scenario requires a fresh stack')
         self.benchmark_scenario = scenario

@@ -43,6 +43,24 @@ contract hash는 세 종류다. algorithm hash는 관측/그래프/행동/학습
 ./run.sh matlab-port-final --run-root results/matlab_port/final_run
 ```
 
+학습 중 상태와 중단/완료 결과는 다른 터미널에서 아래 명령으로 본다. 5초마다
+history를 다시 읽으며, policy나 checkpoint를 열지 않는 read-only 경로다.
+
+```bash
+./run.sh matlab-port-dashboard --run-root results/matlab_port/final_run
+# browser: http://127.0.0.1:8772/
+
+# 서버 없이 정적 HTML/JSON만 생성
+./run.sh matlab-port-dashboard --run-root results/matlab_port/final_run --export
+```
+
+대시보드는 arm별 update/episode 진행률, sampled SUCCESS/TASK_TIMEOUT/unsafe,
+mean return, post-step KL, accepted/rejected actor step, validation과 최종 Isaac 평가,
+reset, mid-episode 및 post-cleanup infrastructure recovery를 표시한다. post-cleanup
+recovery는 이미 완료된 rollout을 보존하고, 나머지 recovery는 불완전 rollout을
+학습 데이터에서 제외한다. `visualization/index.html`과
+`visualization/state.json`은 update마다 새로 기록된다.
+
 이 경로는 최종 3D의 `Isaac/PX4 train -> Isaac/PX4 evaluate`만 실행한다.
 학습과 평가 모두 `backend=isaac`, `control-profile=direct`를 사용한다. 2D 전체와 `audit`, MATLAB
 parity, smoke, 별도 deterministic/sampled local evaluation 및 차원별 report는
@@ -55,8 +73,14 @@ parity, smoke, 별도 deterministic/sampled local evaluation 및 차원별 repor
 generation에서 재기동한다. 따라서 EKF, actuator, HIL clock과 이전 명령은 이어지지
 않는다. gateway가 새 EKF의 연속 유효 odometry를 확인한 뒤에만 learner에
 `reset_complete`를 반환한다. `--fresh-stack-per-episode`는 Isaac world 자체의 문제를
-분리할 때만 쓰는 명시적 fallback이다. `checkpoint_last.pt`는 PPO update마다 저장되며,
-중단 후 같은 run root를 계속할 때는 `--resume-training`을 명시한다.
+분리할 때만 쓰는 명시적 fallback이다. `checkpoint_last.pt`는 PPO update 직후,
+validation보다 먼저 저장된다. validation은 seed별 결과를
+`<method>/validation/update_NNNN.json`에 원자적으로 기록한다. 따라서 검증 중
+Isaac/PX4 cleanup이 실패해도 학습 update를 잃지 않고, 같은 checkpoint와 아직
+완료되지 않은 validation seed부터 이어간다. 이미 결과가 결정된 뒤 cleanup만
+실패하면 결과는 보존하고 owned stack을 교체한다. 정책 제어 중 hard failsafe는 이
+경로로 복구하지 않는다. 중단 후 같은 run root를 계속할 때는
+`--resume-training`을 명시한다.
 
 `matlab-port-all`의 기본값은 arm별 750 update,
 update당 sampled episode 6개, validation 100 seed, test 200 seed(3001--3200),

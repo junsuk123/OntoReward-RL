@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import asdict
+import hashlib
 import json
 from pathlib import Path
 import time
@@ -61,20 +62,25 @@ def _model(contract, method, seed, graph_seed=0):
 def _write_json(path, payload):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True, default=float),
-                    encoding="utf-8")
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(json.dumps(payload, indent=2, sort_keys=True, default=float),
+                         encoding="utf-8")
+    temporary.replace(path)
 
 
 def _rollout(contract, model, seed, *, deterministic, max_steps, policy_version=0,
              backend_factory=None, collect_trace=False):
     factory = backend_factory or make_backend_factory(contract)
     env = factory()
+    rows = []
+    completed = None
+    failure = None
     try:
         if hasattr(env, "set_policy_version"):
             env.set_policy_version(policy_version)
         observation, reset_info = env.reset(seed)
         generator = torch.Generator().manual_seed(seed + 2_000_000)
-        rows, total, status, trace = [], 0.0, "RUNNING", []
+        total, status, trace = 0.0, "RUNNING", []
         tracking_bias = np.zeros(contract.metadata["dimension"]-1, dtype=np.float32)
         policy_elapsed = 0.0
         started = time.perf_counter()
@@ -146,9 +152,63 @@ def _rollout(contract, model, seed, *, deterministic, max_steps, policy_version=
                    "reset": reset_info}
         if collect_trace:
             episode["trace"] = trace
-        return batch, episode
+        completed = (batch, episode)
+        return completed
+    except BaseException as exc:
+        failure = exc
+        # The recovery owner must be able to audit exactly how much partial
+        # experience is discarded.  The exception remains the original bridge
+        # error, so hard vehicle/policy failures cannot be relabelled.
+        try:
+            from ..bridge import BridgeError
+            if isinstance(exc, BridgeError):
+                exc.transitions_collected = len(rows)
+        except ImportError:
+            pass
+        raise
     finally:
-        env.close()
+        try:
+            env.close()
+        except BaseException as cleanup_error:
+            if failure is not None:
+                # Preserve the policy-time cause.  Cleanup diagnostics remain
+                # durable in flight_terminal.jsonl and must not relabel a hard
+                # vehicle/task failure as recoverable infrastructure.
+                failure.cleanup_error = repr(cleanup_error)
+            else:
+                if completed is not None:
+                    cleanup_error.completed_rollout = completed
+                    cleanup_error.transitions_collected = len(rows)
+                raise
+
+
+def _rollout_resilient(*args, **kwargs):
+    """Retry the same seed after a bounded recoverable Isaac interruption."""
+    seed = kwargs.get("seed", args[2] if len(args) > 2 else None)
+    while True:
+        try:
+            return _rollout(*args, **kwargs)
+        except BaseException as exc:
+            from ..bridge import BridgeError
+            if not isinstance(exc, BridgeError):
+                raise
+            from ..bridge import CleanupStopUnconfirmed
+            if isinstance(exc, CleanupStopUnconfirmed):
+                completed = getattr(exc, "completed_rollout", None)
+                if completed is None:
+                    raise
+                from ..spatial.lifecycle import recover_failed_cleanup
+                if recover_failed_cleanup(
+                        exc, seed=seed,
+                        transitions_collected=getattr(
+                            exc, "transitions_collected", 0)):
+                    return completed
+                raise
+            from ..spatial.lifecycle import recover_interrupted_episode
+            if not recover_interrupted_episode(
+                    exc, seed=seed,
+                    transitions_collected=getattr(exc, "transitions_collected", 0)):
+                raise
 
 
 def _join(batches, policy_version):
@@ -159,16 +219,44 @@ def _join(batches, policy_version):
 
 
 def evaluate(contract, model, seeds, max_steps=700, *, deterministic=True,
-             backend_factory=None, collect_trace=False):
-    episodes = [_rollout(contract, model, seed, deterministic=deterministic,
-                         max_steps=max_steps, backend_factory=backend_factory,
-                         collect_trace=collect_trace)[1] for seed in seeds]
-    return {"deterministic": bool(deterministic), "episodes": episodes,
-            "success_rate": sum(row["status"] == "SUCCESS" for row in episodes)/len(episodes),
-            "unsafe_rate": sum(row["status"] in {"UNSAFE_CONTACT", "MISSED_PAD_CONTACT",
-                                                   "SAFETY_ENVELOPE_VIOLATION"}
-                               for row in episodes)/len(episodes),
-            "mean_return": float(np.mean([row["return"] for row in episodes]))}
+             backend_factory=None, collect_trace=False, recover_infrastructure=False,
+             progress_path=None, progress_metadata=None):
+    seeds = list(seeds)
+    collect = _rollout_resilient if recover_infrastructure else _rollout
+    episodes = []
+    progress_path = None if progress_path is None else Path(progress_path)
+    metadata = dict(progress_metadata or {})
+    if progress_path is not None and progress_path.is_file():
+        progress = json.loads(progress_path.read_text(encoding="utf-8"))
+        if (progress.get("version") != 1
+                or progress.get("metadata") != metadata
+                or progress.get("seeds") != seeds):
+            raise ValueError("validation progress does not match this checkpoint/split")
+        episodes = list(progress.get("episodes", []))
+        if [row.get("seed") for row in episodes] != seeds[:len(episodes)]:
+            raise ValueError("validation progress is not an ordered seed prefix")
+    for seed in seeds[len(episodes):]:
+        episodes.append(collect(
+            contract, model, seed, deterministic=deterministic,
+            max_steps=max_steps, backend_factory=backend_factory,
+            collect_trace=collect_trace)[1])
+        if progress_path is not None:
+            _write_json(progress_path, {
+                "version": 1, "metadata": metadata, "seeds": seeds,
+                "episodes": episodes, "complete": False})
+    result = {"deterministic": bool(deterministic), "episodes": episodes,
+              "success_rate": sum(row["status"] == "SUCCESS" for row in episodes)/len(episodes),
+              "unsafe_rate": sum(row["status"] in {"UNSAFE_CONTACT", "MISSED_PAD_CONTACT",
+                                                     "SAFETY_ENVELOPE_VIOLATION"}
+                                 for row in episodes)/len(episodes),
+              "mean_return": float(np.mean([row["return"] for row in episodes]))}
+    if progress_path is not None:
+        _write_json(progress_path, {
+            "version": 1, "metadata": metadata, "seeds": seeds,
+            "episodes": episodes, "complete": True,
+            "metrics": {key: value for key, value in result.items()
+                        if key != "episodes"}})
+    return result
 
 
 def run_smoke(args, contract):
@@ -208,6 +296,18 @@ def run_smoke(args, contract):
 
 def _train_with_factory(args, contract, factory, *, backend_name):
     output = Path(args.output)
+    from .visualization import export_report
+    _write_json(output/"training_manifest.json", {
+        "backend": backend_name, "dimension": args.dimension,
+        "methods": args.methods, "updates": args.updates,
+        "episodes_per_update": args.episodes_per_update,
+        "validation_episodes": args.validation_episodes,
+        "evaluate_every": args.evaluate_every, "steps": args.steps,
+        "training_profile": args.training_profile,
+        "target_kl": getattr(contract.training, "target_kl", 0.02),
+    })
+    export_report(output, planned_updates=args.updates,
+                  episodes_per_update=args.episodes_per_update)
     summary = {"status": "PASSED", "backend": backend_name, "methods": {},
                "task_contract_hash": contract.task_contract_hash,
                "execution_hash": contract.execution_hash}
@@ -244,12 +344,70 @@ def _train_with_factory(args, contract, factory, *, backend_name):
                          validation["mean_return"])
                 if best is None or score > best[0]:
                     best = (score, int(old["update"]), validation)
+
+        def validation_due(update):
+            return update % args.evaluate_every == 0 or update == args.updates
+
+        def complete_validation(row):
+            nonlocal best
+            update = int(row["update"])
+            checkpoint_path = output/method/"checkpoint_last.pt"
+            if not checkpoint_path.is_file():
+                raise RuntimeError(
+                    f"cannot validate {method} update {update} without checkpoint_last.pt")
+            validation_start = (2001 if args.backend == "local"
+                                else max(10000, args.seed+1_000_000))
+            progress_path = (output/method/"validation"/
+                             f"update_{update:04d}.json")
+            validation = evaluate(
+                contract, model,
+                range(validation_start,
+                      validation_start+args.validation_episodes),
+                max_steps=args.steps, backend_factory=factory,
+                recover_infrastructure=args.backend == "isaac",
+                progress_path=progress_path,
+                progress_metadata={
+                    "method": method, "update": update,
+                    "checkpoint_sha256": hashlib.sha256(
+                        checkpoint_path.read_bytes()).hexdigest(),
+                    "task_contract_hash": contract.task_contract_hash,
+                    "execution_hash": contract.execution_hash,
+                })
+            row["validation"] = validation
+            _write_json(history_path, history)
+            score = (validation["success_rate"], -validation["unsafe_rate"],
+                     validation["mean_return"])
+            if best is None or score > best[0]:
+                best = (score, update, validation)
+                save_checkpoint(output/method/"checkpoint_best.pt", model,
+                                training_step=update,
+                                optimizer_state=trainer.optimizer_state(),
+                                rng_state=torch.get_rng_state())
+            export_report(output, planned_updates=args.updates,
+                          episodes_per_update=args.episodes_per_update)
+            return validation
+
+        # A checkpoint is deliberately committed before its expensive Isaac
+        # validation.  If the previous process stopped during that validation,
+        # finish the exact held-out split (from its per-episode journal) before
+        # taking another PPO step.
+        if (history and int(history[-1]["update"]) == first_update-1
+                and validation_due(first_update-1)
+                and "validation" not in history[-1]):
+            validation = complete_validation(history[-1])
+            print(json.dumps({"progress": {
+                "method": method, "update": first_update-1,
+                "episodes_complete": (first_update-1)*args.episodes_per_update,
+                "validation": {key: value for key, value in validation.items()
+                               if key != "episodes"},
+                "resumed_validation": True,
+            }}, default=float), flush=True)
         if first_update > args.updates+1:
             raise ValueError("checkpoint training step exceeds requested --updates")
         for update in range(first_update, args.updates+1):
             batches, episodes = [], []
             for episode in range(args.episodes_per_update):
-                batch, row = _rollout(
+                batch, row = _rollout_resilient(
                     contract, model,
                     args.seed*100_000+update*args.episodes_per_update+episode,
                     deterministic=False, max_steps=args.steps,
@@ -259,30 +417,19 @@ def _train_with_factory(args, contract, factory, *, backend_name):
             stats = trainer.update(_join(batches, trainer.policy_version),
                                    generator=torch.Generator().manual_seed(args.seed+update))
             row = {"update": update, "episodes": episodes, **stats}
-            if update % args.evaluate_every == 0 or update == args.updates:
-                validation_start = (2001 if args.backend == "local"
-                                    else max(10000, args.seed+1_000_000))
-                validation = evaluate(contract, model, range(
-                    validation_start, validation_start+args.validation_episodes),
-                                      max_steps=args.steps, backend_factory=factory)
-                row["validation"] = validation
-                score = (validation["success_rate"], -validation["unsafe_rate"],
-                         validation["mean_return"])
-                if best is None or score > best[0]:
-                    best = (score, update, validation)
-                    save_checkpoint(output/method/"checkpoint_best.pt", model,
-                                    training_step=update,
-                                    optimizer_state=trainer.optimizer_state(),
-                                    rng_state=torch.get_rng_state())
             history.append(row)
             _write_json(output/method/"history.json", history)
             # Actual-Isaac campaigns are long and infrastructure can require a
-            # cold restart. Persist every accepted PPO update, not only the
-            # final update, so a pre-policy failure never discards learning.
+            # cold restart. Persist the accepted PPO update BEFORE validation,
+            # so a held-out flight failure never discards learned weights.
             save_checkpoint(output/method/"checkpoint_last.pt", model,
                             training_step=update,
                             optimizer_state=trainer.optimizer_state(),
                             rng_state=torch.get_rng_state())
+            export_report(output, planned_updates=args.updates,
+                          episodes_per_update=args.episodes_per_update)
+            if validation_due(update):
+                complete_validation(row)
             if update == 1 or "validation" in row:
                 progress = {"method": method, "update": update,
                             "episodes_complete": update*args.episodes_per_update,
@@ -364,7 +511,8 @@ def run_evaluate(args, contract):
                     contract, model,
                     range(args.seed, args.seed+args.evaluation_episodes), args.steps,
                     deterministic=not args.sample_actions,
-                    backend_factory=factory, collect_trace=True)
+                    backend_factory=factory, collect_trace=True,
+                    recover_infrastructure=True)
                 _write_json(output/"isaac_traces"/f"{method}.json", evaluated)
                 # The full per-decision authority trace belongs in its own
                 # artifact, not duplicated into the summary or stdout.

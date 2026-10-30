@@ -9,6 +9,8 @@ from pathlib import Path
 import subprocess
 import sys
 
+from ontology_rgat.direct_policy.visualization import export_report
+
 
 ROOT = Path(__file__).resolve().parents[1]
 RUNNER = ROOT / "python" / "run_matlab_port.py"
@@ -57,6 +59,16 @@ def main(argv=None):
               "omit audit, parity, smoke, local test evaluation and per-dimension reports"))
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args(argv)
+    # ``run.sh`` lives one directory above the Python project.  Resolve every
+    # user-facing relative artifact path against the project root, which is
+    # also the cwd used for child stages; otherwise progress/report files land
+    # in a different ``results/`` tree from the checkpoints they describe.
+    if not args.run_root.is_absolute():
+        args.run_root = (ROOT / args.run_root).resolve()
+    for name in ("planar_checkpoint_root", "spatial_checkpoint_root"):
+        value = getattr(args, name)
+        if value is not None and not value.is_absolute():
+            setattr(args, name, (ROOT / value).resolve())
     if args.final_isaac_only and args.no_isaac:
         parser.error("--final-isaac-only cannot be combined with --no-isaac")
     if args.skip_training and args.resume_training:
@@ -74,15 +86,36 @@ def main(argv=None):
         args.run_root.mkdir(parents=True, exist_ok=True)
     records = []
 
+    def persist_progress():
+        if args.dry_run:
+            return
+        path = args.run_root/"pipeline_progress.json"
+        temporary = path.with_suffix(".json.tmp")
+        temporary.write_text(
+            json.dumps(records, indent=2, ensure_ascii=False)+"\n", encoding="utf-8")
+        temporary.replace(path)
+
     def run(name, cmd):
-        records.append({"name": name, "command": cmd, "status": "PLANNED"})
+        records.append({"name": name, "command": cmd,
+                        "status": "PLANNED" if args.dry_run else "RUNNING"})
         print(json.dumps({"pipeline_stage": name, "command": cmd}), flush=True)
         if args.dry_run:
             return
-        subprocess.run(cmd, cwd=ROOT, check=True)
+        persist_progress()
+        export_report(args.run_root, planned_updates=args.updates,
+                      episodes_per_update=args.episodes_per_update)
+        try:
+            subprocess.run(cmd, cwd=ROOT, check=True)
+        except subprocess.CalledProcessError as exc:
+            records[-1].update(status="FAILED", returncode=exc.returncode)
+            persist_progress()
+            export_report(args.run_root, planned_updates=args.updates,
+                          episodes_per_update=args.episodes_per_update)
+            raise
         records[-1]["status"] = "PASSED"
-        (args.run_root/"pipeline_progress.json").write_text(
-            json.dumps(records, indent=2, ensure_ascii=False)+"\n", encoding="utf-8")
+        persist_progress()
+        export_report(args.run_root, planned_updates=args.updates,
+                      episodes_per_update=args.episodes_per_update)
 
     for dimension in dimensions:
         base = args.run_root/f"{dimension}d"
@@ -209,6 +242,8 @@ def main(argv=None):
     if not args.dry_run:
         (args.run_root/"pipeline_report.json").write_text(
             json.dumps(report, indent=2, ensure_ascii=False)+"\n", encoding="utf-8")
+        export_report(args.run_root, planned_updates=args.updates,
+                      episodes_per_update=args.episodes_per_update)
     print(json.dumps(report, indent=2, ensure_ascii=False))
     return 0
 

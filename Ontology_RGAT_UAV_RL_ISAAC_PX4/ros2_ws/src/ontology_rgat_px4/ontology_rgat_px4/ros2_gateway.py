@@ -31,7 +31,7 @@ from .frames import (
     euler_zyx_to_quat_wxyz,
 )
 from .protocol import (
-    BENCHMARK_SCENARIOS,
+    is_benchmark_scenario,
     PLANAR_TILT_LIMIT_RAD,
     ProtocolError,
     VehicleSample,
@@ -1083,7 +1083,7 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
                 if not math.isfinite(gnss_scale) or not 0.0 <= gnss_scale <= 4.0:
                     raise ProtocolError("gnss_scale must be finite and in [0,4]")
                 scenario = str(msg.get("scenario", "training_random_walk"))
-                if scenario not in BENCHMARK_SCENARIOS:
+                if not is_benchmark_scenario(scenario):
                     raise ProtocolError(f"unsupported benchmark scenario {scenario!r}")
                 self.last_command_seq = seq
                 self.pending_reset_seq = seq

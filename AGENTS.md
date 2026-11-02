@@ -1087,7 +1087,14 @@ The v1 config remains an explicit historical experiment; Isaac/PX4 remains
     one factory and `pilot.py` uses it.
   - Rule: typed minus shuffled on mean success over all ten cells, 95 %
     t-interval over 5 seeds.
-  - Registered and running 2026-11-02 (`relation_shuffle.log`).
+  - **Result 2026-11-02 (status doc 19.1): the rule says WORSE.** Typed
+    minus shuffle-mean is -1.21 pp, per seed [-2.25, -1.5, -1.8, +0.1, -0.6],
+    t(4) -2.85, CI [-2.39, -0.03]. All 10 shuffles reached d = 1.0 and their
+    relational path is active. The evidence is marginal: the two shuffles of
+    one seed differ by 3.5 pp on average (12 pp on seed 14), and a model-level
+    SE gives z -0.55..-1.75. Quote it as "the semantic relation placement does
+    not help the registered R-GAT arm", NOT as "semantics hurt". Shuffled
+    minus untyped is +4.2 pp (t 1.89), not established.
 - **ORL, ontology reinforcement learning (2026-11-02, user; status doc 20):**
   the ontology as the policy's inductive bias. `current_semantics/orl.py`, arm
   `orl_ppo:<ORL_HASH[:16]>`, guard `tests/current_semantics/test_cs3d_orl.py`.
@@ -1107,12 +1114,34 @@ The v1 config remains an explicit historical experiment; Isaac/PX4 remains
     no dead parameter.
   - It is NOT a registered v1 arm, and every v1 hash is unchanged.
   - `--stage orl-learnability` runs pilot 7's G4 protocol into `<root>/orl/`
-    under its own lock; running 2026-11-02.
+    under its own lock. PASSED 2026-11-02 (status doc 20.2): test det 46/48,
+    47/48, sampled 43/48, 43/48 (Raw pilot 7: 45, 41 / 43, 37); d = 1.0 at
+    update 79/67 (Raw 99/96). Its `g4_hash` is the protocol's hash WITH the ORL
+    arm (`run_pilot` swaps `g4.arm`), which `orl_development.pilot_blocker`
+    must compare against; the first registration was refused on that.
   - `register-orl-development` / `orl-develop` (`orl_development.py`,
     `orl_development_v1.yaml`) pair ORL with the development/1 models.
     - Primary: ORL minus semantic_mlp_ppo, i.e. the same phi44 input and budget
       without the structure.
     - Registration is refused until the ORL pilot passes under the same ORL_HASH.
+  - **Result 2026-11-02 (status doc 20.3): primary NOT ESTABLISHED.** ORL minus
+    semantic_mlp_ppo on mean success over the ten cells is +2.2 pp, per seed
+    [+8.6, +1.1, +9.4, -4.8, -3.2], t(4) 0.76, CI [-5.9, +10.4]. All five
+    reached d = 1.0. Secondaries (never decisive): vs raw +3.9 (CI
+    [-0.0, +7.7]), vs untyped +3.8 ([+0.2, +7.5]), vs rgat +0.9.
+  - Exploratory, cells split after the fact, a hypothesis and not a result:
+    - Where the pad stays visible (composition id/ood, motion_id, noise id/ood),
+      ORL is the best of five arms, beating MLP on 24 of 25 seed-cell pairs
+      (the 25th is 0).
+    - Where it is lost (dropout, motion_ood, combined), ORL is equal or worse.
+      Seeds 13/14 lose 13-27 pp there, which is what cancels the mean.
+    - ORL has the fewest OOD unsafe contacts (26 vs 76-150), and its
+      MISSED_PAD_CONTACT count is 627, against MLP 584 and R-GAT 639.
+    - ORL reaches d = 1.0 at update 70 on average, against 98-109 for every
+      development/1 arm. It is faster than all four arms on 4 of 5 seeds. This
+      is the first consistent arm difference in the study, and the metric is
+      not registered.
+    - The cause of the losses in the lost-pad cells is unmeasured.
   - The three biases went in together, so their contributions are not separated.
 - **Study monitor** (user, 2026-11-02): `./run.sh current-semantics-3d --stage
   monitor` serves a read-only page at http://127.0.0.1:8780/

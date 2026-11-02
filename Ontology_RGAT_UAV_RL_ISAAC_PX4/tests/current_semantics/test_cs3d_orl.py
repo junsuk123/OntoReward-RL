@@ -219,6 +219,31 @@ def test_the_development_plan_pins_this_orl_spec_and_waits_for_learnability(tmp_
     assert status == 3 and payload["status"] == "REFUSED"
 
 
+def test_a_passed_orl_pilot_is_accepted_under_the_hashes_run_pilot_writes(tmp_path):
+    # run_pilot(arm=ORL_ARM) replaces g4.arm, so its stored g4_hash is NOT the Raw
+    # protocol's; the first live registration was refused on exactly that mismatch.
+    from dataclasses import replace
+    import json
+    from ontology_rgat.current_semantics import orl_development as od
+    swapped = contract_manifest(replace(CONFIG, g4=replace(CONFIG.g4, arm=orl.ORL_ARM)))
+    assert swapped["g4_hash"] != contract_manifest(CONFIG)["g4_hash"]
+    keys = ("g4_hash", "algorithm_hash", "task_hash", "calibration_hash", "g3_hash")
+    report = {"arm": orl.ORL_ARM, "orl": {"hash": orl.ORL_HASH},
+              "hashes": {k: swapped[k] for k in keys},
+              "protocol_complete": True, "learnability_passed": True}
+    path = tmp_path / od.OUT / od.LEARNABILITY
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps(report), encoding="utf-8")
+    assert od.pilot_blocker(CONFIG, tmp_path) is None
+    report["hashes"]["g4_hash"] = contract_manifest(CONFIG)["g4_hash"]
+    path.write_text(json.dumps(report), encoding="utf-8")
+    assert "another contract" in od.pilot_blocker(CONFIG, tmp_path)
+    report["hashes"] = {k: swapped[k] for k in keys}
+    report["learnability_passed"] = False
+    path.write_text(json.dumps(report), encoding="utf-8")
+    assert "did not pass" in od.pilot_blocker(CONFIG, tmp_path)
+
+
 def test_the_development_verdict_is_orl_minus_the_semantic_mlp():
     from ontology_rgat.current_semantics import orl_development as od
     from ontology_rgat.current_semantics.development import CELLS

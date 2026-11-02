@@ -1213,6 +1213,28 @@ current-semantics Isaac 700 episode(isaac-eval/1–5 + isaac-development/1):
   - typed 모델의 g8가 행동 평균을 바꾸는 크기(RMS)는 0.15–0.27이다. 관계 경로는 살아 있다.
 - **주의:** 균등 섞기는 typed 그룹이 지닌 홉 수준 정렬(1홉 간선 대 2홉 간선)도 함께 깬다. 그래서 "better"가 나와도 의미와 홉 구조를 구분하지 못한다. "not established"는 둘 다를 덮는다.
 
+### 19.1 결과 (2026-11-02 21:20, 4.8 h, `relation_shuffle.json`): 등록 규칙의 판정은 **worse**
+
+| 학습 seed | typed | shuffle 0 | shuffle 1 | Δ = typed − shuffle 평균 |
+|---|---|---|---|---|
+| 10 | 0.803 | 0.817 | 0.834 | −2.25 pp |
+| 11 | 0.778 | 0.788 | 0.798 | −1.50 |
+| 12 | 0.778 | 0.796 | 0.796 | −1.80 |
+| 13 | 0.811 | 0.825 | 0.795 | +0.10 |
+| 14 | 0.759 | 0.705 | 0.825 | −0.60 |
+
+- **주 지표:** Δ 평균 −1.21 pp, sd 0.95, t(4) = −2.85, 95 % 구간 [−2.39, −0.03] pp. 구간 전체가 0 아래이므로 규칙상 "worse"다. 의미대로 놓은 관계 라벨이 임의 배치보다 열 칸 평균에서 낮다.
+- 모든 shuffle이 d = 1.0에 도달했고 검증 결정적 성공률은 0.96–1.00이다. 탈락하거나 다시 뽑은 것은 없다. audit에서 shuffle의 관계 경로도 살아 있다(g8 RMS 0.04–0.11, latent 변화 0.14–0.32; typed 0.07–0.13, 0.15–0.27).
+- **부차 지표(판정에 쓰지 않음), typed − shuffle:**
+  - ID −0.3 pp(t −0.28), 네 OOD −2.8 pp(t −2.03), composition_ood +0.4 pp(t 0.29), OOD unsafe +3.7 pp(typed가 더 위험, t 0.90).
+  - shuffle − untyped +4.2 pp(t 1.89, 구간이 0을 포함). typed − untyped +3.0 pp(t 1.21).
+- **읽는 법:**
+  - 효과는 1.2 pp로 작다. 같은 seed의 두 shuffle 사이 차이는 평균 3.5 pp(seed 14는 12 pp)로, 효과보다 크다.
+  - shuffle 쌍에서 추정한 모델 간 sd(약 4 pp, seed 14를 빼면 1.3 pp)로 Δ의 표준오차를 다시 잡으면 z는 −0.55 ~ −1.75다. 관찰된 Δ의 sd 0.95 pp는 다섯 개 표본에서 우연히 작게 나왔을 가능성이 있다. 판정은 등록 규칙대로 "worse"로 기록하지만, 근거는 경계선이다.
+  - 확실하게 말할 수 있는 것은 반대 방향의 주장, 즉 **"온톨로지 관계의 의미가 등록된 R-GAT arm의 성능에 기여한다"는 근거가 없다**는 것이다. 다섯 seed 중 넷에서 typed가 낮다.
+  - 이는 §20의 진단과 맞는다. 등록된 R-GAT는 g8을 raw21에 덧붙일 뿐이라 head가 그래프를 무시할 수 있고, 관계 라벨이 무엇이든 제약이 생기지 않는다. 관계 *유형이 있다는 것*(shuffle − untyped +4.2 pp)은 방향만 있고 확립되지 않았다.
+  - 홉 구조와 의미는 이 대조군으로 구분되지 않는다(위 주의).
+
 ## 20. ORL — 온톨로지를 정책의 inductive bias로 (사용자, 2026-11-02)
 - **사용자 요청:** "검증 지점 전부를 inductive bias로. CNN의 convolution, LSTM의 시간 요소처럼, R-GAT로 표현된 온톨로지 *때문에만* RL에 inductive bias가 생기는 ORL."
 - **진단:** 등록된 R-GAT arm은 8차원 graph readout을 raw21 옆에 붙이고 MLP가 읽는 구조다. MLP는 graph를 무시할 수 있으므로 함수 공간이 제한되지 않는다. 즉 inductive bias가 없다.
@@ -1247,12 +1269,80 @@ current-semantics Isaac 700 episode(isaac-eval/1–5 + isaac-development/1):
   - 시뮬레이터 truth는 정책에 들어가지 않는다. 한계값은 과제 상수다.
   - guard: `tests/current_semantics/test_cs3d_orl.py`, 15개 테스트. 정확한 등변성, 물리 거울, 평면 정렬, 평면 교환, lateral 국소성, gate, 예산·죽은 parameter, aliasing을 본다.
 - **실험:**
-  - (a) `--stage orl-learnability`: pilot 7과 같은 G4 protocol(model seed 0·1, 600×12, 같은 기준)이다. 실행 중이다(`orl/orl_learnability.log`).
+  - (a) `--stage orl-learnability`: pilot 7과 같은 G4 protocol(model seed 0·1, 600×12, 같은 기준)이다. **통과(2026-11-02 18:29, §20.2).**
   - (b) `orl-development/1`(`config/current_semantics/orl_development_v1.yaml`, `orl_development.py`): development/1에 짝지은 arm이다.
     - 주 비교는 ORL − semantic_mlp_ppo의 열 칸 평균 성공률이고, 95 % t-구간으로 판정한다.
     - 부차 비교는 raw, untyped, R-GAT와의 비교다.
     - 규칙은 학습 전에 코드로 고정했다. (a)가 같은 ORL_HASH로 통과해야만 `register-orl-development`가 등록된다.
+    - **결과(2026-11-02 22:29, §20.3): not established.**
 - **선택의 근거와 한계:**
   - 등변성과 평면 공유는 물리에서 오는 정확한, 혹은 근사적인 대칭이다. 그래서 정답 함수를 배제하지 않는다.
   - descent gate와 lateral 국소성은 *가설*이다. 축 간 결합(추력 공유, 2D 패드 운동)이 중요하다면 비용이 될 수 있다.
   - 세 가지 bias를 한 번에 넣었으므로 개별 기여는 분리되지 않는다. 필요하면 하나씩 뺀 ablation으로 잰다.
+
+### 20.2 ORL G4 학습 가능성: 통과 (2026-11-02 18:29, `orl/orl_learnability.json`)
+
+pilot 7(Raw, 과제 v5)과 같은 protocol·시드·기준이다. 바뀐 것은 arm 하나다. 48개 test seed, d = 1.0 기준이다.
+
+| | seed 0 결정적 | seed 0 샘플링 | seed 1 결정적 | seed 1 샘플링 | d = 1.0 도달 |
+|---|---|---|---|---|---|
+| ORL | 46/48 | 43/48 | 47/48 | 43/48 | update 79 / 67 |
+| Raw (pilot 7) | 45/48 | 43/48 | 41/48 | 37/48 | update 99 / 96 |
+
+- 실패는 UNSAFE_CONTACT, MISSED_PAD_CONTACT, TASK_TIMEOUT이 한두 건씩이다. 샘플링 실패의 대부분은 UNSAFE_CONTACT다.
+- 제약을 넣은 정책도 처음부터 PPO로 착륙을 배운다. 학습 속도는 pilot 7보다 느리지 않다(시드 2개, 비교가 아니다).
+- 선택된 checkpoint는 update 579 / 537이다.
+- **등록 지연과 수정:** 자동 연쇄의 첫 등록은 "another contract"로 거부됐다. 원인은 `run_pilot(arm=ORL_ARM)`이 `g4.arm`을 바꾸므로 저장한 `g4_hash`가 Raw protocol의 hash가 아니라는 점이다. 나머지 hash(algorithm, task, calibration, g3)는 같았다. `orl_development.pilot_blocker`가 이제 ORL arm으로 바꾼 G4 hash와 비교한다. guard는 `test_a_passed_orl_pilot_is_accepted_under_the_hashes_run_pilot_writes`다. 그 뒤 `orl-development/1`을 등록하고 시작했다(`orl/orl_development.log`).
+
+### 20.3 `orl-development/1` 결과 (2026-11-02 22:29, 4.0 h, 로컬, `orl/orl_development.json`): 주 비교 **not established**
+
+development/1과 같은 학습 seed 10–14, 600×12, 열 칸 × 100 episode다. 저장된 development/1 모델과 학습 seed별로 짝지었다. ORL 모델 5개 모두 d = 1.0에 도달했고, 검증은 결정적·샘플링 모두 1.0이다(빠진 모델 없음).
+
+**주 비교(등록 규칙): 열 칸 평균 성공률, ORL − semantic_mlp_ppo**
+
+| 학습 seed | ORL | semantic MLP | 차이 |
+|---|---|---|---|
+| 10 | 0.832 | 0.746 | +8.6 pp |
+| 11 | 0.776 | 0.765 | +1.1 |
+| 12 | 0.844 | 0.750 | +9.4 |
+| 13 | 0.740 | 0.788 | −4.8 |
+| 14 | 0.781 | 0.813 | −3.2 |
+
+- 평균 +2.2 pp, sd 6.6, t(4) 0.76, 95 % 구간 [−5.9, +10.4] pp. 구간이 0을 포함하므로 규칙상 **not established**다.
+
+**부차 비교(보고만 하고 판정하지 않음), 열 칸 평균**
+
+| ORL − | 평균 | t(4) | 95 % 구간 |
+|---|---|---|---|
+| raw_ppo | +3.9 pp | 2.77 | [−0.0, +7.7] |
+| untyped_gnn_ppo | +3.8 | 2.89 | [+0.2, +7.5] |
+| ontology_rgat_ppo | +0.9 | 0.39 | [−5.4, +7.2] |
+
+**칸별 평균 성공률(5 seed 평균; 마지막 열은 seed별 ORL − MLP). 탐색적 분석이며 등록된 지표가 아니다.**
+
+| 칸 | ORL | Raw | MLP | Untyped | R-GAT | ORL − MLP (seed 10–14) |
+|---|---|---|---|---|---|---|
+| composition_id | **0.984** | 0.886 | 0.922 | 0.910 | 0.944 | +.07 +.07 +.06 +.08 +.03 |
+| composition_ood | **0.986** | 0.918 | 0.940 | 0.934 | 0.958 | +.09 +.04 +.06 +.02 +.02 |
+| motion_id | **0.982** | 0.910 | 0.940 | 0.908 | 0.956 | +.10 +.03 +.04 +.04 +.00 |
+| noise_id | **0.996** | 0.904 | 0.940 | 0.904 | 0.956 | +.08 +.05 +.09 +.03 +.03 |
+| noise_ood | **0.842** | 0.658 | 0.714 | 0.676 | 0.738 | +.21 +.07 +.23 +.08 +.05 |
+| dropout_id | 0.880 | 0.852 | 0.890 | 0.834 | 0.896 | +.04 −.04 +.10 −.12 −.03 |
+| combined_id | 0.874 | 0.886 | 0.878 | 0.876 | 0.906 | +.14 −.07 +.11 −.11 −.09 |
+| motion_ood | 0.696 | 0.762 | 0.724 | 0.740 | 0.754 | +.08 −.03 +.16 −.22 −.13 |
+| dropout_ood | 0.650 | 0.702 | 0.708 | 0.714 | 0.692 | +.09 −.04 +.08 −.27 −.15 |
+| combined_ood | 0.056 | 0.082 | 0.068 | 0.066 | 0.058 | −.04 +.03 +.01 −.01 −.05 |
+
+- **패드가 계속 보이는 칸**(composition id/ood, motion_id, noise_id, noise_ood): ORL이 다섯 arm 중 가장 높다. MLP와의 seed별 차이 25개 중 24개가 양수이고 나머지 1개는 0이다. noise_ood를 빼면 ORL의 실패는 칸마다 0–2 %다.
+- **패드를 잃는 칸**(dropout id/ood, motion_ood, combined): ORL은 같거나 낮다. seed 13·14에서 크게 진다(dropout_ood −27 / −15 pp, motion_ood −22 / −13 pp). 이 두 seed가 주 비교의 평균을 0 근처로 끌어내린다.
+- **OOD 칸의 실패 유형**(4 OOD 칸 + composition_ood, 5 seed 합): ORL은 MISSED_PAD_CONTACT 627, UNSAFE_CONTACT 26, SAFETY_ENVELOPE_VIOLATION 113이다. MLP는 584 / 87 / 123, R-GAT는 639 / 76 / 89, Raw는 470 / 150 / 196이다. ORL은 위험 접지가 가장 적고 패드를 놓친 접지가 많다. 패드를 잃은 뒤 다시 잡지 못하는 기존 실패(§13, §14.4)와 같은 경로다.
+- **학습 속도**(d = 1.0에 처음 도달한 update): ORL 66, 62, 81, 77, 65(평균 70)다. Raw는 평균 108, MLP 98, Untyped 107, R-GAT 109다. ORL은 5개 seed 중 4개에서 같은 seed의 네 arm 모두보다 빠르다. seed 12만 MLP(79)보다 2 늦다.
+- 선택된 checkpoint는 update 305, 441, 490, 446, 214다.
+
+**읽는 법**
+
+- 등록된 질문, 즉 "구조가 같은 입력·같은 예산의 MLP보다 낫나"의 답은 **확립되지 않음**이다. "같다"가 아니다. seed 간 sd 6.6 pp에서 이 구간을 좁히려면 seed가 훨씬 많이 필요하다.
+- 탐색적으로 보면 효과는 한 방향이 아니다. 관측이 유지되는 동안은 일관되게 낫다(24/25). 관측을 잃는 칸에서는 seed에 따라 크게 진다. 칸을 사후에 나눈 것이므로 이것은 다음 실험의 가설이지 결론이 아니다.
+- 학습 속도의 차이(평균 70 대 98–109)가 이 연구에서 arm 간에 처음으로 일관되게 보인 차이다. 등록된 지표는 아니다.
+- 관측을 잃는 칸에서 지는 원인은 재지 않았다. 후보는 두 가지다. (1) descent gate가 Q(vision age)를 읽지만 오래된 추정 위에서 계속 내려간다. (2) 국소성 때문에 lateral 결정이 잃은 동안의 정보를 덜 받는다. 네 bias를 함께 넣었으므로 어느 쪽인지는 하나씩 뺀 ablation으로만 가릴 수 있다.
+- 로컬 plant뿐이다. Isaac 평가는 하지 않았다.

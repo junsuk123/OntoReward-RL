@@ -1,0 +1,35 @@
+# spatial_current_semantics_v1: the rest of isaac-development/1, flown after the
+# handover-kick fix (status doc 16.6). `./run.sh current-semantics-3d --stage
+# isaac-handover-fix --plan config/current_semantics/isaac_handover_fix_v2.yaml
+# --allow-isaac`, on the user's approval ("3. after edit 2, go", 2026-11-01).
+#
+# isaac-handover-fix/1 verified the fix on the first 10 environments whose kick wrapped
+# (7 -> 38 of 40 landed, local 36). This flies the other 20 environments of the reference
+# flight, in seed order, with /1's rotation (environment i meets all four arms of training
+# seed training_seeds[i % 5]); afterwards every environment of isaac-development/1 has a
+# post-fix verdict for one training seed's four arms and every development model has flown
+# six times. Same checkpoints, conditions and deterministic mode; nothing else differs
+# from the reference flight but the fixed Isaac source (bound at registration).
+#
+# Recorded for exactly these 80 cases before the fix: Isaac 57 SUCCESS (12 envelope
+# violations, none within 1.5 s of handover; 8 timeouts), local reference 75. Six of the
+# 20 environments wrapped (24 cases: Isaac 5, local 24); 14 did not (56 cases: Isaac 52,
+# local 51). By cell: composition_id 8 cases (8 / 8), composition_ood 32 (24 / 29),
+# combined_id 40 (25 / 38), as Isaac / local.
+#
+# Criteria (isaac_handover_fix.summarize), fixed before the flight:
+#   first_decision_*  as /1: every large kick axis (>= 0.3 m/s) with PX4's sign, per-axis
+#                     error median <= 0.08 m/s.
+#   handover_tilt_max as /1: at most 2 envelope violations within 1.5 s of handover.
+#   success_min       67 of 80 = the local reference's 75 minus 10 percentage points: on
+#                     these cases a fixed Isaac should land within 10 pp of the local plant.
+protocol: isaac-handover-fix/2
+reference_protocol: isaac-development/1
+mode: deterministic
+environments: 20
+criteria:
+  first_decision_sign_min_m_s: 0.3
+  first_decision_median_error_max_m_s: 0.08
+  handover_tilt_window_s: 1.5
+  handover_tilt_max: 2
+  success_min: 67

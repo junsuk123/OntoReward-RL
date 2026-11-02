@@ -939,6 +939,190 @@ The v1 config remains an explicit historical experiment; Isaac/PX4 remains
   (639 vs Raw 470) -- the no-re-acquisition failure. Combined-OOD is 6-8 %
   for every arm. Confirmation stage is not implemented; it and the Isaac
   11.6 evaluation each need the user's approval.
+  **Isaac 11.6 evaluation `isaac-development/1` (user "3", flown 2026-10-30,
+  status doc 15).** Task v5 now flies on Isaac: the LEARNER draws (A, B, r,
+  a2) and sends them in the scenario name `spatial_current_omni/1:...`
+  (`spatial/scenarios.py` encode/parse, gateway passes the prefix,
+  `pad_motion.py`/`landing_world.py` apply it; entry offset -r(cos A, sin A),
+  entry yaw world 0 +-5 deg because local yaw is always 0), and every reset
+  ack is checked against the draw (`current_semantics/scenario.check_isaac_reset`).
+  Found on the way: every earlier Isaac entry was pulled to ~centre by
+  `constrain_camera_visible_entry` (median 0.07 m over 132 episodes vs the
+  local +-0.4 m), so isaac-eval/1-/5 flew an easier entry than training;
+  the omni path skips that pull. Plan `config/current_semantics/
+  isaac_development_v1.yaml`: the 20 development best.pt x 30 cases
+  (composition_id 994101-110, composition_ood 994111-120, combined_id
+  994121-130) = 600 deterministic, environment-major, paired with a local
+  reference on the identical cases; no pass criterion (guide 11.6.5).
+  **Result: Isaac 324/600 (54 %) vs local 560/600 (93 %); per arm raw 82,
+  mlp 81, untyped 78, rgat 83 of 150 -- indistinguishable** (R-GAT minus
+  raw/mlp/untyped per training seed +0.7/+1.3/+3.3 pp, t <= 0.82). The
+  ENVIRONMENT decides: 69 % of outcome variance is between the 30
+  environments, 0.1 % between arms, 1.3 % between the 20 models; 14/30
+  environments give all 20 models the same verdict. The Isaac-local gap
+  grows with the seeded DR handover kick (U(-1, 1) m/s per axis, applied on
+  both sides): |v_xy| < 0.6 Isaac 111/120 vs local 112/120, 0.6-0.9 133/260
+  vs 237/260, >= 0.9 80/220 vs 211/220 -- no single threshold (1.22 m/s ->
+  19/20, 0.87 -> 0/20). Failures: 100 handover tilt within 1.5 s, 87
+  lost-pad descents below the pad plane ~4 m off, the same two paths as
+  isaac-eval/1-/5; no representation changed either. Conditions cannot be
+  compared on Isaac (environment-nested; composition_ood > id is two
+  environments). Infrastructure: 3 SITL link failsafes + 1 mid-episode
+  flight-clock stall; the owned-restart budget is RUN-WIDE (persisted in
+  `isaac_stack/reset_recovery.jsonl`), so the default 2 was spent in the
+  first run -- resume with `--reset-recoveries 5`; judged episodes are never
+  re-flown. That gap turned out to be a SIMULATOR BUG, not plant or
+  observation: see the next bullet.
+- **ROOT CAUSE of the Isaac-local gap (2026-10-31, status doc 16): the
+  handover kick reached PX4 clipped and, on most seeds, with the WRONG SIGN.**
+  `landing_world._on_flight_state` wrote the DR handover kick as ONE 4 ms
+  velocity step; `vn100_imu.py` differentiates velocity and clipped at
+  +-16 g (0.63 m/s per axis per tick); PX4 SITL packs accel into an int16
+  FIFO at g/2048 per count (`SimulatorMavlink.cpp`), so a value pinned at
+  +16 g in FRD is +32768 counts and wraps to -16 g. That model predicts PX4's
+  first-decision EKF velocity change on all 600 isaac-development episodes to
+  a median 0.032 m/s per axis (p90 0.086) with 100 % of signs right; an ideal
+  IMU misses by p90 1.49 m/s. Over the 700 current-semantics Isaac episodes:
+  kick measurable 104/110 landed (95 %, 1 handover tilt), clipped only
+  207/232 (89 %, 2), sign-inverted 61/358 (17 %, 112 of the 115 handover
+  tilts); the local plant lands 90-94 % of each group. On the spatial route
+  10 of the 11 handover tilts (/3-/11) were seed 12000, whose FRD y specific
+  force is 158.1 > 156.9 m/s^2 (wraps); 12001 is measurable. Clip and kick
+  both exist since 2026-09-11/12, so EVERY DR Isaac flight carries it. Read
+  the /11 handover cap, the /12 thrust floor, pilot 5's
+  `training_randomization.handover_own_state_error` (still in
+  `spatial_view_contact_v1.yaml`, so in every development model) and the
+  10.7 "EKF transient" as responses to this bug, not to a physical
+  phenomenon. Fix (Isaac code only; local plant, contracts, checkpoints and
+  profile hashes unchanged, `runtime_source_hash` changes as intended):
+  `isaac_sim/handover_perturbation.py` spreads the kick over the fewest
+  physics ticks that keep each inside half the accelerometer range (<= 4
+  ticks, 16 ms, applied in the `_apply_wind` physics callback, which runs
+  after Pegasus' state/IMU callbacks), and `sensor_profiles.saturate_16bit`
+  makes the VN-100 saturate at +32767 counts in the FRD frame PX4 receives.
+  Guard `tests/test_handover_perturbation_is_measurable.py`. **VERIFIED in
+  flight 2026-10-31 (`--stage isaac-handover-fix --allow-isaac`, protocol
+  `isaac-handover-fix/1`, status doc 16.5):** the identical isaac-development/1
+  cases -- same seeds, conditions, registered checkpoints, deterministic -- on
+  the first 10 wrapped environments by seed order (rule recomputed by the
+  loader, guard `tests/test_isaac_handover_fix_protocol.py`), 40 episodes.
+  Registered criteria, all passed: PX4 first-decision velocity sign right
+  0/40 -> 40/40, per-axis error median 1.22 -> 0.028 m/s, handover tilts
+  17 -> 0, landed 7 -> 38/40 (local reference 36/40; paired: 31 newly landed,
+  0 lost). The two failures are touchdown-phase (vz -0.32, local identical;
+  0.57 m off-centre). `isaac-handover-fix/2` (2026-11-01, status doc 16.6,
+  `config/current_semantics/isaac_handover_fix_v2.yaml`, pass `--plan` as an
+  ABSOLUTE path -- a relative one resolves against the launch directory) flew
+  the other 20 environments, 80 episodes, all criteria passed: sign 80/80,
+  error median 0.026 m/s, 0 handover tilts, 74/80 landed (pre-fix 57, local
+  75). Over all 30 environments, 120 cases: Isaac 112 vs local 111 (pre-fix
+  64) -- the isaac-development/1 Isaac-local gap is gone. Arms remain
+  indistinguishable on every axis measured (final, composition-OOD, Isaac,
+  and learning speed: d = 1.0 at a mean 98-109 updates per arm, training
+  success 0.67-0.72), so fixing the measurement will not by itself produce a
+  representation result.
+- **Task v6 / representation redesign (2026-11-01, user "1 -> delete", "2. go";
+  status doc 17): STOPPED by its own pre-declared rule.** It lives in
+  `config/current_semantics/spatial_view_contact_v2.yaml` and the run root
+  `results/current_semantics_3d/spatial_current_semantics_v1_task6`. It differs
+  from v1 in three places only. Every v1, development/1 and Isaac-registration
+  hash is byte-identical, guarded by `tests/current_semantics/test_cs3d_task6.py`.
+  The CLI picks the root from the config's task and refuses the other task's
+  root (`experiment.run_root_for`).
+  - Change 1: `handover_own_state_error` is DELETED. A pilot-8/9 config that
+    names it is refused.
+  - Change 2: scenario/2 holds out ONE whole relative-geometry class B - A (a
+    cyclic shift). Scenario/1 forbade this.
+  - Change 3: the pilot protocol is g4-pilot/8, then /9.
+  - Why: the v5 held-out orientations were interpolation, because the task is
+    near rotation-equivariant.
+  - Rule, declared before training: the held-out class must cost the Raw
+    baseline >= 10 pp versus nominal.
+  - Pilot 8 (fleeing B = A): G4 passed 46/48, 46/48. Raw scored 0.922 unseen
+    vs 0.969 nominal, a gap of 4.7 pp: FAILED.
+  - Pilot 9 (approaching, the one declared fallback): G4 passed 45/48, 46/48.
+    Raw scored 0.984 unseen vs 0.938 nominal, i.e. EASIER: FAILED.
+  - So development/2 was NOT registered, and no representation arm was trained
+    on task v6.
+  - Read it as: the common baseline already generalizes to unseen scenario
+    combinations on this plant, so the composition axis cannot separate the
+    arms. "Superiority not established", not "equivalent".
+  - Removing the handover error left learnability unchanged.
+  - In development/1, R-GAT - MLP has |t| < 1 in every cell. R-GAT - Raw is
+    +4..+6 pp on the ID cells, which MLP - Raw shares, so that is the phi44
+    features, not the graph.
+- **Task v7 / coupling redesign (2026-11-02, user "a"; status doc 18): STOPPED
+  by its own pre-declared rule.** `config/current_semantics/spatial_view_contact_v3.yaml`
+  (scenario/3, `CouplingScenario`), root `..._task7`, guard
+  `tests/current_semantics/test_cs3d_task7.py`. It is v2 plus one change: the
+  pad starts 1.0-1.5 m off at 1.0-1.5 m/s, so tilt pushes the narrow image
+  axis off the pad. The held-out cells are narrow-axis fleeing and wide-axis
+  approaching. Isaac refuses scenario/3 (pad speed is not in the scenario name).
+  - The rule (`development_design/calibration.py`, written before training)
+    compares against a Raw trained on ALL 16 combinations on the same cells,
+    not against nominal, because cells differ in difficulty.
+  - G4 pilot 10 passed (35/48, 29/48 deterministic), a much harder task than
+    v5 (nominal Raw 0.71 vs 0.94).
+  - Held-out cells: reference 0.542, pilot 10 0.615, novelty gap -0.073
+    against the required +0.10: FAILED. Development/3 was not registered.
+  - Training-seed spread (reference 0.69 vs 0.40) exceeds any novelty effect.
+  - Pilot 10's nominal-vs-composition gap of 13 pp is cell difficulty: the
+    trained reference scores the same 0.448 there. The task-v6 rule would have
+    misread it as a pass.
+  - Across v5, v6 and v7, Raw never paid a measurable price for an unseen
+    combination. Do not attempt a fourth composition axis without the user.
+- **`relation-shuffle/1` (2026-11-02, user "3"; status doc 19):** guide 8.4's
+  control. `current_semantics/relation_control.py` and
+  `config/current_semantics/relation_shuffle_v1.yaml`, guard
+  `tests/current_semantics/test_cs3d_relation_shuffle.py`.
+  - What a shuffle is: the typed R-GAT with its 14 semantic edge labels permuted.
+    It keeps the same pairs, counts, parameters and bit-identical initialisation;
+    no typed edge set survives.
+  - Ten graphs: 2 per training seed, shuffle seeds 7100 + 10s + k.
+  - It is a paired fifth arm of development/1: same seeds and cells, compared by
+    training seed with the STORED typed and untyped models. The current code
+    reproduces their evaluation 24/24.
+  - Arm names carry the graph hash (`ontology_rgat_shuffled_ppo:<seed>:<hash>`),
+    so a shuffled checkpoint never loads as typed. `models.build_model` is the
+    one factory and `pilot.py` uses it.
+  - Rule: typed minus shuffled on mean success over all ten cells, 95 %
+    t-interval over 5 seeds.
+  - Registered and running 2026-11-02 (`relation_shuffle.log`).
+- **ORL, ontology reinforcement learning (2026-11-02, user; status doc 20):**
+  the ontology as the policy's inductive bias. `current_semantics/orl.py`, arm
+  `orl_ppo:<ORL_HASH[:16]>`, guard `tests/current_semantics/test_cs3d_orl.py`.
+  - Why it exists: the registered graph arms append an 8-D readout to raw21, so
+    the head can ignore the graph. That is no bias at all, consistent with the
+    noise-level arm differences.
+  - ORL has four biases, each declared by the ontology:
+    1. No raw bypass; typed node encoders over phi44 slots.
+    2. The x and y planes share encoders, relation weights and the lateral
+       readout, with y aligned to x (-eta, -sin roll, -roll rate).
+    3. Exact Z2xZ2 mirror equivariance, by a group average over declared
+       parities. These match `build_features` on reflected worlds exactly,
+       except the half-pixel principal point (4.2e-3 on view entries).
+    4. A learned descent gate: hold + sigmoid(DescentEligibility) * descend.
+       Eligibility reads only Q, Contact_x/y and View_x/y.
+  - Actor 2,747 parameters = the R-GAT arm's; total 4,016; common raw21 critic;
+    no dead parameter.
+  - It is NOT a registered v1 arm, and every v1 hash is unchanged.
+  - `--stage orl-learnability` runs pilot 7's G4 protocol into `<root>/orl/`
+    under its own lock; running 2026-11-02.
+  - `register-orl-development` / `orl-develop` (`orl_development.py`,
+    `orl_development_v1.yaml`) pair ORL with the development/1 models.
+    - Primary: ORL minus semantic_mlp_ppo, i.e. the same phi44 input and budget
+      without the structure.
+    - Registration is refused until the ORL pilot passes under the same ORL_HASH.
+  - The three biases went in together, so their contributions are not separated.
+- **Study monitor** (user, 2026-11-02): `./run.sh current-semantics-3d --stage
+  monitor` serves a read-only page at http://127.0.0.1:8780/
+  (`current_semantics/monitor.py`). It shows every live study process, with its
+  spawned workers folded in. It shows every training directory under the three
+  task roots: running, stalled or done, with progress, ETA and charts. It also
+  shows per-task G4, calibration, development and Isaac verdicts, the logs
+  written in the last hour, and CPU/memory/GPU. It never writes, locks or
+  starts anything; guard `tests/current_semantics/test_cs3d_monitor.py`. The
+  development dashboard (port 8773) still follows one registered four-arm run.
 - **Bare `./run.sh` (no arguments, or options only) now runs the WHOLE
   minimal-observation system** (user decision 2026-10-08,
   `scripts/run_minimal_system.sh`, doc section 16.3): build the two ROS

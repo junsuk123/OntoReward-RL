@@ -243,12 +243,19 @@ def run(config: CurrentSemanticsConfig, plan: IsaacDevelopmentPlan,
         dev_plan: dev.DevelopmentPlan, root: Path,
         make_backend: Callable[[dev.EvaluationCell], Any], out_dir: Path, *,
         log: Callable[[str], None] = print, trace: bool = True,
-        resume: bool = False) -> dict[str, Any]:
+        resume: bool = False, order: list[tuple[str, int, str]] | None = None,
+        label: str = "isaac-development") -> dict[str, Any]:
     """Fly the registered cases on the backends ``make_backend(cell)`` returns (called once
-    per condition; any backend works, so the logic is testable on the local plant)."""
+    per condition; any backend works, so the logic is testable on the local plant).
+    ``order`` replaces the full plan with an explicit list of its (condition, environment
+    seed, model) cases, e.g. a later re-flight of some of them (isaac_handover_fix)."""
     from .pilot import fly_policy
     models = load_models(config, dev_plan, root)
-    order = episode_order(plan, tuple(models))
+    full = episode_order(plan, tuple(models))
+    if order is None:
+        order = full
+    elif not set(order) <= set(full) or len(set(order)) != len(order):
+        raise ValueError("an explicit order must list distinct cases of this plan")
     out_dir.mkdir(parents=True, exist_ok=True)
     stream = out_dir / "episodes.jsonl"
     rows: list[dict[str, Any]] = []
@@ -268,7 +275,7 @@ def run(config: CurrentSemanticsConfig, plan: IsaacDevelopmentPlan,
         raise ValueError(f"{stream} already holds episodes; resume the same registration "
                          "or use a fresh directory")
     resumed = len(done)
-    log(f"isaac-development: {resumed} of {len(order)} episodes already have a verdict")
+    log(f"{label}: {resumed} of {len(order)} episodes already have a verdict")
     backends: dict[str, Any] = {}
     interruptions_path = out_dir / "interruptions.jsonl"
     stopped = None
@@ -291,7 +298,7 @@ def run(config: CurrentSemanticsConfig, plan: IsaacDevelopmentPlan,
                            "error": f"{type(exc).__name__}: {exc}"}
                 with interruptions_path.open("a", encoding="utf-8") as out:
                     out.write(json.dumps(stopped) + "\n")
-                log(f"isaac-development: stopped at {cell_name} seed {seed} model {key}: "
+                log(f"{label}: stopped at {cell_name} seed {seed} model {key}: "
                     f"{stopped['error']}")
                 break
             training_seed, arm = key.split("/")
@@ -310,7 +317,7 @@ def run(config: CurrentSemanticsConfig, plan: IsaacDevelopmentPlan,
             done.add((cell_name, seed, key))
             handle.write(json.dumps(row, allow_nan=False) + "\n")
             handle.flush()
-            log(f"isaac-development: [{len(done)}/{len(order)}] {cell_name} seed {seed} "
+            log(f"{label}: [{len(done)}/{len(order)}] {cell_name} seed {seed} "
                 f"{key} -> {row['status']} in {row['elapsed_s']:.1f} s "
                 f"(wall {row['wall_s']:.0f} s)")
     complete = stopped is None and len(done) == len(order)

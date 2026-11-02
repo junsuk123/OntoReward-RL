@@ -29,6 +29,11 @@ from ..direct_policy.contracts import SPATIAL_FIELDS, digest
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_CONFIG_PATH = PROJECT_ROOT / "config" / "current_semantics" / "spatial_view_contact_v1.yaml"
+# The config of each task version (task v6: held-out relative class, G4 pilot 8).
+TASK_CONFIG_PATHS = MappingProxyType({
+    "spatial-current-task/5": DEFAULT_CONFIG_PATH,
+    "spatial-current-task/6": DEFAULT_CONFIG_PATH.with_name("spatial_view_contact_v2.yaml"),
+    "spatial-current-task/7": DEFAULT_CONFIG_PATH.with_name("spatial_view_contact_v3.yaml")})
 
 BASELINE_3D_SHA = "cab3dd2123c7eee3968a8c00753f2ba29d55fe71"
 PROVENANCE_2D = MappingProxyType(dict(
@@ -559,6 +564,25 @@ class G3Config:
 # archived in g4_pilot_v6 with isaac_eval_v5. Pilot 7 re-checks learnability on task
 # v5 (omnidirectional scenario, held-out composition) before development.
 G4_PROTOCOL = "g4-pilot/7"
+# Pilot 8 (2026-11-01, user "1 -> delete", "2. go") checks learnability on task v6
+# (a held-out relative-geometry class) and DELETES the handover own-state error: it
+# imitated Isaac's handover transient, which was the VN-100 clip / PX4 int16 wrap bug
+# (G0_G4_STATUS_KO.md 16), not a physical phenomenon.  It lives in its own config
+# (spatial_view_contact_v2.yaml) and run root, so pilot 7, development/1 and every
+# Isaac flight of its models keep their registrations.
+# Pilot 8 held out the fleeing class and FAILED the hardness rule declared before it
+# trained (Raw 0.922 on the unseen class vs 0.969 nominal, gap 4.7 < 10 pp; archived in
+# the task-v6 root's g4_pilot_v8/).  Pilot 9 is the one declared fallback: the same task
+# version holding out the approaching class instead.
+# Pilot 9 failed too (Raw 0.984 unseen vs 0.938 nominal).  Pilot 10 (2026-11-02, user
+# "a") checks learnability on task v7 (scenario/3: a fast pad starting near the frame
+# edge, where the tilt -> image-axis coupling decides the outcome).
+G4_PROTOCOLS = ("g4-pilot/7", "g4-pilot/8", "g4-pilot/9", "g4-pilot/10")
+# The one task each pilot protocol may be paired with.
+G4_TASK = MappingProxyType({"g4-pilot/7": "spatial-current-task/5",
+                            "g4-pilot/8": "spatial-current-task/6",
+                            "g4-pilot/9": "spatial-current-task/6",
+                            "g4-pilot/10": "spatial-current-task/7"})
 
 @dataclass(frozen=True)
 class PPOSettings:
@@ -630,8 +654,9 @@ class VisionBlackout:
 
 @dataclass(frozen=True)
 class TrainingRandomization:
-    """Everything training episodes carry that validation, test and Isaac do not."""
-    handover_own_state_error: HandoverOwnStateError
+    """Everything training episodes carry that validation, test and Isaac do not.
+    ``handover_own_state_error`` is None from g4-pilot/8 on (deleted)."""
+    handover_own_state_error: HandoverOwnStateError | None
     vision_blackout: VisionBlackout
 
 
@@ -682,6 +707,11 @@ class IsaacEvalConfig:
 # -------------------------------------------------------------------- task
 
 TASK_VERSION = "spatial-current-task/5"
+# Task v6 (2026-11-01) is task v5 with scenario/2 (a held-out relative-geometry class);
+# reward, verdict and plant are unchanged.
+SCENARIO_TASK = MappingProxyType({"spatial-current-scenario/1": TASK_VERSION,
+                                  "spatial-current-scenario/2": "spatial-current-task/6",
+                                  "spatial-current-scenario/3": "spatial-current-task/7"})
 TASK_EVALUATOR = "spatial.environment.Evaluator"
 REWARD_VERSION = "spatial-current-reward/4"
 # What the task scores, stated for the manifest. The VERDICT and the terminal
@@ -936,16 +966,21 @@ def _seed_list(value: Any, where: str) -> tuple[int, ...]:
     return seeds
 
 
-def _randomization(data: Any) -> TrainingRandomization:
-    data = _section(data, ("handover_own_state_error", "vision_blackout"),
-                    "g4_pilot.training_randomization")
-    spec = _section(data["handover_own_state_error"],
-                    tuple(HandoverOwnStateError.__dataclass_fields__),
-                    "g4_pilot.training_randomization.handover_own_state_error")
-    where = "g4_pilot.training_randomization.handover_own_state_error."
-    error = HandoverOwnStateError(**{key: _positive(spec[key], where + key) for key in spec})
-    if not error.tau_min_s <= error.tau_max_s:
-        raise ValueError(where + "tau_min_s must not exceed tau_max_s")
+def _randomization(data: Any, protocol: str) -> TrainingRandomization:
+    # Pilot 7 carries pilot 5's handover own-state error; pilot 8 deleted it, and a
+    # pilot-8 config that still names it is refused rather than silently ignored.
+    keys = (("handover_own_state_error", "vision_blackout") if protocol == "g4-pilot/7"
+            else ("vision_blackout",))
+    data = _section(data, keys, "g4_pilot.training_randomization")
+    error = None
+    if "handover_own_state_error" in keys:
+        spec = _section(data["handover_own_state_error"],
+                        tuple(HandoverOwnStateError.__dataclass_fields__),
+                        "g4_pilot.training_randomization.handover_own_state_error")
+        where = "g4_pilot.training_randomization.handover_own_state_error."
+        error = HandoverOwnStateError(**{key: _positive(spec[key], where + key) for key in spec})
+        if not error.tau_min_s <= error.tau_max_s:
+            raise ValueError(where + "tau_min_s must not exceed tau_max_s")
     spec = _section(data["vision_blackout"], tuple(VisionBlackout.__dataclass_fields__),
                     "g4_pilot.training_randomization.vision_blackout")
     where = "g4_pilot.training_randomization.vision_blackout."
@@ -963,8 +998,9 @@ def _g4_pilot(data: Any, g3_seeds: tuple[int, ...]) -> G4PilotConfig:
             "validate_every", "validation_seeds", "test_seeds", "train_seed_base", "workers",
             "ppo", "criteria", "training_randomization")
     data = _section(data, keys, "g4_pilot")
-    if data["protocol"] != G4_PROTOCOL:
-        raise ValueError(f"g4_pilot.protocol must be {G4_PROTOCOL!r} (earlier pilots are archived)")
+    if data["protocol"] not in G4_PROTOCOLS:
+        raise ValueError(f"g4_pilot.protocol must be one of {G4_PROTOCOLS} (earlier pilots "
+                         "are archived)")
     curriculum = _section(data["curriculum"], tuple(SuccessGatedCurriculum.__dataclass_fields__),
                           "g4_pilot.curriculum")
     if data["arm"] not in ARMS:
@@ -980,7 +1016,7 @@ def _g4_pilot(data: Any, g3_seeds: tuple[int, ...]) -> G4PilotConfig:
     validation = _seed_list(data["validation_seeds"], "g4_pilot.validation_seeds")
     test = _seed_list(data["test_seeds"], "g4_pilot.test_seeds")
     pilot = G4PilotConfig(
-        protocol=G4_PROTOCOL, arm=data["arm"], model_seeds=model_seeds,
+        protocol=data["protocol"], arm=data["arm"], model_seeds=model_seeds,
         updates=_count(data["updates"], "g4_pilot.updates"),
         episodes_per_update=_count(data["episodes_per_update"], "g4_pilot.episodes_per_update"),
         curriculum=SuccessGatedCurriculum(
@@ -1011,7 +1047,8 @@ def _g4_pilot(data: Any, g3_seeds: tuple[int, ...]) -> G4PilotConfig:
                                                 "g4_pilot.criteria.deterministic_success_min"),
             sampled_success_min=_fraction(criteria["sampled_success_min"],
                                           "g4_pilot.criteria.sampled_success_min")),
-        training_randomization=_randomization(data["training_randomization"]))
+        training_randomization=_randomization(data["training_randomization"],
+                                              data["protocol"]))
     # Every seed family is disjoint from every other and from all recorded use.
     last_train = pilot.train_seed(max(model_seeds), pilot.updates, 0)
     families = {"validation": set(validation), "test": set(test), "g3": set(g3_seeds)}
@@ -1119,10 +1156,12 @@ def _reward(data: Any, contact: ContactLimits) -> CommonReward:
 
 
 def _scenario(data: Any, contact: ContactLimits) -> Any:
-    from .scenario import SCENARIO_VERSION, CompositionScenario
-    data = _section(data, ("version", "bins", "offset_radius_m", "held_out"), "task.scenario")
-    if data["version"] != SCENARIO_VERSION:
-        raise ValueError(f"task.scenario.version must be {SCENARIO_VERSION!r}")
+    from .scenario import SCENARIO_VERSIONS, CompositionScenario, CouplingScenario
+    if not isinstance(data, Mapping) or data.get("version") not in SCENARIO_VERSIONS:
+        raise ValueError(f"task.scenario.version must be one of {SCENARIO_VERSIONS}")
+    coupling = data["version"] == "spatial-current-scenario/3"
+    data = _section(data, ("version", "bins", "offset_radius_m", "held_out")
+                    + (("pad_speed_m_s",) if coupling else ()), "task.scenario")
     bins = data["bins"]
     if isinstance(bins, bool) or not isinstance(bins, int) or bins < 3:
         raise ValueError("task.scenario.bins must be an integer >= 3")
@@ -1144,13 +1183,32 @@ def _scenario(data: Any, contact: ContactLimits) -> Any:
             sorted(b for _, b in held) != list(range(bins)):
         raise ValueError("task.scenario.held_out must hold out every bearing bin and every "
                          "heading bin exactly once")
-    # ... and not a cyclic shift, so every relative-geometry class (B - A) keeps
-    # trained combinations: the test is composition, not an unseen relative geometry.
-    if len({(b - a) % bins for a, b in held}) == 1:
-        raise ValueError("task.scenario.held_out must not be a cyclic shift (one relative "
-                         "geometry class would never be trained)")
+    classes = {(b - a) % bins for a, b in held}
+    if data["version"] == "spatial-current-scenario/1":
+        # ... and not a cyclic shift, so every relative-geometry class (B - A) keeps
+        # trained combinations: the test is composition, not an unseen relative geometry.
+        if len(classes) == 1:
+            raise ValueError("task.scenario.held_out must not be a cyclic shift (one relative "
+                             "geometry class would never be trained)")
+    elif data["version"] == "spatial-current-scenario/2" and len(classes) != 1:
+        # /2: development/1 measured /1's held-out set as no harder than in-distribution
+        # for every arm (the task is near rotation-equivariant, so an unseen orientation
+        # of a trained relative geometry is interpolation).  /2 holds out exactly one
+        # relative class B - A instead; every A and every B bin still trains.
+        raise ValueError("task.scenario.held_out (scenario/2) must be one cyclic shift: "
+                         "all of one relative-geometry class B - A")
+    if coupling:
+        # /3: any balanced permutation (validated above); the pad's initial speed range.
+        speed = data["pad_speed_m_s"]
+        if (not isinstance(speed, list) or len(speed) != 2
+                or not 0 < _positive(speed[0], "task.scenario.pad_speed_m_s")
+                <= _positive(speed[1], "task.scenario.pad_speed_m_s")):
+            raise ValueError("task.scenario.pad_speed_m_s must be [low, high] with 0 < low <= high")
+        return CouplingScenario(bins=bins, offset_radius_m=(float(radius[0]), float(radius[1])),
+                                held_out=held, version=data["version"],
+                                pad_speed_m_s=(float(speed[0]), float(speed[1])))
     return CompositionScenario(bins=bins, offset_radius_m=(float(radius[0]), float(radius[1])),
-                               held_out=held)
+                               held_out=held, version=data["version"])
 
 
 def _task(data: Any, contact: ContactLimits) -> TaskContract:
@@ -1160,9 +1218,10 @@ def _task(data: Any, contact: ContactLimits) -> TaskContract:
                           ("unsafe_penalty", "nominal")):
         if data[key] != expected:
             raise ValueError(f"task.{key} must be {expected!r}: the only registered choice")
+    scenario = _scenario(data["scenario"], contact)
     return TaskContract(evaluator=TASK_EVALUATOR, supervisor="none", unsafe_penalty="nominal",
-                        reward=_reward(data["reward"], contact),
-                        scenario=_scenario(data["scenario"], contact))
+                        reward=_reward(data["reward"], contact), scenario=scenario,
+                        version=SCENARIO_TASK[scenario.version])
 
 
 def _local_plant(data: Any) -> LocalPlant:
@@ -1271,6 +1330,9 @@ def load_config(path: str | Path | None = None) -> CurrentSemanticsConfig:
         local_plant=_local_plant(data["local_plant"]),
         g4=(g4 := _g4_pilot(data["g4_pilot"], pilot)),
         isaac_eval=_isaac_eval(data["isaac_eval"], g4, pilot))
+    if G4_TASK[config.g4.protocol] != config.task.version:
+        raise ValueError(f"g4_pilot.protocol {config.g4.protocol!r} checks learnability of "
+                         f"{G4_TASK[config.g4.protocol]}, not {config.task.version}")
     totals = {arm: counts["total"]
               for arm, counts in design_parameter_counts(config.model).items()}
     if totals != DESIGN_PARAMETER_TOTALS:

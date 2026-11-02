@@ -904,3 +904,355 @@ teacher, BC, 적분 prior는 쓰지 않는다.
 - **순서와 재개:** 조건별로 환경 우선 순서로 난다. 한 환경을 20개 모델이 모두 날고 나서 다음 환경으로 간다. 그래서 중단되어도 모델 간 범위가 같다. 같은 등록이면 재개한다.
 - **로컬 짝 비교:** 같은 600개 사례를 로컬 plant(development 셀과 같은 코드 경로)에서도 날아 `local_reference.jsonl`에 둔다.
 - **판정 기준은 없다.** 가이드 11.6.5대로 현재 배포의 통합 측정이며, Isaac에서의 우월성 검정이 아니다.
+
+### 15.3 결과 (`isaac_development.json`, 2026-10-30 21:58, 600/600, episode wall 합계 9.2 h)
+
+- **비행 기록:** 실행은 4회였다. 중단은 4번 있었다. SITL link failsafe(gcs/battery)가 3번, episode 도중 비행 시계 정지가 1번이다.
+  - 진입 중 failsafe 2번은 owned 재시작으로 같은 seed를 다시 날았다. 재시작 예산 2는 run 전체에서 누적되므로 첫 실행에서 모두 썼다. 이후 재개는 `--reset-recoveries 5`로 했다.
+  - 판정이 난 episode는 버리거나 바꾸지 않았다. 판정이 없는 pair만 같은 seed로 다시 날았다(`isaac_development/interruptions.jsonl`).
+  - 600개 episode 모두 reset 응답 대조(`check_isaac_reset`)를 통과했고, 정리(cleanup)도 확인했다.
+- **조건 × 비교군 성공**(Isaac, 학습 seed 5개 합계; 괄호는 같은 사례의 로컬 plant):
+
+| 조건 | Raw | MLP | Untyped | R-GAT |
+| --- | --- | --- | --- | --- |
+| Composition ID | 16/50 (43) | 16/50 (49) | 18/50 (48) | 17/50 (48) |
+| Composition OOD | 33/50 (43) | 31/50 (46) | 29/50 (47) | 32/50 (48) |
+| Combined ID (1–3 s 영상 끊김) | 33/50 (46) | 34/50 (47) | 31/50 (49) | 34/50 (46) |
+| 합계 | 82/150 | 81/150 | 78/150 | 83/150 |
+
+- 전체 성공은 Isaac 324/600(54 %), 로컬 560/600(93 %)이다. 같은 사례끼리 짝지으면 둘 다 성공 306, Isaac만 18, 로컬만 254, 둘 다 실패 22다.
+- **사후 분석**(`isaac_development/isaac_development_analysis.py`, `.txt`; 기술 통계이며 판정 기준은 없다):
+  - **비교군 차이는 없다.** 학습 seed 단위로 R-GAT − Raw/MLP/Untyped는 +0.7/+1.3/+3.3 %p다(t 0.21/0.43/0.82). 짝 사례에서 갈린 수는 9:8, 11:9, 14:9다(정확 p 1.00/0.82/0.40). 수평 충격 구간별로도 네 비교군이 같다(≥ 0.9 m/s에서 18–22/55).
+  - **결과는 환경이 정한다.** 성공 여부 분산 중 환경(30개) 간 비율은 0.69다. 비교군은 0.001, 학습 seed는 0.004, 모델(seed × 비교군)은 0.013이다. 30개 환경 중 14개에서 20개 모델이 모두 같은 결과를 냈다.
+  - **Isaac−로컬 차이는 handover 충격과 함께 커진다.** 이 충격은 DR 초기 속도로, 축마다 U(−1, 1) m/s이고 양쪽에 똑같이 적용된다. |v_xy| < 0.6에서는 Isaac 111/120 대 로컬 112/120으로 같다. 0.6–0.9에서는 133/260 대 237/260, ≥ 0.9에서는 80/220 대 211/220이다.
+    - 환경 단위 Spearman: 성공과 수평 충격 −0.54, handover 기울기 초과와 수평 충격 +0.61, 수직 충격 +0.41이다.
+    - 임계값 하나로는 갈리지 않는다. 994113은 1.22 m/s인데 19/20이고, 994116은 0.87 m/s인데 0/20이다.
+  - **조건 사이는 Isaac에서 비교할 수 없다.** 조건마다 환경이 다르고, 환경 10개로는 환경 효과가 조건 효과를 덮는다. Composition OOD가 ID보다 높은 것도 환경 때문이다. 같은 충격 ≥ 0.9 구간에서 OOD는 39/60, ID는 9/100인데, 이 차이는 994113과 994117 두 환경에서 나온다. Combined ID가 Isaac에서 더 어렵지 않은 것도 같은 이유다.
+  - **실패 276건의 방식:**
+    - handover 후 1.5 s 안의 기울기 초과 100건(중앙 0.8 s, 비교군별 21–29)
+    - 패드를 놓친 뒤 패드 면 아래로 하강 87건(중앙 13.4 s, 패드에서 4.2 m)
+    - timeout 41건
+    - missed pad 27건
+    - 고도 상한 7건(모두 Raw)
+    - 측면 범위·후기 기울기 9건
+    - unsafe contact 5건(MLP 3, Untyped 2)
+    
+    두 주된 경로는 isaac-eval/1–5와 같다. 하나는 handover 직후 EKF 과도 상태와 PX4 overshoot가 만드는 기울기 초과(10.7), 다른 하나는 재획득 없이 하강하는 것(12.5, 13.6)이다. 네 표현 중 어느 것도 이 둘을 바꾸지 못했다.
+- **해석:**
+  - 가이드 11.6.5대로 이것은 현재 배포의 통합 측정이다. Isaac에서 네 비교군은 구별되지 않는다(합계 78–83/150).
+  - 로컬 개발의 R-GAT 방향(+1.8 %p)은 Isaac에서 재현되지도 반박되지도 않았다. Isaac−로컬 차이(39 %p)가 그보다 20배 크다.
+  - 이전 isaac-eval(중앙 진입, 15.1)과 직접 비교할 수 없다. 이번은 로컬과 같은 0.3–0.9 m 전 방향 진입이다.
+  - 표현 비교를 Isaac에서 의미 있게 하려면, 먼저 handover 충격 축의 Isaac−로컬 차이를 공통 환경 쪽에서 줄여야 한다. 그 차이는 비교군이 아니라 plant/관측의 차이다.
+
+## 16. 근본 원인: handover 충격이 PX4에 잘리고 부호가 뒤집혀 들어갔다 (2026-10-31)
+
+### 16.1 기전
+- Isaac은 DR handover 충격(축마다 U(−1, 1) m/s)을 physics tick 하나(4 ms)에 속도를 덮어써서 줬다(`landing_world._on_flight_state`).
+- VN-100 모델(`isaac_sim/vn100_imu.py`)은 연속한 속도를 미분하고 ±16 g에서 자른다. tick 하나에 축마다 0.63 m/s가 상한이다.
+- PX4 SITL(`external/PX4-Autopilot/src/modules/simulation/simulator_mavlink/SimulatorMavlink.cpp`)은 가속도를 int16 FIFO(1 count = g/2048)로 담는다. FRD에서 +16 g로 잘린 값은 +32768 count가 되어 −32768로 넘친다. 그래서 양 방향으로 포화된 축은 **반대 부호**로 EKF에 들어간다.
+- 검증: 이 모델(clip + int16 넘침)은 isaac-development 600 episode의 첫 decision EKF 속도 변화를 축별 중앙 오차 0.032 m/s, p90 0.086 m/s로 예측하고 부호를 100 % 맞힌다. 이상적인 IMU 가정은 p90 1.49 m/s, 부호 66 %다.
+
+### 16.2 결과에 미친 영향
+current-semantics Isaac 700 episode(isaac-eval/1–5 + isaac-development/1):
+
+| handover 충격이 PX4에 | 환경 | episode | Isaac 착륙 | handover 기울기 초과 | 같은 사례 로컬 (development) |
+| --- | --- | --- | --- | --- | --- |
+| 측정 가능 | 19 | 110 | 104 (95 %) | 1 | 72/80 (90 %) |
+| 잘림만 | 26 | 232 | 207 (89 %) | 2 | 186/200 (93 %) |
+| 부호 반전 | 35 | 358 | 61 (17 %) | 112 | 302/320 (94 %) |
+
+- 15.3의 "환경이 분산의 69 %", "Isaac−로컬 39 %p", "충격 구간별 차이"는 이것으로 설명된다. 임계값 하나로 갈리지 않던 이유(1.22 m/s → 19/20, 0.87 m/s → 0/20)는 크기가 아니라 FRD 축별 부호가 결정하기 때문이다.
+- spatial-reference 비행(/3–/11)의 handover 기울기 초과 11건 중 10건이 seed 12000이다. 이 seed의 FRD y 비력은 158.1 m/s²로 156.9를 넘어 넘친다. seed 12001은 측정 가능하다.
+- clip은 2026-09-11, 충격은 2026-09-12부터 있었으므로 DR을 켠 모든 Isaac 비행에 들어 있다.
+- 이 버그에 대응해 만든 이전 변경은 재검토 대상이다: `/11` handover 측면 제한, `/12` handover 추력 하한, pilot 5의 학습용 `handover_own_state_error`(최대 1.5 m/s; `spatial_view_contact_v1.yaml`에 남아 있어 development 모델 20개 모두에 들어 있다), 10.7의 "EKF 과도 상태" 설명. 10.7의 실현/명령 기울기 비 1.5–1.68도 EKF가 틀린 속도를 자세 추정으로 일부 보정한 결과일 수 있으나, 이것은 측정하지 않았다. observation/3의 재획득 규칙은 로컬 10 Hz에서도 필요했으므로 유지한다.
+
+### 16.3 수정 (Isaac 코드만; 로컬 plant·계약·checkpoint·profile hash 불변)
+- `isaac_sim/handover_perturbation.py`: 충격을 tick마다 가속도계 범위의 50 % 이내가 되는 최소 tick 수로 나눈다(U(−1, 1)이면 최대 4 tick, 16 ms). 합은 정확히 원래 충격이다. 적용은 physics callback(`_apply_wind`)에서 하며, 이 callback은 Pegasus의 상태·IMU callback 뒤에 돈다. 그래서 증분마다 다른 tick에서 IMU에 잡힌다. 0.1 s decision 기준으로는 여전히 순간 충격이라 로컬 plant와 같다.
+- `sensor_profiles.saturate_16bit` + `vn100_imu.py`: PX4가 받는 FRD 값에서 +32767 count에 포화한다(실제 16-bit 레지스터와 같다). 접촉 충격 등 다른 16 g 초과 상황에서도 부호가 뒤집히지 않는다.
+- 회귀 테스트 `tests/test_handover_perturbation_is_measurable.py`: 비행한 모든 seed와 300개 seed에서 나눈 충격이 PX4 FIFO까지 정확히 측정됨을 확인한다. 이전 방식은 int16 −32768로 넘치는 것도 함께 확인한다.
+- `runtime_source_hash`는 바뀐다(의도된 동작: 옛 코드로 떠 있는 Isaac을 받아들이지 않는다).
+- 비행 검증은 16.5에 있다(`isaac-handover-fix/1`, 통과).
+
+### 16.5 비행 검증 `isaac-handover-fix/1` (사용자 "go", 2026-10-31 비행)
+- 설계는 비행 전에 고정했다(`config/current_semantics/isaac_handover_fix_v1.yaml`, 등록 `isaac_handover_fix_registration.json`, plan 35878d54).
+  - 대상은 isaac-development/1과 **같은 사례**다. 환경 seed, 조건, 등록된 checkpoint(sha256), deterministic 모드가 모두 같아서 바뀐 것은 수정 하나뿐이다.
+  - 사례는 결과가 아니라 규칙으로 골랐다. isaac-development/1 환경 중 충격이 뒤집힌 것을 seed 순서로 앞에서 10개 택했다. 환경 i는 training seed `[10..14][i % 5]`의 네 비교군을 모두 만나므로, 20개 모델이 각각 두 번 난다. 로더가 이 규칙을 다시 계산한다(`tests/test_isaac_handover_fix_protocol.py`).
+  - 실행 명령은 `./run.sh current-semantics-3d --stage isaac-handover-fix --allow-isaac`이다.
+- 판정 기준과 결과(전부 통과, `fix_verified: true`):
+
+  | 기준 (등록) | 수정 전, 같은 40 사례 | 수정 후 |
+  |---|---|---|
+  | PX4 첫 decision Δv 부호가 충격과 일치(축별 \|충격\| ≥ 0.3 m/s) | 0/40 | **40/40** |
+  | 같은 Δv의 축별 오차 중앙값 ≤ 0.08 m/s | 1.22 m/s | **0.028** (p90 0.097, 최대 0.13) |
+  | handover 기울기(1.5 s 안 envelope 위반) ≤ 2 | 17 | **0** |
+  | 착륙 ≥ 30/40 | 7 | **38** |
+
+- 대조:
+  - 같은 40 사례의 로컬 기준값은 36/40이다.
+  - Isaac 수정 전과 짝지으면 둘 다 착륙 7, 수정 후에만 착륙 31, 수정 전에만 착륙 0, 둘 다 실패 2였다.
+  - 로컬과 짝지으면 둘 다 착륙 35, Isaac에서만 착륙 3, 로컬에서만 착륙 1, 둘 다 실패 1이었다.
+  - 최대 기울기는 중앙값 11.7°, 최대 19.8°였다.
+  - 40/40 모두 cleanup이 확인됐고, 중단과 재시작은 없었다.
+  - 수정 전 20개 모델 모두가 기울기로 실패했던 994101과 994108에서는 이번에 네 비교군이 전부 착륙했다.
+- 실패 2건은 둘 다 접지 단계에서 났고, handover와는 무관하다.
+  - 994109 11/raw_ppo는 UNSAFE_CONTACT다. vz −0.32 m/s로 한계 0.30을 넘었고, 로컬에서도 같은 판정이었다.
+  - 994114 14/ontology_rgat_ppo는 MISSED_PAD_CONTACT다. 중심에서 0.57 m 떨어져 접지했고, 로컬에서는 착륙했다.
+- 비교군별 착륙은 다음과 같다(각 10개).
+
+  | 비교군 | Isaac 수정 후 | Isaac 수정 전 | 로컬 |
+  |---|---|---|---|
+  | raw | 9 | 1 | 8 |
+  | mlp | 10 | 2 | 9 |
+  | untyped | 10 | 2 | 10 |
+  | rgat | 9 | 2 | 9 |
+
+  비교군 간 차이로 읽을 수는 없다.
+- 해석:
+  - 기전(첫 decision Δv)과 결과(기울기·착륙)가 모두 예측대로 바뀌었다. 따라서 isaac-development/1의 Isaac–로컬 차이는 이 버그였다.
+  - 고친 Isaac에서 부호 반전 환경의 착륙률은 로컬과 같은 수준이다(38/40 대 36/40).
+  - 다만 이것은 부호 반전 환경 10개의 결과다. 나머지 20개 환경은 16.6에서 날렸다.
+  - 이 10개 환경과 994101–994114는 이제 진단용 seed다.
+
+### 16.6 나머지 20개 환경 `isaac-handover-fix/2` (사용자 "3. after edit 2, go", 2026-11-01 비행)
+- **설계(비행 전에 고정).**
+  - 계획은 `config/current_semantics/isaac_handover_fix_v2.yaml`, 등록은 `isaac_handover_fix_2_registration.json`(plan b017a143)이다.
+  - 대상은 isaac-development/1 환경 중 /1이 날리지 않은 20개 전부다(seed 순서). 회전 규칙은 /1과 같아서, 환경 i는 training seed `[10..14][i % 5]`의 네 비교군을 만난다.
+  - 이로써 30개 환경 모두에 수정 후 판정이 생겼고, development 모델 20개는 각각 여섯 번 날았다. 로더가 이 규칙을 다시 계산한다(`tests/test_isaac_handover_fix_protocol.py`).
+  - 판정 기준은 /1과 같다. 착륙 기준만 이 80 사례의 로컬 75에서 10 %p를 뺀 **≥ 67/80**이다.
+  - 실행 명령: `--stage isaac-handover-fix --plan <절대경로>/isaac_handover_fix_v2.yaml --allow-isaac`. 첫 시도는 `--plan`의 상대경로가 실행 위치(repo 상위) 기준으로 풀려 스택이 뜨기 전에 실패했고, 비행한 episode는 없다.
+- **결과: 전부 통과(`fix_verified: true`).** 80/80 cleanup을 확인했고 중단·재시작은 없었다. 비행 시간은 58분이다.
+
+  | 기준 (등록) | 수정 전, 같은 80 사례 | 수정 후 | 로컬 |
+  |---|---|---|---|
+  | PX4 첫 decision Δv 부호 일치 | (wrap 6개 환경은 반전) | **80/80** | — |
+  | Δv 축별 오차 중앙값 ≤ 0.08 m/s | — | **0.026** | — |
+  | handover 기울기(1.5 s 안) ≤ 2 | 0 | **0** | — |
+  | 착륙 ≥ 67/80 | 57 | **74** | 75 |
+
+- **셀별(수정 후 / 수정 전 / 로컬):**
+  - composition_id: 8/8/8 (8 사례)
+  - composition_ood: 29/24/29 (32 사례)
+  - combined_id: 37/25/38 (40 사례)
+- **짝 비교:**
+  - 수정 전 대비: 둘 다 착륙 55, 수정 후에만 19, 수정 전에만 2, 둘 다 실패 4.
+  - 로컬 대비: 둘 다 착륙 71, Isaac에서만 3, 로컬에서만 4, 둘 다 실패 2.
+- **실패 6건(handover 관련 0):**
+  - 패드를 놓쳐 바깥에 접지한 것이 2건이다(6.5 s, 6.8 s). 그중 1건은 로컬도 같은 판정이다.
+  - 70 s timeout이 2건이다.
+  - combined_id(영상 끊김)에서 10.5 s와 14.7 s에 envelope 위반이 2건 났다. 둘 다 수정 전에도 같은 판정이었다.
+- **비교군별 착륙(각 20):** raw 18, mlp 18, untyped 20, rgat 18이다. 로컬은 18/19/20/18이다.
+- **/1과 /2 합계(30개 환경, 120 사례):** Isaac 수정 후 **112/120**, 수정 전 64/120, 로컬 111/120이다.
+  - 수정 전 isaac-development/1의 Isaac–로컬 차이(54 % 대 93 %)는 수정 후 이 120 사례에서 사라졌다(93 % 대 93 %).
+  - 비교군별로는 raw 27, mlp 28, untyped 30, rgat 27(각 30)이다. 비교군 간 차이로 읽을 수 없다.
+
+### 16.4 표현 비교에 대한 함의
+- 비교군 차이는 지금까지 잰 모든 축에서 보이지 않는다: 로컬 최종(잡음 수준), composition OOD(ID보다 어렵지 않음), Isaac(78–83/150), 학습 속도(d = 1.0 도달 평균 98–109 update, 학습 중 성공률 0.67–0.72).
+- 버그를 고친 Isaac에서도 모든 비교군이 천장에 붙었다(16.5: 9–10/10, 부호 반전 환경에서). 측정을 고치는 것만으로는 표현 효과가 나타나지 않는다. 네 비교군이 같은 21개 값을 읽고 약 100 update 안에 같은 되먹임 법칙을 배우는 과제에서는, 표현이 결과를 바꿀 자리가 없다. 재설계는 17절(과제 v6, development/2)에 있다.
+
+## 17. 표현 비교 재설계: 과제 v6와 development/2 (사용자 "1 -> delete", "2. go", 2026-11-01)
+
+### 17.1 왜 다시 설계하는가
+- development/1에서 Composition 시험은 측정할 것이 없었다(14.4). 네 비교군 모두 보류 조합에서 분포 내와 같거나 더 높았다(+0.6 ~ +2.7 %p).
+- 원인은 과제의 대칭이다. 카메라가 아래를 보고 yaw를 고정하므로 과제는 회전에 거의 등변이다. v5는 보류 조합 4개가 상대 기하(B − A)의 네 부류를 모두 학습에 남기도록 골랐다(로더가 강제했다). 그래서 보류 조합은 이미 배운 상대 기하를 다른 방향에서 보는 것, 즉 보간이었다.
+- 제어 문제를 실제로 바꾸는 A×B 구조는 B − A뿐이다. 패드가 자기 방위로 멀어지는 경우(fleeing), 가로지르는 경우(왼쪽·오른쪽), 다가와 아래를 지나는 경우(approaching)다. 이번에는 이 중 한 부류를 통째로 보류한다.
+- 연구 질문(가이드 2)과 네 비교군·예산·보상·plant는 그대로다. 바뀌는 것은 무엇을 보류하는지뿐이다. development/1 결과를 본 뒤의 변경이므로 새 후보·새 등록으로 하고, 사후 변경임을 여기 밝힌다.
+
+### 17.2 바꾼 것 (`config/current_semantics/spatial_view_contact_v2.yaml`, v1과 정확히 세 군데만 다름)
+1. **과제 v6 = scenario/2.** 보류 집합은 한 상대 기하 부류(cyclic shift) 전체다. 각 A 구간과 B 구간은 여전히 세 조합씩 학습하므로 주변분포는 균등하다. 로더가 scenario/2에는 cyclic shift를, scenario/1에는 그 반대를 강제한다.
+2. **G4 pilot 8.** 과제 v6에서 학습 가능성을 다시 확인한다(가이드 10 G4). Raw만 학습하며 표현 비교군은 아직 학습하지 않는다.
+3. **`handover_own_state_error` 삭제(사용자 "1 -> delete").** 이 설정은 Isaac의 handover 과도 상태를 흉내 냈는데, 그 과도 상태는 16절의 IMU clip/int16 넘침 버그였다. 이제 pilot-8 config에 이 키가 있으면 로더가 거부한다.
+
+- 나머지는 v1 파일과 바이트 단위로 같다. 그래서 algorithm_hash가 같고, 달라지는 hash는 task_hash와 g4_hash뿐이다.
+- v1 config, pilot 7, development/1, isaac-development/1, isaac-handover-fix의 등록 hash는 하나도 바뀌지 않았다. 수정 전후 전부 대조했고, `tests/current_semantics/test_cs3d_task6.py`가 이를 고정한다.
+- 결과 폴더는 과제마다 따로다. v6는 `results/current_semantics_3d/spatial_current_semantics_v1_task6`이다. CLI는 config의 과제로 기본 폴더를 정하고, 다른 과제의 폴더에 쓰려 하면 거부한다(`experiment.run_root_for`).
+
+### 17.3 보류 부류를 고른 규칙 (측정 전에 선언, `..._task6/development_design/`)
+- **1단계, 실현 가능성 (`relative_class_probe.py`).**
+  - 대상은 development/1의 Raw 모델 5개다. 이 모델들은 모든 부류를 네 방향 중 세 방향에서 학습했다.
+  - 부류별로 deterministic, d = 1, nominal, seed 999001–999048에서 비행했다.
+  - 후보 순서는 [fleeing, approaching]이다. 시작 상태를 다른 부류가 재현하지 못하는 두 부류다(오프셋과 상대속도가 평행 또는 반평행). 두 crossing 부류는 서로의 거울상이므로 후보에서 뺐다.
+  - 학습된 성공률이 0.80 이상인 첫 후보를 보류한다.
+
+  | 부류 | 학습 seed 10–14 Raw 성공률 | 평균 |
+  |---|---|---|
+  | fleeing (B = A) | 0.96 0.85 1.00 0.94 0.90 | **0.929** |
+  | crossing left | 1.00 0.83 1.00 0.94 0.92 | 0.938 |
+  | approaching (B = A + 180°) | 0.98 0.77 0.94 0.94 0.83 | 0.892 |
+  | crossing right | 1.00 0.88 1.00 0.96 0.81 | 0.929 |
+
+  → 과제 v6의 보류 부류는 **fleeing**이다(`held_out [[0,0],[1,1],[2,2],[3,3]]`). 학습하면 어느 부류도 어렵지 않으므로, 보류 후의 하락은 실현 불가능성이 아니라 미학습 조합 때문이라고 읽을 수 있다.
+- **2단계, 어려움 (`calibration.py`, pilot 8 학습 전에 작성).**
+  - 대상은 pilot-8 Raw 두 checkpoint다. 이 모델들은 fleeing을 한 번도 학습하지 않았다.
+  - deterministic, d = 1, seed 999101–999196에서 잰다.
+  - 판정: Composition OOD ≤ nominal ID − 0.10이고 Composition OOD ≥ 0.20이면 development/2 등록을 연다.
+  - 실패하면 approaching을 보류하는 pilot을 한 번만 더 한다(미리 선언한 대체 후보). 그것도 실패하면 이 plant에서는 조합 축을 어렵게 만들 수 없다고 기록하고 멈춘다.
+  - 같은 실행에서 OOD 강도도 development/1의 규칙 그대로 다시 정한다. Raw 성공률이 [0.20, 0.80]에 드는 가장 약한 강도다.
+
+### 17.4 G4 pilot 8 (fleeing 보류) — 학습 가능성은 통과, 어려움 규칙은 실패
+- **G4:** 통과했다(`g4_pilot_v8/`).
+  - 시험 deterministic은 46/48, 46/48이다.
+  - sampled는 46/48, 40/48이다.
+  - 난이도 1.0에는 update 86, 75에 도달했다.
+  - handover 오차를 지워도 학습 속도와 성능은 pilot 7과 같은 수준이다.
+- **어려움 판정(2단계, 미리 선언한 규칙):** 실패했다(`calibration_pilot8_fleeing.txt`).
+  - pilot-8 Raw는 학습에서 fleeing을 한 번도 보지 않았다. 그런데 fleeing에서 **0.922**로, nominal ID 0.969보다 4.7 %p만 낮다. 기준은 10 %p다.
+  - 실패 13건 중 MISSED_PAD_CONTACT가 13건이다.
+  - 즉 Raw MLP의 되먹임 법칙은 본 적 없는 상대 기하로도 거의 그대로 외삽된다. 대칭을 깨는 보류로도 "조합"은 쉽게 풀린다.
+- **OOD 강도(같은 실행, development/1 규칙 그대로):** a2 0.6–0.9(0.698), dropout 3–4 s(0.630), noise ×5(0.677)다. development/1과 같은 강도가 다시 선택됐다.
+- **다음:** 미리 선언한 대체 후보를 한 번만 실행한다. approaching(B = A + 180°)을 보류하는 **G4 pilot 9**다. config는 `spatial_view_contact_v2.yaml`에서 보류 집합과 pilot 번호만 바꿨다. 규칙과 seed는 그대로다.
+
+### 17.5 G4 pilot 9 (approaching 보류, 미리 선언한 대체 후보) — 어려움 규칙 실패, 재설계 종료
+- **G4:** 통과했다(현재 `g4_pilot.json`).
+  - 시험 deterministic은 45/48, 46/48이다.
+  - sampled는 39/48, 43/48이다.
+  - 난이도 1.0에는 update 92, 79에 도달했다.
+- **어려움 판정:** 실패했다(`calibration_pilot9_approaching.txt`).
+  - 학습에서 한 번도 보지 않은 approaching에서 Raw는 **0.984**로, nominal ID 0.938보다 오히려 4.7 %p 높다.
+  - OOD 강도는 다시 development/1과 같게 나왔다(a2 0.6–0.9: 0.714, dropout 3–4 s: 0.625, noise ×5: 0.688).
+- **선언한 규칙에 따라 재설계를 여기서 멈춘다.** development/2는 등록하지 않았다.
+- **결론(측정):** 이 plant에서 A×B 조합 축은 비교군을 가를 수 없다.
+  - 보류 방식은 셋을 잰다. v5의 방향만 보류하면 +0.6 ~ +2.7 %p(쉬움)였다. 상대 기하를 통째로 보류하면 fleeing −4.7 %p, approaching +4.7 %p였다.
+  - 공통 baseline(Raw 21D MLP)이 본 적 없는 상대 기하로도 이미 거의 그대로 일반화한다. 그래서 표현이 조합 일반화에서 더할 여지가 없다.
+  - 가이드 13에 따라 "우위를 확인하지 못했다"로 기록한다. 이번 결과를 근거로 비교군이 "동등하다"고 쓰지는 않는다.
+- **참고(사후 기술 통계, development/1의 셀별 R-GAT 차이, 학습 seed 5개):**
+  - R-GAT − MLP(가이드의 주 비교)는 열 셀 모두 |t| < 1이다.
+  - R-GAT − Raw는 ID 셀에서 +4 ~ +6 %p(t 1.4–2.6)다. MLP − Raw도 같은 방향이다. 따라서 이 차이는 그래프 구조가 아니라 파생 특징 phi44의 기여로 읽는다(가이드 13 마지막 항).
+  - combined_ood에서는 R-GAT가 Raw보다 2.4 %p 낮다(t −2.75). 다만 모든 비교군이 6–8 %인 셀이다.
+- **보관:** pilot 8은 `g4_pilot_v8/`, 두 판정은 `development_design/calibration_pilot{8_fleeing,9_approaching}.*`에 있다. 아직 학습하지 않은 표현 비교군은 없다.
+
+## 18. 결합이 성패를 가르는 과제: 과제 v7 (사용자 "a", 2026-11-02)
+
+### 18.1 왜 장면을 바꾸는가
+- 17절에서 조합 보류(방향, 상대 기하)는 어느 것도 Raw에게 어렵지 않았다. 원인은 /12 기하에 있었다. 패드가 화면 안쪽 0.3–0.9 m에서 걷는 속도(0.3–0.8 m/s)로 출발했다. 그래서 가이드의 핵심 결합, 즉 가속하면 기울고 기울면 카메라가 패드 반대쪽을 본다는 결합이 성패를 가를 일이 없었다.
+- 카메라의 두 영상 축은 폭이 다르다. 시작 높이에서 body x(HFOV 90°) 쪽 반폭은 1.8–2.3 m이고 body y(VFOV 73.7°) 쪽 반폭은 1.4–1.8 m다. 최대 횡가속(14°)을 주면 시야가 약 0.5 m 밀린다.
+
+### 18.2 결합 탐색 (학습 없음, development/1 Raw 5개, `..._task7/development_design/coupling_screen{,2}.txt`)
+- **탐색 1(오프셋만, 0.3–1.5 m, plant 속도):** 모든 칸이 0.78–0.93이었다. 고도에서 패드를 잃는 일은 30–50 %로 늘었지만 대부분 다시 찾았다.
+- **탐색 2:**
+  - 오프셋 1.5–1.8 m도 0.78–0.92였다.
+  - 1.8–2.1 m에서는 좁은 축 시작의 상당수가 handover에서 거부됐다. 처음부터 패드가 보이지 않는 것으로, 과제가 성립하지 않는다.
+  - **빠른 패드(초기 1.0–1.5 m/s)를 화면 가장자리(1.2–1.5 m)에서 출발시키면** 결합이 갈랐다.
+
+  | 1.2–1.5 m, 빠른 패드 | 멀어짐 | 가로지름 | 다가옴 |
+  |---|---|---|---|
+  | 넓은 축 x | 0.600 | 0.667 | 0.900 |
+  | 좁은 축 y | **0.392** | 0.758 | 0.842 |
+
+### 18.3 과제 v7 (`spatial_view_contact_v3.yaml`, scenario/3; v2와 한 군데만 다름)
+- **시작 조건:** 오프셋은 U(1.0, 1.5) m이다. 패드 초기 속도 v0는 U(1.0, 1.5) m/s로, plant의 U(0.3, 0.8)을 대신한다. 이후 가속 단계는 plant 그대로다.
+  - curriculum에서는 plant가 쉽게 만든 v0와 섞는다. d = 1에서는 위에서 정한 값 그대로다.
+  - 새 필드를 `CouplingScenario` 하위 클래스에 두었으므로 /1–/2의 필드와 task_hash는 그대로다.
+- **보류 조합:** `[[1,1],[3,3],[0,2],[2,0]]`이다. 좁은 축의 멀어짐과 넓은 축의 다가옴을 보류한다.
+  - 균형 순열이다. 각 A·B 구간은 세 조합씩 학습한다.
+  - 멀어짐은 넓은 축에서만, 좁은 축은 다른 부류로만 학습한다. 그래서 보류한 칸은 모두 "학습한 운동 × 학습한 영상 축"의 조합이다.
+- **나머지:** 보상·plant·PPO·예산·관측·모델은 그대로다. handover 오차 없음도 v2와 같다. algorithm_hash는 v1–v2와 같다.
+- **Isaac:** 이 시나리오의 초기 패드 속도는 Isaac 시나리오 이름에 실리지 않는다. 그래서 `isaac_scenario`가 거부한다. Isaac 평가 전에 `pad_motion.py` 확장이 필요하다.
+- **결과 폴더:** `results/current_semantics_3d/spatial_current_semantics_v1_task7`. G3는 지역 절반을 재실행했고, Isaac 절반은 같은 g3_hash라서 복사했다(`PROVENANCE.json`).
+
+### 18.4 어려움 규칙 (학습 전에 작성, `development_design/calibration.py`)
+- 이번에는 같은 칸에서 **학습한 기준**과 비교한다. 칸마다 난이도가 다르므로, 보류 칸을 ID 평균과 비교하면 난이도와 미학습 효과가 섞인다.
+- **비교하는 두 Raw(같은 G4 protocol, model seed 0·1):**
+  - 기준: 16조합을 모두 학습한다(`design_pilot.py reference`, 등록 아님).
+  - pilot 10: 등록된 G4로, 보류 4조합을 학습하지 않는다.
+- **측정:** 칸마다 seed 999401–999448에서 deterministic, d = 1로 잰다.
+- **판정(세 가지 모두 충족해야 함):**
+  1. 기준의 보류 칸 성공률 ≥ 0.50(실현 가능)
+  2. 기준 − pilot 10 ≥ 0.10(미학습 비용)
+  3. pilot 10 ≥ 0.20(바닥이 아님)
+- **실패하면:** development/3을 등록하지 않고 멈춘다. 이번에는 대체 후보가 없다.
+- **OOD 강도:** development/1의 규칙을 pilot 10에 그대로 적용한다(seed 999601–999696).
+
+### 18.5 결과 (2026-11-02): pilot 10은 G4 통과, 어려움 규칙은 실패 — 재설계 종료
+- **G4 pilot 10(`g4-pilot/10`, 과제 v7, Raw):** 통과. 시험 seed에서 결정적/샘플링 성공은 seed 0이 35/48, 32/48이고 seed 1이 29/48, 28/48이다. d = 1.0 도달은 update 117/123이다. 과제 v5의 pilot 7(45/48, 41/48)보다 훨씬 어렵다.
+- **학습한 기준 Raw(16조합 전부, `development_design/reference/`):** seed 0의 최고 검증은 0.92/0.83이고, seed 1은 0.63/0.42(update 278)로 약하다. 칸별 성공은 0.45–0.64다(`reference/cells.json`). `calibration.py`가 같은 seed로 다시 잰 값과 소수 셋째 자리까지 같다.
+- **판정(`development_design/calibration.txt`/`.json`, seed 999401–999448, 결정적, d = 1):**
+
+  | 칸 | 기준(학습함) | pilot 10 |
+  |---|---|---|
+  | 좁은 축 / 멀어짐 (보류) | 0.448 | 0.448 |
+  | 넓은 축 / 다가옴 (보류) | 0.635 | 0.781 |
+  | 보류 칸 평균 | **0.542** | **0.615** |
+  | 학습 칸 평균 | 0.526 | 0.644 |
+
+  1. 실현 가능(기준 ≥ 0.50): 0.542로 **통과**.
+  2. 미학습 비용(기준 − pilot 10 ≥ 0.10): **−0.073으로 실패**. 보지 못한 조합에서 오히려 pilot 10이 높다.
+  3. 바닥 아님(pilot 10 ≥ 0.20): 0.615로 **통과**.
+
+  → **실패.** development/3은 등록하지 않았다. 과제 v7로 표현 arm을 학습한 일은 없다. 선언한 대로 대체 후보 없이 재설계를 멈춘다.
+- **잡음이 효과보다 크다:**
+  - 학습 seed 사이의 차이가 기준과 pilot 10의 차이보다 크다. 보류 칸에서 기준은 seed 0이 0.688, seed 1이 0.396이다. pilot 10은 0.562와 0.667이다.
+  - 같은 모델 안에서 보류 칸과 학습 칸을 비교해도 일관된 비용이 없다. pilot 10은 −7.7 pp와 +1.8 pp, 기준은 +1.8 pp와 +1.4 pp다.
+  - 좁은 축 멀어짐 칸은 학습했든 안 했든 0.448로 가장 어렵다. 그러므로 pilot 10의 "nominal ID 0.708 vs composition_ood 0.578"(13 pp 차이, 참고값)은 칸의 난이도이지 미학습 비용이 아니다. 17절의 규칙(보류 대 nominal)이었다면 이것을 통과로 잘못 읽었을 것이다.
+- **OOD 강도(참고, 등록에 쓰이지 않음):** 규칙상 motion a2 0.4–0.6(0.635), dropout 3–4 s(0.677), noise ×5(0.401)이다. 과제 v7은 nominal 자체가 0.708이라 강도가 한 단계씩 약해진다. noise ×10–×20은 0이다.
+- **실패 양상:** 판정 칸 전체(3,072회)에서 실패는 TASK_TIMEOUT 273, SAFETY_ENVELOPE_VIOLATION 201, UNSAFE_CONTACT 109, MISSED_PAD_CONTACT 57이다. 빠른 패드를 쫓다가 기울기 한계(21°)를 넘거나, 끝내 따라잡지 못한다.
+
+### 18.6 세 번의 재설계가 말하는 것
+- 조합 축을 세 번 바꿨다. 과제 v5(방위·진행 방향 보류), v6(상대 기하 부류 보류, 두 후보), v7(기울기→영상 결합이 성패를 가르는 장면)이다. 어느 경우에도 공통 Raw는 보지 못한 조합에서 측정 가능한 비용을 치르지 않았다.
+- 균형 보류이므로 모든 방위, 모든 진행 방향, 모든 상대 부류가 학습에 나온다. 보류 조합은 그 요소들의 새 결합일 뿐이다.
+- **가설(측정하지 않음):** 착륙은 닫힌 루프이고 처음 1초 남짓 뒤에는 궤적이 같은 영역(패드 근처, 작은 상대 속도)으로 모인다. 그렇다면 초기 조건의 조합은 정책 입력 공간에서 짧은 과도 구간만 새로울 것이다. 이를 확인하려면 보류 칸 결정의 21D 입력이 학습 칸 입력의 지지 집합 밖에 놓이는 비율을 재면 된다.
+- 따라서 이 plant와 21D 현재 관측에서는 조합 일반화 축으로 표현 arm을 가를 수 없다. 이는 "우월성 미확립"이지 "동등함"이 아니다. 다른 축이 필요하면 무엇을 쓸지는 사용자가 정한다.
+
+## 19. 관계 섞기 대조군 `relation-shuffle/1` (사용자 "3", "keep going", 2026-11-02)
+- **질문:** 가이드 8.4가 요구한 대조군이다. R-GAT 관계 이름의 *의미에 맞는* 배치가 임의 배치보다 나은가?
+- **구성** (`current_semantics/relation_control.py`, `config/current_semantics/relation_shuffle_v1.yaml`):
+  - 그대로 둔 것: 노드 8개, 의미 간선 14개의 (출발, 도착) 쌍, self loop 8개, 관계 이름 6개와 관계별 간선 수(3, 2, 3, 3, 3, 8).
+  - 그 결과 parameter, 초기값(같은 model seed에서 비트 단위로 동일), 2홉 도달이 typed R-GAT와 같다.
+  - 바뀌는 것은 *어느 간선이 가중치를 공유하는가* 하나뿐이다. 의미 간선 14개의 라벨을 선언된 난수열로 균등하게 섞는다.
+  - typed 관계 중 하나라도 간선 집합이 그대로 남으면(이름과 무관하게) 다시 뽑는다.
+  - 학습 seed마다 2개씩, 모두 10개 그래프다(shuffle seed 7200, 7201, …, 7241). 서로 모두 다르고, typed와의 Rand index는 0.71–0.78이다.
+- **짝 비교:** development/1의 다섯 번째 arm으로 둔다. 학습 seed 10–14, 학습 episode, 검증·평가 환경을 같은 것으로 쓴다. 공통 난수이고, 이것으로 고르는 것은 없다.
+  - 저장된 typed와 untyped 모델과 학습 seed별로 짝지어 비교한다.
+  - 현재 코드가 저장된 typed 평가를 24/24 그대로 재현하는지 확인했다.
+  - 학습은 update당 약 1e-8의 부동소수점 차이만 났다.
+- **판정(등록 전에 고정, `RULE`):**
+  - 지표: 열 칸 평균 성공률.
+  - Δ = typed − (그 seed의 shuffle 평균). 다섯 seed의 95 % t-구간이 0보다 위면 "better", 아래면 "worse", 그 밖은 "not established"다.
+  - 모든 shuffle을 보고한다.
+  - 부차 지표: ID, 네 OOD, composition_ood, OOD unsafe, shuffle − untyped, seed 안의 shuffle 간 차이, 관계 출력 audit(g8 RMS와, g8를 평균으로 바꿨을 때 latent 평균의 변화).
+- **상태:** 2026-11-02 등록(plan_hash 4c0ee047…)했고 실행 중이다(`relation_shuffle.log`, 모델 10개, 로컬). smoke run 하나가 등록부터 학습, 평가, audit까지 통과했다.
+  - typed 모델의 g8가 행동 평균을 바꾸는 크기(RMS)는 0.15–0.27이다. 관계 경로는 살아 있다.
+- **주의:** 균등 섞기는 typed 그룹이 지닌 홉 수준 정렬(1홉 간선 대 2홉 간선)도 함께 깬다. 그래서 "better"가 나와도 의미와 홉 구조를 구분하지 못한다. "not established"는 둘 다를 덮는다.
+
+## 20. ORL — 온톨로지를 정책의 inductive bias로 (사용자, 2026-11-02)
+- **사용자 요청:** "검증 지점 전부를 inductive bias로. CNN의 convolution, LSTM의 시간 요소처럼, R-GAT로 표현된 온톨로지 *때문에만* RL에 inductive bias가 생기는 ORL."
+- **진단:** 등록된 R-GAT arm은 8차원 graph readout을 raw21 옆에 붙이고 MLP가 읽는 구조다. MLP는 graph를 무시할 수 있으므로 함수 공간이 제한되지 않는다. 즉 inductive bias가 없다.
+  - development/1에서 arm 간 차이가 잡음 수준이었던 것과 맞는다. R-GAT − MLP의 |t|는 모든 칸에서 1보다 작았다.
+  - CNN의 bias는 덧붙인 정보가 아니라 *제약*에서 나온다.
+- **ORL** (`current_semantics/orl.py`, arm `orl_ppo:eb68eb947a6a49a2`, `ORL_HASH`). 네 가지 bias는 모두 온톨로지 선언에서 나온다.
+  1. **국소성(receptive field):** raw 우회가 없다. 행동은 phi44를 개념 노드를 통해서만 읽는다. 노드 유형마다 자기 slot만 encode하고, 정보는 선언된 관계로만 흐른다.
+     - LateralDecision_x는 y 평면 개념을 어떤 홉 수로도 읽지 못한다. 검사로 확인한다.
+  2. **가중치 공유(convolution kernel):** 3D 과제를 기준 2D landing 평면이 수평축마다 하나씩 있는 것으로 본다(`landing/plane_graph.py`의 원리).
+     - x와 y 평면은 같은 개념의 두 인스턴스다. node encoder, 관계 가중치, lateral readout을 공유한다.
+     - 공유가 같은 물리를 뜻하도록 y 평면의 부호를 맞췄다.
+       - 카메라 y = −body y이므로 영상 좌표는 −η를 쓴다.
+       - a_x는 +sin(pitch), a_y는 −sin(roll)을 따른다(scipy "xyz" ENU/FLU 추력 방향). 각속도도 같은 규칙이다.
+     - FOV 비대칭(90° 대 73.7°)은 다른 가중치가 아니라 정규화된 영상 좌표와 margin 값으로 들어간다.
+  3. **등변성(translation equivariance에 해당):** 개념마다 두 거울 반사에 대한 parity를 선언한다(`PLANE_ROLES`, `MARGINS`, `SHARED_ROLES`).
+     - 평면 개념은 그 평면의 거울에서 부호가 바뀐다. 평면의 view margin 쌍은 서로 바뀐다. heading은 두 거울 모두에서 바뀐다. 나머지는 불변이다.
+     - actor 평균은 네 반사에 대한 군 평균이다. 그래서 거울에 비친 상태에는 정확히 거울에 비친 명령이 나온다.
+     - **측정(§20.1):** 선언된 parity와 `build_features`에 반사된 세계를 넣었을 때의 결과는 view 항목을 빼고 완전히 같다(오차 0). view 항목은 등록된 주점(cx 320 대 픽셀 중심 319.5) 때문에 |Δ| ≤ 4.2e-3이다.
+  4. **학습되는 gate(LSTM gate에 해당):** 이 연구의 검증 지점들이 DescentEligibility에서 만난다.
+     - ContactCondition: 접지 판정의 속도·기울기·각속도 한계와 패드 반경.
+     - ViewGeometry: 카메라 footprint margin.
+     - ObservationQuality: vision age.
+     - DescentEligibility는 Q, C_x, C_y, O_x, O_y만 읽는다.
+     - 수직 평균은 `hold(Z) + sigmoid(gate(E)) · descend(Z)`다. gate는 학습되고 고정 규칙이 아니다(반쯤 열린 상태로 시작). 행동은 여전히 `a_max·tanh(z)` 하나다.
+- **그래프:** 노드 19개(공유 Q·V·H, 평면마다 G·M·A·P·O·C·L, 그리고 E·Z), 관계 8종(기존 5종 + gatesDescent, informsVertical, self), 간선 61개. 관계 층 하나를 공유하고 3홉을 돈다. embedding은 14다.
+- **예산:** actor 2,747로 등록된 R-GAT arm과 정확히 같고, 합계 4,016이다. critic(raw21)과 log_std는 공통이다.
+  - 군 평균이 상쇄하는 lateral 출력 bias는 두지 않았다. 죽은 parameter 0개를 검사로 확인한다.
+  - semantic_mlp_ppo와 같은 입력(phi44), 같은 예산, 구조만 다르다. 이것이 CNN 대 MLP 비교에 해당한다.
+- **경계:**
+  - ORL은 v1 계약의 등록 arm이 아니다. v1의 모든 hash와 등록은 그대로다(스냅샷 비교: IDENTICAL).
+  - checkpoint는 arm 이름의 ORL_HASH로 묶이며, 등록 arm과 서로 load되지 않는다.
+  - 시뮬레이터 truth는 정책에 들어가지 않는다. 한계값은 과제 상수다.
+  - guard: `tests/current_semantics/test_cs3d_orl.py`, 15개 테스트. 정확한 등변성, 물리 거울, 평면 정렬, 평면 교환, lateral 국소성, gate, 예산·죽은 parameter, aliasing을 본다.
+- **실험:**
+  - (a) `--stage orl-learnability`: pilot 7과 같은 G4 protocol(model seed 0·1, 600×12, 같은 기준)이다. 실행 중이다(`orl/orl_learnability.log`).
+  - (b) `orl-development/1`(`config/current_semantics/orl_development_v1.yaml`, `orl_development.py`): development/1에 짝지은 arm이다.
+    - 주 비교는 ORL − semantic_mlp_ppo의 열 칸 평균 성공률이고, 95 % t-구간으로 판정한다.
+    - 부차 비교는 raw, untyped, R-GAT와의 비교다.
+    - 규칙은 학습 전에 코드로 고정했다. (a)가 같은 ORL_HASH로 통과해야만 `register-orl-development`가 등록된다.
+- **선택의 근거와 한계:**
+  - 등변성과 평면 공유는 물리에서 오는 정확한, 혹은 근사적인 대칭이다. 그래서 정답 함수를 배제하지 않는다.
+  - descent gate와 lateral 국소성은 *가설*이다. 축 간 결합(추력 공유, 2D 패드 운동)이 중요하다면 비용이 될 수 있다.
+  - 세 가지 bias를 한 번에 넣었으므로 개별 기여는 분리되지 않는다. 필요하면 하나씩 뺀 ablation으로 잰다.

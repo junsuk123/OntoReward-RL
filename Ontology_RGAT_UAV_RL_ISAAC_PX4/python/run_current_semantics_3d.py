@@ -22,14 +22,18 @@ from ontology_rgat.current_semantics.experiment import (ARTIFACTS, DEFAULT_RUN_R
                                                        fixture_checks,
                                                        gate_table, isaac_eval_state, owned,
                                                        refusal_reasons, report_states,
-                                                       resolved_plan, run_smoke, write_json)
+                                                       resolved_plan, run_root_for, run_smoke,
+                                                       write_json)
 
 
 ISAAC_DEVELOPMENT_STAGES = ("register-isaac-development", "isaac-development")
+RELATION_SHUFFLE_STAGES = ("register-relation-shuffle", "relation-shuffle")
+ORL_STAGES = ("orl-learnability", "register-orl-development", "orl-develop")
 STAGES = ("audit", "fixtures", "smoke", "coupling", "learnability", "isaac-eval",
           "isaac-trace", "report", "dashboard", *DEVELOPMENT_STAGES,
-          *ISAAC_DEVELOPMENT_STAGES, *REFUSED_STAGES)
-FLYING_STAGES = ("isaac-eval", "isaac-trace", "isaac-development")
+          *ISAAC_DEVELOPMENT_STAGES, "isaac-handover-fix", *RELATION_SHUFFLE_STAGES,
+          *ORL_STAGES, "monitor", *REFUSED_STAGES)
+FLYING_STAGES = ("isaac-eval", "isaac-trace", "isaac-development", "isaac-handover-fix")
 REFUSED_EXIT = 3
 
 
@@ -38,8 +42,10 @@ def build_parser() -> argparse.ArgumentParser:
                                      description=__doc__.splitlines()[0])
     parser.add_argument("--stage", required=True, choices=STAGES)
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG_PATH)
-    parser.add_argument("--run-root", type=Path, default=DEFAULT_RUN_ROOT,
-                        help="relative paths resolve against the launch directory")
+    parser.add_argument("--run-root", type=Path, default=None,
+                        help="default: the config's task root (task v5 "
+                             f"{DEFAULT_RUN_ROOT.name}, task v6 {DEFAULT_RUN_ROOT.name}_task6); "
+                             "relative paths resolve against the launch directory")
     parser.add_argument("--dry-run", action="store_true",
                         help="print the resolved plan; create nothing")
     parser.add_argument("--seed", type=int, help="smoke only (default 0)")
@@ -75,8 +81,10 @@ def _validate(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None
     flies = args.backend == "isaac" or args.stage in FLYING_STAGES
     if (args.pairs is not None) != (args.stage == "isaac-trace"):
         parser.error("--pairs is required by, and only by, --stage isaac-trace")
-    if args.plan is not None and args.stage not in DEVELOPMENT_STAGES:
-        parser.error("--plan applies to --stage register-development/develop only")
+    if args.plan is not None and args.stage not in (*DEVELOPMENT_STAGES, "isaac-handover-fix",
+                                                    *RELATION_SHUFFLE_STAGES, *ORL_STAGES[1:]):
+        parser.error("--plan applies to --stage register-development/develop/"
+                     "isaac-handover-fix/register-relation-shuffle/relation-shuffle only")
     if args.checkpoint_root is not None and args.stage != "isaac-trace":
         parser.error("--checkpoint-root applies to --stage isaac-trace only")
     if not flies and (args.headless or args.reset_recoveries is not None or args.allow_isaac):
@@ -151,9 +159,9 @@ def _pairs(text: str, config=None, models=()) -> list[tuple[str, int]]:
 def _development(args, config_path: Path, root: Path) -> int:
     """register-development / develop (guide 11): local plant only, never Isaac."""
     from ontology_rgat.current_semantics.development import (
-        DEFAULT_DEVELOPMENT_PATH, load_development, register, resolved, run_development)
-    plan_path = (args.plan or DEFAULT_DEVELOPMENT_PATH).expanduser().resolve()
+        default_plan_path, load_development, register, resolved, run_development)
     config = load_config(config_path)
+    plan_path = (args.plan or default_plan_path(config)).expanduser().resolve()
     plan = load_development(plan_path, config)
     if args.dry_run:
         _print(resolved_plan(config_path, args.stage, root, dry_run=True,
@@ -188,11 +196,224 @@ def _development(args, config_path: Path, root: Path) -> int:
     return status
 
 
+def _relation_shuffle(args, config_path: Path, root: Path) -> int:
+    """register-relation-shuffle / relation-shuffle (guide 8.4, status doc 19): a fifth,
+    relation-shuffled R-GAT arm of development/1; local plant only, never Isaac."""
+    from ontology_rgat.current_semantics import relation_control as rc
+    config = load_config(config_path)
+    plan_path = (args.plan or rc.DEFAULT_PLAN_PATH).expanduser().resolve()
+    try:
+        plan, development = rc.load_plan(plan_path, config)
+    except ValueError as exc:
+        _print({"stage": args.stage, "status": "REFUSED", "dry_run": args.dry_run,
+                "reason": str(exc)})
+        return REFUSED_EXIT
+    if args.dry_run:
+        _print(resolved_plan(config_path, args.stage, root, dry_run=True,
+                             extra={"plan_file": str(plan_path),
+                                    **rc.resolved(plan, development, config),
+                                    "blocked_by": rc.base_blocker(config, development, root),
+                                    "will_write": ([str(root / rc.REGISTRATION)]
+                                                   if args.stage == "register-relation-shuffle"
+                                                   else [str(root / rc.RESULT),
+                                                         str(root / rc.OUT_DIR)])}))
+        return 0
+    with owned(root):
+        if args.stage == "register-relation-shuffle":
+            status, payload = rc.register(config_path, plan_path, root)
+            path = root / rc.REGISTRATION
+            if payload.get("status") == "REGISTERED":
+                write_json(path, payload)
+        else:
+            status, payload = rc.run(config_path, plan_path, root,
+                                     log=lambda line: print(line, flush=True))
+            path = root / rc.RESULT
+            if payload.get("status") != "REFUSED":
+                write_json(path, payload)
+    if payload.get("status") in ("REFUSED", "ALREADY_REGISTERED"):
+        _print({k: v for k, v in payload.items() if k in ("stage", "status", "reason",
+                                                           "plan_hash")})
+        return status
+    print(f"{args.stage}: wrote {path} (exit {status})")
+    return status
+
+
+def _orl(args, config_path: Path, root: Path) -> int:
+    """orl-learnability (status doc 20): the G4 learnability protocol of this config with
+    the ORL arm, in ``<root>/orl`` under its own lock; local plant only."""
+    from ontology_rgat.current_semantics import orl
+    from ontology_rgat.current_semantics.pilot import run_pilot
+    out = root / "orl"
+    config = load_config(config_path)
+    if args.stage != "orl-learnability":
+        return _orl_development(args, config_path, root)
+    path = out / "orl_learnability.json"
+    if args.dry_run:
+        _print(resolved_plan(config_path, args.stage, root, dry_run=True, extra={
+            "arm": orl.ORL_ARM, "orl_hash": orl.ORL_HASH, "spec": orl.spec_dict(),
+            "model_seeds": list(config.g4.model_seeds), "updates": config.g4.updates,
+            "episodes_per_update": config.g4.episodes_per_update,
+            "will_write": [str(path), str(out / "g4_pilot")], "trains": True,
+            "starts_isaac": False}))
+        return 0
+    out.mkdir(parents=True, exist_ok=True)
+    with owned(out):
+        report = run_pilot(config_path, out / "g4_pilot", arm=orl.ORL_ARM,
+                           log=lambda line: print(line, flush=True))
+        report["orl"] = {"hash": orl.ORL_HASH, "spec": orl.spec_dict()}
+        write_json(path, report)
+    print(f"{args.stage}: wrote {path} (learnability_passed {report['learnability_passed']})")
+    return 0
+
+
+def _orl_development(args, config_path: Path, root: Path) -> int:
+    """register-orl-development / orl-develop (status doc 20): ORL as a paired arm of
+    development/1; local plant only, in ``<root>/orl`` under its own lock."""
+    from ontology_rgat.current_semantics import orl_development as od
+    config = load_config(config_path)
+    plan_path = (args.plan or od.DEFAULT_PLAN_PATH).expanduser().resolve()
+    try:
+        plan, development = od.load_plan(plan_path, config)
+    except ValueError as exc:
+        _print({"stage": args.stage, "status": "REFUSED", "dry_run": args.dry_run,
+                "reason": str(exc)})
+        return REFUSED_EXIT
+    out = root / od.OUT
+    if args.dry_run:
+        _print(resolved_plan(config_path, args.stage, root, dry_run=True, extra={
+            "plan_file": str(plan_path), **od.resolved(plan, development, config),
+            "blocked_by": od.blocker(config, development, root),
+            "will_write": ([str(out / od.REGISTRATION)] if args.stage == od.STAGES[0]
+                           else [str(out / od.RESULT), str(out / "development")])}))
+        return 0
+    out.mkdir(parents=True, exist_ok=True)
+    with owned(out):
+        if args.stage == od.STAGES[0]:
+            status, payload = od.register(config_path, plan_path, root)
+            path = out / od.REGISTRATION
+            if payload.get("status") == "REGISTERED":
+                write_json(path, payload)
+        else:
+            status, payload = od.run(config_path, plan_path, root,
+                                     log=lambda line: print(line, flush=True))
+            path = out / od.RESULT
+            if payload.get("status") != "REFUSED":
+                write_json(path, payload)
+    if payload.get("status") in ("REFUSED", "ALREADY_REGISTERED"):
+        _print({k: v for k, v in payload.items() if k in ("stage", "status", "reason",
+                                                           "plan_hash")})
+        return status
+    print(f"{args.stage}: wrote {path} (exit {status})")
+    return status
+
+
+def _fly_development_models(config, plan, dev_plan, root: Path, out: Path, *, headless: bool,
+                            reset_recoveries: int, resume: bool, order=None,
+                            label: str = "isaac-development"):
+    """The development models on an owned Isaac/PX4 stack (live_stack: flight lock, refuses
+    an already-running Isaac, confirmed stop on exit), one flight and one backend wrapper
+    per condition.  Returns (idev.run's record, the flight)."""
+    from dataclasses import asdict
+    from ontology_rgat.current_semantics import development as dev
+    from ontology_rgat.current_semantics import isaac_development as idev
+    from ontology_rgat.current_semantics.backend import (CurrentSpatialBackend,
+                                                         make_isaac_backend)
+    from ontology_rgat.spatial.runtime_contract import deployment_profile
+    from run_spatial_pipeline import live_stack
+    profile = Path(deployment_profile("spatial-reference/12")["path"])
+    stack_root = out / "isaac_stack"
+    stack_root.mkdir(parents=True, exist_ok=True)
+    wrappers: list = []
+
+    def make(cell):  # one Isaac flight, one wrapper per condition
+        factors, dropout = dev.cell_conditions(config, asdict(cell), dev_plan.dropout_start_s)
+        if not wrappers:
+            backend = make_isaac_backend(config, allow_isaac=True, split=cell.split,
+                                         factors=factors, dropout=dropout)
+        else:
+            backend = CurrentSpatialBackend(wrappers[0].flight, config, name="isaac_v12",
+                                            scientific=False, split=cell.split,
+                                            factors=factors, dropout=dropout)
+        wrappers.append(backend)
+        return backend
+
+    with live_stack(stack_root, adopt=False, headless=headless,
+                    schema="spatial-reference/12",
+                    reset_recoveries=reset_recoveries, profile_path=profile):
+        try:
+            flown = idev.run(config, plan, dev_plan, root, make, out,
+                             log=lambda line: print(line, flush=True),
+                             resume=resume, order=order, label=label)
+        finally:
+            error = None
+            for backend in sorted(wrappers, key=lambda w: not w.active):
+                try:
+                    backend.close()
+                except Exception as exc:  # keep closing; report the first failure
+                    error = error or exc
+            if error is not None:
+                raise error
+    return flown, (wrappers[0].flight if wrappers else None)
+
+
+def _isaac_handover_fix(args, config_path: Path, root: Path) -> int:
+    """isaac-handover-fix (status doc 16): identical isaac-development/1 cases re-flown after
+    the handover-kick fix, registered (cases, recorded verdicts, checkpoints, Isaac source)
+    before the first episode flies, judged against the plan's criteria."""
+    from ontology_rgat.current_semantics import isaac_handover_fix as fix
+    plan_path = (args.plan or fix.DEFAULT_PATH).expanduser().resolve()
+    problem, ctx = fix.prepare(config_path, plan_path, root)
+    problem = problem or fix.check_registration(ctx, root)
+    registration, result, out_dir = fix.files(fix.load_plan(plan_path).protocol)
+    previous = root / result
+    if not problem and previous.exists() and json.loads(
+            previous.read_text(encoding="utf-8")).get("complete"):
+        problem = f"this protocol's flight is complete ({previous})"
+    if problem:
+        _print({"stage": args.stage, "status": "REFUSED", "reason": problem})
+        return REFUSED_EXIT
+    out = root / out_dir
+    cases = ctx["cases"]
+    extra = {"plan_file": str(plan_path), "plan": ctx["plan"].to_dict(),
+             "plan_hash": ctx["plan_hash"], "out_dir": str(out),
+             "cases": [f"{c} {s} {k}: before {ctx['before'][(c, s, k)]['status']}, "
+                       f"local {ctx['local'][(c, s, k)]['status']}" for c, s, k in cases],
+             "episodes": len(cases),
+             "recorded_success": {
+                 "before": sum(ctx["before"][c]["status"] == "SUCCESS" for c in cases),
+                 "local": sum(ctx["local"][c]["status"] == "SUCCESS" for c in cases)},
+             "registered": (root / registration).exists(),
+             "resume": (out / "episodes.jsonl").exists(),
+             "starts_owned_stack": True, "adopts_running_isaac": False,
+             "headless": args.headless,
+             "reset_recoveries": 2 if args.reset_recoveries is None else args.reset_recoveries}
+    if args.dry_run:
+        _print(resolved_plan(config_path, args.stage, root, dry_run=True, extra=extra))
+        return 0
+    with owned(root):
+        if not extra["registered"]:
+            write_json(root / registration, fix.registration(ctx, plan_path))
+        flown, flight = _fly_development_models(
+            ctx["config"], ctx["reference"], ctx["dev_plan"], root, out,
+            headless=args.headless, reset_recoveries=extra["reset_recoveries"],
+            resume=extra["resume"], order=cases, label=args.stage)
+        summary = fix.summarize(ctx["plan"], cases, flown["rows"], ctx["before"],
+                                ctx["local"], out / "traces")
+        payload = {"schema_id": fix.SCHEMA_ID, "stage": args.stage,
+                   "protocol": ctx["plan"].protocol,
+                   "plan_hash": ctx["plan_hash"], "backend": getattr(flight, "name", None),
+                   "profile_sha256": getattr(flight, "profile_sha256", None),
+                   "stopped": flown["stopped"], "interruptions": flown["interruptions"],
+                   "wall_s": flown["wall_s"], **summary}
+        write_json(previous, payload)
+    print(f"{args.stage}: wrote {previous} (fix_verified {payload['fix_verified']})")
+    return 0 if payload["complete"] else 1
+
+
 def _isaac_development(args, config_path: Path, root: Path) -> int:
     """register-isaac-development / isaac-development (guide 11.6): every development model
     on the registered Isaac cases, after a PASSED development gate, with a paired local
     reference on the identical cases."""
-    from dataclasses import asdict
     from ontology_rgat.current_semantics import development as dev
     from ontology_rgat.current_semantics import isaac_development as idev
     config = load_config(config_path)
@@ -235,10 +456,6 @@ def _isaac_development(args, config_path: Path, root: Path) -> int:
     if args.dry_run:
         _print(resolved_plan(config_path, args.stage, root, dry_run=True, extra=extra))
         return 0
-    from ontology_rgat.current_semantics.backend import (CurrentSpatialBackend,
-                                                         make_isaac_backend)
-    from ontology_rgat.spatial.runtime_contract import deployment_profile
-    from run_spatial_pipeline import live_stack
     with owned(root):
         out.mkdir(parents=True, exist_ok=True)
         local_path = out / idev.LOCAL_REFERENCE
@@ -250,41 +467,10 @@ def _isaac_development(args, config_path: Path, root: Path) -> int:
             local = idev.local_reference(config_path, plan, dev_plan, root)
             local_path.write_text("".join(json.dumps(r, allow_nan=False) + "\n" for r in local),
                                   encoding="utf-8")
-        profile = Path(deployment_profile("spatial-reference/12")["path"])
-        stack_root = out / "isaac_stack"
-        stack_root.mkdir(parents=True, exist_ok=True)
-        wrappers: list = []
-
-        def make(cell):  # one Isaac flight, one wrapper per condition
-            factors, dropout = dev.cell_conditions(config, asdict(cell),
-                                                   dev_plan.dropout_start_s)
-            if not wrappers:
-                backend = make_isaac_backend(config, allow_isaac=True, split=cell.split,
-                                             factors=factors, dropout=dropout)
-            else:
-                backend = CurrentSpatialBackend(wrappers[0].flight, config, name="isaac_v12",
-                                                scientific=False, split=cell.split,
-                                                factors=factors, dropout=dropout)
-            wrappers.append(backend)
-            return backend
-
-        with live_stack(stack_root, adopt=False, headless=extra["headless"],
-                        schema="spatial-reference/12",
-                        reset_recoveries=extra["reset_recoveries"], profile_path=profile):
-            try:
-                flown = idev.run(config, plan, dev_plan, root, make, out,
-                                 log=lambda line: print(line, flush=True),
-                                 resume=extra["resume"])
-            finally:
-                error = None
-                for backend in sorted(wrappers, key=lambda w: not w.active):
-                    try:
-                        backend.close()
-                    except Exception as exc:  # keep closing; report the first failure
-                        error = error or exc
-                if error is not None:
-                    raise error
-        flight = wrappers[0].flight if wrappers else None
+        flown, flight = _fly_development_models(config, plan, dev_plan, root, out,
+                                                headless=extra["headless"],
+                                                reset_recoveries=extra["reset_recoveries"],
+                                                resume=extra["resume"])
         payload = idev.report(config, plan, dev_plan, flown,
                               backend=getattr(flight, "name", None),
                               profile_sha256=getattr(flight, "profile_sha256", None),
@@ -325,10 +511,31 @@ def main(argv=None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     _validate(parser, args)
-    root = args.run_root.expanduser()
-    root = root if root.is_absolute() else Path.cwd() / root
     config_path = args.config.expanduser().resolve()
+    requested = None if args.run_root is None else args.run_root.expanduser()
+    if requested is not None and not requested.is_absolute():
+        requested = Path.cwd() / requested
+    try:
+        root = run_root_for(load_config(config_path), requested)
+    except ValueError as exc:
+        parser.error(str(exc))
 
+    if args.stage == "monitor":  # read-only: every task root, process and log; no lock
+        from ontology_rgat.current_semantics.monitor import RESULTS, serve as serve_monitor
+        if args.dry_run:
+            _print({"stage": "monitor", "dry_run": True, "reads": str(RESULTS),
+                    "serves": "http://127.0.0.1:8780/ (next free port up to 8799)",
+                    "writes": [], "trains": False, "starts_isaac": False})
+            return 0
+        server, url = serve_monitor(background=False)
+        print(f"monitor: {url} (read-only view of {RESULTS}; Ctrl+C to stop)", flush=True)
+        try:
+            server.serve_forever()
+        except KeyboardInterrupt:
+            pass
+        finally:
+            server.server_close()
+        return 0
     if args.stage == "dashboard":  # read-only: no lock, no gate, never trains or flies
         from ontology_rgat.current_semantics.dashboard import serve
         if args.dry_run:
@@ -360,6 +567,10 @@ def main(argv=None) -> int:
                     "refusal_reasons": refusal_reasons(gates)})
             return REFUSED_EXIT
         return _development(args, config_path, root)
+    if args.stage in RELATION_SHUFFLE_STAGES:
+        return _relation_shuffle(args, config_path, root)
+    if args.stage in ORL_STAGES:
+        return _orl(args, config_path, root)
     if args.stage in FLYING_STAGES and not args.allow_isaac:
         _print({"stage": args.stage, "status": "REFUSED", "allow_isaac": False,
                 "reason": "the Isaac evaluation starts an owned Isaac Sim + PX4 stack and runs "
@@ -368,6 +579,8 @@ def main(argv=None) -> int:
         return REFUSED_EXIT
     if args.stage in ISAAC_DEVELOPMENT_STAGES:
         return _isaac_development(args, config_path, root)
+    if args.stage == "isaac-handover-fix":
+        return _isaac_handover_fix(args, config_path, root)
     if args.stage == "coupling" and args.backend == "isaac" and not args.allow_isaac:
         _print({"stage": "coupling", "backend": "isaac", "status": "REFUSED",
                 "allow_isaac": False,

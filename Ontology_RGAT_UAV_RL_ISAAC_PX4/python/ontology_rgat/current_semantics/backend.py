@@ -685,13 +685,15 @@ class CurrentSpatialBackend:
             info["evaluation_dropout_s"] = None if self.blackout is None else list(self.blackout)
         if self.randomization is not None:  # evaluator-only record of the randomisation
             info["training_randomization"] = {
-                "own_state_error_m_s": _triple(self.error[0]), "tau_s": self.error[1],
+                "own_state_error_m_s": None if self.error is None else _triple(self.error[0]),
+                "tau_s": None if self.error is None else self.error[1],
                 "vision_blackout_s": None if self.blackout is None else list(self.blackout)}
         return observation, info
 
     def _draw_error(self, t0: float) -> tuple[np.ndarray, float, float] | None:
-        """contracts.HandoverOwnStateError for this episode, from the episode seed."""
-        if self.randomization is None:
+        """contracts.HandoverOwnStateError for this episode, from the episode seed; None
+        from g4-pilot/8 on, which deleted it (it imitated the Isaac IMU wrap bug)."""
+        if self.randomization is None or self.randomization.handover_own_state_error is None:
             return None
         spec = self.randomization.handover_own_state_error
         rng = np.random.default_rng([self.seed, 0x0E5E])

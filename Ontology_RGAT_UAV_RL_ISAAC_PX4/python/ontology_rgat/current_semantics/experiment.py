@@ -29,6 +29,27 @@ from .contracts import (ARMS, DESIGN_PARAMETER_TOTALS, NODE_ORDER, PROJECT_ROOT,
 
 REPOSITORY_ROOT = PROJECT_ROOT.parent
 DEFAULT_RUN_ROOT = PROJECT_ROOT / "results" / "current_semantics_3d" / SCHEMA_ID
+# Each task version owns one run root: g4_pilot.json, the development registration and
+# every Isaac flight in a root were judged under that root's task, so a config of
+# another task may never write there (task v6: spatial_view_contact_v2.yaml).
+TASK_RUN_ROOTS = MappingProxyType({
+    "spatial-current-task/5": DEFAULT_RUN_ROOT,
+    "spatial-current-task/6": DEFAULT_RUN_ROOT.with_name(f"{SCHEMA_ID}_task6"),
+    "spatial-current-task/7": DEFAULT_RUN_ROOT.with_name(f"{SCHEMA_ID}_task7")})
+
+
+def run_root_for(config: CurrentSemanticsConfig, requested: Path | None) -> Path:
+    """``requested`` (or the config's own root); refuses another task's registered root."""
+    own = TASK_RUN_ROOTS[config.task.version]
+    if requested is None:
+        return own
+    root = requested.resolve()
+    for task, other in TASK_RUN_ROOTS.items():
+        if task != config.task.version and root == other.resolve():
+            raise ValueError(f"{root} holds {task} results; {config.task.version} runs in {own}")
+    return requested
+
+
 LOCK_NAME = "run.lock"
 ARTIFACTS = MappingProxyType({"audit": "audit.json", "fixtures": "fixtures.json",
                               "smoke": "smoke.json", "coupling": "coupling_local.json",

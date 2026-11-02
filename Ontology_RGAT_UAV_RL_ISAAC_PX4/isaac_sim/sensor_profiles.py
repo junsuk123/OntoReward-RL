@@ -128,6 +128,21 @@ def vn100_pegasus_config(data: dict[str, Any], physics_dt: float) -> dict[str, A
     }
 
 
+def saturate_16bit(values, full_scale: float):
+    """Saturate like a 16-bit sensor register: [-32768, +32767] counts of full_scale/32768.
+
+    PX4 SITL packs HIL_SENSOR accel/gyro into int16 FIFO samples at exactly
+    16 g / 32768 and 2000 deg/s / 32768 per count (SimulatorMavlink.cpp). A value
+    clipped at +full_scale becomes +32768 counts, which wraps to -32768: a sensor
+    pinned at +16 g reached the EKF as -16 g. That inverted the handover kick on
+    358 of 700 recorded current-semantics Isaac episodes (17 % landed, 112 of the
+    115 handover tilts). A real register stops one count short of +full scale.
+    """
+    import numpy as np
+
+    return np.clip(values, -full_scale, full_scale * (32767.0 / 32768.0))
+
+
 def validate_zed2i_mono(camera: dict[str, Any]) -> None:
     """Validate the selected ZED 2i single-eye operating point."""
     model = str(camera.get("model", ZED2I_MONO_MODEL)).lower()

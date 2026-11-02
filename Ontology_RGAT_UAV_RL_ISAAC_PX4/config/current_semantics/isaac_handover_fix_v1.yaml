@@ -1,0 +1,38 @@
+# spatial_current_semantics_v1: the handover-kick fix, flown (status doc 16).
+# `./run.sh current-semantics-3d --stage isaac-handover-fix --allow-isaac`, on the user's
+# approval ("go", 2026-10-31).
+#
+# isaac-development/1 wrote the seeded handover kick in ONE 4 ms physics tick; the VN-100
+# model clipped it at 16 g and PX4 SITL's int16 FIFO wrapped +16 g to -16 g, so on 16 of
+# its 30 environments PX4's EKF started with the WRONG-SIGN own velocity
+# (isaac_sim/handover_perturbation.py).  This re-flies identical cases of that flight --
+# same environment seeds, conditions and registered checkpoints, same deterministic mode --
+# after the fix, so the fix is the one thing that differs, and pairs every verdict with the
+# pre-fix Isaac verdict and the local reference already recorded for the same case.
+#
+# Cases, by a rule fixed before flying, never by outcome (the loader recomputes it): the
+# first `environments` environments of isaac-development/1, in seed order, whose kick
+# wrapped (FRD specific force of the one-tick step >= the accelerometer range on an axis);
+# environment i meets all four arms of training seed training_seeds[i % 5], so every one of
+# the 20 development models flies twice.  Recorded for exactly these 40 cases before the
+# fix: Isaac 7 SUCCESS, 17 handover tilts; local reference 36 SUCCESS; PX4's first-decision
+# own-velocity change had the kick's sign on every large axis in 0 of 40.
+#
+# Criteria, judged mechanically by isaac_handover_fix.summarize; ALL must hold for the fix
+# to count as verified:
+#   first_decision_*  PX4's own-velocity change over the first decision against the seeded
+#                     kick rotated by the entry yaw.  Over the 80 pre-fix episodes whose kick
+#                     the IMU could measure: per-axis |error| median 0.041 m/s, p90 0.108,
+#                     sign right 80/80; over the 320 wrapped ones: median 0.353, 0/320.
+#   handover_tilt_*   SAFETY_ENVELOPE_VIOLATION within the window after handover.
+#   success_min       landings out of the 40 (local reference 36, pre-fix Isaac 7).
+protocol: isaac-handover-fix/1
+reference_protocol: isaac-development/1
+mode: deterministic
+environments: 10
+criteria:
+  first_decision_sign_min_m_s: 0.3
+  first_decision_median_error_max_m_s: 0.08
+  handover_tilt_window_s: 1.5
+  handover_tilt_max: 2
+  success_min: 30

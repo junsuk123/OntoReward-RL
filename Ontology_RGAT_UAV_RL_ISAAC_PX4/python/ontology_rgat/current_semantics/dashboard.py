@@ -101,10 +101,15 @@ def _plan(root: Path, plan_path: Path | None):
     plan_dict = (registration or {}).get("plan")
     plan_obj = None
     try:
-        from .contracts import load_config
-        from .development import DEFAULT_DEVELOPMENT_PATH, load_development
-        path = Path((registration or {}).get("plan_file") or plan_path or DEFAULT_DEVELOPMENT_PATH)
-        plan_obj = load_development(path, load_config())
+        from .contracts import TASK_CONFIG_PATHS, load_config
+        from .development import DEVELOPMENT_PATHS, load_development
+        from .experiment import TASK_RUN_ROOTS
+        # The root belongs to one task; its config and default plan follow from it.
+        task = next((t for t, r in TASK_RUN_ROOTS.items()
+                     if r.resolve() == Path(root).resolve()), "spatial-current-task/5")
+        path = Path((registration or {}).get("plan_file") or plan_path
+                    or DEVELOPMENT_PATHS[task])
+        plan_obj = load_development(path, load_config(TASK_CONFIG_PATHS[task]))
         if plan_dict is None:
             plan_dict = plan_obj.to_dict()
     except Exception:  # noqa: BLE001 - the dashboard must render whatever exists

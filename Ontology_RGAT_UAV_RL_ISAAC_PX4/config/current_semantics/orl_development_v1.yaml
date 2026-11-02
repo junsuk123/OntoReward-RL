@@ -1,0 +1,14 @@
+# orl-development/1 (status doc 20): ORL -- the ontology as the policy's inductive bias
+# (python/ontology_rgat/current_semantics/orl.py) -- as a paired arm of development/1.
+# Registered by `./run.sh current-semantics-3d --stage register-orl-development` only
+# after the ORL G4 learnability pilot (`--stage orl-learnability`) passed under the same
+# ORL hash, and run (resumable, local plant only) by `--stage orl-develop`.
+# Primary: ORL minus semantic_mlp_ppo (same phi44, same budget, no structure) on the mean
+# success over the ten development/1 cells, 95 % t-interval over training seeds 10-14;
+# the rule is orl_development.RULE, hashed into the registration.
+protocol: orl-development/1
+base_protocol: development/1
+# The ORL spec this plan registers (orl.ORL_ARM = orl_ppo:<ORL_HASH[:16]>); a changed
+# ORL spec changes the arm and the plan no longer loads.
+arm: orl_ppo:eb68eb947a6a49a2
+workers: 16

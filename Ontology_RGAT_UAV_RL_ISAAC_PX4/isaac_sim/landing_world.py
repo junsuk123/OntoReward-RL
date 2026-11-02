@@ -67,6 +67,7 @@ SPATIAL_PROFILE_HASH = runtime_profile_hash(CONFIG)
 SPATIAL_SOURCE_HASH = runtime_source_hash(WORKSPACE)
 from sensor_profiles import isaac_runtime_profile
 from prearm_support import leveling_torque
+from handover_perturbation import perturbation_increments, perturbation_ticks
 
 RUNTIME = isaac_runtime_profile(CONFIG, ARGS.headless)
 
@@ -1405,6 +1406,7 @@ class LandingWorld:
         vehicle_cfg = MultirotorConfig()
         imu_cfg = vn100_pegasus_config(CONFIG, float(isaac_cfg["physics_dt"]))
         vehicle_cfg.sensors[1] = Vn100Imu(imu_cfg)
+        self.imu_accel_range_m_s2 = float(imu_cfg["accelerometer"]["measurement_range"])
         carb.log_info(
             "[imu] VectorNav VN-100: "
             f"hardware max={(CONFIG.get('imu') or {}).get('hardware_output_rate_hz', 800):g} Hz, "
@@ -1637,6 +1639,9 @@ class LandingWorld:
         self.domain_randomization = None
         self.domain_px4_gains = {}
         self.domain_initial_perturbation_pending = False
+        # Per-physics-tick (velocity, rate) increments of the handover kick, see
+        # handover_perturbation.py; drained by the physics callback.
+        self.domain_initial_perturbation_queue = []
         self.last_pad_contact = False
 
         # A live 3D view of the episode inside the simulator window: the two
@@ -1775,6 +1780,7 @@ class LandingWorld:
             sample_domain_randomization(req["seed"])
             if bool(domain_cfg.get("enabled", False)) else None)
         self.domain_initial_perturbation_pending = self.domain_randomization is not None
+        self.domain_initial_perturbation_queue = []
         self.domain_px4_gains = {}
         if self.domain_randomization is not None:
             self.domain_px4_gains = px4_gain_parameters(
@@ -2124,18 +2130,19 @@ class LandingWorld:
         if (self.policy_handover and not previous_handover
                 and self.domain_initial_perturbation_pending
                 and self.domain_randomization is not None):
-            state_now = self.vehicle.state
-            rotation = Rotation.from_quat(state_now.attitude)
-            velocity = (np.asarray(state_now.linear_velocity, dtype=float)
-                        + rotation.apply(
-                            self.domain_randomization.initial_velocity_m_s))
-            angular_rate = (np.asarray(state_now.angular_velocity, dtype=float)
-                            + self.domain_randomization.initial_angular_rate_rad_s)
-            self.vehicle.set_linear_velocity(velocity)
-            self.vehicle.set_angular_velocity(angular_rate)
+            # Queued, not written: one velocity step above the IMU range reached
+            # PX4 clipped and corrupted its EKF (handover_perturbation.py).
+            body_kick = np.asarray(self.domain_randomization.initial_velocity_m_s, dtype=float)
+            rotation = Rotation.from_quat(self.vehicle.state.attitude)
+            ticks = perturbation_ticks(body_kick, float(CONFIG["isaac"]["physics_dt"]),
+                                       self.imu_accel_range_m_s2)
+            self.domain_initial_perturbation_queue = perturbation_increments(
+                rotation.apply(body_kick),
+                self.domain_randomization.initial_angular_rate_rad_s, ticks)
             self.domain_initial_perturbation_pending = False
             carb.log_info(
-                "[domain-randomization] applied policy-handover velocity/rate perturbation")
+                "[domain-randomization] policy-handover velocity/rate perturbation "
+                f"over {ticks} physics tick(s)")
         # The gateway starts only after PX4 reports Ready for takeoff.  Its
         # first valid state therefore releases the cheap startup render loop
         # even for viewers such as run_metasejong_demo that do not reset first.
@@ -2368,6 +2375,12 @@ class LandingWorld:
 
     def _apply_wind(self, dt: float) -> None:
         state = self.vehicle.state
+        if self.domain_initial_perturbation_queue and self.policy_handover:
+            velocity_step, rate_step = self.domain_initial_perturbation_queue.pop(0)
+            self.vehicle.set_linear_velocity(
+                np.asarray(state.linear_velocity, dtype=float) + velocity_step)
+            self.vehicle.set_angular_velocity(
+                np.asarray(state.angular_velocity, dtype=float) + rate_step)
         wind, force_enu, force_body = self.wind.force(
             self.world.current_time, state.linear_velocity, state.attitude
         )

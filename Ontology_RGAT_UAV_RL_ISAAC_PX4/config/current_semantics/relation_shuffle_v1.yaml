@@ -1,0 +1,19 @@
+# relation-shuffle/1 (guide 8.4, status doc 19): does the SEMANTIC placement of the
+# R-GAT's relation names beat an arbitrary placement with the same architecture,
+# parameters, head and initialisation?  Registered by
+#   ./run.sh current-semantics-3d --stage register-relation-shuffle
+# and run (resumable, local plant only) by
+#   ./run.sh current-semantics-3d --stage relation-shuffle
+# It is a fifth arm of development/1 (task v5, spatial_view_contact_v1.yaml): the same
+# training seeds 10-14, training episodes, validation and evaluation environments, paired
+# by training seed with the stored development/1 typed and untyped models.  The rule,
+# the shuffle construction and the primary metric are fixed in relation_control.py
+# (RULE) and hashed into the registration; every declared shuffle is reported.
+protocol: relation-shuffle/1
+base_protocol: development/1
+# Two independent shuffles per training seed (ten graphs), so the spread between two
+# arbitrary placements of the same seed is measured next to typed - shuffled.
+shuffles_per_training_seed: 2
+# Shuffle seed = base + 10 * training seed + k (7200, 7201, 7210, ..., 7241).
+shuffle_seed_base: 7100
+workers: 16

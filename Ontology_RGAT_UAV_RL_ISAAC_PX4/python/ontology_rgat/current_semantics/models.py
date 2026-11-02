@@ -306,6 +306,19 @@ class CurrentActorCritic(nn.Module):
                 "critic": counts["critic"], "log_std": counts["log_std"], "total": total}
 
 
+def build_model(arm: str, config: CurrentSemanticsConfig, *, seed: int) -> CurrentActorCritic:
+    """A registered arm, the ORL arm (``orl``) or a relation-shuffle control arm
+    (``relation_control``); the name carries the ORL spec / shuffle hash, so a worker
+    rebuilds the same network from it and a checkpoint never binds to another."""
+    if arm in ARMS:
+        return CurrentActorCritic(arm, config, seed=seed)
+    if isinstance(arm, str) and arm.startswith("orl_ppo"):
+        from .orl import orl_model
+        return orl_model(arm, config, seed=seed)
+    from .relation_control import shuffled_model
+    return shuffled_model(arm, config, seed=seed)
+
+
 # ----------------------------------------------------------------- tensors
 
 def _read_only(array: np.ndarray) -> np.ndarray:

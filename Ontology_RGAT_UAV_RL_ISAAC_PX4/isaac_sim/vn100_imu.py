@@ -9,6 +9,8 @@ from pegasus.simulator.logic.rotations import rot_ENU_to_NED, rot_FLU_to_FRD
 from pegasus.simulator.logic.sensors import Sensor
 from pegasus.simulator.logic.sensors.geo_mag_utils import GRAVITY_VECTOR
 
+from sensor_profiles import saturate_16bit
+
 
 class Vn100Imu(Sensor):
     """IMU with VN-100 noise, bias, range and deterministic turn-on state."""
@@ -97,7 +99,11 @@ class Vn100Imu(Sensor):
             rot_ENU_to_NED * (Rotation.from_quat(state.attitude) * rot_FLU_to_FRD))
         self._state = {
             "orientation": attitude_frd_ned.as_quat(),
-            "angular_velocity": rot_FLU_to_FRD.apply(gyro),
-            "linear_acceleration": rot_FLU_to_FRD.apply(accel),
+            # Saturated in the FRD frame PX4 receives: its int16 FIFO wraps
+            # +full scale to -full scale (sensor_profiles.saturate_16bit).
+            "angular_velocity": saturate_16bit(
+                rot_FLU_to_FRD.apply(gyro), self._gyro_range),
+            "linear_acceleration": saturate_16bit(
+                rot_FLU_to_FRD.apply(accel), self._accel_range),
         }
         return self._state

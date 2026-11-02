@@ -40,6 +40,24 @@ import numpy as np
 from ..spatial.environment import LocalBackend
 
 SCENARIO_VERSION = "spatial-current-scenario/1"
+# /2 (task v6, 2026-11-01): the same draw, but ``held_out`` is one whole relative-
+# geometry class B - A (a cyclic shift).  development/1 measured /1's held-out
+# orientations as no harder than in-distribution for every arm: the task is close to
+# rotation-equivariant, so only B - A changes the control problem.  Pilot 8 held out
+# B = A (the pad fleeing), chosen by a rule declared before the probe
+# (results/current_semantics_3d/spatial_current_semantics_v1_task6/development_design/
+# relative_class_probe.txt), and failed the declared hardness rule (gap 4.7 pp); the
+# declared fallback, pilot 9, holds out B = A + 180 deg (the pad approaching).
+# /3 (task v7, 2026-11-02, user "a": make the tilt -> camera-axis coupling decide the
+# outcome).  Both held-out rules failed on the /12 geometry because the pad started
+# well inside the frame at walking pace (coupling screens 1-2 in results/.../
+# spatial_current_semantics_v1_task7/development_design): only a FAST pad starting near
+# the frame EDGE makes the class and the image axis matter (development/1 Raw, untrained
+# there: narrow-axis fleeing 0.39, wide-axis fleeing 0.60, approaching 0.84-0.90).  /3
+# keeps the draw of /1-/2 and adds the pad's initial speed (``CouplingScenario``); the
+# held-out set may be any balanced permutation.
+SCENARIO_VERSIONS = (SCENARIO_VERSION, "spatial-current-scenario/2",
+                     "spatial-current-scenario/3")
 SPLITS = ("in_distribution", "composition")
 _STREAM = 0x5CE0
 
@@ -77,6 +95,24 @@ class EpisodeScenario:
                 "heading_bin": self.heading_bin, "bearing_deg": math.degrees(self.bearing_rad),
                 "heading_deg": math.degrees(self.heading_rad),
                 "offset_radius_m": self.offset_radius_m}
+
+
+@dataclass(frozen=True)
+class CouplingScenario(CompositionScenario):
+    """/3: the /1-/2 draw plus the pad's initial speed v0 ~ U(pad_speed_m_s) in place of
+    the plant's U(0.3, 0.8) m/s (its CA phase a2/t1/t2 is the plant's).  A separate class,
+    so the /1-/2 contracts keep their exact field set and task hashes."""
+    pad_speed_m_s: tuple[float, float] = (0.3, 0.8)
+
+
+def pad_speed(spec: Any, seed: int, plant_v0: float, difficulty: float) -> float | None:
+    """/3's initial pad speed for this seed (None below /3).  Below difficulty 1 it is
+    blended with the plant's own curriculum-eased v0, exactly as the plant blends."""
+    speeds = getattr(spec, "pad_speed_m_s", None)
+    if speeds is None:
+        return None
+    drawn = float(np.random.default_rng([int(seed), _STREAM, 0x5B]).uniform(*speeds))
+    return drawn if difficulty >= 1.0 else (1 - difficulty) * plant_v0 + difficulty * drawn
 
 
 def wrap(angle: float) -> float:
@@ -138,6 +174,9 @@ def isaac_scenario(spec: CompositionScenario, seed: int, split: str,
                    factors: PlantFactors = PlantFactors()) -> tuple[EpisodeScenario, str]:
     """This episode's draw and the Isaac scenario name that carries it."""
     from ..spatial.scenarios import encode_current_omni
+    if getattr(spec, "pad_speed_m_s", None) is not None:
+        raise ValueError("scenario/3's initial pad speed is not carried by the Isaac scenario "
+                         "name yet (spatial_current_omni/1); extend pad_motion.py first")
     if factors.optical_noise_scale != 1.0:
         raise ValueError("the optical-noise factor is applied by the local plant only")
     drawn = draw(spec, seed, split)
@@ -209,6 +248,9 @@ class ScenarioLocalBackend(LocalBackend):
         self.position[:2] = self.pad[:2] - radius * np.array(
             [math.cos(drawn.bearing_rad), math.sin(drawn.bearing_rad)])
         self.direction = np.array([math.cos(drawn.heading_rad), math.sin(drawn.heading_rad), 0.0])
+        speed = pad_speed(self.scenario_spec, seed, self.v0, self.difficulty)
+        if speed is not None:
+            self.v0 = speed
         self.pad_velocity = self.direction * self.v0
         if self.factors.pad_acceleration_m_s2 is not None:
             self.a2 = pad_acceleration(seed, self.factors)

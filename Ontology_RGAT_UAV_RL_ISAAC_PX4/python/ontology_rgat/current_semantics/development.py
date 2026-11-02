@@ -32,6 +32,28 @@ from .contracts import (AUDITED_SEED_RANGES, DIAGNOSTIC_SEED_RANGES, PROJECT_ROO
 
 DEVELOPMENT_PROTOCOL = "development/1"
 DEFAULT_DEVELOPMENT_PATH = PROJECT_ROOT / "config" / "current_semantics" / "development_v1.yaml"
+# development/2 (2026-11-01) runs the same stage on task v6 (a held-out relative class,
+# no handover own-state error; spatial_view_contact_v2.yaml).  Each protocol belongs to
+# exactly one task, and each task's default plan is its own file.
+DEVELOPMENT_TASK = {"development/1": "spatial-current-task/5",
+                    "development/2": "spatial-current-task/6",
+                    "development/3": "spatial-current-task/7"}
+DEVELOPMENT_PATHS = {"spatial-current-task/5": DEFAULT_DEVELOPMENT_PATH,
+                     "spatial-current-task/6": DEFAULT_DEVELOPMENT_PATH.with_name(
+                         "development_v2.yaml"),
+                     "spatial-current-task/7": DEFAULT_DEVELOPMENT_PATH.with_name(
+                         "development_v3.yaml")}
+# Seeds a registered development plan has spent; no later plan may reuse them.
+# development/1: validation 992101-992124, training 20e6 + seed 10..14 * 1e6 + 600 x 12,
+# evaluation 50e6 + 5 seeds x 10 cells x 100; its Isaac evaluation 994101-994130.
+SPENT_DEVELOPMENT_SEEDS = (("development/1 validation", 992_101, 992_124),
+                           ("development/1 training", 30_000_000, 34_007_199),
+                           ("development/1 evaluation", 50_000_000, 50_409_099),
+                           ("isaac-development/1 environments", 994_101, 994_130))
+
+
+def default_plan_path(config: CurrentSemanticsConfig) -> Path:
+    return DEVELOPMENT_PATHS[config.task.version]
 REGISTRATION = "development_registration.json"
 RESULT = "development.json"
 CELLS = ("composition_id", "composition_ood", "motion_id", "motion_ood", "dropout_id",
@@ -136,8 +158,9 @@ def load_development(path: str | Path, config: CurrentSemanticsConfig) -> Develo
     data = _section(yaml.safe_load(Path(path).read_text(encoding="utf-8")),
                     ("protocol", "proposed_arm", "arms", "training_seeds", "train_seed_base",
                      "validation_seeds", "workers", "evaluation", "gates"), "development")
-    if data["protocol"] != DEVELOPMENT_PROTOCOL:
-        raise ValueError(f"development.protocol must be {DEVELOPMENT_PROTOCOL!r}")
+    if DEVELOPMENT_TASK.get(data["protocol"]) != config.task.version:
+        raise ValueError(f"development.protocol {data['protocol']!r} is not a development "
+                         f"protocol of {config.task.version} ({DEVELOPMENT_TASK})")
     if tuple(data["arms"]) != ARMS:
         raise ValueError(f"development.arms must be the four registered arms {ARMS}")
     if data["proposed_arm"] != "ontology_rgat_ppo":
@@ -196,7 +219,7 @@ def load_development(path: str | Path, config: CurrentSemanticsConfig) -> Develo
     gates = _section(data["gates"], tuple(DevelopmentGates.__dataclass_fields__),
                      "development.gates")
     plan = DevelopmentPlan(
-        protocol=DEVELOPMENT_PROTOCOL, proposed_arm="ontology_rgat_ppo", arms=ARMS,
+        protocol=data["protocol"], proposed_arm="ontology_rgat_ppo", arms=ARMS,
         training_seeds=_seeds(data["training_seeds"], "development.training_seeds"),
         train_seed_base=int(_number(data["train_seed_base"], "train_seed_base", low=0)),
         validation_seeds=_seeds(data["validation_seeds"], "development.validation_seeds"),
@@ -217,6 +240,8 @@ def _audit_seeds(plan: DevelopmentPlan, config: CurrentSemanticsConfig) -> None:
     used = [(name, first, last) for name, first, last, _ in AUDITED_SEED_RANGES]
     used += list(DIAGNOSTIC_SEED_RANGES)
     used += [("g4 pilot training", *_PILOT_SEEDS)]
+    if plan.protocol != DEVELOPMENT_PROTOCOL:
+        used += list(SPENT_DEVELOPMENT_SEEDS)
     taken = set(g4.validation_seeds) | set(g4.test_seeds) | set(config.g3.pilot_seeds) \
         | set(config.isaac_eval.seeds)
     if set(plan.training_seeds) & set(g4.model_seeds):

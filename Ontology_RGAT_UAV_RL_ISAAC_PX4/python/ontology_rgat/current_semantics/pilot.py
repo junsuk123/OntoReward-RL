@@ -36,8 +36,8 @@ def _init_worker(config_path: str) -> None:
 
 
 def _model(config: CurrentSemanticsConfig, arm: str, state: dict[str, Any]):
-    from .models import CurrentActorCritic
-    model = CurrentActorCritic(arm, config, seed=0)
+    from .models import build_model
+    model = build_model(arm, config, seed=0)
     model.load_state_dict(state)
     model.eval()
     return model
@@ -215,7 +215,7 @@ def train_seed(config: CurrentSemanticsConfig, config_path: Path, model_seed: in
                root: Path, pool: Any, *, log: Callable[[str], None],
                updates: int | None = None) -> dict[str, Any]:
     from .features import build_feature_batch
-    from .models import CurrentActorCritic, save_checkpoint
+    from .models import build_model, save_checkpoint
     from .ppo import PPOTrainer, build_batch
     from ..landing.terminal import REFERENCE_DISCOUNT_TAU_S
 
@@ -227,7 +227,7 @@ def train_seed(config: CurrentSemanticsConfig, config_path: Path, model_seed: in
     for path in (history, validation):
         path.unlink(missing_ok=True)
     torch.manual_seed(0)  # nothing should read it; models use private generators
-    model = CurrentActorCritic(g4.arm, config, seed=model_seed)
+    model = build_model(g4.arm, config, seed=model_seed)
     trainer = PPOTrainer(model, g4.ppo)
     generator = torch.Generator().manual_seed(1_000_003 + model_seed)
     features = lambda vectors: build_feature_batch(vectors, config)
@@ -284,8 +284,8 @@ def train_seed(config: CurrentSemanticsConfig, config_path: Path, model_seed: in
 
 
 def test_checkpoint(config: CurrentSemanticsConfig, path: Path, pool: Any) -> dict[str, Any]:
-    from .models import CurrentActorCritic, load_checkpoint
-    model = CurrentActorCritic(config.g4.arm, config, seed=0)
+    from .models import build_model, load_checkpoint
+    model = build_model(config.g4.arm, config, seed=0)
     meta = load_checkpoint(path, model, manifest=contract_manifest(config))
     state = {k: v.detach().clone() for k, v in model.state_dict().items()}
     return {"checkpoint": str(path), "update": meta["extra"].get("update"),
@@ -296,13 +296,18 @@ def test_checkpoint(config: CurrentSemanticsConfig, path: Path, pool: Any) -> di
 
 
 def run_pilot(config_path: Path, root: Path, *, log: Callable[[str], None] = print,
-              updates: int | None = None, workers: int | None = None) -> dict[str, Any]:
+              updates: int | None = None, workers: int | None = None,
+              arm: str | None = None) -> dict[str, Any]:
     """Train every registered model seed, test each selected checkpoint, judge G4.
 
     ``updates``/``workers`` overrides exist for tests only; a G4 verdict is
-    written only when the registered budget ran (``protocol_complete``).
+    written only when the registered budget ran (``protocol_complete``).  ``arm``
+    runs the same protocol for another arm (ORL, orl.py); the registered pilot is Raw.
     """
     config = load_config(config_path)
+    if arm is not None:
+        from dataclasses import replace
+        config = replace(config, g4=replace(config.g4, arm=arm))
     g4 = config.g4
     manifest = contract_manifest(config)
     # A ProcessPoolExecutor, not multiprocessing.Pool: a worker that dies raises
@@ -339,6 +344,6 @@ def run_pilot(config_path: Path, root: Path, *, log: Callable[[str], None] = pri
                            "sampled_success_min": criteria.sampled_success_min},
               "seeds": seeds_out, "tests": tests, "verdicts": verdicts,
               "learnability_passed": complete and all(v["passed"] for v in verdicts.values()),
-              "note": ("Raw PPO only, local plant; a learnability pilot, not a comparison "
+              "note": (f"{g4.arm} only, local plant; a learnability pilot, not a comparison "
                        "of arms and not an Isaac result")}
     return report

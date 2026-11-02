@@ -107,11 +107,18 @@ def blocker(config: CurrentSemanticsConfig, development, root: Path) -> str | No
             if not summary.exists() or not json.loads(
                     summary.read_text(encoding="utf-8")).get("complete"):
                 return f"{BASE_PROTOCOL} model {s}/{arm} is not complete"
+    return pilot_blocker(config, root)
+
+
+def pilot_blocker(config: CurrentSemanticsConfig, root: Path) -> str | None:
+    """None when ``<root>/orl/orl_learnability.json`` passed under this ORL spec and this
+    contract. ``pilot.run_pilot(arm=ORL_ARM)`` runs the registered G4 protocol with ``g4.arm``
+    replaced, so its ``g4_hash`` is the protocol's hash WITH the ORL arm, not the Raw one."""
     pilot = root / OUT / LEARNABILITY
     if not pilot.exists():
         return f"no ORL G4 learnability pilot ({pilot.name})"
     data = json.loads(pilot.read_text(encoding="utf-8"))
-    manifest = contract_manifest(config)
+    manifest = contract_manifest(replace(config, g4=replace(config.g4, arm=ORL_ARM)))
     if (data.get("orl") or {}).get("hash") != ORL_HASH or data.get("arm") != ORL_ARM:
         return "the ORL learnability pilot ran another ORL spec"
     if any(data.get("hashes", {}).get(k) != manifest[k]

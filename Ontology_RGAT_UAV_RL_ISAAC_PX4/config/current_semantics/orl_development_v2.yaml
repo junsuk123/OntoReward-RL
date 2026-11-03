@@ -1,0 +1,19 @@
+# orl-development/2 (status doc 20.5): ORL/2 -- orl/1 with a descent gate that can work
+# (python/ontology_rgat/current_semantics/orl.py) -- as a paired arm of development/1.
+# orl/1's gate was inert in every trained model (status doc 20.4); orl/2 makes the gate
+# the only path from quality/contact/view to the vertical command, fixes its meaning (an
+# open gate can only add descent) and gives it a coherent gradient from the first update.
+# Registered by `./run.sh current-semantics-3d --stage register-orl-development --plan
+# <abs path of this file>` only after the ORL/2 G4 learnability pilot
+# (`--stage orl-learnability`) passed under the same ORL hash AND its gate probe
+# (orl_development.GATE_PROBE) found every selected checkpoint's gate active; run
+# (resumable, local plant only) by `--stage orl-develop`, which probes every development
+# model's gate too.  Primary, as /1: ORL minus semantic_mlp_ppo on the mean success over
+# the ten development/1 cells, 95 % t-interval over training seeds 10-14; the rule is
+# orl_development.RULE_V2, hashed into the registration with the probe.
+protocol: orl-development/2
+base_protocol: development/1
+# The ORL spec this plan registers (orl.ARMS["orl/2"] = orl_ppo:<HASHES["orl/2"][:16]>);
+# a changed ORL spec changes the arm and the plan no longer loads.
+arm: orl_ppo:0d34c49904e549b3
+workers: 16

@@ -1,0 +1,21 @@
+# orl-development/3 (status doc 20.7): ORL/3 as a paired arm of development/1.  ORL/3 is
+# orl/2 with a closed gate that cannot descend
+# (python/ontology_rgat/current_semantics/orl.py).  orl/2's gate learned, but its hold term
+# settled on a ~0.2 m/s sink, so a closed gate still descended (status doc 20.6).  orl/3's
+# vertical command is -softplus(gain(Z)) * (drone_vz + sigmoid(gate(E)) * softplus(sink(Z))),
+# so a closed gate damps the own vertical velocity to 0 in every state.
+# Registered by `./run.sh current-semantics-3d --stage register-orl-development --plan
+# <abs path of this file>`.  Registration requires two things, both under the same ORL hash:
+# - the ORL/3 G4 learnability pilot (`--stage orl-learnability`) passed;
+# - gate probe 2 (orl_development.GATE_PROBES["orl/3"]) found every selected checkpoint's
+#   gate active: drop >= 0.2 AND a blind sink of at most 0.10 m/s.
+# Run (resumable, local plant only) by `--stage orl-develop`, which probes every development
+# model's gate too.  Primary, as /1: ORL minus semantic_mlp_ppo on the mean success over the
+# ten development/1 cells, with a 95 % t-interval over training seeds 10-14.  The rule is
+# orl_development.RULE_V3, hashed into the registration together with the probe.
+protocol: orl-development/3
+base_protocol: development/1
+# The ORL spec this plan registers (orl.ARMS["orl/3"] = orl_ppo:<HASHES["orl/3"][:16]>).
+# A changed ORL spec changes the arm, and the plan no longer loads.
+arm: orl_ppo:80a8e23a39e9b0f4
+workers: 16

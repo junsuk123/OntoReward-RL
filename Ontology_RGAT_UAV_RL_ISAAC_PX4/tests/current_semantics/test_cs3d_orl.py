@@ -9,6 +9,10 @@ only add descent, and quality/contact/view reaching the vertical command only th
 the gate; orl/1 stays buildable and frozen.  orl/3 (status doc 20.7) adds what a CLOSED
 gate means: a damper whose equilibrium is vz = 0 in every state, a gate gradient that is
 negative in every state, and a slow initial sink; orl/2 stays buildable and frozen.
+orl/4 (status doc 20.9) adds the view rule (view_rule.py): the task's lost-view weight on
+the policy's own estimate, multiplying the gate; it is orl/3 where the rule is open and the
+damper where it is closed, and orl/3 stays buildable and frozen.  The rule control
+(rule_control.py) and orl-development/4 are tested in test_cs3d_orl4.py.
 """
 from __future__ import annotations
 
@@ -183,7 +187,7 @@ def test_descent_passes_a_learned_gate_that_reads_only_its_concepts(version):
     with torch.no_grad():
         head.gate.bias.fill_(-50.0)
         closed = net(raw, flat, nodes)[:, 2]
-        if version == "orl/3":  # the damper alone: -softplus(gain(Z)) * drone_vz
+        if version in orl.DAMPED:  # the damper alone: -softplus(gain(Z)) * drone_vz
             gains = torch.stack([torch.nn.functional.softplus(head.hold(
                 net.encoder.node_states(flat @ net.group[g].T)[:, head.vertical_index]))
                 .squeeze(-1) for g in range(4)]).mean(0)
@@ -219,10 +223,12 @@ def test_orl1_is_frozen_and_stays_loadable():
     # orl-development/1's checkpoints and registration bind this hash (status doc 20.3-20.4).
     assert orl.ARMS["orl/1"] == "orl_ppo:eb68eb947a6a49a2"
     assert len(set(orl.ARMS.values())) == len(orl.ORL_VERSIONS)
-    assert orl.ORL_ARM == orl.ARMS[orl.CURRENT_VERSION] == orl.ARMS["orl/3"]
+    assert orl.ORL_ARM == orl.ARMS[orl.CURRENT_VERSION] == orl.ARMS["orl/4"]
     assert orl.ARMS["orl/3"] == "orl_ppo:80a8e23a39e9b0f4"  # the orl/3 pilot binds it
+    assert orl.ARMS["orl/4"] == "orl_ppo:af6f4fb0994a5042"  # orl-development/4 binds it
     assert len(orl.GRAPHS["orl/1"].edges) == 61
     assert len(orl.GRAPHS["orl/2"].edges) == len(orl.GRAPHS["orl/3"].edges) == 59
+    assert len(orl.GRAPHS["orl/4"].edges) == 59
     net = build_model(orl.ARMS["orl/1"], CONFIG, seed=0)
     assert net.version == "orl/1" and net.actor_head.hold.bias.abs().max() == 0
 
@@ -263,7 +269,7 @@ def test_orl2_gate_gets_a_coherent_gradient_from_the_first_update(seed):
     assert mean2.abs().max() < 5e-3 and mean1.abs().max() < 5e-3
 
 
-@pytest.mark.parametrize("version", ["orl/2", "orl/3"])
+@pytest.mark.parametrize("version", ["orl/2", "orl/3", "orl/4"])
 def test_orl2_an_open_gate_can_only_add_descent(version):
     net = model(6, version)
     raw, flat, nodes = batch(8, 64)
@@ -311,17 +317,19 @@ def test_vertical_terms_are_the_actor_vertical_mean():
             terms = net.vertical_terms(flat)
             torch.testing.assert_close(terms["hold"] + terms["gated"],
                                        net(raw, flat, nodes)[:, 2], atol=1e-6, rtol=0)
-        assert ((terms["gate"] > 0) & (terms["gate"] < 1)).all()
+        low = terms["gate"] >= 0 if version in orl.RULED else terms["gate"] > 0  # w may be 1
+        assert (low & (terms["gate"] < 1)).all()
 
 
 # ------------------------------------------------------------- orl/3's closed gate
 
+@pytest.mark.parametrize("version", orl.DAMPED)
 @pytest.mark.parametrize("seed", [0, 1, 2])
-def test_orl3_a_closed_gate_holds_altitude_in_every_state(seed):
+def test_orl3_a_closed_gate_holds_altitude_in_every_state(seed, version):
     """orl/2's closed gate left hold(Z), which learned a ~0.2 m/s sink (status doc 20.6).
     orl/3's closed gate is -gain(Z) * drone_vz: zero at vz = 0 and opposing vz, whatever
     the other 43 features and the trained weights are."""
-    net = model(seed, "orl/3")
+    net = model(seed, version)
     raw, flat, nodes = batch(20 + seed, 64)
     level, rising, sinking = flat.clone(), flat.clone(), flat.clone()
     level[:, INDEX["drone_vz"]] = 0.0
@@ -398,8 +406,12 @@ def test_the_orl1_registration_and_paths_did_not_move():
     plan, development = od.load_plan(od.DEFAULT_PLAN_PATHS["orl/2"], CONFIG)
     assert od.plan_hash(plan, development, CONFIG).startswith("c0d68961b9b5f1b6")
     assert od.probe_hash("orl/2").startswith("be8c22eee0bb0469")  # the orl/2 pilot's probe
+    plan, development = od.load_plan(od.DEFAULT_PLAN_PATHS["orl/3"], CONFIG)
+    assert od.plan_hash(plan, development, CONFIG).startswith("498a7b31280c6382")
+    assert od.probe_hash("orl/3").startswith("722c0edc0ee1800f")  # the orl/3 pilot's probe
     assert od.probe_hash("orl/3") != od.probe_hash("orl/2")
-    assert dict(od.OUTS) == {"orl/1": "orl", "orl/2": "orl2", "orl/3": "orl3"}
+    assert dict(od.OUTS) == {"orl/1": "orl", "orl/2": "orl2", "orl/3": "orl3",
+                             "orl/4": "orl4"}
     assert od.DEFAULT_PLAN_PATH == od.DEFAULT_PLAN_PATHS[orl.CURRENT_VERSION]
 
 
@@ -423,6 +435,16 @@ def test_a_passed_orl_pilot_is_accepted_under_the_hashes_run_pilot_writes(tmp_pa
     path.parent.mkdir(parents=True)
     write = lambda: path.write_text(json.dumps(report), encoding="utf-8")
     write()
+    if version in od.CONTROLS:  # orl/4 also needs its rule control's pilot (test_cs3d_orl4)
+        assert "rule control" in od.pilot_blocker(CONFIG, tmp_path, version)
+        control = od.part_dir(tmp_path, version, "control") / od.LEARNABILITY
+        control.parent.mkdir(parents=True)
+        cswap = contract_manifest(replace(CONFIG, g4=replace(CONFIG.g4,
+                                                             arm=od.CONTROLS[version])))
+        key, record = od.pilot_record(version, "control")
+        control.write_text(json.dumps({**report, "arm": od.CONTROLS[version], key: record,
+                                       "hashes": {k: cswap[k] for k in keys}}),
+                           encoding="utf-8")
     assert od.pilot_blocker(CONFIG, tmp_path, version) is None
     other = [v for v in orl.ORL_VERSIONS if v != version][0]
     assert od.pilot_blocker(CONFIG, tmp_path, other) is not None  # its own directory only

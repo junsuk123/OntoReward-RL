@@ -1,0 +1,26 @@
+# orl-development/4 (status doc 20.9): orl/4 and the rule control as paired arms of
+# development/1.  orl/4 is orl/3 with its learned gate multiplied by (1 - w), where w is the
+# view rule (python/ontology_rgat/current_semantics/view_rule.py): the task's own lost-view
+# weight (reward /4) on the policy's own estimate.  The rule closes descent once the pad has
+# been unseen for 0.5-1.0 s, except below 0.5 m within 0.75 m of the centre.  PPO left orl/3's
+# gate half open when blind, because closing paid only +1.9 per sampled training episode
+# (status doc 20.8), so the rule is no longer learned.  It is a fixed rule declared by the
+# task, so the primary comparison is against the rule control semantic_mlp_rule_ppo
+# (rule_control.py): the registered semantic MLP, same phi44 input and initialisation, whose
+# vertical mean follows the same damper as the rule closes.  The control is trained here,
+# in <root>/orl4/control, on the same development/1 training seeds.
+# Registration (`./run.sh current-semantics-3d --stage register-orl-development --plan
+# <abs path of this file>`) requires BOTH arms' G4 learnability pilots (`--stage
+# orl-learnability`, with `--orl-part control` for the control) to have passed, and gate
+# probe 2 to find every selected checkpoint of both arms active.
+# Run (resumable, local plant only) by `--stage orl-develop`; `--orl-part orl` or
+# `--orl-part control` trains one arm per process.  The verdict is written once both arms
+# are complete.  Primary: orl/4 minus the rule control on the mean success over the ten
+# development/1 cells, with a 95 % t-interval over training seeds 10-14
+# (orl_development.RULE_V4, hashed into the registration with the probe and both specs).
+protocol: orl-development/4
+base_protocol: development/1
+# The ORL spec this plan registers (orl.ARMS["orl/4"]); the control's spec is bound by
+# orl_development.CONTROLS and hashed into the registration.
+arm: orl_ppo:af6f4fb0994a5042
+workers: 16

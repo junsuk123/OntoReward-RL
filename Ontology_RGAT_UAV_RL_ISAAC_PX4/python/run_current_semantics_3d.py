@@ -11,6 +11,7 @@ run only with ``--allow-isaac``; none adopts a running Isaac.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import datetime as dt
 import json
 from pathlib import Path
@@ -67,6 +68,10 @@ def build_parser() -> argparse.ArgumentParser:
                         help="register-development/develop only: the development plan "
                              "(default config/current_semantics/development_v1.yaml); develop "
                              "refuses any plan that differs from the registration")
+    parser.add_argument("--orl-part", choices=("orl", "control"), default=None,
+                        help="orl-learnability / orl-develop on orl-development/4 only: the "
+                             "ORL arm or the rule control (status doc 20.9); "
+                             "orl-learnability defaults to orl, orl-develop to both in turn")
     parser.add_argument("--reset-recoveries", type=int, default=None,
                         help="coupling --backend isaac / isaac-eval only: owned restarts for "
                              "pre-policy entry failures (default 2)")
@@ -245,8 +250,8 @@ def _orl(args, config_path: Path, root: Path) -> int:
     ``<root>/<orl_development.OUTS[version]>`` under its own lock; orl/2 and orl/3 then
     probe each selected checkpoint's gate (orl_development.GATE_PROBES[version]; probe 2
     also reports each seed's final.pt).  Local plant only.  A complete pilot is never
-    retrained: a rerun only adds a missing gate probe."""
-    from ontology_rgat.current_semantics import orl
+    retrained: a rerun only adds a missing gate probe.  On orl-development/4 ``--orl-part
+    control`` runs the same pilot and probe for the rule control, in ``<out>/control``."""
     from ontology_rgat.current_semantics import orl_development as od
     from ontology_rgat.current_semantics.pilot import run_pilot
     if args.stage != "orl-learnability":
@@ -259,13 +264,20 @@ def _orl(args, config_path: Path, root: Path) -> int:
         _print({"stage": args.stage, "status": "REFUSED", "dry_run": args.dry_run,
                 "reason": str(exc)})
         return REFUSED_EXIT
-    arm, out = orl.ARMS[version], od.out_dir(root, version)
+    part = args.orl_part or "orl"
+    try:
+        arm, out = od.part_arm(version, part), od.part_dir(root, version, part)
+    except (KeyError, ValueError):
+        _print({"stage": args.stage, "status": "REFUSED", "dry_run": args.dry_run,
+                "reason": f"{version} has no {part!r} part"})
+        return REFUSED_EXIT
+    key, record = od.pilot_record(version, part)
     probes = version != "orl/1"
     path = out / od.LEARNABILITY
     if args.dry_run:
         _print(resolved_plan(config_path, args.stage, root, dry_run=True, extra={
-            "orl_version": version, "arm": arm, "orl_hash": orl.HASHES[version],
-            "spec": orl.spec_dict(version), "model_seeds": list(config.g4.model_seeds),
+            "orl_version": version, "part": part, "arm": arm, "spec_hash": record["hash"],
+            "spec": record["spec"], "model_seeds": list(config.g4.model_seeds),
             "updates": config.g4.updates, "episodes_per_update": config.g4.episodes_per_update,
             "gate_probe": od._probe_spec(version) if probes else None,
             "will_write": [str(path), str(out / "g4_pilot")], "trains": True,
@@ -275,14 +287,13 @@ def _orl(args, config_path: Path, root: Path) -> int:
     log = lambda line: print(line, flush=True)
     with owned(out):
         report = json.loads(path.read_text(encoding="utf-8")) if path.exists() else None
-        if report is not None and (report.get("orl") or {}).get("hash") != orl.HASHES[version]:
+        if report is not None and (report.get(key) or {}).get("hash") != record["hash"]:
             _print({"stage": args.stage, "status": "REFUSED",
-                    "reason": f"{path} holds another ORL spec's pilot; archive it first"})
+                    "reason": f"{path} holds another {key} spec's pilot; archive it first"})
             return REFUSED_EXIT
         if report is None or not report.get("protocol_complete"):
             report = run_pilot(config_path, out / "g4_pilot", arm=arm, log=log)
-            report["orl"] = {"version": version, "hash": orl.HASHES[version],
-                             "spec": orl.spec_dict(version)}
+            report[key] = record
             write_json(path, report)
         if probes and (report.get("gate_probe") or {}).get("probe_hash") != \
                 od.probe_hash(version):
@@ -314,15 +325,26 @@ def _orl_development(args, config_path: Path, root: Path) -> int:
                 "reason": str(exc)})
         return REFUSED_EXIT
     out = od.out_dir(root, plan.version)
+    part = args.orl_part
+    if part is not None and (args.stage != od.STAGES[1] or plan.version not in od.CONTROLS):
+        _print({"stage": args.stage, "status": "REFUSED", "dry_run": args.dry_run,
+                "reason": "--orl-part applies to orl-develop on a protocol with a rule control"})
+        return REFUSED_EXIT
     if args.dry_run:
         _print(resolved_plan(config_path, args.stage, root, dry_run=True, extra={
-            "plan_file": str(plan_path), **od.resolved(plan, development, config),
+            "plan_file": str(plan_path), "part": part, **od.resolved(plan, development, config),
             "blocked_by": od.blocker(config, development, root, plan.version),
             "will_write": ([str(out / od.REGISTRATION)] if args.stage == od.STAGES[0]
                            else [str(out / od.RESULT), str(out / "development")])}))
         return 0
     out.mkdir(parents=True, exist_ok=True)
-    with owned(out):
+    # one lock per arm directory, so the ORL arm and the rule control can train side by side
+    locked = ([od.part_dir(root, plan.version, part)] if part is not None else
+              [od.part_dir(root, plan.version, p) for p in od.PARTS
+               if p == "orl" or plan.version in od.CONTROLS])
+    with contextlib.ExitStack() as stack:
+        for directory in locked:
+            stack.enter_context(owned(directory))
         if args.stage == od.STAGES[0]:
             status, payload = od.register(config_path, plan_path, root)
             path = out / od.REGISTRATION
@@ -330,8 +352,9 @@ def _orl_development(args, config_path: Path, root: Path) -> int:
                 write_json(path, payload)
         else:
             status, payload = od.run(config_path, plan_path, root,
-                                     log=lambda line: print(line, flush=True))
-            path = out / od.RESULT
+                                     log=lambda line: print(line, flush=True), part=part)
+            path = (od.part_dir(root, plan.version, part) if part is not None else out) \
+                / od.RESULT
             if payload.get("status") != "REFUSED":
                 write_json(path, payload)
     if payload.get("status") in ("REFUSED", "ALREADY_REGISTERED"):

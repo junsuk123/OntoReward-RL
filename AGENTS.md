@@ -1250,6 +1250,66 @@ The v1 config remains an explicit historical experiment; Isaac/PX4 remains
       non-learned ontology rule, paired with an MLP + same-rule control; or
       add a non-potential blind-descent cost to the COMMON reward and retrain
       every arm.
+  - **ORL/4 + rule control (user "keep going" = option (b), 2026-11-03;
+    status doc 20.9).**
+    - The view rule (`view_rule.py`, `view-rule/1`) is reward /4's
+      `lost_view_weight` evaluated on the policy's OWN estimate. It reads phi44
+      raw slots only, is mirror-invariant, and equals the reward function to
+      5e-7. Its weight w closes over vision age 0.5-1.0 s, but not below
+      0.5 m within 0.75 m of the centre; w = 1 with no estimate. No constant
+      was chosen: `check_config` refuses a config whose lost-view constants or
+      contact height differ.
+    - orl/4 (`orl_ppo:af6f4fb0994a5042`) is orl/3 with the gate times
+      (1 - w): same parameters, and orl/3 weights load into it.
+    - The control (`rule_control.py`, `semantic_mlp_rule_ppo:46967b8a9be973e4`)
+      is the registered semantic MLP, init bit-identical, plus one learned
+      gain: vertical = (1 - w) * mlp_z + w * (-softplus(g) * drone_vz).
+    - orl-development/4 (`orl_development_v4.yaml`, plan 528727af, probe
+      b4cc1976): the PRIMARY is orl/4 minus the CONTROL. Both arms need their
+      own G4 pilot (`--orl-part control`, in `orl4/control/`) and probe 2
+      before registration. `orl-develop --orl-part orl|control` runs one arm
+      per process, each under its own lock.
+    - Pre-check (`orl4/design_checks/`, rule laid onto existing weights): the
+      rule stops blind descent in both arms (vz to ~0). Long blackout: orl/3
+      17/15 -> 21/21; MLP seeds +0..+5 (one -1). Training distribution,
+      sampled: orl/3 41/38 -> 43/43, discounted +1.4/+4.6.
+    - **Pilots (status doc 20.10): both PASSED, and orl-development/4 was
+      REGISTERED 2026-11-03 07:54 UTC.**
+
+      | arm | det | sampled | d = 1 at | probe (blind vz) |
+      |---|---|---|---|---|
+      | orl/4 | 46, 45 | 44, 44 | 58/59 | active, -0.022/-0.024 |
+      | control | 46, 46 | 44, 45 | 82/83 | active, -0.085/-0.024 |
+
+      Both arms then train side by side. Whichever `orl-develop --orl-part`
+      call finds every summary present writes the verdict; a call with no part
+      is only needed if neither did.
+    - **Result 2026-11-03 21:16 KST (status doc 20.11,
+      `orl4/orl_development.json`): primary NOT ESTABLISHED.**
+      - orl/4 minus the rule control, mean success over the ten cells:
+        +3.94 pp, per seed [+6.9, +3.0, +5.3, +7.1, -2.6], t(4) 2.20,
+        CI [-1.04, +8.92]. All ten models reached d = 1.0.
+      - Gate precondition 9/10, so `reads_as_test_of_the_gate` is False. The
+        exception is orl/4 seed 12: its drop passed, but its blind vz is
+        -0.111 against the -0.10 limit.
+      - Secondaries, never decisive and confounded: the stored arms have no
+        rule. orl/4 minus MLP +6.5 [-1.1, +14.0]; minus R-GAT +5.1
+        [+1.9, +8.4]; minus raw/untyped +8.1. The rule's own worth is control
+        minus MLP, +2.5 [-1.4, +6.5].
+      - Exploratory:
+        - orl/4 has the highest ten-cell mean of any arm so far, 0.837 against
+          the next best 0.798.
+        - The rule fixed orl/1's lost-pad weakness: dropout_ood 0.650 -> 0.846,
+          visible cells unchanged.
+        - Seed 14 lost again on motion_ood (0.48 vs 0.64), the lateral loss of
+          an accelerating pad, which no vertical rule touches.
+        - orl/4 has the fewest OOD missed-pad contacts (369 vs control 448,
+          MLP 584).
+        - It reaches d = 1.0 at a mean update 66, against the control's 83.
+      - A fresh-seed confirmation at the dev mean/sd has power 0.79 at 10
+        seeds and 0.94 at 15; at half the effect, 0.29 and 0.43. The dev
+        estimate comes from a design picked after four versions.
+      - Next step is the user's: confirmation, a motion_ood design, or stop.
   - The three biases went in together, so their contributions are not separated.
 - **Study monitor** (user, 2026-11-02): `./run.sh current-semantics-3d --stage
   monitor` serves a read-only page at http://127.0.0.1:8780/

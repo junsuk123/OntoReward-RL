@@ -1,4 +1,4 @@
-"""orl-development/1, /2 and /3: ORL as a paired arm of development/1 (status doc 20).
+"""orl-development/1-/4: ORL as a paired arm of development/1 (status doc 20).
 
 The question is the CNN-vs-MLP one: with the same phi44 input and the same parameter
 budget, does putting the ontology into the policy's structure (orl.py) beat the
@@ -19,6 +19,12 @@ orl/2's gate learned but its closed branch still sank (status doc 20.6), so /3 (
 ``<root>/orl3``) uses the second probe (``GATE_PROBES["orl/3"]``): the same drop AND a
 blind sink no faster than ``max_blind_sink_m_s`` by the policy's own vz.  It also reports,
 never decisively, the final checkpoint of each pilot seed.
+orl/3's gate stayed half open when blind (status doc 20.8), so /4 (orl/4, in ``<root>/orl4``)
+replaces the learned closing by the task's view rule (view_rule.py) and therefore compares
+against a CONTROL carrying the same rule (``CONTROLS``: rule_control.semantic_mlp_rule_ppo,
+trained here in ``<root>/orl4/control``), not against the plain semantic MLP.  Both arms run
+the G4 pilot and probe 2 before registration, and both are trained on every training seed.
+Either arm can be trained by its own process (``part``), each under its own lock.
 """
 from __future__ import annotations
 
@@ -37,12 +43,17 @@ import yaml
 
 from . import SCHEMA_ID
 from .contracts import PROJECT_ROOT, CurrentSemanticsConfig, contract_manifest, load_config
-from .orl import ARMS, CURRENT_VERSION, HASHES, spec_dict
+from .orl import ARMS, CURRENT_VERSION, HASHES, spec_dict, version_of
+from .rule_control import CONTROL_ARM, CONTROL_HASH, spec_dict as control_spec_dict
 
 PROTOCOLS = MappingProxyType({"orl-development/1": "orl/1", "orl-development/2": "orl/2",
-                              "orl-development/3": "orl/3"})
+                              "orl-development/3": "orl/3", "orl-development/4": "orl/4"})
 BASE_PROTOCOL = "development/1"
-OUTS = MappingProxyType({"orl/1": "orl", "orl/2": "orl2", "orl/3": "orl3"})
+OUTS = MappingProxyType({"orl/1": "orl", "orl/2": "orl2", "orl/3": "orl3", "orl/4": "orl4"})
+# orl/4's rule control (status doc 20.9): trained and compared here, in <out>/CONTROL_DIR.
+CONTROLS = MappingProxyType({"orl/4": CONTROL_ARM})
+CONTROL_DIR = "control"
+PARTS = ("orl", "control")
 DEFAULT_PLAN_PATHS = MappingProxyType({
     version: PROJECT_ROOT / "config" / "current_semantics"
     / f"orl_development_v{version.split('/')[1]}.yaml" for version in OUTS})
@@ -98,15 +109,37 @@ GATE_RULE_V2 = GATE_RULE + (
     "blind decisions to be at least -max_blind_sink_m_s (a closed gate must stop the "
     "descent, not only the gate value move). The final checkpoint of each pilot seed is "
     "probed and reported; only the selected (best) checkpoints decide registration.")
-GATE_PROBES = MappingProxyType({"orl/2": GATE_PROBE, "orl/3": GATE_PROBE_V2})
-GATE_RULES = MappingProxyType({"orl/2": GATE_RULE, "orl/3": GATE_RULE_V2})
+GATE_RULE_V4 = GATE_RULE_V2 + (
+    " orl/4 (status doc 20.9): the same probe also runs on the rule control "
+    "(semantic_mlp_rule_ppo), whose gate is the rule's open fraction 1 - w; "
+    "orl-development/4 registers only after BOTH arms' pilots passed G4 and every selected "
+    "checkpoint of both arms is active.")
+GATE_PROBES = MappingProxyType({"orl/2": GATE_PROBE, "orl/3": GATE_PROBE_V2,
+                                "orl/4": GATE_PROBE_V2})
+GATE_RULES = MappingProxyType({"orl/2": GATE_RULE, "orl/3": GATE_RULE_V2,
+                               "orl/4": GATE_RULE_V4})
 RULE_V3 = RULE + (
     " orl-development/3 additionally probes the gate of every development model with "
     "probe 2 (GATE_PROBES['orl/3'], same seeds). The verdict is reported with the number "
     "of models whose gate is active; if any is inert the verdict is not read as a test of "
     "the gate.")
+RULE_V4 = (
+    "Primary: mean SUCCESS over the ten development/1 cells; per training seed, delta = orl/4 "
+    "minus the rule control semantic_mlp_rule_ppo trained here on the same training seeds "
+    "(the registered semantic MLP with the SAME view rule: same phi44 input, same rule, no "
+    "ontology structure). orl/4 is BETTER only if the two-sided 95 % t-interval of delta over "
+    "the five training seeds lies above 0, WORSE only if it lies below 0, otherwise 'not "
+    "established'. Every model of both arms is trained, evaluated and reported; none is "
+    "dropped. A model with no checkpoint at difficulty 1.0 scores 0 in every cell, as in "
+    "development/1. Secondary, reported and never decisive: orl/4 minus the stored "
+    "development/1 semantic_mlp_ppo, raw_ppo, untyped_gnn_ppo and ontology_rgat_ppo; the rule "
+    "control minus the stored semantic_mlp_ppo (what the rule alone does to the MLP); ID mean, "
+    "four-OOD mean, composition_ood and OOD unsafe for every comparison; validation "
+    "learnability of each model. Every development model of both arms is probed with probe 2 "
+    "(GATE_PROBES['orl/4'], same seeds); the verdict reports how many are active, and if any "
+    "is inert it is not read as a test of the rule.")
 RULES = MappingProxyType({"orl-development/1": RULE, "orl-development/2": RULE_V2,
-                          "orl-development/3": RULE_V3})
+                          "orl-development/3": RULE_V3, "orl-development/4": RULE_V4})
 
 
 @dataclass(frozen=True)
@@ -154,6 +187,12 @@ def load_plan(path: str | Path, config: CurrentSemanticsConfig):
     return plan, load_development(DEFAULT_DEVELOPMENT_PATH, config)
 
 
+def probe_version(arm: str) -> str:
+    """The ORL version whose gate probe an arm runs: its own, or orl/4's for the rule
+    control."""
+    return "orl/4" if arm == CONTROL_ARM else version_of(arm)
+
+
 def _probe_spec(version: str = "orl/2") -> dict[str, Any]:
     return {**{k: list(v) if isinstance(v, tuple) else v
                for k, v in GATE_PROBES[version].items()}, "rule": GATE_RULES[version]}
@@ -172,6 +211,8 @@ def plan_hash(plan: ORLPlan, development, config: CurrentSemanticsConfig) -> str
               "development_plan_hash": development_hash(development, config)}
     if plan.version != "orl/1":  # orl/1's registered hash predates the probe
         record["gate_probe"] = _probe_spec(plan.version)
+    if plan.version in CONTROLS:
+        record["control"] = {"arm": CONTROLS[plan.version], "hash": CONTROL_HASH}
     return digest(record)
 
 
@@ -179,12 +220,32 @@ def out_dir(root: Path, version: str) -> Path:
     return root / OUTS[version]
 
 
+def part_dir(root: Path, version: str, part: str = "orl") -> Path:
+    """Where one arm of a protocol writes: the ORL arm in ``out_dir``, the rule control in
+    ``out_dir / CONTROL_DIR``."""
+    if part not in PARTS or (part == "control" and version not in CONTROLS):
+        raise ValueError(f"{version} has no {part!r} part")
+    return out_dir(root, version) if part == "orl" else out_dir(root, version) / CONTROL_DIR
+
+
+def part_arm(version: str, part: str = "orl") -> str:
+    return ARMS[version] if part == "orl" else CONTROLS[version]
+
+
+def pilot_record(version: str, part: str = "orl") -> tuple[str, dict[str, Any]]:
+    """(key, record) a learnability pilot stores to say which spec it trained."""
+    if part == "orl":
+        return "orl", {"version": version, "hash": HASHES[version], "spec": spec_dict(version)}
+    return "control", {"version": version, "arm": CONTROLS[version], "hash": CONTROL_HASH,
+                       "spec": control_spec_dict()}
+
+
 def _dev_model(root: Path, training_seed: int, arm: str) -> Path:
     return root / "development" / f"seed{training_seed}" / arm
 
 
-def _model_root(root: Path, training_seed: int, version: str) -> Path:
-    return out_dir(root, version) / "development" / f"seed{training_seed}"
+def _model_root(root: Path, training_seed: int, version: str, part: str = "orl") -> Path:
+    return part_dir(root, version, part) / "development" / f"seed{training_seed}"
 
 
 def blocker(config: CurrentSemanticsConfig, development, root: Path,
@@ -209,30 +270,41 @@ def blocker(config: CurrentSemanticsConfig, development, root: Path,
 def pilot_blocker(config: CurrentSemanticsConfig, root: Path,
                   version: str = CURRENT_VERSION) -> str | None:
     """None when ``<root>/<OUTS[version]>/orl_learnability.json`` passed under this ORL
-    spec and this contract (orl/2, orl/3: and the version's gate probe found every gate
-    active).
+    spec and this contract (orl/2-/4: and the version's gate probe found every gate
+    active), and, for a version with a rule control (orl/4), when the control's pilot in
+    ``<out>/control`` did the same under the control's spec.
     ``pilot.run_pilot(arm=...)`` runs the registered G4 protocol with ``g4.arm`` replaced,
-    so its ``g4_hash`` is the protocol's hash WITH the ORL arm, not the Raw one."""
-    arm = ARMS[version]
-    pilot = out_dir(root, version) / LEARNABILITY
+    so its ``g4_hash`` is the protocol's hash WITH the pilot's arm, not the Raw one."""
+    for part in PARTS if version in CONTROLS else ("orl",):
+        reason = _part_pilot_blocker(config, root, version, part)
+        if reason:
+            return reason
+    return None
+
+
+def _part_pilot_blocker(config: CurrentSemanticsConfig, root: Path, version: str,
+                        part: str) -> str | None:
+    arm, label = part_arm(version, part), ("ORL" if part == "orl" else "rule control")
+    pilot = part_dir(root, version, part) / LEARNABILITY
     if not pilot.exists():
-        return f"no ORL G4 learnability pilot ({pilot.name})"
+        return f"no {label} G4 learnability pilot ({pilot})"
     data = json.loads(pilot.read_text(encoding="utf-8"))
     manifest = contract_manifest(replace(config, g4=replace(config.g4, arm=arm)))
-    if (data.get("orl") or {}).get("hash") != HASHES[version] or data.get("arm") != arm:
-        return "the ORL learnability pilot ran another ORL spec"
+    key, record = pilot_record(version, part)
+    if (data.get(key) or {}).get("hash") != record["hash"] or data.get("arm") != arm:
+        return f"the {label} learnability pilot ran another {label} spec"
     if any(data.get("hashes", {}).get(k) != manifest[k]
            for k in ("g4_hash", "algorithm_hash", "task_hash", "calibration_hash")):
-        return "the ORL learnability pilot ran under another contract"
+        return f"the {label} learnability pilot ran under another contract"
     if not (data.get("protocol_complete") and data.get("learnability_passed")):
-        return "the ORL learnability pilot did not pass"
+        return f"the {label} learnability pilot did not pass"
     if version != "orl/1":
         probe = data.get("gate_probe") or {}
         if probe.get("probe_hash") != probe_hash(version):
-            return "the ORL pilot's gate was not probed under this gate probe"
+            return f"the {label} pilot's gate was not probed under this gate probe"
         if not probe.get("gate_active"):
-            return ("the ORL pilot's gate is inert (gate probe); a development run would not "
-                    "test the gate")
+            return (f"the {label} pilot's gate is inert (gate probe); a development run would "
+                    "not test the gate")
     return None
 
 
@@ -241,15 +313,23 @@ def resolved(plan: ORLPlan, development, config: CurrentSemanticsConfig) -> dict
     g4, models = config.g4, len(development.training_seeds)
     extra = ({} if plan.version == "orl/1" else
              {"gate_probe": _probe_spec(plan.version), "probe_hash": probe_hash(plan.version)})
+    arms = 1
+    if plan.version in CONTROLS:
+        arms = 2
+        extra["control"] = {"arm": CONTROLS[plan.version], "hash": CONTROL_HASH,
+                            "spec": control_spec_dict(),
+                            "out": f"{OUTS[plan.version]}/{CONTROL_DIR}"}
     return {"protocol": plan.protocol, "base_protocol": BASE_PROTOCOL, "arm": plan.arm,
             "orl_version": plan.version, "orl_hash": HASHES[plan.version],
             "orl_spec": spec_dict(plan.version), **extra,
             "plan_hash": plan_hash(plan, development, config),
             "training_seeds": list(development.training_seeds), "models": models,
             "updates": g4.updates, "episodes_per_update": g4.episodes_per_update,
-            "training_episodes": models * g4.updates * g4.episodes_per_update,
-            "evaluation_episodes": models * len(CELLS) * development.episodes_per_cell,
-            "rule": RULES[plan.protocol], "primary_comparison": PRIMARY,
+            "training_episodes": arms * models * g4.updates * g4.episodes_per_update,
+            "evaluation_episodes": arms * models * len(CELLS) * development.episodes_per_cell,
+            "rule": RULES[plan.protocol],
+            "primary_comparison": (CONTROLS[plan.version] if plan.version in CONTROLS
+                                   else PRIMARY),
             "secondary": list(SECONDARY),
             "seeds": f"{BASE_PROTOCOL}'s training, validation and evaluation seeds, reused on "
                      "purpose (a paired arm); nothing is selected on them",
@@ -290,8 +370,11 @@ def check_registration(plan, development, config, root: Path) -> str | None:
 
 
 def judge(development, orl: dict[int, dict], stored: dict[str, dict[int, dict]],
-          protocol: str = "orl-development/1") -> dict[str, Any]:
-    """``orl``: training seed -> ORL summary; ``stored``: arm -> training seed -> summary."""
+          protocol: str = "orl-development/1",
+          control: dict[int, dict] | None = None) -> dict[str, Any]:
+    """``orl``: training seed -> ORL summary; ``stored``: arm -> training seed -> summary;
+    ``control`` (orl-development/4): training seed -> rule-control summary, the primary
+    comparison."""
     from .development import CELLS, FOUR_OOD, ID_CELLS, OOD_CELLS
     from .relation_control import _t_interval
     seeds = list(development.training_seeds)
@@ -303,6 +386,9 @@ def judge(development, orl: dict[int, dict], stored: dict[str, dict[int, dict]],
     def score(summary, cells, key):
         return float(np.mean([summary["cells"][c][key] for c in cells]))
 
+    ruled = PROTOCOLS[protocol] in CONTROLS
+    if ruled != (control is not None):
+        raise ValueError(f"{protocol} {'needs' if ruled else 'has no'} rule-control summaries")
     out = {}
     for name, (cells, key) in metrics.items():
         mine = [score(orl[s], cells, key) for s in seeds]
@@ -311,24 +397,37 @@ def judge(development, orl: dict[int, dict], stored: dict[str, dict[int, dict]],
         for arm in (PRIMARY, *SECONDARY):
             out[name][f"orl_minus_{arm}"] = _t_interval(
                 [a - b for a, b in zip(mine, out[name][arm])])
-    primary = out["all_cells"][f"orl_minus_{PRIMARY}"]
+        if ruled:
+            theirs = [score(control[s], cells, key) for s in seeds]
+            out[name]["control"] = theirs
+            out[name]["orl_minus_control"] = _t_interval(
+                [a - b for a, b in zip(mine, theirs)])
+            out[name][f"control_minus_{PRIMARY}"] = _t_interval(
+                [a - b for a, b in zip(theirs, out[name][PRIMARY])])
+    primary = out["all_cells"]["orl_minus_control" if ruled else f"orl_minus_{PRIMARY}"]
     low, high = primary["ci95"]
+    word = "better" if low > 0 else "worse" if high < 0 else "not established"
     verdict = {"rule": RULES[protocol], "primary": primary,
-               "orl_vs_semantic_mlp": "better" if low > 0 else "worse" if high < 0
-               else "not established",
+               ("orl_vs_rule_control" if ruled else "orl_vs_semantic_mlp"): word,
                "metrics": out,
                "validation": {str(s): orl[s].get("validation") for s in seeds}}
+    if ruled:
+        verdict["control_validation"] = {str(s): control[s].get("validation") for s in seeds}
     if PROTOCOLS[protocol] != "orl/1":
-        active = [s for s in seeds if (orl[s].get("gate_probe") or {}).get("gate_active")]
-        verdict["gate_active_models"] = f"{len(active)}/{len(seeds)}"
-        verdict["reads_as_test_of_the_gate"] = len(active) == len(seeds)
+        models = [orl[s] for s in seeds] + ([control[s] for s in seeds] if ruled else [])
+        active = [m for m in models if (m.get("gate_probe") or {}).get("gate_active")]
+        verdict["gate_active_models"] = f"{len(active)}/{len(models)}"
+        verdict["reads_as_test_of_the_gate"] = len(active) == len(models)
     return verdict
 
 
 def run(config_path: Path, plan_path: Path, root: Path, *, log: Callable[[str], None] = print,
         updates: int | None = None, episodes_per_cell: int | None = None,
-        workers: int | None = None) -> tuple[int, dict[str, Any]]:
-    """Train, select and evaluate ORL on every development/1 training seed; resumable."""
+        workers: int | None = None, part: str | None = None) -> tuple[int, dict[str, Any]]:
+    """Train, select and evaluate ORL (and, on orl-development/4, the rule control) on every
+    development/1 training seed; resumable.  ``part`` trains one arm only ("orl" or
+    "control"), so the two can run as separate processes; the verdict is computed once
+    every model of every arm has a summary, by whichever call finds them all."""
     from .development import CELLS, _status, _validation_of, arm_config, evaluate_model
     from .experiment import write_json
     from .models import build_model, load_checkpoint
@@ -343,72 +442,104 @@ def run(config_path: Path, plan_path: Path, root: Path, *, log: Callable[[str], 
     if episodes_per_cell is not None:
         development = replace(development, episodes_per_cell=int(episodes_per_cell))
     complete = updates is None and episodes_per_cell is None
-    arm, version, protocol = plan.arm, plan.version, plan.protocol
-    acfg = arm_config(config, development, arm)
-    results: dict[int, dict] = {}
+    version, protocol = plan.version, plan.protocol
+    parts = PARTS if version in CONTROLS else ("orl",)
+    if part is not None and part not in parts:
+        return 3, {"stage": STAGES[1], "status": "REFUSED",
+                   "reason": f"{protocol} has no {part!r} part (parts {list(parts)})"}
+    results: dict[str, dict[int, dict]] = {p: {} for p in parts}
     started = time.monotonic()
     count = plan.workers if workers is None else int(workers)
+
+    def stored_summary(p, s):
+        path = _model_root(root, s, version, p) / "summary.json"
+        if not path.exists():
+            return None
+        summary = json.loads(path.read_text(encoding="utf-8"))
+        if summary.get("plan_hash") != digest_ or summary.get("complete") != complete:
+            raise RuntimeError(f"{path} belongs to another run; archive it")
+        return summary
+
     with ProcessPoolExecutor(max_workers=count, mp_context=multiprocessing.get_context("spawn"),
                              initializer=_init_worker, initargs=(str(config_path),)) as pool:
-        for seed_index, s in enumerate(development.training_seeds):
-            model_root = _model_root(root, s, version)
-            summary_path = model_root / "summary.json"
-            if summary_path.exists():
-                summary = json.loads(summary_path.read_text(encoding="utf-8"))
-                if summary.get("plan_hash") != digest_ or summary.get("complete") != complete:
-                    raise RuntimeError(f"{summary_path} belongs to another run; archive it")
-                results[s] = summary
-                log(f"{protocol}: seed {s} already done")
+        for p in parts:
+            if part is not None and p != part:
                 continue
-            log(f"{protocol}: training seed {s}")
-            _status(model_root, "training")
-            trained = train_seed(acfg, config_path, s, model_root, pool, log=log, updates=updates)
-            best = model_root / "best.pt"
-            summary = {"plan_hash": digest_, "complete": complete, "arm": arm,
-                       "training": trained,
-                       "validation": _validation_of(model_root, trained["best_update"]),
-                       "checkpoint": str(best) if best.exists() else None}
-            if best.exists():
-                model = build_model(arm, acfg, seed=0)
-                load_checkpoint(best, model, manifest=contract_manifest(acfg))
-                state = {k: v.detach().clone() for k, v in model.state_dict().items()}
-                log(f"{protocol}: evaluating seed {s}")
-                summary["cells"] = evaluate_model(
-                    pool, development, arm, state, seed_index,
-                    progress=lambda name, index, root_=model_root: _status(
-                        root_, "evaluating", cell=name, cell_index=index,
-                        cells=len(development.cells)))
-            else:
-                summary["cells"] = {c: {"episodes": 0, "success": 0.0, "unsafe": 0.0,
-                                        "timeout": 0.0, "statuses": {},
-                                        "note": "no checkpoint reached difficulty 1.0"}
-                                    for c in CELLS}
-            if version != "orl/1":
-                summary["gate_probe"] = (probe_model(pool, arm, state) if best.exists()
-                                         else {"gate_active": False,
-                                               "note": "no checkpoint reached difficulty 1.0"})
-                log(f"{protocol}: seed {s} gate active "
-                    f"{summary['gate_probe']['gate_active']}")
-            write_json(summary_path, summary)
-            _status(model_root, "done")
-            results[s] = summary
-            log(f"{protocol}: seed {s} all-cells success "
-                f"{np.mean([v['success'] for v in summary['cells'].values()]):.3f}")
+            arm = part_arm(version, p)
+            acfg = arm_config(config, development, arm)
+            for seed_index, s in enumerate(development.training_seeds):
+                model_root = _model_root(root, s, version, p)
+                summary = stored_summary(p, s)
+                if summary is not None:
+                    results[p][s] = summary
+                    log(f"{protocol} {p}: seed {s} already done")
+                    continue
+                log(f"{protocol} {p}: training seed {s}")
+                _status(model_root, "training")
+                trained = train_seed(acfg, config_path, s, model_root, pool, log=log,
+                                     updates=updates)
+                best = model_root / "best.pt"
+                summary = {"plan_hash": digest_, "complete": complete, "arm": arm,
+                           "training": trained,
+                           "validation": _validation_of(model_root, trained["best_update"]),
+                           "checkpoint": str(best) if best.exists() else None}
+                if best.exists():
+                    model = build_model(arm, acfg, seed=0)
+                    load_checkpoint(best, model, manifest=contract_manifest(acfg))
+                    state = {k: v.detach().clone() for k, v in model.state_dict().items()}
+                    log(f"{protocol} {p}: evaluating seed {s}")
+                    summary["cells"] = evaluate_model(
+                        pool, development, arm, state, seed_index,
+                        progress=lambda name, index, root_=model_root: _status(
+                            root_, "evaluating", cell=name, cell_index=index,
+                            cells=len(development.cells)))
+                else:
+                    summary["cells"] = {c: {"episodes": 0, "success": 0.0, "unsafe": 0.0,
+                                            "timeout": 0.0, "statuses": {},
+                                            "note": "no checkpoint reached difficulty 1.0"}
+                                        for c in CELLS}
+                if version != "orl/1":
+                    summary["gate_probe"] = (probe_model(pool, arm, state) if best.exists()
+                                             else {"gate_active": False,
+                                                   "note": "no checkpoint reached difficulty "
+                                                           "1.0"})
+                    log(f"{protocol} {p}: seed {s} gate active "
+                        f"{summary['gate_probe']['gate_active']}")
+                write_json(model_root / "summary.json", summary)
+                _status(model_root, "done")
+                results[p][s] = summary
+                log(f"{protocol} {p}: seed {s} all-cells success "
+                    f"{np.mean([v['success'] for v in summary['cells'].values()]):.3f}")
+    for p in parts:  # the other process's arm, if it has finished
+        for s in development.training_seeds:
+            if s not in results[p]:
+                found = stored_summary(p, s)
+                if found is not None:
+                    results[p][s] = found
+    finished = all(len(results[p]) == len(development.training_seeds) for p in parts)
     stored = {arm: {s: json.loads((_dev_model(root, s, arm) / "summary.json")
                                   .read_text(encoding="utf-8"))
                     for s in development.training_seeds} for arm in (PRIMARY, *SECONDARY)}
-    verdict = judge(development, results, stored, protocol) if complete else None
-    return 0, {"schema_id": SCHEMA_ID, "stage": STAGES[1], "protocol": protocol,
+    verdict = None
+    if complete and finished:
+        verdict = judge(development, results["orl"], stored, protocol,
+                        results.get("control") if version in CONTROLS else None)
+
+    def brief(x):
+        return ({k: v for k, v in x.items() if k not in ("cells", "gate_probe")}
+                | {"gate_active": (x.get("gate_probe") or {}).get("gate_active")}
+                | {"cells": {c: {k: v for k, v in cv.items() if k != "per_seed"}
+                             for c, cv in x["cells"].items()}})
+    payload = {"schema_id": SCHEMA_ID, "stage": STAGES[1], "protocol": protocol,
                "plan_hash": digest_, "orl_hash": HASHES[version], "procedure_complete": complete,
-               "verdict": verdict,
-               "models": {str(s): {k: v for k, v in x.items() if k not in ("cells",
-                                                                            "gate_probe")}
-                          | {"gate_active": (x.get("gate_probe") or {}).get("gate_active")}
-                          | {"cells": {c: {k: v for k, v in cv.items() if k != "per_seed"}
-                                       for c, cv in x["cells"].items()}}
-                          for s, x in results.items()},
+               "part": part, "all_parts_finished": finished, "verdict": verdict,
+               "models": {str(s): brief(x) for s, x in results["orl"].items()},
                "wall_s": time.monotonic() - started,
                "note": "local plant only; paired with the stored development/1 models"}
+    if version in CONTROLS:
+        payload["control_hash"] = CONTROL_HASH
+        payload["control_models"] = {str(s): brief(x) for s, x in results["control"].items()}
+    return 0, payload
 
 
 # ------------------------------------------------------------------ gate probe
@@ -422,10 +553,9 @@ def _probe_work(task: tuple) -> dict[str, Any]:
     from .features import build_features
     from .models import tensors_from_frames
     from .observation import decode
-    from .orl import version_of
     from .pilot import _WORKER, _model, fly_policy
     arm, state, seed = task
-    spec = GATE_PROBES[version_of(arm)]
+    spec = GATE_PROBES[probe_version(arm)]
     config = _WORKER["config"]
     blackout = replace(config.g4.training_randomization.vision_blackout, probability=1.0)
     model = _model(config, arm, state)
@@ -492,8 +622,7 @@ def summarize_probe(episodes: list[dict[str, Any]], version: str = "orl/2") -> d
 
 
 def probe_model(pool: Any, arm: str, state: dict[str, Any]) -> dict[str, Any]:
-    from .orl import version_of
-    version = version_of(arm)
+    version = probe_version(arm)
     episodes = list(pool.map(_probe_work, [(arm, state, s)
                                            for s in GATE_PROBES[version]["seeds"]]))
     return {"probe_hash": probe_hash(version), **summarize_probe(episodes, version)}
@@ -507,9 +636,8 @@ def probe_checkpoints(config_path: Path, arm: str, checkpoints: dict[str, Path],
     ``descriptive`` checkpoints (probe 2: each seed's final.pt) are probed and reported under
     ``descriptive_models`` and never enter ``gate_active``."""
     from .models import build_model, load_checkpoint
-    from .orl import version_of
     from .pilot import _init_worker
-    version = version_of(arm)
+    version = probe_version(arm)
     config = load_config(config_path)
     config = replace(config, g4=replace(config.g4, arm=arm))
     manifest = contract_manifest(config)

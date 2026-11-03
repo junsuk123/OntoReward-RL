@@ -69,8 +69,10 @@ def _run_kind(rel: Path) -> str:
         return "design (등록 아님)"
     if parts[0] == "relation_shuffle":
         return "관계 섞기 대조군"
-    if parts[0] in ("orl", "orl2", "orl3"):
+    if parts[0] in ("orl", "orl2", "orl3", "orl4"):
         name = "ORL" if parts[0] == "orl" else f"ORL/{parts[0][3:]}"
+        if parts[1] == "control":  # orl/4's rule control (MLP + view rule)
+            name, parts = f"{name} 대조군(MLP+규칙)", parts[1:]
         return f"{name} " + ("G4 pilot" if parts[1] == "g4_pilot" else parts[1])
     return parts[0]
 
@@ -143,7 +145,10 @@ def _history_dirs(task_root: Path) -> list[Path]:
                 "relation_shuffle/seed*/shuffle*/history.jsonl",
                 "orl/g4_pilot/seed*/history.jsonl", "orl/development/seed*/history.jsonl",
                 "orl2/g4_pilot/seed*/history.jsonl", "orl2/development/seed*/history.jsonl",
-                "orl3/g4_pilot/seed*/history.jsonl", "orl3/development/seed*/history.jsonl")
+                "orl3/g4_pilot/seed*/history.jsonl", "orl3/development/seed*/history.jsonl",
+                "orl4/g4_pilot/seed*/history.jsonl", "orl4/development/seed*/history.jsonl",
+                "orl4/control/g4_pilot/seed*/history.jsonl",
+                "orl4/control/development/seed*/history.jsonl")
     found = []
     for pattern in patterns:
         found += [p.parent for p in task_root.glob(pattern)]

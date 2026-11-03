@@ -1141,7 +1141,115 @@ The v1 config remains an explicit historical experiment; Isaac/PX4 remains
       development/1 arm. It is faster than all four arms on 4 of 5 seeds. This
       is the first consistent arm difference in the study, and the metric is
       not registered.
-    - The cause of the losses in the lost-pad cells is unmeasured.
+    - The losses in the lost-pad cells were then diagnosed (next bullet).
+  - **Diagnosed 2026-11-03 (status doc 20.4, `orl/diagnostics_lost_pad/`;
+    1600/1600 verdicts reproduced): the learned descent gate is INERT in every
+    trained ORL model.**
+    - Its value is constant per model: sd 0.004-0.027, flat across vision age.
+    - hold(Z) and descend(Z) are collinear (cos 1.000), so the vertical output is
+      a constant times one readout.
+    - E does encode vision age (R^2 0.91-0.97). Its variance along the gate
+      weight is 2-14 % of the total.
+    - Cause: descend starts at x0.01, so the gate's gradient (proportional to
+      descend(z)) is ~0 early, while hold and descend receive proportional
+      gradients and align.
+    - So orl-development/1 tested three biases, not four, and a "remove the gate"
+      ablation would be a no-op.
+    - dropout_ood loss mechanism: ORL descends faster while seeing the pad
+      (0.39-0.60 vs MLP 0.29-0.36 m/s at 0.5-2 m). Seeds 13/14 keep sinking
+      at 0.22-0.30 m/s blind and touch down 0.5-9 m off.
+    - A truth-free what-if "brake vz when vision age > 0.5 s above 0.5 m":
+      ORL 67.5 -> 85.8 %, MLP 73.8 -> 81.0 %.
+    - motion_ood loss mechanism is different: an accelerating pad is lost
+      0.6-0.9 m off at 0.4-0.6 m, and the vertical brake gives only +2-4 pp.
+    - Next: ORL/2 with a gate that provably receives gradient and cannot
+      collapse onto hold, checked before training.
+  - **ORL/2 (user "yes", 2026-11-03; status doc 20.5).** It is
+    `orl.ARMS["orl/2"]` = `orl_ppo:0d34c49904e549b3`; orl/1 stays buildable,
+    hash-identical and loadable.
+    - Vertical = `hold(Z) - sigmoid(gate(E)) * softplus(sink(Z))`.
+    - VerticalDecision reads VerticalState ALONE: 2 edges removed, 59 edges
+      left, same 4,016 parameters. Quality, contact and view therefore reach
+      the vertical command only through the gate, and an open gate can only add
+      descent.
+    - Init: output weights x0.01 including the gate's; hold bias ln(2)/2
+      cancels sigmoid(0)*softplus(0). The initial mean is ~0, and
+      d(vertical)/d(gate bias) is -0.173 in every state (orl/1: +-0.0005,
+      mixed sign). Guarded in `test_cs3d_orl.py`.
+    - Each version owns a protocol and a directory
+      (`orl_development.PROTOCOLS/OUTS`): orl/1 is orl-development/1 in
+      `orl/`, orl/2 is orl-development/2 in `orl2/`.
+    - The default plan is now `orl_development_v2.yaml`. To reach orl/1, pass
+      `--plan <abs>/orl_development_v1.yaml`, which also applies to
+      `orl-learnability`. The orl/1 registration hash is unchanged.
+    - GATE PROBE (`orl_development.GATE_PROBE`, seeds 999101-999124, forced
+      training blackout): a gate is active if mean gate on fresh decisions
+      minus blind decisions is >= 0.2, both classes judged by the policy's
+      OWN estimate above 0.5 m.
+      - The orl/1 pilot checkpoints read as inert under it (drop -0.01 /
+        -0.08).
+      - orl-development/2 registers only after a G4 pass AND an active gate
+        on both pilot checkpoints.
+      - orl-develop probes all five development models; any inert gate means
+        the verdict is not a test of the gate.
+    - **Pilot result 2026-11-03 (status doc 20.6): G4 PASSED, gate probe
+      FAILED, so orl-development/2 was NOT registered** (`pilot_blocker`
+      refuses).
+      - G4: det 47/48, 46/48; sampled 43/48, 43/48.
+      - Gate drop: seed 0 0.756 (active), seed 1 0.174 (inert). Seed 1's
+        best.pt is update 135; validation was already 1.00 there and the gate
+        separated later (final.pt drop ~0.46). Checkpoint selection never sees
+        the gate. Do not swap in final.pt after the fact.
+      - Exploratory (`orl2/diagnostics_gate/`): the gradient fix works, but a
+        CLOSED GATE DOES NOT STOP DESCENT. hold(Z) is unconstrained, and its
+        learned equilibrium is a ~0.2 m/s sink: when blind, the total vertical
+        command is ~0 net acceleration, and own vz stays -0.2 to -0.4 m/s.
+      - Forced-blackout landings: 18-21/24, against orl/1's 20-21/24.
+      - "Gate closed = hold altitude" must be built into the structure, e.g.
+        hold = -softplus(k)*vz with its equilibrium at vz = 0. That is the
+        proposed orl/3; the user decides.
+  - **ORL/3 (user "go", 2026-11-03; status doc 20.7).** It is
+    `orl.ARMS["orl/3"]` = `orl_ppo:80a8e23a39e9b0f4`, protocol
+    orl-development/3, directory `orl3/`, plan `orl_development_v3.yaml`.
+    orl/1 and orl/2 hashes, registration hashes and the orl/2 probe hash are
+    pinned in the tests.
+    - Vertical = `-softplus(gain(Z)) * (drone_vz + sigmoid(gate(E)) *
+      softplus(sink(Z)))`. drone_vz is VerticalState's own phi44 slot. A
+      closed gate is therefore a damper whose equilibrium is vz = 0 in EVERY
+      state, whatever the weights, and the gate gradient is negative in every
+      state.
+    - Cost: the initial mean is a 0.091 m/s sink, not 0, because the gate
+      starts half open with a full-open sink of 0.2 m/s. The sink is bounded;
+      it does not drift.
+    - `HOLD_GAIN_INIT = 3` was measured, untrained, with the gate closed, at
+      d = 1 under the full seeded force (up to 0.5 m/s^2 vertical). Residual
+      |vz| p90 was 0.39 / 0.14 / 0.11 / 0.092 / 0.089 m/s at gain 1-4, and
+      jitter rose 7x at gain 4. A memoryless damper cannot cancel a constant
+      force, so gain 1 would have let a closed gate sink at 0.35 m/s.
+    - Gate probe 2 (`GATE_PROBES["orl/3"]`): probe 1 plus the policy's own
+      mean vz on blind decisions >= -0.10 m/s. orl/2 seed 0 would fail it.
+      Each seed's final.pt is reported but is never decisive.
+    - **Pilot result 2026-11-03 (status doc 20.8): G4 PASSED, probe 2
+      FAILED, orl-development/3 NOT registered.** Test det 47/48, 46/48,
+      sampled 43/48, 40/48; d = 1.0 at update 65/66. The gate drop passed
+      (0.35, 0.21), but the blind sink did not: vz -0.172 and -0.223 m/s
+      against the -0.10 limit (final.pt -0.173 / -0.193).
+    - Diagnosed (`orl3/diagnostics_gate/`): the STRUCTURE works. Forcing the
+      gate shut on the probe's blind class (truth-free) lands 19/19/18/20 ->
+      22/20/23/23 of 24 under forced blackout, and 44/43/42/45 -> 47/42/48/48
+      of 48 deterministic in the training distribution.
+    - PPO instead learns a HALF-open blind gate: 0.36-0.52 vs 0.69-0.79 fresh,
+      with the gain rising 3 -> ~5 and the full sink 0.2 -> ~0.6 m/s. That
+      gives a 0.15-0.23 m/s blind sink, about the reward field's 0.2.
+    - Why PPO does not close it: under the distribution PPO optimises
+      (training, SAMPLED), closing is worth only +1.9 discounted per episode
+      (-1.2..+3.2, SE ~3). Most episodes lose a little time; rare ones save a
+      miss (+65). Same lesson as pilot 6: a structure can make a behaviour
+      expressible, but not optimal.
+    - Options left to the user: stop the gate line; fix the gate as a
+      non-learned ontology rule, paired with an MLP + same-rule control; or
+      add a non-potential blind-descent cost to the COMMON reward and retrain
+      every arm.
   - The three biases went in together, so their contributions are not separated.
 - **Study monitor** (user, 2026-11-02): `./run.sh current-semantics-3d --stage
   monitor` serves a read-only page at http://127.0.0.1:8780/

@@ -191,7 +191,10 @@ def test_descent_passes_a_learned_gate_that_reads_only_its_concepts(version):
             gains = torch.stack([torch.nn.functional.softplus(head.hold(
                 net.encoder.node_states(flat @ net.group[g].T)[:, head.vertical_index]))
                 .squeeze(-1) for g in range(4)]).mean(0)
-            hold_only = -gains * flat[:, INDEX["drone_vz"]]
+            # orl/5 damps B(vz - vz_ref), the field's lost-view climb (view-rule/2)
+            damped = (net._vertical_inputs(flat)[0][:, 0] if version in orl.CLIMBING
+                      else flat[:, INDEX["drone_vz"]])
+            hold_only = -gains * damped
         else:
             hold_only = torch.stack([head.hold(net.encoder.node_states(
                 flat @ net.group[g].T)[:, head.vertical_index]).squeeze(-1)
@@ -223,7 +226,7 @@ def test_orl1_is_frozen_and_stays_loadable():
     # orl-development/1's checkpoints and registration bind this hash (status doc 20.3-20.4).
     assert orl.ARMS["orl/1"] == "orl_ppo:eb68eb947a6a49a2"
     assert len(set(orl.ARMS.values())) == len(orl.ORL_VERSIONS)
-    assert orl.ORL_ARM == orl.ARMS[orl.CURRENT_VERSION] == orl.ARMS["orl/4"]
+    assert orl.ORL_ARM == orl.ARMS[orl.CURRENT_VERSION] == orl.ARMS["orl/5"]
     assert orl.ARMS["orl/3"] == "orl_ppo:80a8e23a39e9b0f4"  # the orl/3 pilot binds it
     assert orl.ARMS["orl/4"] == "orl_ppo:af6f4fb0994a5042"  # orl-development/4 binds it
     assert len(orl.GRAPHS["orl/1"].edges) == 61
@@ -328,16 +331,22 @@ def test_vertical_terms_are_the_actor_vertical_mean():
 def test_orl3_a_closed_gate_holds_altitude_in_every_state(seed, version):
     """orl/2's closed gate left hold(Z), which learned a ~0.2 m/s sink (status doc 20.6).
     orl/3's closed gate is -gain(Z) * drone_vz: zero at vz = 0 and opposing vz, whatever
-    the other 43 features and the trained weights are."""
+    the other 43 features and the trained weights are.  orl/5's is the same damper around
+    view-rule/2's reference vz_ref (the field's lost-view climb, 0 where the rule is open);
+    the rule never reads vz, so the reference is the same for all three rows."""
     net = model(seed, version)
     raw, flat, nodes = batch(20 + seed, 64)
+    from ontology_rgat.current_semantics.view_rule import rule_terms
+    ref = rule_terms(flat)[1][:, 0] if version in orl.CLIMBING else torch.zeros(len(flat))
+    step = torch.empty(len(flat)).uniform_(0.02, 1.0)
+    enc = lambda v: v / (v.abs() + 1.0)  # drone_vz's B(vz; 1 m/s)
     level, rising, sinking = flat.clone(), flat.clone(), flat.clone()
-    level[:, INDEX["drone_vz"]] = 0.0
-    rising[:, INDEX["drone_vz"]] = torch.empty(len(flat)).uniform_(0.02, 0.6)
-    sinking[:, INDEX["drone_vz"]] = -rising[:, INDEX["drone_vz"]]
+    level[:, INDEX["drone_vz"]] = enc(ref)
+    rising[:, INDEX["drone_vz"]] = enc(ref + step)
+    sinking[:, INDEX["drone_vz"]] = enc(ref - step)
     with torch.no_grad():
         net.actor_head.gate.bias.fill_(-50.0)
-        assert net(raw, level, nodes)[:, 2].abs().max() < 1e-6
+        assert net(raw, level, nodes)[:, 2].abs().max() < 1e-5
         assert (net(raw, rising, nodes)[:, 2] < 0).all()
         assert (net(raw, sinking, nodes)[:, 2] > 0).all()
         orl2 = model(seed, "orl/2")  # orl/2's closed gate has no such zero
@@ -411,7 +420,7 @@ def test_the_orl1_registration_and_paths_did_not_move():
     assert od.probe_hash("orl/3").startswith("722c0edc0ee1800f")  # the orl/3 pilot's probe
     assert od.probe_hash("orl/3") != od.probe_hash("orl/2")
     assert dict(od.OUTS) == {"orl/1": "orl", "orl/2": "orl2", "orl/3": "orl3",
-                             "orl/4": "orl4"}
+                             "orl/4": "orl4", "orl/5": "orl5"}
     assert od.DEFAULT_PLAN_PATH == od.DEFAULT_PLAN_PATHS[orl.CURRENT_VERSION]
 
 

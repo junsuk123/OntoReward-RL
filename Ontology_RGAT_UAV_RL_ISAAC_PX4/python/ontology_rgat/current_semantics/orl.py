@@ -79,6 +79,15 @@ Two versions, both buildable, each with its own hash and arm (``ARMS``):
   same parameter names and initialisation, and orl/3 weights load into it unchanged.
   Unlike bias 4 this is a FIXED rule declared by the task, so orl/4 is compared with the
   semantic MLP carrying the same rule (``view_rule``, ``semantic_mlp_rule_ppo``).
+- ``orl/5`` (status doc 20.12) lets the closed rule do what the task's field asks for
+  instead of only holding.  orl-development/4 lost motion_ood on the lateral loss of an
+  accelerating pad at ~1 m, followed by a blind descent onto the ground behind it
+  (orl4/diagnostics_motion).  orl/5 reads view-rule/2 (``view_rule.rule_terms``): the
+  same closing weight (and, with ``view_rule.ALIGNMENT_EDGE``, the field's alignment
+  cone), and a closed law that tracks the field's lost-view climb ``vz_ref`` instead of
+  vz = 0.  The vertical command is ``-softplus(gain(Z)) * (B(vz - vz_ref) + (1 - W) *
+  sigmoid(gate(E)) * softplus(sink(Z)))``, B the drone_vz encoding.  Where the rule is open
+  (W = 0, so vz_ref = 0) it is orl/4 exactly; same parameters, and orl/4 weights load.
 """
 from __future__ import annotations
 
@@ -98,10 +107,11 @@ from .graph import SELF, GraphSpec, reachable_within
 from .models import (MODEL_ARCHITECTURE, CurrentActorCritic, RelationalAttentionLayer,
                      _check_inputs, _linear, _mlp, component_generator)
 
-ORL_VERSIONS = ("orl/1", "orl/2", "orl/3", "orl/4")
-CURRENT_VERSION = "orl/4"
-DAMPED = ("orl/3", "orl/4")  # the closed gate is a damper on drone_vz
-RULED = ("orl/4",)          # the gate is multiplied by the view rule's (1 - w)
+ORL_VERSIONS = ("orl/1", "orl/2", "orl/3", "orl/4", "orl/5")
+CURRENT_VERSION = "orl/5"
+DAMPED = ("orl/3", "orl/4", "orl/5")  # the closed gate is a damper on drone_vz
+RULED = ("orl/4", "orl/5")  # the gate is multiplied by the view rule's (1 - w)
+CLIMBING = ("orl/5",)       # view-rule/2: the closed law tracks the field's climb
 ARM_PREFIX = "orl_ppo"
 X, Y = "x", "y"
 PLANES = (X, Y)
@@ -327,6 +337,13 @@ def spec_dict(version: str = CURRENT_VERSION) -> dict[str, Any]:
                             "task's lost-view weight on the policy's own estimate; a closed "
                             "rule or gate damps vz to 0 in every state")
         spec["view_rule"] = rule_dict()
+    if version in CLIMBING:
+        from .view_rule import rule_dict_for
+        spec["vertical"] = ("-softplus(gain(Z)) * (B(vz - vz_ref) + (1 - W) * sigmoid(gate(E)) "
+                            "* softplus(sink(Z))); (W, vz_ref) = view_rule.rule_terms(phi44), "
+                            "view-rule/2 on the policy's own estimate; B the drone_vz "
+                            "encoding; a closed rule tracks the field's lost-view climb")
+        spec["view_rule"] = rule_dict_for("view-rule/2")
     return spec
 
 
@@ -506,8 +523,8 @@ class ORLActorCritic(CurrentActorCritic):
             [[sx, sy, 1] for sx, sy in group], dtype=torch.float32), persistent=False)
         self.vz_index = _flat_index()["drone_vz"]  # even under every mirror
         if self.version in RULED:
-            from .view_rule import check_config
-            check_config(config)
+            from .view_rule import check_config, check_config_v2
+            (check_config_v2 if self.version in CLIMBING else check_config)(config)
 
     def graph_readout(self, nodes: torch.Tensor) -> torch.Tensor:
         raise NotImplementedError("ORL reads phi44; use encoder.node_states(flat44)")
@@ -522,10 +539,23 @@ class ORLActorCritic(CurrentActorCritic):
         from .view_rule import closed_weight
         return closed_weight(flat44)
 
+    def _vertical_inputs(self, flat44: torch.Tensor
+                         ) -> tuple[torch.Tensor, torch.Tensor | None]:
+        """(damped vz feature, closing weight) of the vertical law.  orl/5 damps
+        B(vz - vz_ref) and closes by view-rule/2's W; earlier versions read ``_vz`` and
+        ``_closed``."""
+        if self.version not in CLIMBING:
+            return self._vz(flat44), self._closed(flat44)
+        from .view_rule import rule_terms
+        closed, reference = rule_terms(flat44)
+        u = self._vz(flat44)
+        vz = VZ_SCALE * u / (1.0 - u.abs())  # decode B(vz; VZ_SCALE)
+        error = vz - reference
+        return error / (error.abs() + VZ_SCALE), closed
+
     def unaveraged(self, flat44: torch.Tensor) -> torch.Tensor:
         """The ontology network before the mirror average (diagnostics)."""
-        return self.actor_head(self.encoder.node_states(flat44), self._vz(flat44),
-                               self._closed(flat44))
+        return self.actor_head(self.encoder.node_states(flat44), *self._vertical_inputs(flat44))
 
     def _reflected(self, flat44: torch.Tensor) -> torch.Tensor:
         """(members * B, 44): every mirror image of every row, member-major."""
@@ -545,7 +575,7 @@ class ORLActorCritic(CurrentActorCritic):
         batch, members = flat44.shape[0], self.group.shape[0]
         reflected = self._reflected(flat44)
         terms = self.actor_head.vertical_terms(self.encoder.node_states(reflected),
-                                               self._vz(reflected), self._closed(reflected))
+                                               *self._vertical_inputs(reflected))
         return {name: term.reshape(members, batch).mean(0)
                 for name, term in zip(("hold", "gate", "gated"), terms)}
 

@@ -1,0 +1,27 @@
+# orl-development/5 (status doc 20.12): orl/5 and its rule control as paired arms of
+# development/1.  orl/5 is orl/4 reading view-rule/2 (python/ontology_rgat/current_semantics/
+# view_rule.py): the task field's lost-view law on the policy's own estimate -- view-rule/1's
+# closing weight, a closed law that tracks the field's lost-view CLIMB toward the search
+# height instead of holding altitude, and closing descent outside the field's alignment cone r = 0.25 + 0.5 h as well.  orl-development/4 lost motion_ood (and part of
+# dropout_ood) to an accelerating pad leaving the view at ~1 m and a blind descent onto the
+# ground behind it (results/.../orl4/diagnostics_motion); laid onto the trained orl/4 and
+# rule-control weights, the field's climb raised both arms there with no loss in any ID cell
+# (climb_whatif_screen.log; the variant was chosen on diagnostic seeds by the rule in
+# selection_rule.txt, declared before that run).  The rule is in BOTH arms, so the primary
+# comparison stays orl/5 minus the rule control semantic-mlp-rule/2 (rule_control.py), trained
+# here in <root>/orl5/control on the same development/1 training seeds.
+# Registration (`./run.sh current-semantics-3d --stage register-orl-development --plan
+# <abs path of this file>`) requires BOTH arms' G4 learnability pilots (`--stage
+# orl-learnability --plan <abs path>`, with `--orl-part control` for the control) to have
+# passed, and gate probe 2 to find every selected checkpoint of both arms active.
+# Run (resumable, local plant only) by `--stage orl-develop --plan <abs path>`;
+# `--orl-part orl` or `--orl-part control` trains one arm per process.  Primary: orl/5 minus
+# the rule control on the mean success over the ten development/1 cells, with a 95 %
+# t-interval over training seeds 10-14 (orl_development.RULE_V5, hashed into the
+# registration with the probe and both specs).
+protocol: orl-development/5
+base_protocol: development/1
+# The ORL spec this plan registers (orl.ARMS["orl/5"]); the control's spec is bound by
+# orl_development.CONTROLS and hashed into the registration.
+arm: orl_ppo:c9e4f46f36a05004
+workers: 16

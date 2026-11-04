@@ -69,8 +69,9 @@ def build_parser() -> argparse.ArgumentParser:
                              "(default config/current_semantics/development_v1.yaml); develop "
                              "refuses any plan that differs from the registration")
     parser.add_argument("--orl-part", choices=("orl", "control"), default=None,
-                        help="orl-learnability / orl-develop on orl-development/4 only: the "
-                             "ORL arm or the rule control (status doc 20.9); "
+                        help="orl-learnability / orl-develop on a protocol with a rule "
+                             "control (orl-development/4, /5): the ORL arm or the rule "
+                             "control (status doc 20.9, 20.12); "
                              "orl-learnability defaults to orl, orl-develop to both in turn")
     parser.add_argument("--reset-recoveries", type=int, default=None,
                         help="coupling --backend isaac / isaac-eval only: owned restarts for "

@@ -25,6 +25,10 @@ against a CONTROL carrying the same rule (``CONTROLS``: rule_control.semantic_ml
 trained here in ``<root>/orl4/control``), not against the plain semantic MLP.  Both arms run
 the G4 pilot and probe 2 before registration, and both are trained on every training seed.
 Either arm can be trained by its own process (``part``), each under its own lock.
+orl-development/5 (orl/5 in ``<root>/orl5``, status doc 20.12) is /4's design with
+view-rule/2 in BOTH arms: the closed rule tracks the task field's lost-view climb (and,
+with ``view_rule.ALIGNMENT_EDGE``, also closes outside the field's alignment cone).  Its
+control is semantic-mlp-rule/2 (``rule_control.CONTROL_ARM_V2``) in ``<root>/orl5/control``.
 """
 from __future__ import annotations
 
@@ -44,14 +48,17 @@ import yaml
 from . import SCHEMA_ID
 from .contracts import PROJECT_ROOT, CurrentSemanticsConfig, contract_manifest, load_config
 from .orl import ARMS, CURRENT_VERSION, HASHES, spec_dict, version_of
-from .rule_control import CONTROL_ARM, CONTROL_HASH, spec_dict as control_spec_dict
+from .rule_control import (CONTROL_ARM, CONTROL_ARM_V2, CONTROL_HASHES, control_version,
+                           spec_dict as control_spec_dict)
 
 PROTOCOLS = MappingProxyType({"orl-development/1": "orl/1", "orl-development/2": "orl/2",
-                              "orl-development/3": "orl/3", "orl-development/4": "orl/4"})
+                              "orl-development/3": "orl/3", "orl-development/4": "orl/4",
+                              "orl-development/5": "orl/5"})
 BASE_PROTOCOL = "development/1"
-OUTS = MappingProxyType({"orl/1": "orl", "orl/2": "orl2", "orl/3": "orl3", "orl/4": "orl4"})
-# orl/4's rule control (status doc 20.9): trained and compared here, in <out>/CONTROL_DIR.
-CONTROLS = MappingProxyType({"orl/4": CONTROL_ARM})
+OUTS = MappingProxyType({"orl/1": "orl", "orl/2": "orl2", "orl/3": "orl3", "orl/4": "orl4",
+                        "orl/5": "orl5"})
+# The rule controls (status doc 20.9, 20.12): trained and compared here, in <out>/CONTROL_DIR.
+CONTROLS = MappingProxyType({"orl/4": CONTROL_ARM, "orl/5": CONTROL_ARM_V2})
 CONTROL_DIR = "control"
 PARTS = ("orl", "control")
 DEFAULT_PLAN_PATHS = MappingProxyType({
@@ -114,10 +121,15 @@ GATE_RULE_V4 = GATE_RULE_V2 + (
     "(semantic_mlp_rule_ppo), whose gate is the rule's open fraction 1 - w; "
     "orl-development/4 registers only after BOTH arms' pilots passed G4 and every selected "
     "checkpoint of both arms is active.")
+GATE_RULE_V5 = GATE_RULE_V2 + (
+    " orl/5 (status doc 20.12): the same probe also runs on its rule control "
+    "(semantic-mlp-rule/2), whose gate is the rule's open fraction 1 - W; orl-development/5 "
+    "registers only after BOTH arms' pilots passed G4 and every selected checkpoint of both "
+    "arms is active.")
 GATE_PROBES = MappingProxyType({"orl/2": GATE_PROBE, "orl/3": GATE_PROBE_V2,
-                                "orl/4": GATE_PROBE_V2})
+                                "orl/4": GATE_PROBE_V2, "orl/5": GATE_PROBE_V2})
 GATE_RULES = MappingProxyType({"orl/2": GATE_RULE, "orl/3": GATE_RULE_V2,
-                               "orl/4": GATE_RULE_V4})
+                               "orl/4": GATE_RULE_V4, "orl/5": GATE_RULE_V5})
 RULE_V3 = RULE + (
     " orl-development/3 additionally probes the gate of every development model with "
     "probe 2 (GATE_PROBES['orl/3'], same seeds). The verdict is reported with the number "
@@ -138,8 +150,24 @@ RULE_V4 = (
     "learnability of each model. Every development model of both arms is probed with probe 2 "
     "(GATE_PROBES['orl/4'], same seeds); the verdict reports how many are active, and if any "
     "is inert it is not read as a test of the rule.")
+RULE_V5 = (
+    "Primary: mean SUCCESS over the ten development/1 cells; per training seed, delta = orl/5 "
+    "minus the rule control semantic-mlp-rule/2 trained here on the same training seeds "
+    "(the registered semantic MLP with the SAME view-rule/2: same phi44 input, same rule, no "
+    "ontology structure). orl/5 is BETTER only if the two-sided 95 % t-interval of delta over "
+    "the five training seeds lies above 0, WORSE only if it lies below 0, otherwise 'not "
+    "established'. Every model of both arms is trained, evaluated and reported; none is "
+    "dropped. A model with no checkpoint at difficulty 1.0 scores 0 in every cell, as in "
+    "development/1. Secondary, reported and never decisive: orl/5 minus the stored "
+    "development/1 semantic_mlp_ppo, raw_ppo, untyped_gnn_ppo and ontology_rgat_ppo; the rule "
+    "control minus the stored semantic_mlp_ppo; ID mean, four-OOD mean, composition_ood and "
+    "OOD unsafe for every comparison; validation learnability of each model. Every "
+    "development model of both arms is probed with probe 2 (GATE_PROBES['orl/5'], same "
+    "seeds); the verdict reports how many are active, and if any is inert it is not read as "
+    "a test of the rule.")
 RULES = MappingProxyType({"orl-development/1": RULE, "orl-development/2": RULE_V2,
-                          "orl-development/3": RULE_V3, "orl-development/4": RULE_V4})
+                          "orl-development/3": RULE_V3, "orl-development/4": RULE_V4,
+                          "orl-development/5": RULE_V5})
 
 
 @dataclass(frozen=True)
@@ -188,9 +216,20 @@ def load_plan(path: str | Path, config: CurrentSemanticsConfig):
 
 
 def probe_version(arm: str) -> str:
-    """The ORL version whose gate probe an arm runs: its own, or orl/4's for the rule
-    control."""
-    return "orl/4" if arm == CONTROL_ARM else version_of(arm)
+    """The ORL version whose gate probe an arm runs: its own, or that of the ORL version a
+    rule control belongs to."""
+    for version, control in CONTROLS.items():
+        if arm == control:
+            return version
+    return version_of(arm)
+
+
+def control_hash(version: str) -> str:
+    return CONTROL_HASHES[control_version(CONTROLS[version])]
+
+
+def control_spec(version: str) -> dict[str, Any]:
+    return control_spec_dict(control_version(CONTROLS[version]))
 
 
 def _probe_spec(version: str = "orl/2") -> dict[str, Any]:
@@ -212,7 +251,7 @@ def plan_hash(plan: ORLPlan, development, config: CurrentSemanticsConfig) -> str
     if plan.version != "orl/1":  # orl/1's registered hash predates the probe
         record["gate_probe"] = _probe_spec(plan.version)
     if plan.version in CONTROLS:
-        record["control"] = {"arm": CONTROLS[plan.version], "hash": CONTROL_HASH}
+        record["control"] = {"arm": CONTROLS[plan.version], "hash": control_hash(plan.version)}
     return digest(record)
 
 
@@ -236,8 +275,8 @@ def pilot_record(version: str, part: str = "orl") -> tuple[str, dict[str, Any]]:
     """(key, record) a learnability pilot stores to say which spec it trained."""
     if part == "orl":
         return "orl", {"version": version, "hash": HASHES[version], "spec": spec_dict(version)}
-    return "control", {"version": version, "arm": CONTROLS[version], "hash": CONTROL_HASH,
-                       "spec": control_spec_dict()}
+    return "control", {"version": version, "arm": CONTROLS[version],
+                       "hash": control_hash(version), "spec": control_spec(version)}
 
 
 def _dev_model(root: Path, training_seed: int, arm: str) -> Path:
@@ -316,8 +355,8 @@ def resolved(plan: ORLPlan, development, config: CurrentSemanticsConfig) -> dict
     arms = 1
     if plan.version in CONTROLS:
         arms = 2
-        extra["control"] = {"arm": CONTROLS[plan.version], "hash": CONTROL_HASH,
-                            "spec": control_spec_dict(),
+        extra["control"] = {"arm": CONTROLS[plan.version], "hash": control_hash(plan.version),
+                            "spec": control_spec(plan.version),
                             "out": f"{OUTS[plan.version]}/{CONTROL_DIR}"}
     return {"protocol": plan.protocol, "base_protocol": BASE_PROTOCOL, "arm": plan.arm,
             "orl_version": plan.version, "orl_hash": HASHES[plan.version],
@@ -537,7 +576,7 @@ def run(config_path: Path, plan_path: Path, root: Path, *, log: Callable[[str], 
                "wall_s": time.monotonic() - started,
                "note": "local plant only; paired with the stored development/1 models"}
     if version in CONTROLS:
-        payload["control_hash"] = CONTROL_HASH
+        payload["control_hash"] = control_hash(version)
         payload["control_models"] = {str(s): brief(x) for s, x in results["control"].items()}
     return 0, payload
 

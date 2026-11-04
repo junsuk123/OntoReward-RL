@@ -18,6 +18,22 @@ estimate (vision age sentinel) there is nothing to descend on and w = 1.
 Two arms read it (status doc 20.9): orl/4 multiplies its learned gate by (1 - w), and the
 control ``semantic_mlp_rule_ppo`` blends the registered semantic MLP's vertical output
 into the same damper.  The rule is truth-free: phi44's raw slots only.
+
+view-rule/2 (status doc 20.12, orl/5) keeps w and adds the rest of the same field's
+vertical law, still on the policy's own estimate.  orl-development/4's motion_ood failures
+(orl4/diagnostics_motion) lost the pad at ~1 m while 0.85 m behind an accelerating pad and
+then descended on a stale estimate: the closed rule only HELD altitude, below 0.5 m the
+blind-touchdown exemption reopened descent on an estimate 0.6 m off, and 9 of 122
+re-acquired.  The field itself asks for two more things, and view-rule/2 states both:
+
+- where the view is lost it asks for a CLIMB toward the search height, so the closed law
+  tracks ``vz_ref = w * min(climb_speed, climb_gain * max(search_height - h, 0))``
+  (0 without an estimate: with no height there is no search height to climb to);
+- (``ALIGNMENT_EDGE``) it asks for no descent outside the alignment cone
+  r = r_0 + k_r * h, so the rule also closes there:
+  ``W = max(w, ramp((d - r) / ramp_m))``, with the field's own lost-view ramp.
+
+``rule_terms`` returns (W, vz_ref); view-rule/1 (``closed_weight``) is unchanged.
 """
 from __future__ import annotations
 
@@ -83,3 +99,64 @@ def closed_weight(flat44: torch.Tensor) -> torch.Tensor:
 
 def rule_dict() -> dict[str, Any]:
     return dict(VIEW_RULE)
+
+
+# ------------------------------------------------------------------ view-rule/2
+# Chosen by the variant rule declared in orl4/diagnostics_motion/selection_rule.txt BEFORE
+# its run (climb_diag.json, diagnostic seeds 995001-995048, both arms' orl/4-era weights, ten
+# cell conditions): mean success climb 0.861, climb + cone 0.874 (>= +0.010 required), and
+# neither arm's ID mean lower (status doc 20.12).
+ALIGNMENT_EDGE = True
+VIEW_RULE_V2 = MappingProxyType({
+    **VIEW_RULE, "version": "view-rule/2",
+    "source": "reward /4's lost-view field on the policy's own decoded estimate: its weight "
+              "w AND its climb" + (" AND its alignment cone" if ALIGNMENT_EDGE else ""),
+    "climb_speed_m_s": 0.5, "climb_gain_per_s": 1.0, "search_height_m": 2.5,
+    "reference": "vz_ref = w * min(climb_speed, climb_gain * max(search_height - h, 0)); "
+                 "0 without an estimate",
+    **({"alignment_radius_m": 0.25, "alignment_radius_per_m": 0.5,
+        "closing": "W = max(w, clip((d - (alignment_radius_m + alignment_radius_per_m * h)) "
+                   "/ ramp_m, 0, 1))"} if ALIGNMENT_EDGE else {"closing": "W = w"})})
+RULES = MappingProxyType({"view-rule/1": VIEW_RULE, "view-rule/2": VIEW_RULE_V2})
+
+
+def check_config_v2(config: Any) -> None:
+    """view-rule/1's binding plus the climb (and cone) constants of the same field."""
+    check_config(config)
+    field = config.task.reward.field
+    declared = {"climb_speed_m_s": field.lost_view.climb_speed_m_s,
+                "climb_gain_per_s": field.lost_view.climb_gain_per_s,
+                "search_height_m": field.lost_view.search_height_m}
+    if ALIGNMENT_EDGE:
+        declared.update(alignment_radius_m=field.alignment_radius_m,
+                        alignment_radius_per_m=field.alignment_radius_per_m)
+    differs = {k: (v, VIEW_RULE_V2[k]) for k, v in declared.items()
+               if float(v) != VIEW_RULE_V2[k]}
+    if differs:
+        raise ValueError(f"view rule: the config's field constants differ from "
+                         f"{VIEW_RULE_V2['version']}: {differs}")
+
+
+def rule_terms(flat44: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    """view-rule/2: (W, vz_ref), each (B, 1).  W in [0, 1] is how far descent is closed;
+    vz_ref (m/s, up positive) is what the closed law tracks.  Both read an age, a height
+    and a distance only, so both are invariant under the two mirrors."""
+    w = closed_weight(flat44)
+    valid = flat44[:, _INDEX[AGE]] < 1.0
+    h = (_signed(flat44[:, _INDEX[H]], _SCALE[H]) - VIEW_RULE["contact_height_m"]).clamp_min(0.0)
+    climb = (VIEW_RULE_V2["climb_gain_per_s"]
+             * (VIEW_RULE_V2["search_height_m"] - h).clamp_min(0.0)
+             ).clamp(max=VIEW_RULE_V2["climb_speed_m_s"])
+    climb = torch.where(valid, climb, torch.zeros_like(climb))
+    reference = w * climb.unsqueeze(-1)
+    if not ALIGNMENT_EDGE:
+        return w, reference
+    d = torch.hypot(_signed(flat44[:, _INDEX[X]], _SCALE[X]),
+                    _signed(flat44[:, _INDEX[Y]], _SCALE[Y]))
+    radius = VIEW_RULE_V2["alignment_radius_m"] + VIEW_RULE_V2["alignment_radius_per_m"] * h
+    edge = ((d - radius) / VIEW_RULE["ramp_m"]).clamp(0.0, 1.0).unsqueeze(-1)
+    return torch.maximum(w, edge), reference
+
+
+def rule_dict_for(version: str) -> dict[str, Any]:
+    return dict(RULES[version])

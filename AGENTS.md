@@ -1310,6 +1310,45 @@ The v1 config remains an explicit historical experiment; Isaac/PX4 remains
         seeds and 0.94 at 15; at half the effect, 0.29 and 0.43. The dev
         estimate comes from a design picked after four versions.
       - Next step is the user's: confirmation, a motion_ood design, or stop.
+  - **ORL/5 (user "b" = the motion_ood design, 2026-11-04; status doc 20.12;
+    `orl4/diagnostics_motion/`).** Built, tested (496 pass), NOT yet trained.
+    - Diagnosed first, on 3000 re-flown episodes (verdicts reproduced 3000/3000). The
+      motion_ood failure is common to all four arms, and it is not the lateral law:
+      lateral gains are unchanged at OOD pad speeds and nothing saturates.
+      1. While the pad accelerates, the shared track's pad-velocity estimate lags by
+         0.37 m/s.
+      2. The drone sits 0.85 m behind at ~1 m, sinking 0.4 m/s, and the pad leaves the
+         narrow camera axis.
+      3. view-rule/1's blind-touchdown exemption (below 0.5 m, estimated d < 0.75 m)
+         then reopens descent on an estimate 0.6 m off, and the drone lands behind the
+         pad. orl/4 9/122 re-acquired.
+    - The field's alignment cone alone (r = 0.25 + 0.5 h) is too strong as the field's
+      proportional scaling (ID -10..-30 pp, timeouts) and too weak as an edge only
+      (+2..+5 pp).
+    - What works is the field's own lost-view CLIMB (search height 2.5 m at 0.5 m/s),
+      which view-rule/1 dropped. Laid onto the trained orl/4 and control weights it
+      raises motion_ood and dropout_ood +6..+12 pp in both arms, with no ID loss.
+    - Variant chosen by a rule written BEFORE its run (`selection_rule.txt`), on
+      diagnostic seeds 995001-995048, NOT the verdict's environments: climb + cone 0.874
+      vs climb 0.861, so `view_rule.ALIGNMENT_EDGE = True`.
+    - view-rule/2 (`view_rule.rule_terms`):
+      - W = max(w, clip((d - r)/0.25, 0, 1)).
+      - The closed law tracks vz_ref = w * min(0.5, 1.0 * (2.5 - h)), and 0 with no
+        estimate.
+      - Every constant is the field's; `check_config_v2` refuses a mismatch.
+    - orl/5 is `orl_ppo:c9e4f46f36a05004`: damper on B(vz - vz_ref), gate * (1 - W). It
+      equals orl/4 where the rule is open, and orl/4 weights load into it.
+    - The control is semantic-mlp-rule/2, `semantic_mlp_rule_ppo:3a696fc93f810588`.
+    - orl-development/5: `orl_development_v5.yaml`, `<root>/orl5` (control in
+      `orl5/control`), primary orl/5 - control v2, probe 2.
+    - Every earlier hash is pinned in `test_cs3d_orl5.py`.
+    - The rule is in both arms, so its gain is not the primary's answer.
+    - User "go" 2026-11-04. Both pilots PASSED (status doc 20.13): orl/5 det 48/48,
+      48/48, sampled 47/48, 45/48, d = 1 at update 55/56; the v2 control det 47/48,
+      39/48, sampled 43/48, 35/48, d = 1 at 66/75. Probe 2 is active for every
+      checkpoint, and blind vz is POSITIVE (+0.03..+0.19), i.e. the closed rule climbs.
+      orl-development/5 was REGISTERED 2026-11-03 18:00 UTC (plan 87f71b5c, probe
+      4f064274), and both arms are training in parallel.
   - The three biases went in together, so their contributions are not separated.
 - **Study monitor** (user, 2026-11-02): `./run.sh current-semantics-3d --stage
   monitor` serves a read-only page at http://127.0.0.1:8780/

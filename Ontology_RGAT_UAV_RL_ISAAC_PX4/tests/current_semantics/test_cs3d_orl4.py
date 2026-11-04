@@ -173,7 +173,7 @@ def test_the_control_trains_every_parameter_and_binds_its_own_checkpoints(tmp_pa
 
 def test_orl_development_4_binds_both_specs_and_needs_both_pilots(tmp_path):
     plan, development = od.load_plan(od.DEFAULT_PLAN_PATHS["orl/4"], CONFIG)
-    assert od.DEFAULT_PLAN_PATH == od.DEFAULT_PLAN_PATHS["orl/4"]
+    assert od.DEFAULT_PLAN_PATHS["orl/4"].name == "orl_development_v4.yaml"
     assert plan.protocol == "orl-development/4" and plan.arm == orl.ARMS["orl/4"]
     assert od.CONTROLS["orl/4"] == rc.CONTROL_ARM
     resolved = od.resolved(plan, development, CONFIG)

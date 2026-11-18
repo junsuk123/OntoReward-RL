@@ -1,0 +1,564 @@
+{
+ "note": "extracted by tools/make_doc_figures.py extract; 5 training seeds (10-14) per policy",
+ "isaac": {
+  "truth": {
+   "ontology_rgat_ppo": {
+    "episodes": 150,
+    "success": 149,
+    "unsafe": 0,
+    "statuses": {
+     "SUCCESS": 149,
+     "MISSED_PAD_CONTACT": 1
+    },
+    "seed_success": {
+     "10": 1.0,
+     "11": 1.0,
+     "12": 0.9666666666666667,
+     "13": 1.0,
+     "14": 1.0
+    },
+    "common_episodes": 150,
+    "common_success": 149
+   },
+   "semantic_mlp_ppo": {
+    "episodes": 150,
+    "success": 148,
+    "unsafe": 2,
+    "statuses": {
+     "SUCCESS": 148,
+     "SAFETY_ENVELOPE_VIOLATION": 2
+    },
+    "seed_success": {
+     "10": 1.0,
+     "11": 0.9333333333333333,
+     "12": 1.0,
+     "13": 1.0,
+     "14": 1.0
+    },
+    "common_episodes": 90,
+    "common_success": 88
+   },
+   "raw_ppo": {
+    "episodes": 150,
+    "success": 148,
+    "unsafe": 0,
+    "statuses": {
+     "SUCCESS": 148,
+     "TASK_TIMEOUT": 2
+    },
+    "seed_success": {
+     "10": 1.0,
+     "11": 0.9666666666666667,
+     "12": 1.0,
+     "13": 1.0,
+     "14": 0.9666666666666667
+    },
+    "common_episodes": 150,
+    "common_success": 148
+   },
+   "untyped_gnn_ppo": {
+    "episodes": 150,
+    "success": 147,
+    "unsafe": 1,
+    "statuses": {
+     "SUCCESS": 147,
+     "SAFETY_ENVELOPE_VIOLATION": 1,
+     "TASK_TIMEOUT": 1,
+     "MISSED_PAD_CONTACT": 1
+    },
+    "seed_success": {
+     "10": 1.0,
+     "11": 0.9333333333333333,
+     "12": 1.0,
+     "13": 0.9666666666666667,
+     "14": 1.0
+    },
+    "common_episodes": 150,
+    "common_success": 147
+   }
+  },
+  "kalman": {
+   "ontology_rgat_ppo": {
+    "episodes": 150,
+    "success": 145,
+    "unsafe": 3,
+    "statuses": {
+     "SUCCESS": 145,
+     "SAFETY_ENVELOPE_VIOLATION": 3,
+     "MISSED_PAD_CONTACT": 2
+    },
+    "seed_success": {
+     "10": 0.9,
+     "11": 0.9666666666666667,
+     "12": 0.9666666666666667,
+     "13": 1.0,
+     "14": 1.0
+    },
+    "common_episodes": 150,
+    "common_success": 145
+   },
+   "semantic_mlp_ppo": {
+    "episodes": 90,
+    "success": 86,
+    "unsafe": 4,
+    "statuses": {
+     "SUCCESS": 86,
+     "SAFETY_ENVELOPE_VIOLATION": 4
+    },
+    "seed_success": {
+     "11": 0.9,
+     "12": 0.9666666666666667,
+     "14": 1.0
+    },
+    "common_episodes": 90,
+    "common_success": 86
+   },
+   "raw_ppo": {
+    "episodes": 150,
+    "success": 142,
+    "unsafe": 7,
+    "statuses": {
+     "SUCCESS": 142,
+     "SAFETY_ENVELOPE_VIOLATION": 5,
+     "UNSAFE_CONTACT": 2,
+     "TASK_TIMEOUT": 1
+    },
+    "seed_success": {
+     "10": 0.9666666666666667,
+     "11": 0.9333333333333333,
+     "12": 0.9666666666666667,
+     "13": 0.9666666666666667,
+     "14": 0.9
+    },
+    "common_episodes": 150,
+    "common_success": 142
+   },
+   "untyped_gnn_ppo": {
+    "episodes": 150,
+    "success": 140,
+    "unsafe": 9,
+    "statuses": {
+     "SUCCESS": 140,
+     "SAFETY_ENVELOPE_VIOLATION": 5,
+     "UNSAFE_CONTACT": 4,
+     "MISSED_PAD_CONTACT": 1
+    },
+    "seed_success": {
+     "10": 0.9333333333333333,
+     "11": 0.9333333333333333,
+     "12": 0.9666666666666667,
+     "13": 0.9,
+     "14": 0.9333333333333333
+    },
+    "common_episodes": 150,
+    "common_success": 140
+   }
+  },
+  "wmon": {
+   "ontology_rgat_ppo": {
+    "episodes": 150,
+    "success": 144,
+    "unsafe": 2,
+    "statuses": {
+     "SUCCESS": 144,
+     "MISSED_PAD_CONTACT": 3,
+     "TASK_TIMEOUT": 1,
+     "SAFETY_ENVELOPE_VIOLATION": 2
+    },
+    "seed_success": {
+     "10": 0.9333333333333333,
+     "11": 0.9666666666666667,
+     "12": 0.9333333333333333,
+     "13": 0.9666666666666667,
+     "14": 1.0
+    },
+    "common_episodes": 150,
+    "common_success": 144
+   },
+   "semantic_mlp_ppo": {
+    "episodes": 150,
+    "success": 127,
+    "unsafe": 18,
+    "statuses": {
+     "SUCCESS": 127,
+     "UNSAFE_CONTACT": 18,
+     "TASK_TIMEOUT": 5
+    },
+    "seed_success": {
+     "10": 0.8666666666666667,
+     "11": 0.7333333333333333,
+     "12": 0.8666666666666667,
+     "13": 0.9666666666666667,
+     "14": 0.8
+    },
+    "common_episodes": 90,
+    "common_success": 72
+   },
+   "raw_ppo": {
+    "episodes": 150,
+    "success": 124,
+    "unsafe": 19,
+    "statuses": {
+     "SUCCESS": 124,
+     "UNSAFE_CONTACT": 17,
+     "MISSED_PAD_CONTACT": 4,
+     "SAFETY_ENVELOPE_VIOLATION": 2,
+     "TASK_TIMEOUT": 3
+    },
+    "seed_success": {
+     "10": 0.4666666666666667,
+     "11": 0.9333333333333333,
+     "12": 0.8666666666666667,
+     "13": 0.8666666666666667,
+     "14": 1.0
+    },
+    "common_episodes": 150,
+    "common_success": 124
+   },
+   "untyped_gnn_ppo": {
+    "episodes": 150,
+    "success": 106,
+    "unsafe": 26,
+    "statuses": {
+     "SUCCESS": 106,
+     "UNSAFE_CONTACT": 25,
+     "MISSED_PAD_CONTACT": 5,
+     "TASK_TIMEOUT": 13,
+     "SAFETY_ENVELOPE_VIOLATION": 1
+    },
+    "seed_success": {
+     "10": 0.8666666666666667,
+     "11": 0.5,
+     "12": 0.7666666666666667,
+     "13": 0.6333333333333333,
+     "14": 0.7666666666666667
+    },
+    "common_episodes": 150,
+    "common_success": 106
+   }
+  }
+ },
+ "local": {
+  "truth": {
+   "ontology_rgat_ppo": {
+    "ten_cell_success_per_seed": [
+     0.8029999999999999,
+     0.778,
+     0.778,
+     0.8110000000000002,
+     0.759
+    ],
+    "trained": [
+     true,
+     true,
+     true,
+     true,
+     true
+    ]
+   },
+   "semantic_mlp_ppo": {
+    "ten_cell_success_per_seed": [
+     0.746,
+     0.765,
+     0.75,
+     0.788,
+     0.813
+    ],
+    "trained": [
+     true,
+     true,
+     true,
+     true,
+     true
+    ]
+   },
+   "raw_ppo": {
+    "ten_cell_success_per_seed": [
+     0.7939999999999999,
+     0.6990000000000001,
+     0.8,
+     0.7500000000000001,
+     0.737
+    ],
+    "trained": [
+     true,
+     true,
+     true,
+     true,
+     true
+    ]
+   },
+   "untyped_gnn_ppo": {
+    "ten_cell_success_per_seed": [
+     0.7550000000000001,
+     0.7819999999999999,
+     0.8089999999999999,
+     0.699,
+     0.736
+    ],
+    "trained": [
+     true,
+     true,
+     true,
+     true,
+     true
+    ]
+   }
+  },
+  "kalman": {
+   "ontology_rgat_ppo": {
+    "ten_cell_success_per_seed": [
+     0.7219999999999999,
+     0.739,
+     0.762,
+     0.73,
+     0.7060000000000001
+    ],
+    "trained": [
+     true,
+     true,
+     true,
+     true,
+     true
+    ]
+   },
+   "semantic_mlp_ppo": {
+    "ten_cell_success_per_seed": [
+     0.0,
+     0.7549999999999999,
+     0.74,
+     0.0,
+     0.7809999999999999
+    ],
+    "trained": [
+     true,
+     true,
+     true,
+     true,
+     true
+    ]
+   },
+   "raw_ppo": {
+    "ten_cell_success_per_seed": [
+     0.7029999999999998,
+     0.8130000000000001,
+     0.704,
+     0.696,
+     0.735
+    ],
+    "trained": [
+     true,
+     true,
+     true,
+     true,
+     true
+    ]
+   },
+   "untyped_gnn_ppo": {
+    "ten_cell_success_per_seed": [
+     0.713,
+     0.773,
+     0.723,
+     0.597,
+     0.733
+    ],
+    "trained": [
+     true,
+     true,
+     true,
+     true,
+     true
+    ]
+   }
+  },
+  "wmon": {
+   "ontology_rgat_ppo": {
+    "ten_cell_success_per_seed": [
+     0.736,
+     0.5710000000000001,
+     0.7510000000000001,
+     0.7150000000000001,
+     0.707
+    ],
+    "trained": [
+     true,
+     true,
+     true,
+     true,
+     true
+    ]
+   },
+   "semantic_mlp_ppo": {
+    "ten_cell_success_per_seed": [
+     0.6719999999999999,
+     0.472,
+     0.48200000000000004,
+     0.7230000000000001,
+     0.606
+    ],
+    "trained": [
+     true,
+     true,
+     true,
+     true,
+     true
+    ]
+   },
+   "raw_ppo": {
+    "ten_cell_success_per_seed": [
+     0.404,
+     0.744,
+     0.503,
+     0.753,
+     0.722
+    ],
+    "trained": [
+     true,
+     true,
+     true,
+     true,
+     true
+    ]
+   },
+   "untyped_gnn_ppo": {
+    "ten_cell_success_per_seed": [
+     0.659,
+     0.535,
+     0.555,
+     0.30100000000000005,
+     0.46499999999999997
+    ],
+    "trained": [
+     true,
+     true,
+     true,
+     true,
+     true
+    ]
+   }
+  }
+ },
+ "orl": {
+  "updates_to_full_difficulty": {
+   "orl1": [
+    66,
+    62,
+    81,
+    77,
+    65
+   ],
+   "semantic_mlp_ppo": [
+    121,
+    93,
+    79,
+    112,
+    84
+   ],
+   "orl5": [
+    55,
+    60,
+    56,
+    56,
+    56
+   ],
+   "control2": [
+    66,
+    71,
+    63,
+    63,
+    68
+   ],
+   "ontology_rgat_ppo": [
+    88,
+    89,
+    117,
+    147,
+    104
+   ],
+   "raw_ppo": [
+    123,
+    97,
+    103,
+    96,
+    122
+   ],
+   "untyped_gnn_ppo": [
+    97,
+    93,
+    141,
+    100,
+    106
+   ]
+  },
+  "ten_cell_success": {
+   "orl5": [
+    0.883,
+    0.881,
+    0.8939999999999999,
+    0.8590000000000002,
+    0.852
+   ],
+   "control2": [
+    0.8320000000000001,
+    0.861,
+    0.857,
+    0.8539999999999999,
+    0.8819999999999999
+   ]
+  },
+  "per_cell_mean": {
+   "orl5": {
+    "composition_id": 0.9800000000000001,
+    "composition_ood": 0.99,
+    "motion_id": 0.994,
+    "motion_ood": 0.758,
+    "dropout_id": 0.9719999999999999,
+    "dropout_ood": 0.9559999999999998,
+    "noise_id": 0.9960000000000001,
+    "noise_ood": 0.874,
+    "combined_id": 0.978,
+    "combined_ood": 0.24
+   },
+   "control2": {
+    "composition_id": 0.9720000000000001,
+    "composition_ood": 0.968,
+    "motion_id": 0.974,
+    "motion_ood": 0.8,
+    "dropout_id": 0.9560000000000001,
+    "dropout_ood": 0.93,
+    "noise_id": 0.9800000000000001,
+    "noise_ood": 0.818,
+    "combined_id": 0.9620000000000001,
+    "combined_ood": 0.21200000000000002
+   },
+   "semantic_mlp_ppo": {
+    "composition_id": 0.922,
+    "composition_ood": 0.9399999999999998,
+    "motion_id": 0.9400000000000001,
+    "motion_ood": 0.724,
+    "dropout_id": 0.8899999999999999,
+    "dropout_ood": 0.708,
+    "noise_id": 0.9400000000000001,
+    "noise_ood": 0.7140000000000001,
+    "combined_id": 0.8779999999999999,
+    "combined_ood": 0.06799999999999999
+   }
+  },
+  "orl_minus_rule_control": {
+   "per_seed": [
+    0.050999999999999934,
+    0.020000000000000018,
+    0.03699999999999992,
+    0.0050000000000003375,
+    -0.029999999999999916
+   ],
+   "mean": 0.01660000000000006,
+   "sd": 0.03129376934790685,
+   "t": 1.1861379820957685,
+   "ci95": [
+    -0.022256346767388434,
+    0.05545634676738855
+   ]
+  }
+ }
+}

@@ -318,6 +318,9 @@ def build_model(arm: str, config: CurrentSemanticsConfig, *, seed: int) -> Curre
     if isinstance(arm, str) and arm.startswith("semantic_mlp_rule_ppo"):
         from .rule_control import control_model
         return control_model(arm, config, seed=seed)
+    if isinstance(arm, str) and arm.startswith("bond_rgat_ppo"):
+        from .bond import bond_model   # WMON's relational bond equilibrium (bond.py)
+        return bond_model(arm, config, seed=seed)
     from .relation_control import shuffled_model
     return shuffled_model(arm, config, seed=seed)
 

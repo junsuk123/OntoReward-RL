@@ -30,10 +30,12 @@ from ontology_rgat.current_semantics.experiment import (ARTIFACTS, DEFAULT_RUN_R
 ISAAC_DEVELOPMENT_STAGES = ("register-isaac-development", "isaac-development")
 RELATION_SHUFFLE_STAGES = ("register-relation-shuffle", "relation-shuffle")
 ORL_STAGES = ("orl-learnability", "register-orl-development", "orl-develop")
+# bond/1 (current_semantics/bond.py): WMON's relational bond equilibrium in the R-GAT
+BOND_STAGES = ("bond-learnability", "register-bond-development", "bond-develop")
 STAGES = ("audit", "fixtures", "smoke", "coupling", "learnability", "isaac-eval",
           "isaac-trace", "report", "dashboard", *DEVELOPMENT_STAGES,
           *ISAAC_DEVELOPMENT_STAGES, "isaac-handover-fix", *RELATION_SHUFFLE_STAGES,
-          *ORL_STAGES, "monitor", *REFUSED_STAGES)
+          *ORL_STAGES, *BOND_STAGES, "monitor", *REFUSED_STAGES)
 FLYING_STAGES = ("isaac-eval", "isaac-trace", "isaac-development", "isaac-handover-fix")
 REFUSED_EXIT = 3
 
@@ -67,7 +69,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--plan", type=Path, default=None,
                         help="register-development/develop only: the development plan "
                              "(default config/current_semantics/development_v1.yaml); develop "
-                             "refuses any plan that differs from the registration")
+                             "refuses any plan that differs from the registration.  "
+                             "register-isaac-development/isaac-development: the Isaac plan "
+                             "(default isaac_development_v1.yaml; isaac_development_v2.yaml "
+                             "is the isaac-development/2 re-flight)")
     parser.add_argument("--orl-part", choices=("orl", "control"), default=None,
                         help="orl-learnability / orl-develop on a protocol with a rule "
                              "control (orl-development/4, /5): the ORL arm or the rule "
@@ -88,10 +93,12 @@ def _validate(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None
     if (args.pairs is not None) != (args.stage == "isaac-trace"):
         parser.error("--pairs is required by, and only by, --stage isaac-trace")
     if args.plan is not None and args.stage not in (*DEVELOPMENT_STAGES, "isaac-handover-fix",
-                                                    *RELATION_SHUFFLE_STAGES, *ORL_STAGES):
+                                                    *RELATION_SHUFFLE_STAGES, *ORL_STAGES,
+                                                    *BOND_STAGES,
+                                                    *ISAAC_DEVELOPMENT_STAGES):
         parser.error("--plan applies to --stage register-development/develop/"
-                     "isaac-handover-fix/register-relation-shuffle/relation-shuffle and the "
-                     "ORL stages only")
+                     "isaac-handover-fix/register-relation-shuffle/relation-shuffle, the "
+                     "ORL stages and the Isaac development stages only")
     if args.checkpoint_root is not None and args.stage != "isaac-trace":
         parser.error("--checkpoint-root applies to --stage isaac-trace only")
     if not flies and (args.headless or args.reset_recoveries is not None or args.allow_isaac):
@@ -312,6 +319,53 @@ def _orl(args, config_path: Path, root: Path) -> int:
     return 0
 
 
+def _bond(args, config_path: Path, root: Path) -> int:
+    """bond-learnability / register-bond-development / bond-develop (bond_development.py):
+    the bond/1 arm as a paired arm of this root's completed development/1, in
+    ``<root>/bond`` under its own lock.  Local plant only."""
+    from ontology_rgat.current_semantics import bond
+    from ontology_rgat.current_semantics import bond_development as bd
+    from ontology_rgat.current_semantics import development as dev
+    config = load_config(config_path)
+    plan_path = (args.plan or dev.default_plan_path(config)).expanduser().resolve()
+    plan = dev.load_development(plan_path, config)
+    out = bd.out_dir(root)
+    if args.dry_run:
+        _print(resolved_plan(config_path, args.stage, root, dry_run=True, extra={
+            "protocol": bd.PROTOCOL, "arm": bond.ARM, "spec_hash": bond.SPEC_HASH,
+            "rule": bd.RULE, "plan_file": str(plan_path),
+            "blocker": None if args.stage == "bond-learnability"
+            else bd.blocker(config, plan, root),
+            "will_write": [str(out / {"bond-learnability": bd.LEARNABILITY,
+                                      "register-bond-development": bd.REGISTRATION,
+                                      "bond-develop": bd.RESULT}[args.stage])],
+            "trains": args.stage != "register-bond-development", "starts_isaac": False}))
+        return 0
+    out.mkdir(parents=True, exist_ok=True)
+    log = lambda line: print(line, flush=True)
+    with owned(out):
+        if args.stage == "bond-learnability":
+            report = bd.learnability(config_path, root, log=log)
+            print(f"{args.stage}: wrote {out / bd.LEARNABILITY} "
+                  f"(learnability_passed {report['learnability_passed']})")
+            return 0
+        if args.stage == "register-bond-development":
+            status, payload = bd.register(config_path, plan_path, root)
+            if payload.get("status") == "REGISTERED":
+                write_json(out / bd.REGISTRATION, payload)
+            _print({k: v for k, v in payload.items()
+                    if k in ("stage", "status", "reason", "plan_hash", "protocol")})
+            return status
+        status, payload = bd.run(config_path, plan_path, root, log=log)
+        if payload.get("status") == "REFUSED":
+            _print(payload)
+            return status
+        write_json(out / bd.RESULT, payload)
+        print(f"{args.stage}: wrote {out / bd.RESULT} "
+              f"(verdict {payload['judgement']['verdict']})")
+        return status
+
+
 def _orl_development(args, config_path: Path, root: Path) -> int:
     """register-orl-development / orl-develop (status doc 20): ORL as a paired arm of
     development/1; local plant only, in ``<root>/<orl_development.OUTS[version]>`` under its
@@ -368,7 +422,7 @@ def _orl_development(args, config_path: Path, root: Path) -> int:
 
 def _fly_development_models(config, plan, dev_plan, root: Path, out: Path, *, headless: bool,
                             reset_recoveries: int, resume: bool, order=None,
-                            label: str = "isaac-development"):
+                            label: str = "isaac-development", keys=None):
     """The development models on an owned Isaac/PX4 stack (live_stack: flight lock, refuses
     an already-running Isaac, confirmed stop on exit), one flight and one backend wrapper
     per condition.  Returns (idev.run's record, the flight)."""
@@ -402,7 +456,7 @@ def _fly_development_models(config, plan, dev_plan, root: Path, out: Path, *, he
         try:
             flown = idev.run(config, plan, dev_plan, root, make, out,
                              log=lambda line: print(line, flush=True),
-                             resume=resume, order=order, label=label)
+                             resume=resume, order=order, label=label, keys=keys)
         finally:
             error = None
             for backend in sorted(wrappers, key=lambda w: not w.active):
@@ -477,30 +531,34 @@ def _isaac_development(args, config_path: Path, root: Path) -> int:
     from ontology_rgat.current_semantics import isaac_development as idev
     config = load_config(config_path)
     dev_plan = dev.load_development(dev.DEFAULT_DEVELOPMENT_PATH, config)
-    plan = idev.load_plan(idev.DEFAULT_PATH, config, dev_plan)
-    keys = idev.model_keys(dev_plan)
-    out = root / idev.OUT_DIR
-    summary = {"plan_file": str(idev.DEFAULT_PATH), "plan": plan.to_dict(),
+    plan_path = (args.plan or idev.DEFAULT_PATH).expanduser().resolve()
+    plan = idev.load_plan(plan_path, config, dev_plan)
+    spec = idev.spec_of(plan)
+    keys = idev.registered_keys(plan, dev_plan, root)
+    out = root / spec.out_dir
+    summary = {"plan_file": str(plan_path), "plan": plan.to_dict(), "protocol": plan.protocol,
                "models": list(keys), "episodes": len(plan.seeds) * len(keys)}
     if args.stage == "register-isaac-development":
         if args.dry_run:
             _print(resolved_plan(config_path, args.stage, root, dry_run=True,
-                                 extra={**summary, "starts_isaac": False}))
+                                 extra={**summary, "starts_isaac": False,
+                                        "will_write": [str(root / spec.registration)]}))
             return 0
         with owned(root):
-            status, payload = idev.register(config_path, idev.DEFAULT_PATH,
+            status, payload = idev.register(config_path, plan_path,
                                             dev.DEFAULT_DEVELOPMENT_PATH, root)
-            path = root / ARTIFACTS["register_isaac_development"]
+            path = root / spec.registration
             if payload.get("status") == "REGISTERED":
                 write_json(path, payload)
         _print({k: v for k, v in payload.items()
-                if k in ("stage", "status", "reason", "plan_hash", "episodes")})
+                if k in ("stage", "status", "reason", "plan_hash", "episodes", "protocol",
+                         "excluded_models", "development_gate_passed")})
         return status
     problem = idev.check_registration(config, plan, dev_plan, root)
     if problem:
         _print({"stage": args.stage, "status": "REFUSED", "reason": problem})
         return REFUSED_EXIT
-    previous = root / ARTIFACTS["isaac_development"]
+    previous = root / spec.result
     if previous.exists() and json.loads(previous.read_text(encoding="utf-8")).get(
             "protocol_complete"):
         _print({"stage": args.stage, "status": "REFUSED",
@@ -513,7 +571,10 @@ def _isaac_development(args, config_path: Path, root: Path) -> int:
              "headless": args.headless,
              "reset_recoveries": 2 if args.reset_recoveries is None else args.reset_recoveries}
     if args.dry_run:
-        _print(resolved_plan(config_path, args.stage, root, dry_run=True, extra=extra))
+        _print(resolved_plan(config_path, args.stage, root, dry_run=True,
+                             extra={**extra, "will_write": [str(previous),
+                                                            str(out / "episodes.jsonl"),
+                                                            str(out / "isaac_stack")]}))
         return 0
     with owned(root):
         out.mkdir(parents=True, exist_ok=True)
@@ -523,13 +584,13 @@ def _isaac_development(args, config_path: Path, root: Path) -> int:
                      local_path.read_text(encoding="utf-8").splitlines()]
         else:  # deterministic, so its order relative to the flight does not matter
             print("isaac-development: local reference on the identical cases", flush=True)
-            local = idev.local_reference(config_path, plan, dev_plan, root)
+            local = idev.local_reference(config_path, plan, dev_plan, root, keys=keys)
             local_path.write_text("".join(json.dumps(r, allow_nan=False) + "\n" for r in local),
                                   encoding="utf-8")
         flown, flight = _fly_development_models(config, plan, dev_plan, root, out,
                                                 headless=extra["headless"],
                                                 reset_recoveries=extra["reset_recoveries"],
-                                                resume=extra["resume"])
+                                                resume=extra["resume"], keys=keys)
         payload = idev.report(config, plan, dev_plan, flown,
                               backend=getattr(flight, "name", None),
                               profile_sha256=getattr(flight, "profile_sha256", None),
@@ -630,6 +691,8 @@ def main(argv=None) -> int:
         return _relation_shuffle(args, config_path, root)
     if args.stage in ORL_STAGES:
         return _orl(args, config_path, root)
+    if args.stage in BOND_STAGES:
+        return _bond(args, config_path, root)
     if args.stage in FLYING_STAGES and not args.allow_isaac:
         _print({"stage": args.stage, "status": "REFUSED", "allow_isaac": False,
                 "reason": "the Isaac evaluation starts an owned Isaac Sim + PX4 stack and runs "

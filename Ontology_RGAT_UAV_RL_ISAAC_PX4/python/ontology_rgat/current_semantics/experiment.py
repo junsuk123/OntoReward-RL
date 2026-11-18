@@ -38,15 +38,34 @@ TASK_RUN_ROOTS = MappingProxyType({
     "spatial-current-task/7": DEFAULT_RUN_ROOT.with_name(f"{SCHEMA_ID}_task7")})
 
 
-def run_root_for(config: CurrentSemanticsConfig, requested: Path | None) -> Path:
-    """``requested`` (or the config's own root); refuses another task's registered root."""
+NAVIGATION_ROOT_TAG = "_nav4_"
+
+
+def config_run_root(config: CurrentSemanticsConfig) -> Path:
+    """The task's root; a config with a navigation profile (observation /4) owns a sibling
+    root named after its profile's hash, so /4 never writes where /3 was judged."""
     own = TASK_RUN_ROOTS[config.task.version]
+    profile = getattr(config, "navigation", None)
+    if profile is None:
+        return own
+    from ..direct_policy.contracts import digest
+    return own.with_name(f"{own.name}{NAVIGATION_ROOT_TAG}{digest(profile.manifest_part())[:8]}")
+
+
+def run_root_for(config: CurrentSemanticsConfig, requested: Path | None) -> Path:
+    """``requested`` (or the config's own root); refuses another task's or another
+    observation profile's registered root."""
+    own = config_run_root(config)
     if requested is None:
         return own
     root = requested.resolve()
     for task, other in TASK_RUN_ROOTS.items():
-        if task != config.task.version and root == other.resolve():
-            raise ValueError(f"{root} holds {task} results; {config.task.version} runs in {own}")
+        if root == other.resolve() and root != own.resolve():
+            raise ValueError(f"{root} holds {task} results (observation /3); "
+                             f"this config runs in {own}")
+    if NAVIGATION_ROOT_TAG in root.name and root != own.resolve():
+        raise ValueError(f"{root} holds another navigation profile's results; "
+                         f"this config runs in {own}")
     return requested
 
 

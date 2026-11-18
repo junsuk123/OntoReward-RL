@@ -314,10 +314,16 @@ def recent_logs(results: Path, roots: list[Path], now: float) -> list[dict[str, 
 # ------------------------------------------------------------------ state
 
 def snapshot(results: Path | None = None) -> dict[str, Any]:
-    from .experiment import TASK_RUN_ROOTS
+    from .experiment import NAVIGATION_ROOT_TAG, TASK_RUN_ROOTS
     results = RESULTS if results is None else Path(results)
     now = time.time()
     roots = {task: (results / root.name) for task, root in TASK_RUN_ROOTS.items()}
+    # observation-profile /4 roots (experiment.config_run_root), shown under their task
+    for task, root in list(roots.items()):
+        for nav_root in sorted(results.glob(f"{root.name}{NAVIGATION_ROOT_TAG}*")):
+            if nav_root.is_dir():
+                tag = nav_root.name.split(NAVIGATION_ROOT_TAG, 1)[1]
+                roots[f"{task} obs/4 {tag}"] = nav_root
     runs = []
     for task, root in roots.items():
         if not root.exists():

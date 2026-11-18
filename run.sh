@@ -37,6 +37,9 @@ case "$1" in
     echo '                               current-observation 3D study: gates G0-G4; Isaac'
     echo '                               G3 only via coupling --backend isaac --allow-isaac'
     echo '  ./run.sh isaac-legacy [existing flight options]'
+    echo '  ./run.sh wmon-demo [--profile truth|wmon|kalman] [--model SEED/ARM|SEED/bond]'
+    echo '                     [--cell CELL] [--backend local|isaac --allow-isaac] [--no-viewers]'
+    echo '                               fly a trained policy; RViz2 + rqt_plot (/wmon_demo/*)'
     echo 'Reference = two_axis_reference_v28_active.yaml, local dynamics, no Isaac/PX4.'
     echo 'Isaac legacy = planar_three_arm_comparison.yaml; NOT reference-equivalent.'
     echo 'Bare ./run.sh TRAINS and FLIES: hours, writes under results/, and starts an'
@@ -98,6 +101,10 @@ case "$1" in
     export OMP_NUM_THREADS="${OMP_NUM_THREADS:-1}"
     export MKL_NUM_THREADS="${MKL_NUM_THREADS:-1}"
     exec python3 "$project_root/python/run_current_semantics_3d.py" "$@"
+    ;;
+  wmon-demo)
+    shift
+    exec bash "$project_root/scripts/run_wmon_demo.sh" "$@"
     ;;
   isaac-legacy)
     shift

@@ -20,7 +20,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 import math
 from types import MappingProxyType
-from typing import Any
+from typing import Any, Callable
 
 import numpy as np
 from scipy.spatial.transform import Rotation
@@ -308,17 +308,34 @@ class CurrentObserver:
     sample stays the decision sample.  The track re-acquires after
     ``TRACK_REACQUIRE_AFTER_REJECTIONS`` consecutive rejected fresh detections
     (contracts.TRACK_REACQUIRE_RULE); while it accepts frames nothing changes.
+
+    ``track_factory`` (opt-in, unregistered) replaces the pad track, e.g.
+    ``spatial.wmon_track.wmon_track_factory()``; it must return an object with
+    the reference track's ``update``/fields.  None is the registered ABG track,
+    bit for bit.  A replaced track is named in the provenance
+    (``pad_estimator``) because ``observation_hash`` still describes the ABG one.
     """
 
-    def __init__(self, cadence: LocalOpticalCadence | None = None) -> None:
+    def __init__(self, cadence: LocalOpticalCadence | None = None, *,
+                 track_factory: Callable[[], Any] | None = None,
+                 navigation: Any = None) -> None:
         self.cadence = cadence
+        self.track_factory = track_factory
+        # opt-in live navigation (navigation.LiveNavigation): its estimate is already in
+        # the Measurements the backend feeds; here it only supplies the two channels.
+        self.navigation = navigation
         self.reset(None)
+
+    def _new_track(self) -> Any:
+        if self.track_factory is None:
+            return ReferenceSpatialTrack(capture_aligned=True)
+        return self.track_factory()
 
     def reset(self, episode_id: Any, *, seed: int | None = None) -> None:
         self.episode_id = episode_id
         if self.cadence is not None:
             self.cadence.reset(0 if seed is None else seed)
-        self.track = ReferenceSpatialTrack(capture_aligned=True)
+        self.track = self._new_track()
         self.rejected: list[tuple[float, np.ndarray]] = []  # (capture, measured pad position)
         self.reacquisitions = 0
         self.last_measurement: Measurement | None = None
@@ -377,7 +394,7 @@ class CurrentObserver:
         slope = ((times - centre)[:, None] * (points - points.mean(0))).sum(0) \
             / ((times - centre) ** 2).sum()
         slope[2] = 0.0
-        fresh = ReferenceSpatialTrack(capture_aligned=True)
+        fresh = self._new_track()
         track = self.track
         track.position = points.mean(0) + slope * (now - centre)
         track.velocity = slope
@@ -402,6 +419,8 @@ class CurrentObserver:
         angles = Rotation.from_quat(np.asarray(m.quaternion, dtype=np.float64)[[1, 2, 3, 0]]
                                     ).as_euler("xyz")
         zero = (0.0, 0.0, 0.0)
+        nav_valid, nav_age = (True, 0.0) if self.navigation is None \
+            else self.navigation.status(decision)
         estimate = SpatialEstimate(
             pad_position_enu=tuple(track.position.tolist()) if initialized else zero,
             pad_velocity_enu=tuple(track.velocity.tolist()) if initialized else zero,
@@ -411,8 +430,8 @@ class CurrentObserver:
             body_rate_rad_s=tuple(np.asarray(m.angular_rate, dtype=np.float64).tolist()),
             vision_updated=self.frames_since_decision > 0,
             vision_age_s=age,
-            navigation_valid=True,
-            navigation_age_s=0.0,
+            navigation_valid=nav_valid,
+            navigation_age_s=nav_age,
             estimate_initialized=initialized)
         vector = from_source(spatial_vector(estimate))
         sample, capture, receive = self.last_frame if self.last_frame else (None, None, None)
@@ -429,10 +448,15 @@ class CurrentObserver:
             "track_reacquisitions": self.reacquisitions,
             "estimate_initialized": initialized,
             "vision_age_s": age if initialized else None,
-            "navigation": "valid 1, age 0 by construction (backend.NAVIGATION_NOTE)",
+            "navigation": ("valid 1, age 0 by construction (backend.NAVIGATION_NOTE)"
+                           if self.navigation is None else self.navigation.provenance(decision)),
             # Evaluator-only: never part of the 21D vector.
             "track_std": track.std.tolist() if initialized else None,
         }
+        if self.track_factory is not None:  # opt-in estimator: say which one fed the vector
+            provenance["pad_estimator"] = getattr(track, "estimator_id", type(track).__name__)
+            if hasattr(track, "diagnostics"):
+                provenance["pad_estimator_diagnostics"] = track.diagnostics()
         self.frames_since_decision = 0
         return vector, provenance
 
@@ -533,7 +557,17 @@ class CurrentSpatialBackend:
     def __init__(self, flight: Any, config: CurrentSemanticsConfig, *, name: str,
                  scientific: bool, randomization: TrainingRandomization | None = None,
                  dropout: VisionBlackout | None = None, split: str | None = None,
-                 factors: Any = None):
+                 factors: Any = None, track_factory: Callable[[], Any] | None = None,
+                 navigation: Any = None):
+        if track_factory is not None and scientific:
+            raise ValueError("a replaced pad track (track_factory) is not part of the "
+                             "registered observation contract; scientific use needs a "
+                             "contract revision")
+        if navigation is not None and scientific and getattr(config, "navigation", None) \
+                != navigation.profile:
+            raise ValueError("live navigation is observation profile "
+                             "spatial-current-observation/4, not the registered /3; "
+                             "scientific use needs a config that declares it (navigation:)")
         if dropout is not None and randomization is not None:
             raise ValueError("an evaluation dropout never rides on a training randomisation")
         if (split is not None or factors is not None) and name != "isaac_v12":
@@ -597,7 +631,9 @@ class CurrentSpatialBackend:
         cadence = config.local_plant.optical_cadence
         thinning = cadence.keep_every_nth_capture > 1 or cadence.extra_drop_probability > 0
         self.observer = CurrentObserver(
-            LocalOpticalCadence(cadence, cfg.camera_dt) if local and thinning else None)
+            LocalOpticalCadence(cadence, cfg.camera_dt) if local and thinning else None,
+            track_factory=track_factory, navigation=navigation)
+        self.navigation = navigation
         self.handover_wait_steps = (int(math.ceil(config.local_plant.handover_wait_max_s
                                                   / cfg.dt - 1e-9)) if local else 0)
         self.evaluator = Evaluator(cfg)
@@ -645,6 +681,8 @@ class CurrentSpatialBackend:
         self.error = self._draw_error(float(measurement.time_s))
         self.blackout = self._draw_blackout()
         self.observer.reset(self.episode_id, seed=self.seed)
+        if self.navigation is not None:
+            self.navigation.reset(self.seed)
         self._ingest(measurement)
         measurement = self.observer.last_measurement
         self._reset_controller(measurement)
@@ -731,7 +769,8 @@ class CurrentSpatialBackend:
                                       optical_quaternion=None, marker_corners_px=None,
                                       marker_capture_time_s=None)
         if self.error is None:
-            return self.observer.ingest(measurement)
+            return self.observer.ingest(measurement if self.navigation is None
+                                        else self.navigation(measurement))
         e0, tau, t0 = self.error
         drift = lambda t: e0 * tau * (1.0 - math.exp(-max(t - t0, 0.0) / tau))
         now = float(measurement.time_s)
@@ -743,7 +782,9 @@ class CurrentSpatialBackend:
             changes["optical_own_position"] = (
                 np.asarray(measurement.optical_own_position, dtype=np.float64)
                 + drift(float(measurement.optical_time_s)))
-        return self.observer.ingest(replace(measurement, **changes))
+        measurement = replace(measurement, **changes)
+        return self.observer.ingest(measurement if self.navigation is None
+                                    else self.navigation(measurement))
 
     def _reset_controller(self, measurement: Measurement) -> None:
         yaw = Rotation.from_quat(np.asarray(measurement.quaternion)[[1, 2, 3, 0]]
@@ -839,15 +880,31 @@ class CurrentSpatialBackend:
 
 # ---------------------------------------------------------------- factories
 
+def _profile_navigation(config: CurrentSemanticsConfig, navigation: Any) -> Any:
+    """A fresh LiveNavigation of the config's profile (/4), or the explicit one; never both
+    different -- a /4 config's observation is its profile's, nothing else."""
+    profile = getattr(config, "navigation", None)
+    if profile is None:
+        return navigation
+    if navigation is None:
+        return profile.build()
+    if navigation.profile != profile:
+        raise ValueError("explicit navigation differs from the config's navigation profile")
+    return navigation
+
+
 def make_local_backend(config: CurrentSemanticsConfig, *, difficulty: float = 1.0,
                        randomization: TrainingRandomization | None = None,
                        scenario: str | None = None, factors: Any = None,
-                       dropout: VisionBlackout | None = None) -> CurrentSpatialBackend:
+                       dropout: VisionBlackout | None = None,
+                       track_factory: Callable[[], Any] | None = None,
+                       navigation: Any = None) -> CurrentSpatialBackend:
     """The spatial-reference/12 local plant; ``difficulty`` < 1 and ``randomization``
     (contracts.TrainingRandomization) are training-only.  ``scenario`` selects the
     task-v5 composition split ("in_distribution" or "composition", scenario.py) that
     every learning and evaluation run uses; None keeps the /12 plant's own draw for
     the implementation checks (G3 probes, fixtures)."""
+    navigation = _profile_navigation(config, navigation)
     if scenario is None:
         if factors is not None:
             raise ValueError("plant factors need a task-v5 scenario split")
@@ -858,19 +915,23 @@ def make_local_backend(config: CurrentSemanticsConfig, *, difficulty: float = 1.
                                       scenario=config.task.scenario, split=scenario,
                                       factors=PlantFactors() if factors is None else factors)
     return CurrentSpatialBackend(flight, config, name="spatial_local_v12", scientific=False,
-                                 randomization=randomization, dropout=dropout)
+                                 randomization=randomization, dropout=dropout,
+                                 track_factory=track_factory, navigation=navigation)
 
 
 def make_isaac_backend(config: CurrentSemanticsConfig, *, pair: int = 0,
                        allow_isaac: bool = False, split: str | None = None,
                        factors: Any = None,
-                       dropout: VisionBlackout | None = None) -> CurrentSpatialBackend:
+                       dropout: VisionBlackout | None = None,
+                       track_factory: Callable[[], Any] | None = None,
+                       navigation: Any = None) -> CurrentSpatialBackend:
     """Connect to a running, user-approved Isaac/PX4 stack.  Refused unless asked.
     ``split`` flies the task-v5 draw ("in_distribution" or "composition") instead of
     the /12 deck; ``factors`` (pad acceleration only) and ``dropout`` are evaluation
     conditions.  None keeps the /12 deck that G3 and isaac_eval/1-5 flew."""
     if allow_isaac is not True:
         raise _refusal(BACKENDS["isaac_v12"], "requires allow_isaac=True (--allow-isaac)")
+    navigation = _profile_navigation(config, navigation)
     from ..spatial.environment import IsaacBackend
     from ..spatial.runtime_contract import deployment_profile
     deployment = deployment_profile(FLIGHT_SCHEMA)
@@ -881,7 +942,8 @@ def make_isaac_backend(config: CurrentSemanticsConfig, *, pair: int = 0,
                           pair=pair, scenario=ISAAC_SCENARIO, deployment=deployment)
     try:
         return CurrentSpatialBackend(flight, config, name="isaac_v12", scientific=False,
-                                     split=split, factors=factors, dropout=dropout)
+                                     split=split, factors=factors, dropout=dropout,
+                                     track_factory=track_factory, navigation=navigation)
     except BaseException:
         flight.close()
         raise

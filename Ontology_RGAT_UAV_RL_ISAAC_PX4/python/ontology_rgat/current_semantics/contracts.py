@@ -174,7 +174,19 @@ TRACK_REACQUIRE_RULE = (
     "to a fresh track's; counts as an accepted frame")
 
 
-def observation_manifest() -> dict[str, Any]:
+def observation_manifest(navigation: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    """The registered /3 manifest; with ``navigation`` (navigation.LiveNavigation
+    .manifest_part()) the opt-in live-navigation profile /4, hashed apart."""
+    manifest = _registered_observation_manifest()
+    if navigation is None:
+        return manifest
+    manifest = dict(manifest)
+    manifest["version"] = navigation["version"]
+    manifest["navigation"] = _plain(dict(navigation))
+    return manifest
+
+
+def _registered_observation_manifest() -> dict[str, Any]:
     return _plain({
         "version": OBSERVATION_VERSION,
         "dimension": OBSERVATION_DIMENSION,
@@ -873,6 +885,10 @@ class CurrentSemanticsConfig:
     local_plant: LocalPlant
     g4: G4PilotConfig
     isaac_eval: IsaacEvalConfig
+    # Optional ``navigation`` section (navigation.NavigationProfile): observation profile
+    # /4 with live own navigation.  None is the registered /3, and a config without the
+    # section loads, hashes and runs exactly as before it existed.
+    navigation: Any = None
 
     @property
     def z_near_m(self) -> float:
@@ -1259,10 +1275,20 @@ def _pilot_seeds(value: Any) -> tuple[int, ...]:
     return seeds
 
 
+def _navigation(section: Any) -> Any:
+    if section is None:
+        return None
+    from .navigation import NavigationProfile
+    return NavigationProfile.from_mapping(section)
+
+
 def load_config(path: str | Path | None = None) -> CurrentSemanticsConfig:
     """Load and validate the registered YAML; every key is required, none is extra."""
     path = DEFAULT_CONFIG_PATH if path is None else Path(path)
-    data = _section(yaml.safe_load(Path(path).read_text(encoding="utf-8")), _TOP_KEYS, "config")
+    raw = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+    # The one optional top-level key: observation profile /4 (navigation.py).
+    navigation_section = raw.pop("navigation", None) if isinstance(raw, dict) else None
+    data = _section(raw, _TOP_KEYS, "config")
     if data["schema_id"] != SCHEMA_ID:
         raise ValueError(f"schema_id must be {SCHEMA_ID!r}, got {data['schema_id']!r}")
     if data["deployment_profile"] != DEPLOYMENT_PROFILE:
@@ -1329,7 +1355,8 @@ def load_config(path: str | Path | None = None) -> CurrentSemanticsConfig:
         task=_task(data["task"], limits),
         local_plant=_local_plant(data["local_plant"]),
         g4=(g4 := _g4_pilot(data["g4_pilot"], pilot)),
-        isaac_eval=_isaac_eval(data["isaac_eval"], g4, pilot))
+        isaac_eval=_isaac_eval(data["isaac_eval"], g4, pilot),
+        navigation=_navigation(navigation_section))
     if G4_TASK[config.g4.protocol] != config.task.version:
         raise ValueError(f"g4_pilot.protocol {config.g4.protocol!r} checks learnability of "
                          f"{G4_TASK[config.g4.protocol]}, not {config.task.version}")
@@ -1428,8 +1455,15 @@ def _extension_part(name: str, config: CurrentSemanticsConfig) -> Any:
     return None if hook is None else _plain(hook(config))
 
 
-def contract_manifest(config: CurrentSemanticsConfig) -> dict[str, Any]:
-    observation = observation_manifest()
+def contract_manifest(config: CurrentSemanticsConfig, *,
+                      navigation: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    """``navigation`` defaults to the config's own profile (None: the registered /3)."""
+    if config.navigation is not None:
+        own = config.navigation.manifest_part()
+        if navigation is not None and _plain(dict(navigation)) != _plain(own):
+            raise ValueError("navigation differs from the config's navigation profile")
+        navigation = own
+    observation = observation_manifest(navigation)
     calibration = config.calibration.to_dict()
     scales = _plain(config.feature_scales)
     contact = _plain({**asdict(config.contact), "tilt_rad": config.contact.tilt_rad,
@@ -1486,7 +1520,7 @@ def contract_manifest(config: CurrentSemanticsConfig) -> dict[str, Any]:
          "action_hash": hashes["action_hash"], "model": model})
     return _plain({
         "schema_id": SCHEMA_ID,
-        "versions": {"observation": OBSERVATION_VERSION, "features": FEATURE_VERSION,
+        "versions": {"observation": observation["version"], "features": FEATURE_VERSION,
                      "graph": GRAPH_VERSION, "action": ACTION_VERSION,
                      "models": MODEL_VERSION},
         "observation": observation,

@@ -17,12 +17,20 @@ verdict as it lands and resumes an interrupted flight of the same registration.
 ``local_reference`` flies the identical cases on the calibrated local plant, so each
 Isaac verdict has a paired local one.  This is an integration measurement of the
 current deployment, not an Isaac superiority test (guide 11.6.5): no pass criterion.
+
+``isaac-development/2`` (isaac_development_v2.yaml, 2026-11-13) re-flies the SAME cases
+as /1 under its own artifact names (``PROTOCOLS``), so a root keeps its /1 record:
+the /1 flight of task 5 /3 predates the 2026-10-31 handover-kick fix, and an
+observation-/4 root whose development gate FAILED (Kalman navigation) is flown as a
+paired navigation comparison.  /2 needs the development procedure COMPLETE, not a
+passed gate; a model without ``best.pt`` is excluded and recorded, never imputed.
 """
 from __future__ import annotations
 
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import asdict, dataclass
 import datetime as dt
+from types import MappingProxyType
 import hashlib
 import json
 import multiprocessing
@@ -44,6 +52,34 @@ REGISTRATION = "isaac_development_registration.json"
 RESULT = "isaac_development.json"
 OUT_DIR = "isaac_development"
 LOCAL_REFERENCE = "local_reference.jsonl"
+REFLIGHT_PROTOCOL = "isaac-development/2"
+REFLIGHT_PATH = PROJECT_ROOT / "config" / "current_semantics" / "isaac_development_v2.yaml"
+
+
+@dataclass(frozen=True)
+class ProtocolSpec:
+    """Artifact names and the development requirement of one Isaac-development protocol."""
+    protocol: str
+    registration: str
+    result: str
+    out_dir: str
+    requires_gate: bool   # a PASSED development gate (/1) or only a complete procedure (/2)
+
+
+PROTOCOLS = MappingProxyType({
+    ISAAC_DEVELOPMENT_PROTOCOL: ProtocolSpec(ISAAC_DEVELOPMENT_PROTOCOL, REGISTRATION, RESULT,
+                                             OUT_DIR, requires_gate=True),
+    REFLIGHT_PROTOCOL: ProtocolSpec(REFLIGHT_PROTOCOL, "isaac_development_2_registration.json",
+                                    "isaac_development_2.json", "isaac_development_2",
+                                    requires_gate=False)})
+NOTES = MappingProxyType({
+    ISAAC_DEVELOPMENT_PROTOCOL: ("an integration measurement of the current deployment on fixed "
+                                 "paired cases (guide 11.6.5): not an Isaac superiority test, "
+                                 "no pass criterion"),
+    REFLIGHT_PROTOCOL: ("isaac-development/2: the isaac-development/1 cases and seeds re-flown "
+                        "on the current (post-2026-10-31 handover-fix) stack under their own "
+                        "artifacts; needs a complete development procedure, not a passed gate; "
+                        "models without best.pt are excluded and listed; no pass criterion")})
 
 
 @dataclass(frozen=True)
@@ -68,8 +104,8 @@ def load_plan(path: str | Path, config: CurrentSemanticsConfig,
     data = dev._section(yaml.safe_load(Path(path).read_text(encoding="utf-8")),
                         ("protocol", "development_protocol", "mode", "conditions"),
                         "isaac_development")
-    if data["protocol"] != ISAAC_DEVELOPMENT_PROTOCOL:
-        raise ValueError(f"isaac_development.protocol must be {ISAAC_DEVELOPMENT_PROTOCOL!r}")
+    if data["protocol"] not in PROTOCOLS:
+        raise ValueError(f"isaac_development.protocol must be one of {tuple(PROTOCOLS)}")
     if data["development_protocol"] != dev_plan.protocol:
         raise ValueError("isaac_development.development_protocol must name the registered "
                          f"development protocol {dev_plan.protocol!r}")
@@ -85,11 +121,21 @@ def load_plan(path: str | Path, config: CurrentSemanticsConfig,
             raise ValueError(f"{name} scales the optical noise, which only the local plant "
                              "applies; Isaac cannot fly it")
         conditions.append((name, dev._seeds(seeds, f"isaac_development.conditions.{name}")))
-    plan = IsaacDevelopmentPlan(conditions=tuple(conditions))
+    plan = IsaacDevelopmentPlan(conditions=tuple(conditions), protocol=data["protocol"])
     if len(set(plan.seeds)) != len(plan.seeds):
         raise ValueError("isaac_development seeds must be distinct across conditions")
+    if plan.protocol == REFLIGHT_PROTOCOL:
+        # a re-flight is paired case by case with /1: identical conditions and seeds
+        first = load_plan(DEFAULT_PATH, config, dev_plan)
+        if plan.conditions != first.conditions:
+            raise ValueError("isaac-development/2 must fly exactly the isaac-development/1 "
+                             "conditions and seeds")
     _audit(plan, config, dev_plan)
     return plan
+
+
+def spec_of(plan: IsaacDevelopmentPlan) -> ProtocolSpec:
+    return PROTOCOLS[plan.protocol]
 
 
 def _audit(plan: IsaacDevelopmentPlan, config: CurrentSemanticsConfig,
@@ -134,8 +180,10 @@ def plan_hash(plan: IsaacDevelopmentPlan, development_plan_hash: str) -> str:
 
 
 def _development_passed(config: CurrentSemanticsConfig, dev_plan: dev.DevelopmentPlan,
-                        root: Path) -> tuple[str | None, str | None]:
-    """(reason it is not, the registered development plan hash)."""
+                        root: Path, *, requires_gate: bool = True
+                        ) -> tuple[str | None, str | None]:
+    """(reason it is not, the registered development plan hash).  ``requires_gate`` False
+    (isaac-development/2) accepts a complete procedure whatever its gate verdict."""
     problem = dev.check_registration(config, dev_plan, root)
     if problem:
         return problem, None
@@ -146,10 +194,19 @@ def _development_passed(config: CurrentSemanticsConfig, dev_plan: dev.Developmen
     result = json.loads(result_path.read_text(encoding="utf-8"))
     if result.get("plan_hash") != registration["plan_hash"]:
         return "development.json belongs to another development plan", None
-    if not (result.get("procedure_complete")
-            and (result.get("verdict") or {}).get("development_gate_passed")):
+    if not result.get("procedure_complete"):
+        return "the development procedure is not complete", None
+    if requires_gate and not (result.get("verdict") or {}).get("development_gate_passed"):
         return "guide 11.6 flies the development models only after a PASSED development gate", None
     return None, registration["plan_hash"]
+
+
+def _development_gate(root: Path) -> bool | None:
+    path = root / dev.RESULT
+    if not path.exists():
+        return None
+    return (json.loads(path.read_text(encoding="utf-8")).get("verdict") or {}).get(
+        "development_gate_passed")
 
 
 def register(config_path: Path, plan_path: Path, dev_plan_path: Path,
@@ -157,52 +214,79 @@ def register(config_path: Path, plan_path: Path, dev_plan_path: Path,
     config = load_config(config_path)
     dev_plan = dev.load_development(dev_plan_path, config)
     plan = load_plan(plan_path, config, dev_plan)
+    spec = spec_of(plan)
     refused = {"stage": "register-isaac-development", "status": "REFUSED"}
-    problem, dev_hash = _development_passed(config, dev_plan, root)
+    problem, dev_hash = _development_passed(config, dev_plan, root,
+                                            requires_gate=spec.requires_gate)
     if problem:
         return 3, {**refused, "reason": problem}
     digest = plan_hash(plan, dev_hash)
-    existing = root / REGISTRATION
+    existing = root / spec.registration
     if existing.exists():
         recorded = json.loads(existing.read_text(encoding="utf-8"))
         if recorded.get("plan_hash") == digest:
             return 0, {**recorded, "status": "ALREADY_REGISTERED"}
         return 3, {**refused, "reason": f"{existing} registers another plan "
                                         f"({recorded.get('plan_hash')}); archive it first"}
-    checkpoints = {}
+    checkpoints, excluded = {}, {}
     for key in model_keys(dev_plan):
         path = checkpoint_path(root, key)
         if not path.exists():
-            return 3, {**refused, "reason": f"development model {key} has no best.pt ({path})"}
+            if spec.requires_gate:
+                return 3, {**refused,
+                           "reason": f"development model {key} has no best.pt ({path})"}
+            excluded[key] = f"no best.pt ({path}): the development stage selected no checkpoint"
+            continue
         checkpoints[key] = {"path": str(path), "sha256": _sha256(path)}
+    if not checkpoints:
+        return 3, {**refused, "reason": "no development model has a best.pt"}
+    note = ("registered before any development model flew on Isaac; conditions "
+            "and seeds fixed here, no pass criterion (guide 11.6.5)")
+    if plan.protocol == REFLIGHT_PROTOCOL:
+        note = ("registered before this protocol flew; " + NOTES[REFLIGHT_PROTOCOL])
     return 0, {"schema_id": SCHEMA_ID, "stage": "register-isaac-development",
-               "status": "REGISTERED", "protocol": ISAAC_DEVELOPMENT_PROTOCOL,
+               "status": "REGISTERED", "protocol": plan.protocol,
                "plan_hash": digest, "development_plan_hash": dev_hash,
+               "development_gate_passed": _development_gate(root),
                "plan_file": str(plan_path), "plan": plan.to_dict(),
-               "checkpoints": checkpoints,
+               "checkpoints": checkpoints, "excluded_models": excluded,
                "episodes": len(plan.seeds) * len(checkpoints),
                "registered_at": dt.datetime.now(dt.timezone.utc).isoformat(),
-               "note": ("registered before any development model flew on Isaac; conditions "
-                        "and seeds fixed here, no pass criterion (guide 11.6.5)")}
+               "note": note}
 
 
 def check_registration(config: CurrentSemanticsConfig, plan: IsaacDevelopmentPlan,
                        dev_plan: dev.DevelopmentPlan, root: Path) -> str | None:
-    problem, dev_hash = _development_passed(config, dev_plan, root)
+    spec = spec_of(plan)
+    problem, dev_hash = _development_passed(config, dev_plan, root,
+                                            requires_gate=spec.requires_gate)
     if problem:
         return problem
-    path = root / REGISTRATION
+    path = root / spec.registration
     if not path.exists():
         return "no Isaac development registration; run --stage register-isaac-development"
     recorded = json.loads(path.read_text(encoding="utf-8"))
     if recorded.get("plan_hash") != plan_hash(plan, dev_hash):
         return "the Isaac development plan differs from its registration"
-    for key in model_keys(dev_plan):
+    for key in registered_keys(plan, dev_plan, root):
         want = (recorded.get("checkpoints") or {}).get(key, {}).get("sha256")
         path = checkpoint_path(root, key)
         if not path.exists() or want != _sha256(path):
             return f"development checkpoint {key} differs from the registered one"
     return None
+
+
+def registered_keys(plan: IsaacDevelopmentPlan, dev_plan: dev.DevelopmentPlan,
+                    root: Path) -> tuple[str, ...]:
+    """The models this registration flies: all of them for /1; for /2 the registered
+    checkpoints (models without best.pt are excluded at registration), in model order."""
+    if spec_of(plan).requires_gate:
+        return model_keys(dev_plan)
+    path = root / spec_of(plan).registration
+    if not path.exists():
+        return tuple(k for k in model_keys(dev_plan) if checkpoint_path(root, k).exists())
+    recorded = json.loads(path.read_text(encoding="utf-8")).get("checkpoints") or {}
+    return tuple(k for k in model_keys(dev_plan) if k in recorded)
 
 
 def episode_order(plan: IsaacDevelopmentPlan,
@@ -213,12 +297,13 @@ def episode_order(plan: IsaacDevelopmentPlan,
 
 
 def load_models(config: CurrentSemanticsConfig, dev_plan: dev.DevelopmentPlan,
-                root: Path) -> dict[str, tuple[Any, CurrentSemanticsConfig, dict[str, Any]]]:
+                root: Path, keys: tuple[str, ...] | None = None
+                ) -> dict[str, tuple[Any, CurrentSemanticsConfig, dict[str, Any]]]:
     """Every development model under its own arm's contract (load_checkpoint refuses any
     other).  key -> (model, arm config, {checkpoint, update})."""
     from .models import CurrentActorCritic, load_checkpoint
     out = {}
-    for key in model_keys(dev_plan):
+    for key in (model_keys(dev_plan) if keys is None else keys):
         arm = key.split("/")[1]
         acfg = dev.arm_config(config, dev_plan, arm)
         model = CurrentActorCritic(arm, acfg, seed=0)
@@ -244,13 +329,14 @@ def run(config: CurrentSemanticsConfig, plan: IsaacDevelopmentPlan,
         make_backend: Callable[[dev.EvaluationCell], Any], out_dir: Path, *,
         log: Callable[[str], None] = print, trace: bool = True,
         resume: bool = False, order: list[tuple[str, int, str]] | None = None,
-        label: str = "isaac-development") -> dict[str, Any]:
+        label: str = "isaac-development",
+        keys: tuple[str, ...] | None = None) -> dict[str, Any]:
     """Fly the registered cases on the backends ``make_backend(cell)`` returns (called once
     per condition; any backend works, so the logic is testable on the local plant).
     ``order`` replaces the full plan with an explicit list of its (condition, environment
     seed, model) cases, e.g. a later re-flight of some of them (isaac_handover_fix)."""
     from .pilot import fly_policy
-    models = load_models(config, dev_plan, root)
+    models = load_models(config, dev_plan, root, keys)
     full = episode_order(plan, tuple(models))
     if order is None:
         order = full
@@ -334,12 +420,13 @@ def run(config: CurrentSemanticsConfig, plan: IsaacDevelopmentPlan,
 
 def local_reference(config_path: Path, plan: IsaacDevelopmentPlan,
                     dev_plan: dev.DevelopmentPlan, root: Path, *,
-                    workers: int | None = None) -> list[dict[str, Any]]:
+                    workers: int | None = None,
+                    keys: tuple[str, ...] | None = None) -> list[dict[str, Any]]:
     """The identical registered cases on the calibrated local plant (development cells'
     own code path, ``development._cell_work``), for a paired local verdict per case."""
     from .pilot import _init_worker
     config = load_config(config_path)
-    models = load_models(config, dev_plan, root)
+    models = load_models(config, dev_plan, root, keys)
     tasks, index = [], []
     for cell_name, seed, key in episode_order(plan, tuple(models)):
         model = models[key][0]
@@ -419,12 +506,11 @@ def report(config: CurrentSemanticsConfig, plan: IsaacDevelopmentPlan,
     manifest = contract_manifest(config)
     return _plain({
         "schema_id": SCHEMA_ID, "stage": "Isaac evaluation of the development models (11.6)",
-        "protocol": ISAAC_DEVELOPMENT_PROTOCOL, "backend": backend,
+        "protocol": plan.protocol, "backend": backend,
         "profile_sha256": profile_sha256, "plan": plan.to_dict(), "mode": "deterministic",
         "hashes": {k: manifest[k] for k in dev.BOUND_HASHES},
         "protocol_complete": flown["complete"], "stopped": flown["stopped"],
         "interruptions": flown["interruptions"], "models": flown["models"],
         "episodes": len(flown["rows"]), "wall_s": flown["wall_s"],
         **summarize(plan, dev_plan, flown["rows"], local),
-        "note": ("an integration measurement of the current deployment on fixed paired cases "
-                 "(guide 11.6.5): not an Isaac superiority test, no pass criterion")})
+        "note": NOTES[plan.protocol]})

@@ -1,0 +1,24 @@
+# spatial_current_semantics_v1, guide 11.6: isaac-development/2 -- the isaac-development/1
+# cases re-flown on the CURRENT Isaac/PX4 stack, under their own artifacts
+# (isaac_development_2_registration.json, isaac_development_2.json, isaac_development_2/),
+# so a root keeps its /1 record (2026-11-13, user request "2 first and 1 next").
+#
+# Why a second protocol:
+#  * task 5 /3: its isaac-development/1 flight (2026-10-30) predates the 2026-10-31
+#    handover-kick fix (IMU clip + PX4 int16 wrap; 203/600 SAFETY_ENVELOPE_VIOLATION);
+#    only 80 of its cases were re-flown after the fix (isaac_handover_fix_2).
+#  * observation /4 with Kalman navigation: its development gate FAILED (two MLP models
+#    selected no checkpoint, Raw margin -0.008), so /1 refuses it; it is flown here as the
+#    paired navigation comparison to the /4 WMON root's /1 flight.
+#
+# Conditions and seeds MUST equal isaac_development_v1.yaml (the loader checks it), so
+# every case pairs across roots and protocols.  /2 needs a COMPLETE development
+# procedure, not a passed gate; a model without best.pt is excluded at registration and
+# listed (excluded_models), never imputed.  Deterministic, no pass criterion.
+protocol: isaac-development/2
+development_protocol: development/1
+mode: deterministic
+conditions:
+  composition_id: [994101, 994102, 994103, 994104, 994105, 994106, 994107, 994108, 994109, 994110]
+  composition_ood: [994111, 994112, 994113, 994114, 994115, 994116, 994117, 994118, 994119, 994120]
+  combined_id: [994121, 994122, 994123, 994124, 994125, 994126, 994127, 994128, 994129, 994130]

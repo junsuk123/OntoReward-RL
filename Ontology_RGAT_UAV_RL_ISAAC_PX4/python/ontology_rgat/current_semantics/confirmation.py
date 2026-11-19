@@ -832,6 +832,43 @@ def bind_checkpoints(plan: ConfirmationPlan, root: Path, seeds: list[int]
     return record["checkpoints"], record["excluded"]
 
 
+def bind_models(plan: ConfirmationPlan, root: Path, keys: list[str]
+                ) -> tuple[dict[str, Any], dict[str, str]]:
+    """``bind_checkpoints`` for individual COMPLETED models (summary.json written, so their
+    best.pt is final): a model can fly as soon as it is evaluated, without waiting for the
+    other arms of its seed, and a model still training is never bound or excluded."""
+    from .experiment import write_json
+    path = isaac_dir(root, plan) / CHECKPOINTS
+    record = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {
+        "checkpoints": {}, "excluded": {}}
+    for key in keys:
+        directory = model_root(root, plan, key)
+        if not (directory / "summary.json").exists():
+            raise RuntimeError(f"{key} is not complete; only evaluated models are bound")
+        best = directory / "best.pt"
+        if not best.exists():
+            record["excluded"].setdefault(
+                key, "no best.pt: the model selected no checkpoint (zero success)")
+            continue
+        digest = _sha256(best)
+        known = record["checkpoints"].get(key)
+        if known is None:
+            record["checkpoints"][key] = {"path": str(best), "sha256": digest,
+                                          "bound_utc": dt.datetime.now(
+                                              dt.timezone.utc).isoformat(timespec="seconds")}
+        elif known["sha256"] != digest:
+            raise RuntimeError(f"confirmation checkpoint {key} changed since it was bound")
+    isaac_dir(root, plan).mkdir(parents=True, exist_ok=True)
+    write_json(path, record)
+    return record["checkpoints"], record["excluded"]
+
+
+def model_order(plan: ConfirmationPlan, keys: list[str]) -> list[tuple[str, int, str]]:
+    """The registered cases of ``keys``, model by model, condition by condition."""
+    return [(cell, env, key) for key in keys for cell, envs in plan.isaac.conditions
+            for env in envs]
+
+
 def seed_order(plan: ConfirmationPlan, seeds: list[int], excluded: dict[str, str]
                ) -> tuple[list[tuple[str, int, str]], tuple[str, ...]]:
     """(cases, model keys) of the given training seeds: seed by seed, and inside a seed

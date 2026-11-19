@@ -266,3 +266,19 @@ def test_an_amendment_cannot_drop_raw_or_move_guards(tmp_path, mini):
     (tmp_path / "b.yaml").write_text(yaml.safe_dump(moved), encoding="utf-8")
     with pytest.raises(ValueError, match="guards"):
         cf.load_amendment(tmp_path / "b.yaml", mini)
+
+
+def test_models_fly_as_soon_as_they_are_evaluated(tmp_path, plan):
+    done = cf.model_root(tmp_path, plan, "20/raw_ppo")
+    done.mkdir(parents=True)
+    (done / "summary.json").write_text("{}")
+    (done / "best.pt").write_bytes(b"x")
+    training = cf.model_root(tmp_path, plan, "20/ontology_rgat_ppo")
+    training.mkdir(parents=True)
+    (training / "best.pt").write_bytes(b"still changing")
+    bound, excluded = cf.bind_models(plan, tmp_path, ["20/raw_ppo"])
+    assert set(bound) == {"20/raw_ppo"} and not excluded
+    with pytest.raises(RuntimeError, match="not complete"):
+        cf.bind_models(plan, tmp_path, ["20/ontology_rgat_ppo"])
+    order = cf.model_order(plan, ["20/raw_ppo"])
+    assert len(order) == len(plan.isaac.seeds) and {k for _, _, k in order} == {"20/raw_ppo"}

@@ -786,32 +786,36 @@ def _isaac_confirm(args, config_path: Path, root: Path) -> int:
     seeds = list(plan.models.training_seeds)
     cases = len(plan.isaac.seeds)
 
-    def flown_seeds() -> list[int]:
+    keys_all = list(cf.model_keys(plan))
+
+    def flown_models() -> list[str]:
+        """Models whose every registered case has a verdict, or that were excluded."""
         rows = cf.isaac_rows(root, plan)
         path = out / cf.CHECKPOINTS
         excluded = (json.loads(path.read_text(encoding="utf-8")).get("excluded", {})
                     if path.exists() else {})
-        done = []
-        for seed in seeds:
-            keys = [f"{seed}/{arm}" for arm in plan.models.arms]
-            own = [r for r in rows if r["model"] in keys]
-            needed = cases * sum(k not in excluded for k in keys)
-            if any(k in excluded for k in keys) or own:
-                if len(own) == needed and all(
-                        k in excluded or any(r["model"] == k for r in own) for k in keys):
-                    done.append(seed)
-        return done
+        counts: dict[str, int] = {}
+        for r in rows:
+            counts[r["model"]] = counts.get(r["model"], 0) + 1
+        return [k for k in keys_all if k in excluded or counts.get(k, 0) == cases]
 
-    def pending() -> list[int]:
-        done = set(flown_seeds())
-        return [s for s in cf.ready_seeds(plan, config, root) if s not in done]
+    def pending() -> list[str]:
+        """Evaluated models not yet flown, in seed-major order: each flies as soon as its
+        own training and local evaluation finish (no waiting for the rest of its seed)."""
+        done = set(flown_models())
+        ready = cf.completed_models(plan, config, root)
+        return [k for k in keys_all if k in ready and k not in done]
+
+    def flown_seeds() -> list[int]:
+        done = set(flown_models())
+        return [s for s in seeds if all(f"{s}/{a}" in done for a in plan.models.arms)]
 
     restarts = 0
     with owned(out):
         while True:
             todo = pending()
             if not todo:
-                if len(flown_seeds()) == len(seeds):
+                if len(flown_models()) == len(keys_all):
                     break
                 if not args.wait_for_models:
                     log("isaac-confirm: no completed training seed left to fly; stopping")
@@ -845,12 +849,20 @@ def _isaac_confirm(args, config_path: Path, root: Path) -> int:
                                 profile_path=profile):
                     try:
                         while todo and stopped is None:
-                            seed = todo[0]
-                            done = flown_seeds()
-                            _, excluded = cf.bind_checkpoints(plan, root, done + [seed])
-                            order, keys = cf.seed_order(plan, done + [seed], excluded)
-                            log(f"isaac-confirm: flying training seed {seed} "
-                                f"({len(done)} of {len(seeds)} seeds flown)")
+                            key = todo[0]
+                            started = [r["model"] for r in cf.isaac_rows(root, plan)]
+                            _, excluded = cf.bind_models(plan, root, [key])
+                            if key in excluded:
+                                log(f"isaac-confirm: {key} selected no checkpoint; excluded "
+                                    "(zero success)")
+                                todo = pending()
+                                continue
+                            keys = tuple(k for k in keys_all
+                                         if (k in set(flown_models()) or k in set(started)
+                                             or k == key) and k not in excluded)
+                            order = cf.model_order(plan, list(keys))
+                            log(f"isaac-confirm: flying model {key} "
+                                f"({len(flown_models())} of {len(keys_all)} models flown)")
                             flown = idev.run(fly_config, plan.isaac, plan.models, cf.out_dir(root, plan),
                                              make, out, log=log, resume=True, order=order,
                                              keys=keys, label="isaac-confirm")
@@ -878,7 +890,7 @@ def _isaac_confirm(args, config_path: Path, root: Path) -> int:
                     return 1
                 time.sleep(60)
         path = None
-        if len(flown_seeds()) == len(seeds):
+        if len(flown_models()) == len(keys_all):
             with owned(cf.out_dir(root, plan) / "report"):
                 path = _write_confirmation_report(config_path, plan_path, root)
     log(f"isaac-confirm: {len(cf.isaac_rows(root, plan))} episodes judged"

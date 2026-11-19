@@ -2,13 +2,13 @@
 
     python3 tools/make_doc_figures.py extract     # results/ -> docs/figures/figure_data.json
     python3 tools/make_doc_figures.py all         # every figure from figure_data.json + code
-    python3 tools/make_doc_figures.py architecture | model | graph | field | results | robustness | orl
+    python3 tools/make_doc_figures.py architecture | model | graph | field | effects | results | robustness
 
 Diagrams are drawn from the code (graph edges from current_semantics/graph.py, node slots from
 current_semantics/features.py, the approach field from current_semantics/reward.py).  Result
-figures read only docs/figures/figure_data.json, which ``extract`` builds from the per-episode
-Isaac records and the local evaluation summaries under results/current_semantics_3d (results/ is
-not versioned, so the extracted numbers are).  White background, English labels, PNG 200 dpi + SVG.
+figures read only docs/figures/figure_data.json, which ``extract`` builds from the confirmation
+report (20 fresh training seeds), the per-episode Isaac records and the local evaluation summaries
+under results/current_semantics_3d (results/ is not versioned, so the extracted numbers are).  White background, English labels, PNG 200 dpi + SVG.
 """
 from __future__ import annotations
 
@@ -58,6 +58,9 @@ SHORT_LABEL = {"ontology_rgat_ppo": "Ontology\nR-GAT", "semantic_mlp_ppo": "Sema
 ARMS = ("ontology_rgat_ppo", "semantic_mlp_ppo", "raw_ppo", "untyped_gnn_ppo")
 UNSAFE = {"UNSAFE_CONTACT", "SAFETY_ENVELOPE_VIOLATION"}
 SEEDS = (10, 11, 12, 13, 14)
+WMON_ROOT = RESULTS / "spatial_current_semantics_v1_nav4_5aa4091b"
+CONFIRMATION = WMON_ROOT / "confirmation_mini" / "confirmation.json"
+COMPARED = ("semantic_mlp_ppo", "untyped_gnn_ppo", "raw_ppo")
 
 
 # ----------------------------------------------------------------------------- drawing helpers
@@ -186,21 +189,69 @@ def extract():
                 vals.append(float(np.mean([c["success"] for c in cells.values()])) if cells else 0.0)
             per_arm[arm] = {"ten_cell_success_per_seed": vals, "trained": trained}
         local[nav] = per_arm
-    orl_dir = RESULTS / "spatial_current_semantics_v1/orl5"
-    explo = json.load(open(orl_dir / "analysis_dev5/dev5_exploratory.json", encoding="utf-8"))
-    verdict = json.load(open(orl_dir / "orl_development.json", encoding="utf-8"))["verdict"]
-    first = explo["first_full_difficulty"]
-    orl = {"updates_to_full_difficulty": {k: [first[k][str(s)] for s in SEEDS]
-                                          for k in ("orl1", "semantic_mlp_ppo", "orl5", "control2",
-                                                    "ontology_rgat_ppo", "raw_ppo", "untyped_gnn_ppo")},
-           "ten_cell_success": {k: explo["all_cells"][k] for k in ("orl5", "control2")},
-           "per_cell_mean": {k: explo["per_cell_mean"][k] for k in ("orl5", "control2", "semantic_mlp_ppo")},
-           "orl_minus_rule_control": verdict["primary"]}
-    data = {"note": "extracted by tools/make_doc_figures.py extract; 5 training seeds (10-14) per policy",
-            "isaac": isaac, "local": local, "orl": orl}
+    # development stage, WMON root: the same paired-t intervals the confirmation registers, for
+    # comparison only (5 seeds; the confirmation is the test)
+    from ontology_rgat.current_semantics.confirmation import paired_interval
+    development = {}
+    for family, values in (("local_success", {a: local["wmon"][a]["ten_cell_success_per_seed"]
+                                              for a in ARMS}),
+                           ("isaac_success", {a: [isaac["wmon"][a]["seed_success"][str(s)] for s in SEEDS]
+                                              for a in ARMS})):
+        development[family] = {a: paired_interval([p - q for p, q in zip(values["ontology_rgat_ppo"],
+                                                                         values[a])],
+                                                  0.975 if a != "raw_ppo" else 0.95)
+                               for a in COMPARED}
+    data = {"note": "extracted by tools/make_doc_figures.py extract; development: 5 training seeds "
+                    "(10-14) per policy; confirmation: 20 fresh training seeds (20-39)",
+            "isaac": isaac, "local": local, "development_intervals": development,
+            "confirmation": _confirmation()}
     OUT.mkdir(parents=True, exist_ok=True)
     DATA.write_text(json.dumps(data, indent=1), encoding="utf-8")
     print("wrote", DATA)
+
+
+def _confirmation():
+    """The registered confirmation report, reduced to what the README and figures quote."""
+    if not CONFIRMATION.exists():
+        return None
+    c = json.load(open(CONFIRMATION, encoding="utf-8"))
+    keep = ("n", "mean", "sd", "confidence", "low", "high", "t", "p", "passed", "opened",
+            "holm_rejected", "lower_risk")
+    trim = lambda d: {k: v for k, v in d.items() if k in keep}
+    out = {"plan_hash": c["plan_hash"], "local_complete": c["local"]["complete"],
+           "isaac_complete": c["isaac"]["complete"]}
+    lv = c["local"]["verdict"]
+    if lv:
+        out["local"] = {"means": lv["means"], "confirmation_passed": lv["confirmation_passed"],
+                        "practical_passed": lv["practical_passed"],
+                        "primary": {a: trim(v) for a, v in lv["primary"].items()},
+                        "practical": {a: trim(v) for a, v in lv["practical"].items()},
+                        "guards": {g: trim(v) for g, v in lv["guards"].items()},
+                        "composition_ood": {
+                            "means": lv["secondary"]["composition_ood_success"]["means"],
+                            "primary": {a: trim(v) for a, v in
+                                        lv["secondary"]["composition_ood_success"]["primary"].items()},
+                            "practical": {a: trim(v) for a, v in
+                                          lv["secondary"]["composition_ood_success"]["practical"].items()}},
+                        "learnability": {k: lv["learnability"][k] for k in
+                                         ("validated", "with_checkpoint", "models")},
+                        "success_by_arm_and_cell": lv["success_by_arm_and_cell"],
+                        "unsafe_by_arm_and_cell": lv["unsafe_by_arm_and_cell"],
+                        "ten_cell_success_by_seed": lv["ten_cell_success_by_seed"]}
+    iv = c["isaac"]["verdict"]
+    if iv:
+        out["isaac"] = {"means": iv["means"], "isaac_passed": iv["isaac_passed"],
+                        "practical_passed": iv["practical_passed"],
+                        "primary": {a: trim(v) for a, v in iv["primary"].items()},
+                        "practical": {a: trim(v) for a, v in iv["practical"].items()},
+                        "risk_family": {a: trim(v) for a, v in iv["risk_family"].items()},
+                        "risk_means": iv["risk_means"], "statuses_by_arm": iv["statuses_by_arm"],
+                        "flights_per_arm": iv["flights_per_arm"],
+                        "success_by_condition": iv["success_by_condition"],
+                        "success_by_seed": iv["success_by_seed"], "risk_by_seed": iv["risk_by_seed"],
+                        "excluded_models": iv["excluded_models"],
+                        "paired_with_local": c["isaac"]["paired_with_local"]}
+    return out
 
 
 def load_data():
@@ -506,46 +557,151 @@ def field():
         style_axes(ax)
         ax.yaxis.grid(False)
     fig.text(0.5, -0.03, "Arrows: desired drone-minus-pad velocity v_des of the shaping potential "
-             "(current_semantics/reward.py); the same lost-view law is the optional descent rule of the "
-             "ORL extension.", ha="center", fontsize=8.4, color=MUTED)
+             "(current_semantics/reward.py). The field shapes the reward only; the policy is not told it.",
+             ha="center", fontsize=8.4, color=MUTED)
     save(fig, "task_and_field")
 
 
 # ----------------------------------------------------------------------------- 5 results
 def results():
-    d = load_data()["isaac"]["wmon"]
-    fig, (a1, a2) = plt.subplots(1, 2, figsize=(11.5, 4.3), gridspec_kw=dict(width_ratios=[1.2, 1.0],
-                                                                                wspace=0.32))
+    """Isaac Sim + PX4 under WMON navigation: the confirmation (20 fresh seeds) as bars and seed
+    dots, the development stage (5 seeds) as hollow diamonds."""
+    data = load_data()
+    conf = (data.get("confirmation") or {}).get("isaac")
+    dev = data["isaac"]["wmon"]
+    fig, (a1, a2) = plt.subplots(1, 2, figsize=(11.8, 4.5), gridspec_kw=dict(width_ratios=[1.25, 1.0],
+                                                                                wspace=0.30))
     x = np.arange(len(ARMS))
     colors = [PROPOSED if a == "ontology_rgat_ppo" else OTHER for a in ARMS]
-    succ = [100 * d[a]["success"] / d[a]["episodes"] for a in ARMS]
+    dev_succ = [100 * dev[a]["success"] / dev[a]["episodes"] for a in ARMS]
+    dev_risk = [100 * dev[a]["unsafe"] / dev[a]["episodes"] for a in ARMS]
+    if conf:
+        succ = [100 * conf["means"][a] for a in ARMS]
+        risk = [100 * conf["risk_means"][a] for a in ARMS]
+        flights = conf["flights_per_arm"]["ontology_rgat_ppo"]
+        n_seeds = len(conf["success_by_seed"]["ontology_rgat_ppo"])
+    else:
+        succ, risk, flights, n_seeds = dev_succ, dev_risk, dev["ontology_rgat_ppo"]["episodes"], len(SEEDS)
     a1.bar(x, succ, width=0.56, color=colors, zorder=2)
     rng = np.random.default_rng(3)
     for i, a in enumerate(ARMS):
-        ys = [100 * v for v in d[a]["seed_success"].values()]
-        a1.scatter(i + rng.uniform(-0.13, 0.13, len(ys)), ys, s=16, color="white", edgecolor=INK, lw=0.8,
+        ys = [100 * v for v in (conf["success_by_seed"][a].values() if conf else dev[a]["seed_success"].values())]
+        a1.scatter(i + rng.uniform(-0.16, 0.16, len(ys)), ys, s=13, color="white", edgecolor=INK, lw=0.7,
                    zorder=3)
         a1.text(i, 3.0, f"{succ[i]:.1f} %", ha="center", va="bottom", fontsize=9.8, color="white",
                 weight="bold")
+        if conf:
+            a1.scatter([i + 0.36], [dev_succ[i]], marker="D", s=30, color="white", edgecolor=INK, lw=1.1,
+                       zorder=4)
     a1.set_xticks(x, [SHORT_LABEL[a] for a in ARMS], fontsize=9)
+    a1.set_xlim(-0.5, len(ARMS) - 0.35)
     a1.set_ylim(0, 108)
     a1.set_ylabel("landing success [%]", fontsize=9.5, color=MUTED)
-    a1.set_title("Landing success  (150 flights per policy;  o = one training seed)", fontsize=10.5, color=INK,
-                 loc="left")
+    a1.set_title(f"Landing success  (o = one training seed, {flights // n_seeds} flights)", fontsize=10.5,
+                 color=INK, loc="left")
     style_axes(a1)
-    uns = [d[a]["unsafe"] for a in ARMS]
-    a2.bar(x, uns, width=0.56, color=colors, zorder=2)
+    a2.bar(x, risk, width=0.56, color=colors, zorder=2)
     for i, a in enumerate(ARMS):
-        a2.text(i, uns[i] + 0.6, f"{uns[i]}", ha="center", va="bottom", fontsize=9.6, color=INK,
+        a2.text(i, risk[i] + 0.5, f"{risk[i]:.1f} %", ha="center", va="bottom", fontsize=9.4, color=INK,
                 weight="bold" if a == "ontology_rgat_ppo" else "normal")
+        if conf:
+            a2.scatter([i + 0.36], [dev_risk[i]], marker="D", s=30, color="white", edgecolor=INK, lw=1.1,
+                       zorder=4)
     a2.set_xticks(x, [SHORT_LABEL[a] for a in ARMS], fontsize=9)
-    a2.set_ylim(0, 31)
-    a2.set_ylabel("flights with an unsafe verdict", fontsize=9.5, color=MUTED)
-    a2.set_title("Unsafe contact or envelope violation  (of 150)", fontsize=10.5, color=INK, loc="left")
+    a2.set_xlim(-0.5, len(ARMS) - 0.35)
+    a2.set_ylim(0, max(risk + dev_risk) * 1.25 + 1)
+    a2.set_ylabel("flights with a risk verdict [%]", fontsize=9.5, color=MUTED)
+    a2.set_title("Unsafe contact or envelope violation", fontsize=10.5, color=INK, loc="left")
     style_axes(a2)
     fig.suptitle("Isaac Sim + PX4 SITL, own navigation from the WMON estimator with GNSS outages",
-                 x=0.06, y=1.03, ha="left", fontsize=12, weight="bold", color=INK)
+                 x=0.06, y=1.04, ha="left", fontsize=12, weight="bold", color=INK)
+    if conf:
+        fig.text(0.06, -0.06, f"Bars: confirmation, {n_seeds} fresh training seeds x {flights // n_seeds} "
+                 f"flights = {flights} flights per policy.   "
+                 "Hollow diamond: development stage, 5 seeds x 30 flights (other seeds and environments).",
+                 fontsize=8.4, color=MUTED)
     save(fig, "isaac_wmon_results")
+
+
+def effects():
+    """Registered decision of the confirmation: R-GAT minus each policy, per-seed paired-t intervals."""
+    data = load_data()
+    conf = data["confirmation"]
+    devi = data["development_intervals"]
+    names = {"semantic_mlp_ppo": "vs Semantic MLP", "untyped_gnn_ppo": "vs Untyped GNN",
+             "raw_ppo": "vs PPO (raw obs.)"}
+    fig = plt.figure(figsize=(11.0, 7.4))
+    a1 = fig.add_axes([0.25, 0.42, 0.40, 0.50])
+    a2 = fig.add_axes([0.25, 0.10, 0.40, 0.20])
+
+    def verdict(v, a):
+        if v.get("passed"):
+            return "confirmed"
+        if a == "raw_ppo" and not v.get("opened", True):
+            return "not opened"
+        return "not confirmed"
+
+    def draw(ax, y, v, good, dev=None):
+        col = PROPOSED if good else OTHER
+        ax.plot([100 * v["low"], 100 * v["high"]], [y, y], color=col, lw=3.0, solid_capstyle="round", zorder=3)
+        ax.scatter([100 * v["mean"]], [y], s=46, color=col, edgecolor="white", lw=1.0, zorder=4)
+        if dev is not None:
+            ax.scatter([100 * dev["mean"]], [y + 0.3], marker="D", s=22, color="white", edgecolor=INK, lw=0.9,
+                       zorder=4)
+
+    def finish(ax, ticks, labels, xlabel, title):
+        ax.axvline(0, color=INK, lw=1.0, zorder=2)
+        ax.set_yticks(ticks, labels, fontsize=9)
+        ax.set_xlabel(xlabel, fontsize=9.2, color=MUTED)
+        style_axes(ax)
+        ax.yaxis.grid(False)
+        ax.xaxis.grid(True, color=GRID, lw=0.8)
+        ax.set_title(title, fontsize=10.5, color=INK, loc="left")
+
+    n = (conf.get("local") or conf.get("isaac"))["primary"]["semantic_mlp_ppo"]["n"]
+    y, ticks, labels = 0.0, [], []
+    for title, fam, dkey in (("Local plant: ten-cell mean success", conf.get("local"), "local_success"),
+                             ("Isaac + PX4: landing success", conf.get("isaac"), "isaac_success")):
+        if fam is None:
+            continue
+        a1.text(-0.02, y, title, transform=a1.get_yaxis_transform(), ha="right", va="center",
+                fontsize=9.6, weight="bold", color=INK)
+        y += 1
+        for a in COMPARED:
+            v = fam["primary"][a] if a in fam["primary"] else fam["practical"][a]
+            good = bool(v.get("passed"))
+            draw(a1, y, v, good, devi[dkey][a])
+            level = f"{100 * v['confidence']:.1f}".rstrip("0").rstrip(".")
+            a1.text(1.03, y, f"{100 * v['mean']:+.1f} pp  [{100 * v['low']:+.1f}, {100 * v['high']:+.1f}]  "
+                    f"{level} %   {verdict(v, a)}", transform=a1.get_yaxis_transform(), va="center",
+                    fontsize=8.6, color=PROPOSED if good else INK, weight="bold" if good else "normal")
+            ticks.append(y)
+            labels.append(names[a])
+            y += 1
+        y += 0.5
+    a1.set_ylim(y - 0.6, -0.7)
+    finish(a1, ticks, labels, "R-GAT minus compared policy, landing success [pp]",
+           f"Landing success: registered comparisons, {n} fresh training seeds, paired by seed")
+    iv = conf.get("isaac")
+    if iv:
+        for i, a in enumerate(COMPARED):
+            v = iv["risk_family"][a]
+            good = bool(v.get("lower_risk"))
+            draw(a2, i, v, good)
+            a2.text(1.03, i, f"{100 * v['mean']:+.1f} pp  [{100 * v['low']:+.1f}, {100 * v['high']:+.1f}]  95 %   "
+                    + ("fewer (Holm)" if good else "not established"), transform=a2.get_yaxis_transform(),
+                    va="center", fontsize=8.6, color=PROPOSED if good else INK,
+                    weight="bold" if good else "normal")
+        a2.set_ylim(len(COMPARED) - 0.5, -0.5)
+        finish(a2, list(range(len(COMPARED))), [names[a] for a in COMPARED],
+               "R-GAT minus compared policy, risk verdicts [pp]  (negative = fewer)",
+               "Isaac + PX4: unsafe contact or envelope violation")
+    fig.text(0.02, -0.02, f"Line: paired-t interval of the mean over the {n} per-seed differences (97.5 % for the two "
+             "primary comparisons, Bonferroni; 95 % for PPO,\nread only after both primaries pass; risk family "
+             "Holm-adjusted).  Dot: mean.  Hollow diamond: development-stage estimate (5 other seeds).\n"
+             "Rule and seeds were registered before training: config/current_semantics/confirmation_mini_v1.yaml.",
+             fontsize=8.2, color=MUTED, linespacing=1.45, va="top")
+    save(fig, "confirmation_effects")
 
 
 def robustness():
@@ -586,38 +742,8 @@ def robustness():
     save(fig, "navigation_robustness")
 
 
-def orl():
-    d = load_data()["orl"]["updates_to_full_difficulty"]
-    fig, ax = plt.subplots(figsize=(7.4, 4.4))
-    groups = [("semantic_mlp_ppo", "orl1", "same 44 semantic inputs,\nno domain rule"),
-              ("control2", "orl5", "same inputs + the same\nlost-view descent rule")]
-    for g, (base, prop, label) in enumerate(groups):
-        xb, xp = 2 * g, 2 * g + 0.8
-        yb, yp = np.array(d[base], float), np.array(d[prop], float)
-        for b, p in zip(yb, yp):
-            ax.plot([xb, xp], [b, p], color="#C9C9C9", lw=1.0, zorder=1)
-        ax.scatter([xb] * 5, yb, s=34, color=OTHER, edgecolor="white", lw=0.8, zorder=3)
-        ax.scatter([xp] * 5, yp, s=40, color=PROPOSED, edgecolor="white", lw=0.8, zorder=3)
-        for xx, yy in ((xb, yb), (xp, yp)):
-            ax.plot([xx - 0.17, xx + 0.17], [yy.mean()] * 2, color=INK, lw=2.0, zorder=4)
-            ax.text(xx + 0.21, yy.mean(), f"{yy.mean():.0f}", va="center", fontsize=9, color=INK)
-        ax.text((xb + xp) / 2, 162, label, ha="center", va="top", fontsize=8.6, color=MUTED)
-    ax.set_xticks([0, 0.8, 2, 2.8], ["Semantic\nMLP", "ORL", "Semantic\nMLP + rule", "ORL\n+ rule"],
-                  fontsize=9)
-    ax.set_xlim(-0.5, 3.4)
-    ax.set_ylim(40, 165)
-    ax.set_ylabel("PPO updates until the curriculum\nreaches full difficulty (lower = faster)", fontsize=9.2,
-                  color=MUTED)
-    ax.set_title("Ontology-structured policy (ORL): learning speed", fontsize=11.5, color=INK, loc="left",
-                 weight="bold")
-    style_axes(ax)
-    fig.text(0.02, -0.05, "Dots: 5 training seeds, lines join the same seed; bar: mean. Local Isaac-calibrated "
-             "plant, 12 episodes per update.", fontsize=8.2, color=MUTED)
-    save(fig, "orl_learning_speed")
-
-
-FIGURES = {"architecture": architecture, "model": model, "graph": graph, "field": field, "results": results,
-           "robustness": robustness, "orl": orl}
+FIGURES = {"architecture": architecture, "model": model, "graph": graph, "field": field, "effects": effects,
+           "results": results, "robustness": robustness}
 
 
 def main():

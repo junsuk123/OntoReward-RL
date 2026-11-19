@@ -81,10 +81,12 @@ ARTIFACTS = MappingProxyType({"audit": "audit.json", "fixtures": "fixtures.json"
                                   "isaac_development_registration.json",
                               "isaac_development": "isaac_development.json"})
 GATES = ("G0", "G1", "G2", "G3", "G4")
-# Development opens once G0-G4 are passed or waived (guide 10-11); confirmation opens
-# only after a passed development gate and is not implemented yet.
+# Development opens once G0-G4 are passed or waived (guide 10-11).  Confirmation opens
+# only after a passed development gate; it is implemented in confirmation.py
+# (confirmation/1, 2026-11-19), which refuses a root without one, so no stage is refused
+# here unconditionally any more.
 DEVELOPMENT_STAGES = ("register-development", "develop")
-REFUSED_STAGES = ("register-confirmation", "confirm")
+REFUSED_STAGES: tuple[str, ...] = ()
 
 _G0_EVIDENCE = (
     "3D baseline cab3dd2123c7eee3968a8c00753f2ba29d55fe71 pinned (contracts.BASELINE_3D_SHA)",

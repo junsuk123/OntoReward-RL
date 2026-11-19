@@ -1,0 +1,26 @@
+# Amendment 1 of confirmation-mini/1 (current_semantics/confirmation.py: load_amendment,
+# amend, effective_plan), registered by `--stage amend-confirmation` BEFORE any confirmation
+# model was evaluated and before any Isaac flight.  Seeds, budget, cells, Isaac cases and
+# guards are unchanged; only the arm set and the comparisons over it are narrowed.
+amendment: confirmation-mini/1 amendment 1
+reason: >-
+  User request 2026-11-19 ("keep about three core comparison groups; it takes too long; pick
+  the comparisons that explain why the proposed method is needed").  Kept: PPO on the raw
+  observation (is the ontology needed at all?) and the untyped GNN on the same nodes and
+  edges (are the relation TYPES needed, or would any graph do?).  Dropped: the semantic MLP
+  (same 44 features, no graph); its development-stage result stays reported.  The semantic
+  MLP model of seed 20 had trained 206 of 300 updates and was stopped unevaluated; no other
+  semantic MLP model had started.
+arms: [raw_ppo, untyped_gnn_ppo, ontology_rgat_ppo]
+analysis:
+  # Two primary comparisons, Bonferroni over the pair: each two-sided paired-t interval at
+  # 97.5 % must have its lower bound above zero.  No separate practical comparison remains.
+  primary_comparisons: [untyped_gnn_ppo, raw_ppo]
+  primary_family_alpha: 0.05
+  practical_comparison: null
+  practical_alpha: 0.05
+  guard_alpha: 0.05
+  id_success_ci_low_min: -0.02
+  four_ood_success_ci_low_min: -0.02
+  ood_unsafe_ci_high_max: 0.01
+  risk_family_alpha: 0.05

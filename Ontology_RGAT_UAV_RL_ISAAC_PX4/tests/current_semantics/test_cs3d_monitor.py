@@ -73,7 +73,7 @@ def test_snapshot_reads_runs_tasks_and_logs_without_writing(tmp_path):
     assert tasks["spatial-current-task/5"]["g4"]["passed"] is True
     assert [f["file"] for f in tasks["spatial-current-task/5"]["isaac"]] == \
         ["isaac_handover_fix_2.json"]
-    assert tasks["spatial-current-task/6"]["root"] is None
+    assert "spatial-current-task/6" not in tasks      # no folder: nothing recent to show
     assert [l["path"].rsplit("/", 1)[-1] for l in state["logs"]] == ["g4_pilot10.log"]
     json.dumps(state, allow_nan=False, default=lambda o: None)
 
@@ -121,3 +121,17 @@ def test_relation_shuffle_runs_and_their_verdict_are_shown(tmp_path):
     assert task["relation_shuffle"] == {"protocol": "relation-shuffle/1", "models": 10,
                                         "complete": None, "verdict": None, "delta": None,
                                         "ci95": None}
+
+
+def test_records_older_than_the_window_are_not_shown(tmp_path):
+    import os
+    import time as _time
+    from ontology_rgat.current_semantics.monitor import RECENT_S
+    root = _tree(tmp_path)
+    old = root.rglob("development_design/old/seed1/history.jsonl")
+    path = next(iter(old))
+    stamp = _time.time() - RECENT_S - 3600
+    os.utime(path, (stamp, stamp))
+    runs = {r["path"].split("/", 1)[1] for r in snapshot(root)["runs"]}
+    assert "development_design/old/seed1" not in runs
+    assert "g4_pilot/seed0" in runs

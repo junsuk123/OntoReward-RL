@@ -1,222 +1,124 @@
-# 구현 개요
+# 구현 안내: 온톨로지 R-GAT 착륙 정책
 
-2026-10-05 현재 reference primary는
-`config/experiments/two_axis_reference_v28_active.yaml`이다. 실제 공간 3축 통합은
-별도 `python/run_spatial_pipeline.py`이며 기본 계약 v5, opt-in 후보 v6–v10을 구분한다.
-아래의 과거 Shin/3채널/선택적 R-GAT 설명은 legacy 기록이다.
+이 디렉터리는 [상위 README](../README.md)에서 설명한 제안 방법의 실행 코드이다.
+방법, 기여, 결과는 상위 README에 있다. 이 문서는 다음 세 가지를 정리한다.
 
-| 현재 경로 | 주요 구현 | 판정 |
+- 알고리즘의 각 부분이 어느 모듈에 있는가
+- 실험을 어떤 순서로 실행하고, 각 단계가 무엇을 남기는가
+- 결과를 믿기 위해 코드가 강제하는 규칙
+
+## 1. 알고리즘 ↔ 코드
+
+경로는 모두 `python/ontology_rgat/` 기준이다.
+
+| 구성 요소 | 모듈 | 내용 |
 |---|---|---|
-| 2D reference | `python/ontology_rgat/two_axis/`, `run_two_axis_pipeline.py` | v2.8 수식/계약 이식; MATLAB 성능 재현과 구분 |
-| Spatial causal | `python/ontology_rgat/spatial/`, `run_spatial_pipeline.py` | 세 arm PPO/저장/실제 Isaac 평가 연결; 학습 착륙 acceptance 미충족 |
-| Opt-in v9 | `spatial/context.py`, `estimation.py`, `scenarios.py`, `spatial-isaac-system-v9.yaml` | 축별 reference 9×12, capture-time 정합, 동일 CV–CA–CV, 외란 유지; 부분 학습 보존 후 v10 우선 검증 |
-| Opt-in v10 | `spatial/safety.py`, 동일 v9 Isaac profile | uncertainty trust/latch/정지거리/terminal corridor, 외란 backup, measured-view reward; 로컬/actual 학습 6개와 저장·로컬 재로딩 완료, actual 고정 시험 진행 중 |
-| 실제 bridge | `bridge.py`, `ros2_ws/src/ontology_rgat_px4/`, `isaac_sim/` | armed/OFFBOARD 입구, cold reset, terminal/cleanup 별도 기록 |
+| 현재 관측 `O_t` | `current_semantics/observation.py` | 21채널 관측의 정규화와 복원 |
+| 의미 특징 φ와 노드 입력 | `current_semantics/features.py`, `geometry.py` | 44개 의미 특징, 유효성 규칙, 8 × 10 노드 행렬, 카메라 좌표계 패드 기하 |
+| 착륙 온톨로지 | `current_semantics/graph.py` | 개념 8개, 관계 유형 5개, 의미 간선 14개 + 자기 루프 |
+| R-GAT 인코더와 정책 | `current_semantics/models.py` | 관계 어텐션 층(2홉 공유), LandingContext 판독, actor-critic, 비교 정책 세 가지 |
+| 보상 | `current_semantics/reward.py` | 접근 속도장 퍼텐셜, 시간·제어·기울기 비용 |
+| PPO | `current_semantics/ppo.py`, `pilot.py` | 완결 에피소드 배치, 목표 KL, 성공률 기반 커리큘럼, 체크포인트 선택 |
+| 시나리오 | `current_semantics/scenario.py` | 패드 방위 A × 진행 방향 B, 학습 제외 조합, 패드 가속 |
+| 항법 열화 | `current_semantics/navigation.py`, `spatial/wmon.py`, `spatial/kinematic_kf.py` | GNSS 결측 창, WMON·칼만 자기 항법 |
+| 플랜트와 판정 | `current_semantics/backend.py`, `spatial/dynamics.py`, `spatial/environment.py` | Isaac 응답에 보정한 로컬 플랜트, Isaac/PX4 백엔드, 착륙 판정기 |
+| 실험 절차 | `current_semantics/development.py`, `confirmation.py`, `isaac_development.py` | 개발 단계, 확인 실험, Isaac 폐루프 평가 |
+| 계약과 해시 | `current_semantics/contracts.py`, `experiment.py` | 관측·특징·그래프·과제·학습 설정의 해시, 실행 폴더, 단일 실행 잠금 |
+| Isaac 월드 | `../isaac_sim/landing_world.py`, `pad_motion.py`, `vn100_imu.py`, `handover_perturbation.py` | 착륙 월드, 패드 운동, IMU, 인계 교란 |
 
-현재 결과와 실행 한도는 [대조 보고서](docs/refactor/REFERENCE_V28_AUDIT_KO.md),
-명령·실패 복구는 [운영 안내](docs/OPERATIONS.md)를 따른다. unit test, 안전 종료,
-비학습 diagnostic 착륙을 learned-policy 성공으로 보고하지 않는다.
+설정 파일은 `config/current_semantics/`에 있다.
 
-## 과거 구현 설명 — 현재 primary와 구분
-
-> **2026-09-29 선택적 R-GAT 리팩터링:** 새 breaking scientific contract는
-> `config/experiments/selective_rgat_three_arm.yaml`에 있다. 동일한 canonical
-> observation과 capture/distance 2항 보상을 쓰는 `ppo_vector_state`와,
-> 사전학습·고정된 R-GAT 위에서 네 evidence relation gate만 PPO로 갱신하는
-> `ppo_ontology_selective_rgat`를 비교한다. 아래의 기존 end-to-end graph-state
-> 방법은 재현/ablation용으로 보존하며 새 checkpoint와 호환되지 않는다.
-> 감사 결과와 설계는 `docs/refactor/`를 참고한다.
-
-이 디렉터리는 [상위 README](../README.md)가 정의한 3-arm 비교의 실행 코드다.
-아래는 알고리즘의 각 구성요소가 어느 모듈에 대응하는지, 그리고 어떤 artifact가
-어느 단계에서 확정되는지를 정리한다.
-
-## 1. 세 arm
-
-| ID | 종류 | 구성 |
-|---|---|---|
-| `pn_guidance_v1` | **비학습 대조군** | 사가탈 평면 비례항법 유도. 학습·보상·checkpoint 없음 |
-| `shin_se_fixed` | 학습 | Shin et al. 전체 baseline |
-| `shin_se_onto_rgat_state` | 학습 | 동일 baseline + 관측에 온톨로지 상황 그래프 `G_t` |
-
-대조군은 `PipelineSpec`을 갖지 않는다. 따라서 보상 dispatch에 넘길 수 없고, 러너가
-**참조 arm의 method로 비행**시킨 뒤 기록만 대조군 이름으로 남긴다. 공정성 측면에서도
-옳다 — 대조군이 학습 arm과 같은 encoder로 덱을 보고, 같은 3채널 액션을 낸다.
-
-`pipelines`는 학습 arm 목록이고, 전체 arm 목록은 `manifest.json`의 `arms` 키다.
-`learned` 플래그와 `ontology_role`을 싣는다.
-
-두 학습 agent는 카메라, Isaac/Pegasus/PX4 환경, 초기조건, UGV 궤적, 6-keypoint
-encoder와 checkpoint, LSTM과 6-D 상대상태 추정기, 보조손실, actor/critic,
-observation의 이미지·proprio 부분, action, PPO hyperparameter, curriculum,
-**보상 전체**(고정 5개 shaping 항과 가중치, active-perception, 종료 보상),
-학습·평가 seed와 episode 예산을 공유한다. 같은 seed에서 **공유 파라미터가 비트
-단위로 동일**하다(`tests/test_two_pipeline_fov.py`가 텐서 단위로 확인).
-
-소거 실험 arm은 `shin_se_onto_gat_state`(관계 유형 통합)와
-`shin_se_node_pool_state`(메시지 전달 없음)이며, 같은 부호기 클래스와 같은 PPO를
-쓴다. 은퇴한 보상항 arm `shin_se_onto_rgat_recovery`는 자기 id로 남아 있고 지금도
-실행할 수 있다. 두 방법을 한 실행에 섞는 것은
-`validate_pipeline_configuration`이 거부한다 — 요인이 둘이 되기 때문이다.
-
-`PipelineSpec`은 frozen dataclass이고 모델 구성, 목적함수, 보상 dispatch, dataset
-준비가 모두 같은 spec을 읽는다. 따라서 추정기 없는 actor에 추정 의존 보상을
-붙이거나, 그래프를 상태와 보상 양쪽에 넣는 조합은 구성 시점에 예외가 된다.
-
-## 2. 알고리즘 ↔ 코드
-
-### 2.1 인지와 정책
-
-| 구성요소 | 모듈 | 형태 |
-|---|---|---|
-| 6-keypoint encoder | `perception/keypoint_encoder.py` | conv(1→32→64→128→128, stride 2) → 6채널 heatmap → soft-argmax → keypoint별 descriptor pooling → `Linear(768, 512)` + tanh |
-| Encoder 사전학습 | `perception/keypoint_pretrain.py` | 패드 landmark 투영 label + 실제 Isaac 프레임 fine-tuning, 검증 개선 시에만 채택 후 동결 |
-| 시간 backbone | `ppo/temporal_backbone.py` | 이미지 embedding 512 + proprio 7 → LSTM 512 → latent 256 |
-| 상대상태 보조 head | `ppo/recurrent.py: RelativeStateAuxiliaryHead` | `latent[0:6]` → `[Δp^b, Δv^b]`, 정규화 scale `[3,3,8,3,3,2]` |
-| Actor | `ppo/recurrent.py: PipelineActorCritic.actor` | `concat(latent[6:], proprio 7, g_t)` → 256 → 256 → **3**, tanh squash, `log σ` 학습 |
-| Asymmetric critic | 같은 파일 `critic` | `[u_t(7), s^rel(6), g_t]` → 256 → 256 → 1, 학습 전용 |
-| PPO | `ppo/recurrent_train.py`, `ppo/gae.py` | γ 0.99, GAE λ 0.95, clip 0.2, lr 5e-5, epochs 3, seq len 32, entropy 0.003, value 0.5, grad clip 5, 보조계수 0.05, target KL 0.03 |
-
-`g_t`는 그래프 상태 arm에만 존재한다. 기준 arm에서 actor 입력은 `latent[6:]`와
-proprio뿐이고, `graph_dim`이 0이라 두 arm의 유일한 구조적 차이는 각 head의
-**입력층 폭**이다. 그 입력층은 생성 순서상 마지막에 만들어지므로, 나머지 모든
-파라미터는 전역 난수열의 같은 지점에서 나온다.
-
-Actor 관측은 grayscale 이미지, 7-D UAV proprioception(body velocity 3 +
-quaternion 4), 그리고 제안 arm에서는 `G_t`다. 플랫폼 world pose, 상대 truth,
-접촉력, 보상 label, critic value는 actor에 들어가지 않는다.
-
-### 2.2 보상 (두 학습 arm 공통)
-
-| 구성요소 | 모듈 |
+| 파일 | 역할 |
 |---|---|
-| 5개 shaping 항 + active perception + 종료 보상 | `reward_modes/shin2026.py: ShinReward` |
-| Pipeline별 보상 dispatch | `ppo/recurrent_train.py: _reward` |
+| `spatial_view_contact_v1.yaml` | 기준 항법 설정 (과제, 관측, 모델, 학습) |
+| `spatial_view_contact_v1_nav4_wmon.yaml` | 같은 설정 + WMON 항법, GNSS 결측 |
+| `spatial_view_contact_v1_nav4_kalman.yaml` | 같은 설정 + 칼만 항법, GNSS 결측 |
+| `development_v1.yaml` | 개발 단계 계획 (학습 시드 5개, 평가 셀 10개, 판정 기준) |
+| `confirmation_mini_v1.yaml` | 축소 확인 실험 계획 (새 학습 시드 6개, 모델당 300 업데이트, 사전 등록한 판정 규칙, Isaac 케이스). `confirm` 단계의 기본값 |
+| `confirmation_v1.yaml` | 전체 규모 확인 실험 계획 (새 학습 시드 20개, 600 업데이트, Isaac 2,400회). `--plan`으로 지정 |
+| `isaac_development_v1.yaml`, `isaac_development_v2.yaml` | 개발 모델의 Isaac 평가 케이스 |
 
-`ShinReward`는 종료 전이에서 shaping 항 전체를 0으로 만들고 `±10`만 남긴다.
-**온톨로지는 보상에 전혀 관여하지 않는다.** 다섯 번째 항만 선언된 이탈이다:
-원문의 `-2|ω_z|`가 같은 가중치로 종방향 틸트 채널에 옮겨졌다
-(`docs/PAPER_FIDELITY.md` §3의 9번).
+## 2. 실험 절차
 
-### 2.3 온톨로지와 R-GAT
+모든 명령은 저장소 루트에서 `./run.sh current-semantics-3d --config <설정> --stage <단계>`로 실행한다.
+각 단계의 산출물은 설정마다 정해진 결과 폴더(`results/current_semantics_3d/<과제>[_nav4_<해시>]/`)에 쌓인다.
 
-| 구성요소 | 모듈 |
-|---|---|
-| 시각 semantics 추출 | `perception/semantic_observation.py` |
-| 9-node 상황 그래프 생성 | `rgat/state_graph.py` |
-| R-GAT 부호기 + 그래프 수준 읽기 | `ppo/graph_state_encoder.py` |
-| 관계 attention kernel | `rgat/layers.py`, `rgat/topology.py` |
+| 순서 | 단계 | 하는 일 | 산출물 |
+|---|---|---|---|
+| 1 | `audit`, `fixtures` | 관측·특징·그래프 계약 점검 | `audit.json`, `fixtures.json` |
+| 2 | `coupling --backend local` (`isaac`) | 축 결합, 시야 이탈, 접지 높이 확인 | `coupling_local.json` |
+| 3 | `learnability` | 공통 PPO로 착륙이 학습되는지 확인 | `g4_pilot.json` |
+| 4 | `register-development` → `develop` | 4개 정책 × 학습 시드 5개 학습, 로컬 평가 10개 셀 | `development.json` |
+| 5 | `register-isaac-development` → `isaac-development` | 개발 모델 전부를 Isaac/PX4에서 비행 | `isaac_development*.json` |
+| 6 | `register-confirmation` → `confirm` | 새 학습 시드로 같은 절차 반복 | `confirmation_mini/` (전체 규모는 `confirmation/`) |
+| 7 | `isaac-confirm` | 확인 모델 전부를 새 Isaac 케이스로 비행 | `confirmation_mini/isaac/` |
+| 8 | `confirm-report` | 사전 등록 규칙으로 판정 | `confirmation_mini/confirmation.json` |
 
-`build_state_graph`의 유일한 생성자 인자는 `SemanticObservation`이며, 그 필드는
-keypoint/이미지 이력과 기체 자신의 proprioception에서만 나온다. Simulator truth,
-6-D 추정, critic state, 기하 패드중심 FOV 라벨이 들어갈 인자 자체가 존재하지 않고,
-`tests/test_ontology_graph_state.py`가 서명과 구문 트리 양쪽으로 확인한다.
+- 등록 단계는 학습 전에 계획 파일의 해시를 계약 해시와 묶는다. 이후 단계는 계획이 하나라도 바뀌면 거부한다.
+- 확인 실험은 개발 판정을 통과한 결과 폴더에서만 열린다.
+- `confirm --shard K/N`은 학습 시드를 N개 프로세스로 나눈다. 각 프로세스는 따로 잠금을 잡는다.
+  모든 에피소드에 시드가 정해져 있으므로 `--workers`(롤아웃 프로세스 수)는 결과를 바꾸지 않는다.
+- `isaac-confirm --wait-for-models`는 학습이 끝난 시드부터 비행한다. PX4 failsafe나 시뮬레이터 시계 정지 같은
+  인프라 중단이 나면 스택을 다시 띄워 이어서 비행하고, 판정이 난 에피소드는 다시 비행하지 않는다.
+- `--dry-run`은 어느 단계에서든 아무것도 만들지 않고 해석된 계획만 출력한다.
 
-부호기는 **PPO가 함께 학습한다**. 오프라인 단계도, 동결 산출물도, checksum
-게이트도 없다. 설정으로 동결하거나 사전학습 파일을 가리키려는 시도는
-`validate_pipeline_configuration`이 거부한다.
-
-### 2.4 제어
-
-| 구성요소 | 모듈 |
-|---|---|
-| 평면 3채널 엔벨로프 | `controllers/planar_controller.py` |
-| PN 유도 대조군 | `controllers/pn_guidance.py` |
-| 속도 법칙 → 평면 액션 변환 | `run_three_pipeline._planar_from_velocity_action` |
-| 틸트/yaw 유지 전송 | `bridge.py: step_velocity` |
-| 틸트 → 가속도 피드포워드, yaw 절대 유지 | `ros2_ws/.../ros2_gateway.py` |
-| 세 덱의 속도 프로파일 | `isaac_sim/pad_motion.py: segmented_cruise_speeds` |
-| 평면 진입 자세 | `isaac_sim/landing_world.py` (`planar_entry`) |
-
-교사도, 대조군도, 정책도 같은 적분기와 같은 한계를 통과해 PX4에 도달한다.
-상세는 [평면 엔벨로프](docs/PLANAR_ENVELOPE.md).
-
-### 2.5 실행과 평가
-
-| 구성요소 | 모듈 |
-|---|---|
-| 주 실험 진입점 | `python/run_two_pipeline.py` (→ `run_three_pipeline.main(primary_only=True)`) |
-| 실행 계약 spec | `ontology_rgat/pipelines/spec.py` |
-| 실제 환경 adapter | `ontology_rgat/benchmarks/live_env.py`, `px4_adapter.py` |
-| Isaac stage | `isaac_sim/landing_world.py`, `isaac_sim/keypoint_geometry.py` |
-| 지표 집계·통계·표 | `ontology_rgat/evaluation/two_pipeline.py`, `three_pipeline.py` |
-| 대시보드 | `ontology_rgat/viz/live.py`, `tools/watch_run.py` |
-| RViz | `ontology_rgat/viz/rviz.py`, `rviz/*.rviz` |
-
-주 실행 설정은 `config/experiments/planar_three_arm_comparison.yaml`, 시뮬레이터
-프로파일은 `config/shin2026-planar-system.yaml`이다.
-
-## 3. 실행 단계
-
-```
-0  stack startup            DDS · Isaac Sim · Pegasus · PX4 SITL
-1  keypoint validation      실제 Isaac 카메라 · held-out label · 이후 동결
-2  behavior cloning         공통 PN 유도 시연 → arm별 warm start
-3  parallel PPO             모든 arm 동시 · 동일 예산 · 동일 seed · 동일 보상
-4  checkpoint selection     held-out 결정론 multi-seed
-5  crossover evaluation     방법 × 시나리오 × seed × 물리 pair
-6  tables / figures
-```
-
-**오프라인 보상 설계 단계가 없다.** 은퇴한 보상항 경로를 선택했을 때만
-FOV-risk 데이터 수집과 R-GAT 동결 단계가 켜진다.
-
-중단 후 같은 명령을 다시 실행하면 호환되는 checkpoint와 이미 끝난 평가 행을
-재사용한다. Episode 지표와 checkpoint를 성공적으로 기록한 뒤에만 committed episode가
-증가하므로 부분 trajectory는 PPO에 들어가지 않는다.
-
-## 4. 실행
+예시 (WMON 항법 축소 확인 실험, 4개 샤드가 정책 하나씩 학습):
 
 ```bash
-# 상위 디렉터리에서
-./run.sh                 # 기본: 평면 3-arm 비교
-./run.sh --mode quick    # 전 구간 배관 검증 (수십 분, full 전에 권장)
+C=$PWD/Ontology_RGAT_UAV_RL_ISAAC_PX4/config/current_semantics/spatial_view_contact_v1_nav4_wmon.yaml
+./run.sh current-semantics-3d --config $C --stage register-confirmation
+for k in 0 1 2 3; do
+  ./run.sh current-semantics-3d --config $C --stage confirm --shard $k/4 --workers 6 &
+done
+./run.sh current-semantics-3d --config $C --stage isaac-confirm --allow-isaac --headless --wait-for-models
+./run.sh current-semantics-3d --config $C --stage confirm-report
+./run.sh current-semantics-3d --stage monitor        # 읽기 전용 진행 현황 (http://127.0.0.1:8780/)
+Ontology_RGAT_UAV_RL_ISAAC_PX4/scripts/monitor_tailscale.sh start   # 같은 모니터를 Tailscale 주소로 (tailnet 안에서만 접속)
 ```
 
-각 pair는 PX4 instance, ROS namespace, UDP gateway/learner port, reset/controller
-state, PPO buffer, optimizer와 log를 독립적으로 소유한다. GPU update만 lock으로
-직렬화한다. 학습 페어는 **학습 arm에만** 나뉘고, 최종 평가는 동일 scenario/seed를
-세 arm 전체에 교차 배정한다.
+모니터(`current_semantics/monitor.py`)는 읽기 전용이며 다음을 5초마다 갱신한다.
 
-시뮬레이터 없이 수행하는 정적·단위 검증:
+- 확인 실험: 시드 × 정책별 학습·평가 진행, Isaac 비행 진행, 인프라 중단, 판정
+- 학습 곡선: 모델별 학습 성공률, 난이도, 위험 비율, 검증 점수
+- **R-GAT 인코딩** (`current_semantics/encoding_view.py`)
+  - 그래프 정책(R-GAT, Untyped GNN)의 최신 체크포인트로 프로브 에피소드 하나를 결정론적으로 비행한다.
+  - 결정 시점마다 기록하는 값은 다음과 같다.
+    - 간선별 어텐션 α (홉별)
+    - 노드 상태 크기 ‖h‖
+    - 8차원 LandingContext 판독 g_t
+    - 정책이 본 패드 추정
+  - 이 값들을 그래프, 막대, 시간 히트맵으로 재생한다. 학습 중 검증에서 체크포인트가 바뀌면 다시 계산한다.
+  - 프로브 시드(999901)는 등록된 어떤 시드와도 겹치지 않는다.
+  - 이 에피소드는 아무것도 학습하거나 쓰지 않으며, 비교 판정의 근거가 아니다.
+
+Isaac Sim + PX4 스택을 띄우는 단계는 `--allow-isaac`를 줄 때만 실행된다. 이미 떠 있는 Isaac은 넘겨받지 않고 거부한다.
+
+## 3. 결과를 믿기 위한 규칙
+
+코드가 강제하는 규칙은 다음과 같다.
+
+- **참값 격리:** 시뮬레이터 참값은 보상과 착륙 판정에만 들어간다. actor, critic, 그래프, 관측 경로에는 들어가지 않는다.
+- **같은 조건:** 네 정책은 보상, 판정, PPO 설정, 커리큘럼, 학습 예산, 학습·평가 시드, 가치함수 설계가 같다.
+  다른 것은 actor 입력의 표현뿐이다.
+- **사전 등록:** 판정 규칙과 시드는 학습 전에 등록한다. 시드는 이미 쓴 모든 범위와 겹치지 않는지 로더가 확인한다.
+- **분석 단위:** 분석 단위는 학습 시드이다. 같은 시드의 네 정책은 같은 평가 환경을 비행하고, 시드마다 짝지은 차이를 계산한다.
+  한 셀의 환경 100개는 독립 반복 100개로 세지 않는다.
+- **결정론적 평가:** 평가는 결정론적 정책으로 한다. 학습 가능성 점검에서는 확률적 정책도 함께 평가한다.
+- **실패 처리:** 체크포인트를 고르지 못한 모델도 빼지 않는다. 그 모델의 성공은 0으로 센다.
+- **인프라 실패와 정책 실패의 분리:** 인프라 실패(스택 시작 실패, PX4 failsafe, 시계 정지)는 판정에 넣지 않고 같은 케이스를 다시 비행한다.
+  정책이 비행한 뒤 나온 판정은 버리지 않는다.
+
+## 4. 테스트
 
 ```bash
-./scripts/check_workspace.sh
-python -m pytest -q tests/test_ontology_graph_state.py tests/test_planar_envelope.py
-python -m pytest -q tests/test_two_pipeline_fov.py tests/test_three_pipeline.py
+cd Ontology_RGAT_UAV_RL_ISAAC_PX4
+python3 -m pytest -q tests/current_semantics
 ```
 
-## 5. Artifact와 경계
+계약 해시, 시드 감사, 판정 통계(짝지은 t 구간, Holm), 단계 거부 규칙을 확인한다.
+학습이나 비행은 하지 않는다.
 
-| Artifact | 확정 시점 | PPO 중 |
-|---|---|---|
-| Keypoint encoder | 사전학습/보정 단계 | 동결 |
-| Actor / LSTM / critic / **그래프 부호기** | PPO 단계 | 학습 |
-| Latest checkpoint | episode commit | 재개용 갱신 |
-| Best checkpoint | 안전성 score 개선 시 | pre-update snapshot |
-| Selected checkpoint | held-out 검증 후 | 최종 평가·배포용 동결 |
+## 5. 다른 실행 경로
 
-모든 artifact는 config/dataset/encoder hash와 architecture version을 저장하고,
-불일치하면 재사용하지 않는다. 시연 집합은 v4 형식으로 전이별 `G_t`를 함께
-저장한다 — 사후에 다시 계산하려면 비행이 가졌던 시각 recurrence가 필요한데
-기록 파일에는 없다.
-
-## 6. 결과 디렉터리
-
-```
-manifest.json                       resolved config · arms(learned·ontology_role) · spec · seed/budget · provenance
-models/<pipeline>/                  독립 PPO latest/best/selected checkpoint
-evaluation/per_episode.csv          paired · crossover 원자료
-evaluation/paired_summary.csv       시나리오별 계층 bootstrap 요약
-tables/primary_comparison.*         3-arm 주 비교 (대조군 포함)
-```
-
-## 7. Legacy
-
-estimator-free, adaptive-weight, semantic PBRS 실험, 은퇴한 이진 분류 readout
-(`shin_se_onto_rgat_fov`), 그리고 FOV-risk 보상항 방법
-(`shin_se_onto_rgat_recovery`)은 기존 결과의 귀속을 위해 원래 ID로 보존된다.
-기본 설정, 기본 runner, 대시보드 기본 화면, 주 결과 집계에는 나타나지 않는다.
-대시보드 패널은 `ontology_role`을 선언하고 그 역할이 없는 실행에서는 숨는다 —
-그래프 상태 실행에서 FOV-보상 패널이 빈 채로 그려지면 측정이 고장난 것처럼
-읽히기 때문이다.
+저장소에는 재현을 위해 보존한 다른 실행 경로도 들어 있다. 2축 기준 이식, 이전 3축 경로, 최소 관측 ROS 파이프라인이 그것이다.
+목록은 `./run.sh --help`로 볼 수 있다. 이 경로들은 위 제안 방법의 결과를 만드는 데 쓰이지 않는다.

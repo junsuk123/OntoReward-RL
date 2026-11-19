@@ -32,11 +32,16 @@ RELATION_SHUFFLE_STAGES = ("register-relation-shuffle", "relation-shuffle")
 ORL_STAGES = ("orl-learnability", "register-orl-development", "orl-develop")
 # bond/1 (current_semantics/bond.py): WMON's relational bond equilibrium in the R-GAT
 BOND_STAGES = ("bond-learnability", "register-bond-development", "bond-develop")
+# confirmation/1 (current_semantics/confirmation.py, guide 11.4-11.6): fresh seeds, the
+# development procedure repeated, a decision rule registered before training.
+CONFIRMATION_STAGES = ("register-confirmation", "amend-confirmation", "confirm", "confirm-report",
+                       "isaac-confirm")
 STAGES = ("audit", "fixtures", "smoke", "coupling", "learnability", "isaac-eval",
           "isaac-trace", "report", "dashboard", *DEVELOPMENT_STAGES,
           *ISAAC_DEVELOPMENT_STAGES, "isaac-handover-fix", *RELATION_SHUFFLE_STAGES,
-          *ORL_STAGES, *BOND_STAGES, "monitor", *REFUSED_STAGES)
-FLYING_STAGES = ("isaac-eval", "isaac-trace", "isaac-development", "isaac-handover-fix")
+          *ORL_STAGES, *BOND_STAGES, "monitor", *REFUSED_STAGES, *CONFIRMATION_STAGES)
+FLYING_STAGES = ("isaac-eval", "isaac-trace", "isaac-development", "isaac-handover-fix",
+                 "isaac-confirm")
 REFUSED_EXIT = 3
 
 
@@ -78,6 +83,24 @@ def build_parser() -> argparse.ArgumentParser:
                              "control (orl-development/4, /5): the ORL arm or the rule "
                              "control (status doc 20.9, 20.12); "
                              "orl-learnability defaults to orl, orl-develop to both in turn")
+    parser.add_argument("--host", default=None,
+                        help="monitor/dashboard only: address to bind (default 127.0.0.1); "
+                             "e.g. this machine's Tailscale address for tailnet-only access")
+    parser.add_argument("--port", type=int, default=None,
+                        help="monitor/dashboard only: first port to try")
+    parser.add_argument("--shard", default=None,
+                        help="confirm only: K/N trains every N-th model starting at K under its "
+                             "own lock; 'any' claims the next unclaimed model, so any number of "
+                             "processes share the work")
+    parser.add_argument("--workers", type=int, default=None,
+                        help="confirm only: rollout processes of this process (results do "
+                             "not depend on it; default: the plan's)")
+    parser.add_argument("--wait-for-models", action="store_true",
+                        help="isaac-confirm only: keep polling for training seeds that "
+                             "complete while the flight runs, until every model has flown")
+    parser.add_argument("--resume-budget", type=int, default=None,
+                        help="isaac-confirm only: owned-stack restarts after an "
+                             "infrastructure stop (default 30); judged episodes never re-fly")
     parser.add_argument("--reset-recoveries", type=int, default=None,
                         help="coupling --backend isaac / isaac-eval only: owned restarts for "
                              "pre-policy entry failures (default 2)")
@@ -94,11 +117,19 @@ def _validate(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None
         parser.error("--pairs is required by, and only by, --stage isaac-trace")
     if args.plan is not None and args.stage not in (*DEVELOPMENT_STAGES, "isaac-handover-fix",
                                                     *RELATION_SHUFFLE_STAGES, *ORL_STAGES,
-                                                    *BOND_STAGES,
+                                                    *BOND_STAGES, *CONFIRMATION_STAGES,
                                                     *ISAAC_DEVELOPMENT_STAGES):
         parser.error("--plan applies to --stage register-development/develop/"
                      "isaac-handover-fix/register-relation-shuffle/relation-shuffle, the "
                      "ORL stages and the Isaac development stages only")
+    if (args.host is not None or args.port is not None) and args.stage not in ("monitor",
+                                                                               "dashboard"):
+        parser.error("--host/--port apply to --stage monitor/dashboard only")
+    if (args.shard is not None or args.workers is not None) and args.stage != "confirm":
+        parser.error("--shard/--workers apply to --stage confirm only")
+    if (args.wait_for_models or args.resume_budget is not None) \
+            and args.stage != "isaac-confirm":
+        parser.error("--wait-for-models/--resume-budget apply to --stage isaac-confirm only")
     if args.checkpoint_root is not None and args.stage != "isaac-trace":
         parser.error("--checkpoint-root applies to --stage isaac-trace only")
     if not flies and (args.headless or args.reset_recoveries is not None or args.allow_isaac):
@@ -601,6 +632,260 @@ def _isaac_development(args, config_path: Path, root: Path) -> int:
     return status
 
 
+def _confirmation_plan(args, config_path: Path, root: Path):
+    """(config, plan path, plan, refusal payload or None) of a confirmation stage.  A root
+    without a PASSED development gate is refused before anything is created."""
+    from ontology_rgat.current_semantics import confirmation as cf
+    config = load_config(config_path)
+    plan_path = (args.plan or cf.DEFAULT_PATH).expanduser().resolve()
+    refused = {"stage": args.stage, "status": "REFUSED", "dry_run": args.dry_run}
+    try:
+        plan = cf.load_plan(plan_path, config)
+    except ValueError as exc:
+        return config, plan_path, None, {**refused, "reason": str(exc)}
+    problem = (cf.blocker(config, root) if args.stage == "register-confirmation"
+               else cf.check_registration(config, plan, root))
+    if problem:
+        return config, plan_path, plan, {**refused, "reason": problem}
+    if args.stage not in ("register-confirmation", "amend-confirmation"):
+        plan = cf.effective_plan(plan, config, root)   # the registered amendment, if any
+    return config, plan_path, plan, None
+
+
+def _write_confirmation_report(config_path: Path, plan_path: Path, root: Path) -> Path:
+    from ontology_rgat.current_semantics import confirmation as cf
+    config = load_config(config_path)
+    plan = cf.load_plan(plan_path, config)
+    local = None
+    rows = cf.isaac_rows(root, plan)
+    cache = cf.isaac_dir(root, plan) / cf.LOCAL_REFERENCE
+    draft = cf.report(config_path, plan_path, root)
+    if draft["isaac"]["complete"]:
+        if cache.exists():
+            local = [json.loads(line) for line in cache.read_text(encoding="utf-8").splitlines()]
+        else:  # deterministic: the identical Isaac cases on the calibrated local plant
+            keys = tuple(sorted({r["model"] for r in rows},
+                                key=cf.model_keys(plan).index))
+            print("confirm-report: local reference on the identical Isaac cases", flush=True)
+            local = cf.local_reference(config_path, plan, root, keys)
+            cache.write_text("".join(json.dumps(r, allow_nan=False) + "\n" for r in local),
+                             encoding="utf-8")
+    payload = cf.report(config_path, plan_path, root, local_reference=local)
+    path = cf.out_dir(root, plan) / cf.RESULT
+    write_json(path, payload)
+    return path
+
+
+def _confirmation(args, config_path: Path, root: Path) -> int:
+    """register-confirmation / confirm / confirm-report (guide 11.4-11.5): the development
+    procedure on fresh seeds, local plant only; ``<root>/confirmation``."""
+    from ontology_rgat.current_semantics import confirmation as cf
+    config, plan_path, plan, refusal = _confirmation_plan(args, config_path, root)
+    if refusal is not None:
+        _print(refusal)
+        return REFUSED_EXIT
+    out = cf.out_dir(root, plan)
+    shard, dynamic = None, args.shard == "any"
+    if args.shard is not None and not dynamic:
+        try:
+            k, n = (int(x) for x in args.shard.split("/"))
+            cf.shard_keys(plan, (k, n))
+        except ValueError as exc:
+            _print({"stage": args.stage, "status": "REFUSED", "reason": f"--shard: {exc}"})
+            return REFUSED_EXIT
+        shard = (k, n)
+    if args.dry_run:
+        _print(resolved_plan(config_path, args.stage, root, dry_run=True, extra={
+            "plan_file": str(plan_path), **cf.resolved(plan, config), "shard": args.shard,
+            "models_of_this_process": list(cf.shard_keys(plan, shard)),
+            "will_write": ([str(out / cf.REGISTRATION)] if args.stage == "register-confirmation"
+                           else [str(out / cf.RESULT)] if args.stage == "confirm-report"
+                           else [str(out / "development"), str(out / cf.RESULT)]),
+            "starts_isaac": False}))
+        return 0
+    if args.stage == "register-confirmation":
+        with owned(out):
+            status, payload = cf.register(config_path, plan_path, root)
+            path = out / cf.REGISTRATION
+            if payload.get("status") == "REGISTERED":
+                write_json(path, payload)
+        _print({k: v for k, v in payload.items()
+                if k in ("stage", "status", "reason", "plan_hash", "models",
+                         "training_episodes", "evaluation_episodes", "isaac_episodes")})
+        return status
+    if args.stage == "amend-confirmation":
+        with owned(out / "amendment"):
+            status, payload = cf.amend(config_path, plan_path, cf.AMENDMENT_PATH, root)
+            if payload.get("status") == "AMENDED":
+                write_json(out / cf.AMENDMENT, payload)
+        _print({k: v for k, v in payload.items()
+                if k in ("stage", "status", "reason", "plan_hash", "amendment_hash", "arms",
+                         "analysis", "amended_utc")})
+        return status
+    if args.stage == "confirm-report":
+        with owned(out / "report"):
+            path = _write_confirmation_report(config_path, plan_path, root)
+        print(f"confirm-report: wrote {path}")
+        return 0
+    # dynamic processes need no stage lock: every model is claimed atomically (cf.claim)
+    lock = (contextlib.nullcontext() if dynamic else
+            owned(out / ("all" if shard is None else f"shard{shard[0]}of{shard[1]}")))
+    with lock:
+        status, payload = cf.run(config_path, plan_path, root,
+                                 log=lambda line: print(line, flush=True), shard=shard,
+                                 workers=args.workers, dynamic=dynamic)
+    if payload.get("status") == "REFUSED":
+        _print(payload)
+        return status
+    if len(cf.completed_models(plan, config, root)) == len(cf.model_keys(plan)):
+        try:
+            with owned(out / "report"):
+                path = _write_confirmation_report(config_path, plan_path, root)
+            print(f"confirm: every model is complete; wrote {path}")
+        except SystemExit as exc:  # another process is writing the same report
+            print(f"confirm: report left to the other writer ({exc})")
+    else:
+        print(f"confirm: shard {args.shard or 'all'} done; other shards still training")
+    return status
+
+
+def _isaac_confirm(args, config_path: Path, root: Path) -> int:
+    """isaac-confirm (guide 11.6.5): every confirmation model on the registered Isaac cases,
+    deterministic, on an owned Isaac/PX4 stack; flies training seeds as they complete
+    (``--wait-for-models``) and restarts the stack after an infrastructure stop (judged
+    episodes never re-fly)."""
+    import time
+    from dataclasses import asdict
+    from ontology_rgat.current_semantics import confirmation as cf
+    from ontology_rgat.current_semantics import development as dev
+    from ontology_rgat.current_semantics import isaac_development as idev
+    config, plan_path, plan, refusal = _confirmation_plan(args, config_path, root)
+    if refusal is not None:
+        _print(refusal)
+        return REFUSED_EXIT
+    out = cf.isaac_dir(root, plan)
+    fly_config = cf.budget_config(config, plan)   # checkpoints were saved under it
+    budget = 30 if args.resume_budget is None else int(args.resume_budget)
+    recoveries = 5 if args.reset_recoveries is None else int(args.reset_recoveries)
+    if args.dry_run:
+        _print(resolved_plan(config_path, args.stage, root, dry_run=True, extra={
+            "plan_file": str(plan_path), **cf.resolved(plan, config),
+            "ready_seeds": cf.ready_seeds(plan, config, root),
+            "flown_episodes": len(cf.isaac_rows(root, plan)), "wait_for_models": args.wait_for_models,
+            "resume_budget": budget, "reset_recoveries": recoveries,
+            "will_write": [str(out / "episodes.jsonl"), str(out / cf.CHECKPOINTS),
+                           str(out / "isaac_stack"), str(cf.out_dir(root, plan) / cf.RESULT)],
+            "starts_owned_stack": True, "adopts_running_isaac": False}))
+        return 0
+    from ontology_rgat.current_semantics.backend import CurrentSpatialBackend, make_isaac_backend
+    from ontology_rgat.spatial.runtime_contract import deployment_profile
+    from run_spatial_pipeline import live_stack
+    profile = Path(deployment_profile("spatial-reference/12")["path"])
+    log = lambda line: print(f"{dt.datetime.now().isoformat(timespec='seconds')} {line}",
+                             flush=True)
+    seeds = list(plan.models.training_seeds)
+    cases = len(plan.isaac.seeds)
+
+    def flown_seeds() -> list[int]:
+        rows = cf.isaac_rows(root, plan)
+        path = out / cf.CHECKPOINTS
+        excluded = (json.loads(path.read_text(encoding="utf-8")).get("excluded", {})
+                    if path.exists() else {})
+        done = []
+        for seed in seeds:
+            keys = [f"{seed}/{arm}" for arm in plan.models.arms]
+            own = [r for r in rows if r["model"] in keys]
+            needed = cases * sum(k not in excluded for k in keys)
+            if any(k in excluded for k in keys) or own:
+                if len(own) == needed and all(
+                        k in excluded or any(r["model"] == k for r in own) for k in keys):
+                    done.append(seed)
+        return done
+
+    def pending() -> list[int]:
+        done = set(flown_seeds())
+        return [s for s in cf.ready_seeds(plan, config, root) if s not in done]
+
+    restarts = 0
+    with owned(out):
+        while True:
+            todo = pending()
+            if not todo:
+                if len(flown_seeds()) == len(seeds):
+                    break
+                if not args.wait_for_models:
+                    log("isaac-confirm: no completed training seed left to fly; stopping")
+                    break
+                time.sleep(300)
+                continue
+            wrappers: list = []
+            cache: dict = {}
+
+            def make(cell):  # one Isaac flight per stack, one wrapper per condition
+                if cell.name in cache:
+                    return cache[cell.name]
+                factors, dropout = dev.cell_conditions(config, asdict(cell),
+                                                       plan.models.dropout_start_s)
+                if not wrappers:
+                    backend = make_isaac_backend(config, allow_isaac=True, split=cell.split,
+                                                 factors=factors, dropout=dropout)
+                else:
+                    backend = CurrentSpatialBackend(wrappers[0].flight, config,
+                                                    name="isaac_v12", scientific=False,
+                                                    split=cell.split, factors=factors,
+                                                    dropout=dropout)
+                wrappers.append(backend)
+                cache[cell.name] = backend
+                return backend
+
+            stopped = None
+            try:
+                with live_stack(out / "isaac_stack", adopt=False, headless=args.headless,
+                                schema="spatial-reference/12", reset_recoveries=recoveries,
+                                profile_path=profile):
+                    try:
+                        while todo and stopped is None:
+                            seed = todo[0]
+                            done = flown_seeds()
+                            _, excluded = cf.bind_checkpoints(plan, root, done + [seed])
+                            order, keys = cf.seed_order(plan, done + [seed], excluded)
+                            log(f"isaac-confirm: flying training seed {seed} "
+                                f"({len(done)} of {len(seeds)} seeds flown)")
+                            flown = idev.run(fly_config, plan.isaac, plan.models, cf.out_dir(root, plan),
+                                             make, out, log=log, resume=True, order=order,
+                                             keys=keys, label="isaac-confirm")
+                            stopped = flown["stopped"]
+                            todo = pending()
+                    finally:
+                        error = None
+                        for backend in sorted(wrappers, key=lambda w: not w.active):
+                            try:
+                                backend.close()
+                            except Exception as exc:  # keep closing; report the first
+                                error = error or exc
+                        if error is not None and stopped is None:
+                            stopped = {"error": f"cleanup: {type(error).__name__}: {error}"}
+            except Exception as exc:  # stack start/stop failure: infrastructure, not RL
+                stopped = {"error": f"stack: {type(exc).__name__}: {exc}"}
+                with (out / "interruptions.jsonl").open("a", encoding="utf-8") as handle:
+                    handle.write(json.dumps(stopped) + "\n")
+            if stopped is not None:
+                restarts += 1
+                log(f"isaac-confirm: infrastructure stop ({stopped.get('error')}); "
+                    f"restart {restarts} of {budget}")
+                if restarts > budget:
+                    log("isaac-confirm: resume budget spent; stopping")
+                    return 1
+                time.sleep(60)
+        path = None
+        if len(flown_seeds()) == len(seeds):
+            with owned(cf.out_dir(root, plan) / "report"):
+                path = _write_confirmation_report(config_path, plan_path, root)
+    log(f"isaac-confirm: {len(cf.isaac_rows(root, plan))} episodes judged"
+        + (f"; wrote {path}" if path else ""))
+    return 0 if path else 1
+
+
 def _isaac_eval(config, root: Path, extra: dict) -> dict:
     """The selected G4 checkpoints inside an owned stack (same rules as the G3 half).
     With ``extra["pairs"]`` it is the diagnostic re-flight: traces only, no verdict."""
@@ -644,10 +929,12 @@ def main(argv=None) -> int:
         from ontology_rgat.current_semantics.monitor import RESULTS, serve as serve_monitor
         if args.dry_run:
             _print({"stage": "monitor", "dry_run": True, "reads": str(RESULTS),
-                    "serves": "http://127.0.0.1:8780/ (next free port up to 8799)",
+                    "serves": f"http://{args.host or '127.0.0.1'}:{args.port or 8780}/ "
+                              "(next free port up to +19)",
                     "writes": [], "trains": False, "starts_isaac": False})
             return 0
-        server, url = serve_monitor(background=False)
+        server, url = serve_monitor(background=False, host=args.host or "127.0.0.1",
+                                    port=args.port or 8780)
         print(f"monitor: {url} (read-only view of {RESULTS}; Ctrl+C to stop)", flush=True)
         try:
             server.serve_forever()
@@ -672,6 +959,8 @@ def main(argv=None) -> int:
         finally:
             server.server_close()
         return 0
+    if args.stage in CONFIRMATION_STAGES and args.stage != "isaac-confirm":
+        return _confirmation(args, config_path, root)
     if args.stage in REFUSED_STAGES:
         _print({"stage": args.stage, "status": "REFUSED", "dry_run": args.dry_run,
                 "reason": "confirmation opens only after a passed development gate (guide "
@@ -701,6 +990,8 @@ def main(argv=None) -> int:
         return REFUSED_EXIT
     if args.stage in ISAAC_DEVELOPMENT_STAGES:
         return _isaac_development(args, config_path, root)
+    if args.stage == "isaac-confirm":
+        return _isaac_confirm(args, config_path, root)
     if args.stage == "isaac-handover-fix":
         return _isaac_handover_fix(args, config_path, root)
     if args.stage == "coupling" and args.backend == "isaac" and not args.allow_isaac:

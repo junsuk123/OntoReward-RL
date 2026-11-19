@@ -24,7 +24,12 @@
 > - 착륙 성공률: **96.0 %**. Semantic MLP는 84.7 %, 일반 PPO는 82.7 %, Untyped GNN은 70.7 %이다.
 > - 위험 판정: 150회 비행 중 **2건**. Semantic MLP는 18건, 일반 PPO는 19건, Untyped GNN은 26건이다.
 
-![System pipeline](docs/figures/system_architecture.png)
+![Overall architecture](docs/figures/overall_architecture.png)
+
+*전체 구조.*
+- 위: 장면 정보가 온톨로지 R-GAT 인코더(의미 특징 → 노드 투영 → 관계 어텐션 2홉 → LandingContext 판독)를 거친다.
+  이어서 원 관측과 함께 Actor로 들어가고, Actor가 PX4 명령을 낸다.
+- 아래: 인코더 블록과 각 단계의 상세.
 
 ---
 
@@ -54,8 +59,6 @@
   이 문서에서 **위험 판정**은 UNSAFE_CONTACT와 SAFETY_ENVELOPE_VIOLATION을 합한 것이다.
 
 ## 2. 제안 방법
-
-![Policy model](docs/figures/policy_model.png)
 
 ### 2.1 착륙 온톨로지
 
@@ -170,6 +173,8 @@ g_t     = W_o h_L^(2) ∈ R^8                             LandingContext 판독
 ## 3. 검증
 
 ### 3.1 시뮬레이션 환경
+
+![System pipeline](docs/figures/system_architecture.png)
 
 | 항목 | 설정 |
 |---|---|

@@ -58,8 +58,14 @@ from .contracts import (AUDITED_SEED_RANGES, DIAGNOSTIC_SEED_RANGES, PROJECT_ROO
 PROTOCOL = "confirmation/1"
 MINI_PROTOCOL = "confirmation-mini/1"
 # protocol -> (its Isaac protocol, its folder under the run root)
+REPLICATION_PROTOCOL = "replication-mini/1"
 PROTOCOLS = {PROTOCOL: ("isaac-confirmation/1", "confirmation"),
-             MINI_PROTOCOL: ("isaac-confirmation-mini/1", "confirmation_mini")}
+             MINI_PROTOCOL: ("isaac-confirmation-mini/1", "confirmation_mini"),
+             REPLICATION_PROTOCOL: ("isaac-replication-mini/1", "replication_mini")}
+# A replication repeats a confirmation's seeds and rule under another self-navigation
+# estimator; it needs that root's development procedure COMPLETE, not a passed gate (the
+# CA-KF root's gate failed), and it may name its own arm subset.
+GATE_FREE = frozenset({REPLICATION_PROTOCOL})
 ISAAC_PROTOCOL = PROTOCOLS[PROTOCOL][0]
 FULL_PATH = PROJECT_ROOT / "config" / "current_semantics" / "confirmation_v1.yaml"
 DEFAULT_PATH = PROJECT_ROOT / "config" / "current_semantics" / "confirmation_mini_v1.yaml"
@@ -126,7 +132,8 @@ def load_plan(path: str | Path, config: CurrentSemanticsConfig) -> ConfirmationP
     raw_data = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
     if not isinstance(raw_data, dict):
         raise ValueError("confirmation plan must be a mapping")
-    optional = {k: raw_data.pop(k) for k in ("updates", "episodes_per_cell") if k in raw_data}
+    optional = {k: raw_data.pop(k) for k in ("updates", "episodes_per_cell", "arms")
+                if k in raw_data}
     data = dev._section(raw_data, ("protocol", "development_protocol", "training_seeds",
                                    "train_seed_base", "validation_seeds", "workers",
                                    "env_seed_base", "analysis", "isaac"), "confirmation")
@@ -164,8 +171,20 @@ def load_plan(path: str | Path, config: CurrentSemanticsConfig) -> ConfirmationP
         four_ood_success_ci_low_min=float(raw["four_ood_success_ci_low_min"]),
         ood_unsafe_ci_high_max=float(raw["ood_unsafe_ci_high_max"]),
         risk_family_alpha=_alpha(raw["risk_family_alpha"], "risk_family_alpha"))
+    if "arms" in optional:
+        arms = tuple(optional["arms"])
+        if data["protocol"] not in GATE_FREE:
+            raise ValueError("only a replication protocol may name its own arm subset")
+        if not set(arms) <= set(models.arms) or PROPOSED not in arms \
+                or GUARD_REFERENCE not in arms or len(set(arms)) != len(arms):
+            raise ValueError(f"arms must be distinct registered arms including {PROPOSED} "
+                             f"and {GUARD_REFERENCE}")
+        models = replace(models, arms=tuple(a for a in models.arms if a in arms))
+        compared = set(analysis.primary_comparisons) | ({analysis.practical_comparison} - {None})
+        if compared != set(models.arms) - {PROPOSED}:
+            raise ValueError("the analysis must compare the proposed arm with every other arm")
     # Guide 11.3: two primary comparisons, then the practical one against Raw.
-    if analysis.primary_comparisons != ("semantic_mlp_ppo", "untyped_gnn_ppo") \
+    elif analysis.primary_comparisons != ("semantic_mlp_ppo", "untyped_gnn_ppo") \
             or analysis.practical_comparison != "raw_ppo":
         raise ValueError("confirmation.analysis must compare R-GAT with semantic_mlp_ppo and "
                          "untyped_gnn_ppo (primary) and raw_ppo (practical), guide 11.3")
@@ -286,8 +305,10 @@ def resolved(plan: ConfirmationPlan, config: CurrentSemanticsConfig) -> dict[str
 
 # ------------------------------------------------------------- registration
 
-def blocker(config: CurrentSemanticsConfig, root: Path) -> str | None:
-    """None when this root's development procedure is complete with a PASSED gate."""
+def blocker(config: CurrentSemanticsConfig, root: Path, *, require_gate: bool = True
+            ) -> str | None:
+    """None when this root's development procedure is complete with a PASSED gate (or, for
+    ``require_gate`` False -- a replication -- complete whatever its gate)."""
     development = dev.load_development(dev.default_plan_path(config), config)
     problem = dev.check_registration(config, development, root)
     if problem:
@@ -300,7 +321,7 @@ def blocker(config: CurrentSemanticsConfig, root: Path) -> str | None:
         return "development.json belongs to another development plan"
     if not result.get("procedure_complete"):
         return "the development procedure is not complete"
-    if not (result.get("verdict") or {}).get("development_gate_passed"):
+    if require_gate and not (result.get("verdict") or {}).get("development_gate_passed"):
         return "confirmation opens only after a PASSED development gate (guide 11.5)"
     return None
 
@@ -309,7 +330,7 @@ def register(config_path: Path, plan_path: Path, root: Path) -> tuple[int, dict[
     config = load_config(config_path)
     plan = load_plan(plan_path, config)
     refused = {"stage": "register-confirmation", "status": "REFUSED"}
-    problem = blocker(config, root)
+    problem = blocker(config, root, require_gate=plan.protocol not in GATE_FREE)
     if problem:
         return 3, {**refused, "reason": problem}
     digest_ = plan_hash(plan, config)
@@ -330,7 +351,9 @@ def register(config_path: Path, plan_path: Path, root: Path) -> tuple[int, dict[
                "plan_file": str(plan_path), "plan": plan.to_dict(), **resolved(plan, config),
                "contract": {k: manifest[k] for k in dev.BOUND_HASHES},
                "development": {"plan_hash": development.get("plan_hash"),
-                               "development_gate_passed": True},
+                               "development_gate_passed": bool(
+                                   (development.get("verdict") or {}).get(
+                                       "development_gate_passed"))},
                "seed_audit": "no confirmation seed lies in AUDITED_SEED_RANGES, "
                              "DIAGNOSTIC_SEED_RANGES, the G4 pilots' or the development's "
                              "seed blocks, or any registered seed (confirmation._audit)",
@@ -339,7 +362,7 @@ def register(config_path: Path, plan_path: Path, root: Path) -> tuple[int, dict[
 
 def check_registration(config: CurrentSemanticsConfig, plan: ConfirmationPlan,
                        root: Path) -> str | None:
-    problem = blocker(config, root)
+    problem = blocker(config, root, require_gate=plan.protocol not in GATE_FREE)
     if problem:
         return problem
     path = out_dir(root, plan) / REGISTRATION
@@ -703,7 +726,16 @@ def judge_local(plan: ConfirmationPlan, models: dict[str, dict[str, Any]]) -> di
                                       and det >= g.validation_deterministic_success_min
                                       and smp >= g.validation_sampled_success_min)}
     passed = decision["primary_passed"] and all(x["passed"] for x in guards.values())
+    from scipy.stats import fisher_exact
+    reached = {arm: sum(models[f"{s}/{arm}"].get("checkpoint") is not None for s in seeds)
+               for arm in arms}
+    reliability = {"models_reaching_full_difficulty": reached, "per_arm": len(seeds),
+                   "fisher_vs_proposed": {
+                       arm: float(fisher_exact([[reached[PROPOSED], len(seeds) - reached[PROPOSED]],
+                                                [reached[arm], len(seeds) - reached[arm]]])[1])
+                       for arm in arms if arm != PROPOSED}}
     return {"primary_metric": "ten_cell_mean_success", **decision, "guards": guards,
+            "training_reliability": reliability,
             "confirmation_passed": bool(passed),
             "practical_passed": (None if a.practical_comparison is None else bool(
                 passed and decision["practical"][a.practical_comparison]["passed"])),

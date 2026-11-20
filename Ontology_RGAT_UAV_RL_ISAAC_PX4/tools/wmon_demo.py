@@ -140,7 +140,7 @@ def state(backend, observation, step, action, evidence, label, n, total, statuse
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--profile", choices=tuple(CONFIGS), default="wmon",
-                        help="observation: truth navigation (/3), /4 WMON or /4 Kalman")
+                        help="observation: reference navigation (/3), /4 FFT-assisted kinematic WLS (internal id wmon) or /4 constant-acceleration Kalman (CA-KF)")
     parser.add_argument("--model", default="10/ontology_rgat_ppo",
                         help="SEED/ARM of the root's development/1, or SEED/bond")
     parser.add_argument("--cell", default="composition_id", choices=dev.CELLS)

@@ -37,6 +37,42 @@ from ..spatial.wmon import MATLAB_TRAINED_THETA, WMONParams, WMONStream
 
 LIVE_NAVIGATION_OBSERVATION_VERSION = "spatial-current-observation/4"
 ESTIMATOR_KINDS = ("hold", "kalman", "wmon")
+
+# --------------------------------------------------------------- display names
+# The internal identifiers above (configs, result folders, checkpoints, hashes) never
+# change; documents and figures show the names below.  ``wmon`` is the author's own
+# estimator from separate research (spatial/wmon.py, WMON v0.1): a weighted least-squares
+# state estimator with causal-FFT preprocessing, frequency-based measurement confidence
+# and kinematic-consistency residuals, its coefficients calibrated by SPSA + Adam.  It is
+# part of the experimental setup, NOT a contribution of the landing-policy study, and a
+# result obtained with it is a result obtained with it -- never relabel it as a Kalman or
+# generic WLS result.  Nothing here enters a manifest or a hash.
+SELF_NAVIGATION_BLOCK = "Self-Navigation Estimator"
+ESTIMATED_NAVIGATION_STATE = "Estimated Navigation State"
+NAVIGATION_QUALITY = "Navigation Validity & Age"
+ESTIMATOR_DISPLAY_NAMES = {
+    "hold": "Last-fix hold",
+    "kalman": "Constant-Acceleration Kalman Filter (CA-KF)",
+    "wmon": "FFT-Assisted Kinematic Weighted Least Squares (WLS) Estimator",
+}
+ESTIMATOR_SHORT_NAMES = {"hold": "hold", "kalman": "Kalman", "wmon": "Kinematic WLS"}
+ESTIMATOR_PROVENANCE = {
+    "wmon": ("developed by the author in separate research (internal name WMON, "
+             "spatial/wmon.py); used here as the self-navigation estimator of the "
+             "experimental setup, not as a contribution of this study"),
+    "kalman": "conventional constant-acceleration Kalman filter (spatial/kinematic_kf.py)",
+}
+
+
+def estimator_display_name(kind: str | None, *, short: bool = False) -> str:
+    """The name documents and figures show for an internal estimator identifier;
+    ``None`` is the reference navigation (the flight's own state as is)."""
+    if kind is None:
+        return "reference navigation"
+    names = ESTIMATOR_SHORT_NAMES if short else ESTIMATOR_DISPLAY_NAMES
+    if kind not in names:
+        raise ValueError(f"unknown estimator {kind!r}; registered: {ESTIMATOR_KINDS}")
+    return names[kind]
 NAVIGATION_RULE = (
     "own position/velocity of the 21D vector and the capture-time own position of the pad "
     "track come from the navigation estimator; drone_navigationValid := GNSS fix age < "

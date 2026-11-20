@@ -135,3 +135,34 @@ def test_records_older_than_the_window_are_not_shown(tmp_path):
     runs = {r["path"].split("/", 1)[1] for r in snapshot(root)["runs"]}
     assert "development_design/old/seed1" not in runs
     assert "g4_pilot/seed0" in runs
+
+
+def test_the_learning_speed_panel_reads_each_models_event(tmp_path):
+    """learning-speed/1: a done model shows its first difficulty-1.0 update or its censoring,
+    a running one its progress; the tally pairs only seeds where both arms are done."""
+    v5 = tmp_path / TASK_RUN_ROOTS["spatial-current-task/5"].name
+    base = v5 / "learning_speed"
+    orl = "orl_ppo:0123456789abcdef"
+    base.mkdir(parents=True)
+    (base / "learning_speed_registration.json").write_text(json.dumps({
+        "protocol": "learning-speed/1", "proposed_arm": orl, "comparisons": ["raw_ppo"],
+        "training_seeds": [40, 41], "cap": 600}))
+    for seed, arm, first, censored in ((40, orl, 70, False), (40, "raw_ppo", 140, False),
+                                       (41, orl, None, None)):
+        run = base / f"seed{seed}" / arm.replace(":", "_")
+        _history(run, 12, difficulty=0.3)
+        if censored is not None:
+            (run / "summary.json").write_text(json.dumps(
+                {"complete": True, "first_full_update": first, "censored": censored}))
+    before = _listing(tmp_path)
+    state = snapshot(tmp_path)
+    assert _listing(tmp_path) == before
+    panel = next(s for s in state["speeds"] if s["kind"] == "speed")
+    models = {(m["seed"], m["arm"]): m for m in panel["models"]}
+    assert models[(40, orl)]["first_full"] == 70 and models[(40, orl)]["state"] == "done"
+    assert models[(41, orl)]["state"] == "running" and models[(41, "raw_ppo")]["state"] == "pending"
+    tally = panel["provisional"]["raw_ppo"]
+    assert tally["pairs"] == 1 and tally["proposed_first"] == 1 and abs(tally["ratio"] - 0.5) < 1e-9
+    runs = {r["path"]: r for r in state["runs"]}
+    live = runs[f"{v5.name}/learning_speed/seed41/{orl.replace(':', '_')}"]
+    assert live["stops_at_full"] and live["eta_s"] is None and live["planned"] == 600

@@ -62,7 +62,9 @@ SHORT_LABEL = {"ontology_rgat_ppo": "Ontology\nR-GAT", "semantic_mlp_ppo": "Sema
 ARMS = ("ontology_rgat_ppo", "semantic_mlp_ppo", "raw_ppo", "untyped_gnn_ppo")
 UNSAFE = {"UNSAFE_CONTACT", "SAFETY_ENVELOPE_VIOLATION"}
 SEEDS = (10, 11, 12, 13, 14)
-WMON_ROOT = RESULTS / "spatial_current_semantics_v1_nav4_5aa4091b"
+# Result keys and folders keep the internal estimator identifiers ("wmon", "kalman");
+# every label shown in a figure goes through current_semantics.navigation's display names.
+WMON_ROOT = RESULTS / "spatial_current_semantics_v1_nav4_5aa4091b"   # internal: kinematic WLS
 CONFIRMATION = WMON_ROOT / "confirmation_mini" / "confirmation.json"
 COMPARED = ("semantic_mlp_ppo", "untyped_gnn_ppo", "raw_ppo")
 
@@ -328,8 +330,8 @@ def overall():
     fig, ax = canvas(150, 172)
     # ---- top band: scene graph -> encoder -> actor -> PX4
     kg = {"UAV": (16.5, 154.0), "Moving\npad": (5.2, 165.5), "Camera": (28.6, 166.5),
-          "WMON\nnav.": (5.2, 142.5), "Attitude": (28.6, 142.0)}
-    edge_lab = {"Moving\npad": "relative x, y, h", "Camera": "vision age", "WMON\nnav.": "valid, age",
+          "Self-\nNavigation\nEstimator": (5.2, 142.5), "Attitude": (28.6, 142.0)}
+    edge_lab = {"Moving\npad": "relative x, y, h", "Camera": "vision age", "Self-\nNavigation\nEstimator": "valid, age",
                 "Attitude": "roll, pitch, rate"}
     for name, (x, y) in kg.items():
         if name != "UAV":
@@ -340,7 +342,8 @@ def overall():
                     bbox=dict(fc="white", ec="none", pad=0.1), zorder=3)
         r = 5.2 if name == "UAV" else 4.3
         ax.add_patch(Circle((x, y), r, fc=C["kg"][0], ec=C["kg"][1], lw=1.2, zorder=4))
-        ax.text(x, y, name, ha="center", va="center", fontsize=10.5, zorder=5, linespacing=1.0)
+        ax.text(x, y, name, ha="center", va="center", fontsize=8.6 if name.count("\n") > 1 else 10.5,
+                zorder=5, linespacing=1.0)
     _line(ax, [(34.5, 154.0), (39.0, 154.0)])
     ax.add_patch(FancyBboxPatch((37.5, 138.5), 109.5, 33.0, boxstyle="round,pad=0,rounding_size=3.5",
                                 fc=C["off"][0], ec="#555555", lw=1.6, ls=(0, (4, 3)), zorder=1))
@@ -495,7 +498,8 @@ def architecture():
         1: ("2  Perception & navigation", "est", [
             ("ArUco detection + PnP", ["ROS 2 camera stream", "capture-time aligned"]),
             ("Pad track", ["relative position, velocity", "re-acquired after rejections"]),
-            ("Own navigation", ["GNSS + velocity + IMU fusion", "WMON or Kalman, outage-aware"]),
+            ("Self-Navigation Estimator", ["GNSS + velocity + IMU fusion",
+                                           "GNSS-outage-aware state estimation"]),
             (r"Current observation  $O_t$", ["21 channels, no history", "quality · geometry · motion · att."])]),
         2: ("3  Ontology semantics", "know", [
             ("Concepts and relations", ["8 concepts · 5 relation types", "14 semantic edges + self loops"]),
@@ -713,7 +717,8 @@ def field():
 
 # ----------------------------------------------------------------------------- 5 results
 def results():
-    """Isaac Sim + PX4 under WMON navigation: the confirmation (20 fresh seeds) as bars and seed
+    """Isaac Sim + PX4 under the kinematic WLS navigation (internal estimator id "wmon"):
+    the confirmation as bars and seed
     dots, the development stage (5 seeds) as hollow diamonds."""
     data = load_data()
     conf = (data.get("confirmation") or {}).get("isaac")
@@ -762,8 +767,13 @@ def results():
     a2.set_ylabel("flights with a risk verdict [%]", fontsize=9.5, color=MUTED)
     a2.set_title("Unsafe contact or envelope violation", fontsize=10.5, color=INK, loc="left")
     style_axes(a2)
-    fig.suptitle("Isaac Sim + PX4 SITL, own navigation from the WMON estimator with GNSS outages",
-                 x=0.06, y=1.04, ha="left", fontsize=12, weight="bold", color=INK)
+    from ontology_rgat.current_semantics.navigation import estimator_display_name
+    fig.suptitle("Isaac Sim + PX4 SITL, own navigation from the FFT-assisted kinematic WLS estimator "
+                 "with GNSS outages", x=0.06, y=1.04, ha="left", fontsize=12, weight="bold", color=INK)
+    fig.text(0.06, -0.12 if conf else -0.06,
+             f"Estimator: {estimator_display_name('wmon')}, recorded internally as 'wmon'; developed by "
+             "the author in separate research and part of the experimental setup, not a contribution "
+             "of this study.", fontsize=8.2, color=MUTED)
     if conf:
         fig.text(0.06, -0.06, f"Bars: confirmation, {n_seeds} fresh training seeds x {flights // n_seeds} "
                  f"flights = {flights} flights per policy.   "
@@ -855,8 +865,10 @@ def effects():
 
 def robustness():
     d = load_data()["isaac"]
-    navs = [("truth", "reference\nnavigation"), ("kalman", "Kalman\n(GNSS outages)"),
-            ("wmon", "WMON\n(GNSS outages)")]
+    from ontology_rgat.current_semantics.navigation import estimator_display_name
+    navs = [("truth", "reference\nnavigation"),
+            ("kalman", f"{estimator_display_name('kalman', short=True)}\n(GNSS outages)"),
+            ("wmon", f"{estimator_display_name('wmon', short=True)}\n(GNSS outages)")]
     fig, ax = plt.subplots(figsize=(7.6, 4.6))
     markers = {"ontology_rgat_ppo": "o", "semantic_mlp_ppo": "s", "raw_ppo": "^", "untyped_gnn_ppo": "D"}
     x = np.arange(len(navs))
@@ -886,8 +898,9 @@ def robustness():
     n = d["wmon"]["ontology_rgat_ppo"]["common_episodes"]
     m = d["wmon"]["semantic_mlp_ppo"]["common_episodes"]
     fig.text(0.02, -0.04, f"Identical cases in every column: 30 environments x 5 training seeds = {n} flights per "
-             f"policy ({m} for the MLP,\nwhose seeds common to all three profiles are 3).", fontsize=8.2,
-             color=MUTED)
+             f"policy ({m} for the MLP,\nwhose seeds common to all three profiles are 3).  Kinematic WLS = "
+             "FFT-assisted kinematic WLS estimator (internal id 'wmon'); Kalman = constant-acceleration "
+             "Kalman filter.", fontsize=8.2, color=MUTED)
     save(fig, "navigation_robustness")
 
 

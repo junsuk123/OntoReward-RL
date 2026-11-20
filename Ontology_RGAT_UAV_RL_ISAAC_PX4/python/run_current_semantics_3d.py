@@ -36,10 +36,17 @@ BOND_STAGES = ("bond-learnability", "register-bond-development", "bond-develop")
 # development procedure repeated, a decision rule registered before training.
 CONFIRMATION_STAGES = ("register-confirmation", "amend-confirmation", "confirm", "confirm-report",
                        "isaac-confirm")
+# learning-speed-extension/1 (current_semantics/extension.py): every confirmation model that
+# never reached difficulty 1.0 continued, by exact replay, to 1.0 or update 600.
+EXTENSION_STAGES = ("register-extension", "extend", "extension-report")
+# learning-speed/1 (current_semantics/speed.py): ORL against PPO and the untyped GNN, updates
+# to difficulty 1.0 on fresh seeds, base navigation, decision rule registered first.
+SPEED_STAGES = ("register-speed", "speed", "speed-report")
 STAGES = ("audit", "fixtures", "smoke", "coupling", "learnability", "isaac-eval",
           "isaac-trace", "report", "dashboard", *DEVELOPMENT_STAGES,
           *ISAAC_DEVELOPMENT_STAGES, "isaac-handover-fix", *RELATION_SHUFFLE_STAGES,
-          *ORL_STAGES, *BOND_STAGES, "monitor", *REFUSED_STAGES, *CONFIRMATION_STAGES)
+          *ORL_STAGES, *BOND_STAGES, "monitor", *REFUSED_STAGES, *CONFIRMATION_STAGES,
+          *EXTENSION_STAGES, *SPEED_STAGES)
 FLYING_STAGES = ("isaac-eval", "isaac-trace", "isaac-development", "isaac-handover-fix",
                  "isaac-confirm")
 REFUSED_EXIT = 3
@@ -118,6 +125,7 @@ def _validate(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None
     if args.plan is not None and args.stage not in (*DEVELOPMENT_STAGES, "isaac-handover-fix",
                                                     *RELATION_SHUFFLE_STAGES, *ORL_STAGES,
                                                     *BOND_STAGES, *CONFIRMATION_STAGES,
+                                                    *EXTENSION_STAGES, *SPEED_STAGES,
                                                     *ISAAC_DEVELOPMENT_STAGES):
         parser.error("--plan applies to --stage register-development/develop/"
                      "isaac-handover-fix/register-relation-shuffle/relation-shuffle, the "
@@ -125,8 +133,10 @@ def _validate(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None
     if (args.host is not None or args.port is not None) and args.stage not in ("monitor",
                                                                                "dashboard"):
         parser.error("--host/--port apply to --stage monitor/dashboard only")
-    if (args.shard is not None or args.workers is not None) and args.stage != "confirm":
-        parser.error("--shard/--workers apply to --stage confirm only")
+    if args.shard is not None and args.stage != "confirm":
+        parser.error("--shard applies to --stage confirm only")
+    if args.workers is not None and args.stage not in ("confirm", "extend", "speed"):
+        parser.error("--workers applies to --stage confirm/extend/speed only")
     if (args.wait_for_models or args.resume_budget is not None) \
             and args.stage != "isaac-confirm":
         parser.error("--wait-for-models/--resume-budget apply to --stage isaac-confirm only")
@@ -643,7 +653,8 @@ def _confirmation_plan(args, config_path: Path, root: Path):
         plan = cf.load_plan(plan_path, config)
     except ValueError as exc:
         return config, plan_path, None, {**refused, "reason": str(exc)}
-    problem = (cf.blocker(config, root) if args.stage == "register-confirmation"
+    problem = (cf.blocker(config, root, require_gate=plan.protocol not in cf.GATE_FREE)
+               if args.stage == "register-confirmation"
                else cf.check_registration(config, plan, root))
     if problem:
         return config, plan_path, plan, {**refused, "reason": problem}
@@ -747,6 +758,55 @@ def _confirmation(args, config_path: Path, root: Path) -> int:
     else:
         print(f"confirm: shard {args.shard or 'all'} done; other shards still training")
     return status
+
+
+def _extension(args, config_path: Path, root: Path) -> int:
+    """register-extension / extend / extension-report (learning-speed-extension/1): every
+    confirmation model that never reached difficulty 1.0 inside the budget, continued by exact
+    replay to 1.0 or the cap.  Any number of ``extend`` processes share the models."""
+    from ontology_rgat.current_semantics import extension as ext
+    config, plan_path, plan, refusal = _confirmation_plan(args, config_path, root)
+    if refusal is not None:
+        _print(refusal)
+        return REFUSED_EXIT
+    out = ext.out_dir(root, plan)
+    try:
+        keys = ext.censored_keys(plan, config, root)
+    except ValueError as exc:
+        _print({"stage": args.stage, "status": "REFUSED", "reason": str(exc)})
+        return REFUSED_EXIT
+    if args.dry_run:
+        _print(resolved_plan(config_path, args.stage, root, dry_run=True, extra={
+            "plan_file": str(plan_path), "protocol": ext.PROTOCOL, "cap": ext.CAP,
+            "models": list(keys), "will_write": [str(out)], "starts_isaac": False}))
+        return 0
+    if args.stage == "register-extension":
+        with owned(out / "registration"):
+            status, payload = ext.register(config_path, plan_path, root)
+        _print({k: v for k, v in payload.items()
+                if k in ("stage", "status", "reason", "protocol", "cap", "models",
+                         "registered_utc")})
+        return status
+    if args.stage == "extend":
+        try:
+            status, payload = ext.run(config_path, plan_path, root,
+                                      log=lambda line: print(line, flush=True),
+                                      workers=args.workers)
+        except ValueError as exc:
+            _print({"stage": args.stage, "status": "REFUSED", "reason": str(exc)})
+            return REFUSED_EXIT
+        if status:
+            _print(payload)
+            return status
+    try:
+        with owned(out / "report"):
+            payload = ext.report(config_path, plan_path, root)
+            write_json(out / ext.RESULT, payload)
+    except SystemExit as exc:   # another process is writing the same report
+        print(f"{args.stage}: report left to the other writer ({exc})")
+        return 0
+    _print({k: payload[k] for k in ("protocol", "complete", "pending", "arms", "comparisons")})
+    return 0
 
 
 def _isaac_confirm(args, config_path: Path, root: Path) -> int:
@@ -924,6 +984,51 @@ def _isaac_eval(config, root: Path, extra: dict) -> dict:
             backend.close()
 
 
+def _speed(args, config_path: Path, root: Path) -> int:
+    """register-speed / speed / speed-report (learning-speed/1): updates to difficulty 1.0 of
+    ORL, PPO and the untyped GNN on fresh seeds, base navigation.  Any number of ``speed``
+    processes share the models; whichever finds them all complete writes the verdict."""
+    from ontology_rgat.current_semantics import speed
+    plan_path = (args.plan or speed.DEFAULT_PATH).expanduser().resolve()
+    config = load_config(config_path)
+    try:
+        plan = speed.load_plan(plan_path, config)
+    except ValueError as exc:
+        _print({"stage": args.stage, "status": "REFUSED", "reason": str(exc)})
+        return REFUSED_EXIT
+    out = speed.out_dir(root)
+    if args.dry_run:
+        _print(resolved_plan(config_path, args.stage, root, dry_run=True, extra={
+            "plan_file": str(plan_path), **speed.resolved(plan, config),
+            "will_write": [str(out)]}))
+        return 0
+    if args.stage == "register-speed":
+        with owned(out / "registration"):
+            status, payload = speed.register(config_path, plan_path, root)
+        _print(payload)
+        return status
+    if args.stage == "speed":
+        status, payload = speed.run(config_path, plan_path, root,
+                                    log=lambda line: print(line, flush=True),
+                                    workers=args.workers)
+        if status:
+            _print(payload)
+            return status
+    try:
+        with owned(out / "report"):
+            payload = speed.report(config_path, plan_path, root)
+            from ontology_rgat.current_semantics.experiment import write_json
+            write_json(out / speed.RESULT, payload)
+    except SystemExit:
+        _print({"stage": args.stage, "status": "REPORT_HELD_ELSEWHERE"})
+        return 0
+    except ValueError as exc:
+        _print({"stage": args.stage, "status": "REFUSED", "reason": str(exc)})
+        return REFUSED_EXIT
+    _print({k: payload[k] for k in ("protocol", "complete", "pending", "arms", "verdict")})
+    return 0
+
+
 def main(argv=None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -973,6 +1078,10 @@ def main(argv=None) -> int:
         return 0
     if args.stage in CONFIRMATION_STAGES and args.stage != "isaac-confirm":
         return _confirmation(args, config_path, root)
+    if args.stage in EXTENSION_STAGES:
+        return _extension(args, config_path, root)
+    if args.stage in SPEED_STAGES:
+        return _speed(args, config_path, root)
     if args.stage in REFUSED_STAGES:
         _print({"stage": args.stage, "status": "REFUSED", "dry_run": args.dry_run,
                 "reason": "confirmation opens only after a passed development gate (guide "

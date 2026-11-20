@@ -213,7 +213,9 @@ def evaluate(pool: Any, arm: str, state: dict[str, Any], seeds: tuple[int, ...],
 
 def train_seed(config: CurrentSemanticsConfig, config_path: Path, model_seed: int,
                root: Path, pool: Any, *, log: Callable[[str], None],
-               updates: int | None = None) -> dict[str, Any]:
+               updates: int | None = None, stop_at_full: bool = False) -> dict[str, Any]:
+    """Train one model.  ``stop_at_full`` (extension.py only) ends training after the first
+    update trained at difficulty 1.0; every earlier update is unchanged."""
     from .features import build_feature_batch
     from .models import build_model, save_checkpoint
     from .ppo import PPOTrainer, build_batch
@@ -233,6 +235,7 @@ def train_seed(config: CurrentSemanticsConfig, config_path: Path, model_seed: in
     features = lambda vectors: build_feature_batch(vectors, config)
     best, best_key = None, None
     curriculum, at_full = Curriculum(g4.curriculum), 0
+    stopped = None
     started = time.monotonic()
     for update in range(updates):
         difficulty = curriculum.difficulty
@@ -258,6 +261,9 @@ def train_seed(config: CurrentSemanticsConfig, config_path: Path, model_seed: in
                 f"success={row['success']:.2f} return={row['mean_return']:.1f} "
                 f"kl={row['max_kl']} acc/rej={stats['accepted_steps']}/{stats['rejected_steps']} "
                 f"log_std={np.round(stats['log_std'], 2).tolist()}")
+        if stop_at_full and difficulty >= 1.0:
+            stopped = update
+            break
         last = update == updates - 1
         at_full += difficulty >= 1.0
         if difficulty >= 1.0 and (at_full % g4.validate_every == 0 or last):
@@ -275,12 +281,16 @@ def train_seed(config: CurrentSemanticsConfig, config_path: Path, model_seed: in
                 save_checkpoint(root / "best.pt", model, manifest=manifest,
                                 extra={"update": update, "model_seed": model_seed})
     save_checkpoint(root / "final.pt", model, manifest=manifest,
-                    extra={"update": updates - 1, "model_seed": model_seed})
-    return {"model_seed": model_seed, "updates": updates, "best_update": best,
-            "best_validation_key": list(best_key) if best_key else None,
-            "final_training_difficulty": curriculum.difficulty,
-            "updates_at_full_difficulty": at_full,
-            "wall_s": time.monotonic() - started}
+                    extra={"update": updates - 1 if stopped is None else stopped,
+                           "model_seed": model_seed})
+    out = {"model_seed": model_seed, "updates": updates, "best_update": best,
+           "best_validation_key": list(best_key) if best_key else None,
+           "final_training_difficulty": curriculum.difficulty,
+           "updates_at_full_difficulty": at_full,
+           "wall_s": time.monotonic() - started}
+    if stop_at_full:
+        out["stopped_at_full"] = stopped
+    return out
 
 
 def test_checkpoint(config: CurrentSemanticsConfig, path: Path, pool: Any) -> dict[str, Any]:

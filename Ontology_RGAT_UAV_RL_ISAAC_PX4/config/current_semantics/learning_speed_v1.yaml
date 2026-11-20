@@ -1,0 +1,33 @@
+# learning-speed/1 (python/ontology_rgat/current_semantics/speed.py): how many PPO updates
+# each arm needs to reach the task's full difficulty, on the BASE self-navigation contract
+# (spatial_view_contact_v1.yaml: no navigation estimator; the kinematic WLS estimator of the
+# author's separate research is not used anywhere in this protocol).
+#
+# User decision 2026-11-20 ("1"): the proposed model is ORL, the ontology used as the
+# policy's structure (orl.py; orl/1 = no raw-observation bypass, x/y planes sharing weights,
+# exact mirror equivariance, no hand-written rule).  Observed BEFORE this plan, on the
+# development seeds 10-14 (status doc 20.3, exploratory): first update at difficulty 1.0
+# ORL 66/62/81/77/65 against registered R-GAT 88/89/117/147/104, Untyped GNN
+# 97/93/141/100/106 and PPO 123/97/103/96/122; ORL first on 5/5 seeds against each.
+#
+# Registered by `./run.sh current-semantics-3d --config <base config> --stage register-speed`
+# before any model trains; `--stage speed` (any number of processes share the models) trains
+# to the event, `--stage speed-report` writes the verdict.  The decision rule is
+# speed.RULE, hashed into the registration together with this file and the contract.
+protocol: learning-speed/1
+proposed: orl/1
+comparisons: [untyped_gnn_ppo, raw_ppo]
+# Fresh model-initialisation seeds: 0-1 trained the G4 pilots, 10-14 the development,
+# 20-39 belong to confirmation/1 and its miniature/replication.
+training_seeds: [40, 41, 42, 43, 44, 45, 46, 47, 48, 49]
+# Training episode seed = base + seed * 1e6 + update * 12 + episode:
+# 340,000,000-349,007,199, outside every audited, diagnostic, pilot, development and
+# confirmation range (speed._audit refuses an overlap).
+train_seed_base: 300000000
+# Training stops at the first update trained at difficulty 1.0; a model still below it at
+# the cap is censored there (600 = the development budget).
+cap: 600
+# Episode workers per `speed` process.
+workers: 3
+# Bonferroni over the two comparisons: each is a two-sided 97.5 % paired-t interval.
+family_alpha: 0.05

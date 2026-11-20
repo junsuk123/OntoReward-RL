@@ -14,7 +14,7 @@
 
 ![overall architecture](overall_architecture.png)
 
-- **위:** 장면 정보(UAV, 이동 패드, 카메라, 항법, 자세)가 온톨로지 R-GAT 인코더를 거친다.
+- **위:** 장면 정보(UAV, 이동 패드, 카메라, 자기 항법 추정기 Self-Navigation Estimator, 자세)가 온톨로지 R-GAT 인코더를 거친다.
   - 인코더 순서: 의미 특징 생성기 φ → 노드 투영 → 관계 그래프 어텐션 2홉(같은 층 공유) → LandingContext 판독
   - 판독 결과 g_t는 원 관측 O_t와 이어 붙여 Actor에 들어간다.
   - Actor의 3축 순가속도는 자세·추력으로 바뀌어 PX4 OFFBOARD로 전달된다.
@@ -56,18 +56,26 @@ Untyped GNN 비교 정책은 같은 간선에서 관계 이름만 지운 그래�
 - (a) 정책 인계 시점의 시나리오 추출. 패드 방위 A와 패드 진행 방향 B는 4개 구역씩이고, 16개 조합 중 4개는 시험용으로 학습에서 뺀다.
 - (b), (c) 보상 퍼텐셜이 요구하는 드론−패드 상대 속도 `v_des`. `current_semantics/reward.py: desired_velocity`를 격자에서 직접 계산했다.
 
-## 5. Isaac 폐루프 결과 (WMON 항법)
+## 5. Isaac 폐루프 결과 (Kinematic WLS 자기 항법)
 
 ![isaac results](isaac_wmon_results.png)
 
 정책마다 Isaac Sim + PX4에서 비행한 착륙 성공률과 위험 판정(불안전 접지 + 기울기 한계 위반) 비율이다.
+이때 자기 항법은 FFT-assisted kinematic WLS 추정기가 맡았다. 이 추정기는 저자가 별도 연구에서 개발한 것(내부 명칭 WMON)으로, 본 연구의 기여가 아니다.
+파일 이름 `isaac_wmon_results`의 `wmon`은 결과 폴더와 맞춘 내부 식별자이다.
 점 하나는 학습 시드 하나의 성공률이다.
 
 ## 6. 항법 열화에 따른 성능
 
 ![navigation robustness](navigation_robustness.png)
 
-같은 케이스를 기준 항법, 칼만, WMON 세 가지 항법으로 비행한 성공률이다.
+같은 케이스를 세 가지 자기 항법으로 비행한 성공률이다.
+
+- 기준 항법: PX4 EKF2 출력 그대로
+- Kalman: 등가속도 칼만 필터(CA-KF)
+- Kinematic WLS: FFT-assisted kinematic WLS 추정기, 내부 명칭 WMON
+
+성공률은 원래 실험 기록에서 그대로 옮겼다.
 
 ## 다시 만들기
 

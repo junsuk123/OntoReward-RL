@@ -20,6 +20,7 @@
 >
 > 온톨로지로 관측 품질, 상대 운동, 착륙 조건을 구조화하고, R-GAT 상태 표현을 강화학습 정책에 적용했다.
 > Isaac Sim–PX4 폐루프에서 GNSS 결측으로 항법 신뢰도가 떨어진 조건을 평가했다.
+> 이때 자기 항법은 FFT-assisted kinematic WLS 추정기가 맡았다. 이 추정기는 저자가 별도 연구에서 개발한 것으로, 본 연구의 기여가 아니다(3.1, 3.4 해석 범위 참조).
 >
 > - 착륙 성공률: **96.0 %**. Semantic MLP는 84.7 %, 일반 PPO는 82.7 %, Untyped GNN은 70.7 %이다.
 > - 위험 판정: 150회 비행 중 **2건**. Semantic MLP는 18건, 일반 PPO는 19건, Untyped GNN은 26건이다.
@@ -185,7 +186,7 @@ g_t     = W_o h_L^(2) ∈ R^8                             LandingContext 판독
 | 착륙 패드 | UGV 위 17-태그 ArUco 보드 (세 가지 크기) |
 | 패드 인식 | ArUco 검출 + PnP, 촬영 시각 정렬, 반복 거부 후 추적 재획득 |
 | 항법 열화 | GNSS 10 Hz, σ = (0.3, 0.3, 0.5) m. 에피소드마다 2–6 s에서 시작하는 1–4 s 결측 창. 속도 σ 0.05 m/s, IMU σ 0.2 m/s² |
-| 항법 추정기 | 기준 항법(PX4 EKF), 칼만(등가속도), WMON |
+| 자기 항법 추정기 (Self-Navigation Estimator) | 세 조건: 기준 항법(PX4 EKF2 출력 그대로), 등가속도 칼만 필터(CA-KF), FFT-assisted kinematic WLS 추정기(Kinematic WLS; 저자가 별도 연구에서 개발, 내부 명칭 WMON) |
 
 #### 센서 사양
 
@@ -200,11 +201,17 @@ Isaac Sim 쪽 값은 배포 프로필 `config/spatial-isaac-system-v12.yaml`과 
 | GPS | Pegasus 기본 GPS | 갱신 250 Hz, 위치 잡음 밀도 2 × 10⁻⁴ m/√Hz(수평)·4 × 10⁻⁴(수직), 랜덤 워크 2.0/4.0 (m/s)/√Hz, 속도 잡음 밀도 0.2/0.4 (m/s)/√Hz, 상관 시간 60 s, 3D fix | PX4 EKF2 입력(기준 항법) |
 | 기압계 | Pegasus 기본 기압계 | 250 Hz, 압력 잡음 1 Pa RMS | PX4 EKF2 입력 |
 | 자력계 | Pegasus 기본 자력계 | 250 Hz, 잡음 밀도 0.4 × 10⁻³ gauss/√Hz, 랜덤 워크 6.4 × 10⁻⁶ gauss·√Hz | PX4 EKF2 입력 |
-| 항법 열화용 GNSS | 결측 창이 있는 위치 측정 | 10 Hz, σ = (0.3, 0.3, 0.5) m. 에피소드마다 결측 창 1회(시작 2–6 s, 길이 1–4 s). 마지막 측정 후 0.5 s가 지나면 항법 무효로 표시 | WMON·칼만 자기 항법 |
-| 항법 열화용 속도 | 광류·VIO 대용 | σ = 0.05 m/s | WMON·칼만 자기 항법 |
-| 항법 열화용 가속도 | 기준 속도 차분 | σ = 0.2 m/s² | WMON·칼만 자기 항법 |
+| 항법 열화용 GNSS | 결측 창이 있는 위치 측정 | 10 Hz, σ = (0.3, 0.3, 0.5) m. 에피소드마다 결측 창 1회(시작 2–6 s, 길이 1–4 s). 마지막 측정 후 0.5 s가 지나면 항법 무효로 표시 | 자기 항법 추정기(Kinematic WLS·CA-KF) |
+| 항법 열화용 속도 | 광류·VIO 대용 | σ = 0.05 m/s | 자기 항법 추정기(Kinematic WLS·CA-KF) |
+| 항법 열화용 가속도 | 기준 속도 차분 | σ = 0.2 m/s² | 자기 항법 추정기(Kinematic WLS·CA-KF) |
 
-- 정책이 받는 자기 위치·속도는 기준 자기 상태를 열화 센서로 다시 측정한 뒤 WMON(또는 칼만)이 추정한 값이다. 기준 자기 상태는 로컬 플랜트에서는 참값, Isaac에서는 PX4 EKF2 출력이다.
+- 정책이 받는 자기 위치·속도는 기준 자기 상태를 열화 센서로 다시 측정한 뒤 자기 항법 추정기(Kinematic WLS 또는 CA-KF)가 추정한 값(Estimated Navigation State)이다. 항법 유효 여부와 나이(Navigation Validity & Age)도 함께 관측에 들어간다. 기준 자기 상태는 로컬 플랜트에서는 참값, Isaac에서는 PX4 EKF2 출력이다.
+- **FFT-assisted kinematic WLS 추정기**: 축마다 위치·속도·가속도 상태를 둔다. 계산 단계는 다음과 같다.
+  1. 센서 신호를 인과적 FFT 창으로 전처리한다.
+  2. 고주파 비율로 측정 신뢰도를 정한다.
+  3. 운동학적 일관성 잔차를 포함한 가중 최소제곱으로 상태를 정한다.
+
+  계수 7개는 SPSA + Adam으로 보정했다. 이 추정기는 저자가 별도 연구에서 개발한 것(내부 명칭 WMON, `spatial/wmon.py`)이며, 본 연구에서는 실험 환경의 구성 요소로만 쓴다.
 - 로컬 학습 플랜트의 카메라 모델도 같은 카메라와 보드를 쓴다.
   - 검출 조건: 태그 하나가 화면 안에 12 px 이상으로 온전히 투영될 때
   - 오류 모델: 꼭짓점 잡음 0.5 px, 프레임 누락 5 %, 영상 전달 지연 75 ms
@@ -243,9 +250,11 @@ Isaac Sim 쪽 값은 배포 프로필 `config/spatial-isaac-system-v12.yaml`과 
 
 ### 3.4 결과
 
-#### 항법 열화 조건의 Isaac Sim + PX4 폐루프 (WMON 항법, GNSS 결측)
+#### 항법 열화 조건의 Isaac Sim + PX4 폐루프 (Kinematic WLS 자기 항법, GNSS 결측)
 
-![Isaac WMON results](docs/figures/isaac_wmon_results.png)
+이 절의 결과는 모두 FFT-assisted kinematic WLS 추정기(내부 명칭 WMON)로 자기 항법을 한 조건에서 얻었다. 다른 추정기의 결과로 바꿔 읽을 수 없다.
+
+![Isaac results under the kinematic WLS navigation](docs/figures/isaac_wmon_results.png)
 
 | 정책 | 착륙 성공 | 위험 판정 | 그 밖의 실패 |
 |---|---:|---:|---|
@@ -264,7 +273,7 @@ Isaac Sim 쪽 값은 배포 프로필 `config/spatial-isaac-system-v12.yaml`과 
 같은 케이스를 세 항법으로 비행한 결과이다. 학습 시드 5개, 환경 30개로 정책마다 150회이다.
 Semantic MLP는 세 항법 모두에서 학습된 시드 3개만 비교하므로 90회이다.
 
-| 정책 | 기준 항법 | 칼만 | WMON | 기준 → WMON |
+| 정책 | 기준 항법 | 칼만(CA-KF) | Kinematic WLS | 기준 → Kinematic WLS |
 |---|---:|---:|---:|---:|
 | **Ontology R-GAT** | 99.3 % | 96.7 % | 96.0 % | **−3.3 pp** |
 | PPO (raw obs.) | 98.7 % | 94.7 % | 82.7 % | −16.0 pp |
@@ -277,11 +286,11 @@ Semantic MLP는 세 항법 모두에서 학습된 시드 3개만 비교하므로
 
 로컬 평가 셀 10개의 평균 성공률이다(학습 시드 5개 평균).
 
-- 기준 항법과 WMON에서는 제안 정책이 가장 높다.
+- 기준 항법과 Kinematic WLS에서는 제안 정책이 가장 높다.
 - 칼만에서는 PPO와 같은 수준이다(73.2 % vs 73.0 %).
-- 항법이 가장 나쁜 WMON에서 격차가 가장 크다.
+- 항법이 가장 나쁜 Kinematic WLS 조건에서 격차가 가장 크다.
 
-| 정책 | 기준 항법 | 칼만 | WMON |
+| 정책 | 기준 항법 | 칼만(CA-KF) | Kinematic WLS |
 |---|---:|---:|---:|
 | **Ontology R-GAT** | **78.6 %** | 73.2 % | **69.6 %** |
 | Semantic MLP | 77.2 % | 45.5 %\* | 59.1 % |
@@ -293,15 +302,33 @@ Semantic MLP는 세 항법 모두에서 학습된 시드 3개만 비교하므로
 #### 해석 범위
 
 - 학습 시드 5개 기준으로 시드별 짝지은 차이의 95 % 구간을 보면 다음과 같다.
-  - Untyped GNN 대비: Isaac WMON에서 +25.3 pp [+6.2, +44.4]이고, 로컬 WMON에서도 0을 벗어난다.
+  - Untyped GNN 대비: Isaac(Kinematic WLS 항법)에서 +25.3 pp [+6.2, +44.4]이고, 같은 항법의 로컬 평가에서도 0을 벗어난다.
   - Semantic MLP 대비: +11.3 pp [−0.9, +23.6]이다. 시드별 차이는 0–23 pp로 모두 0 이상이지만, 구간 하한이 0을 살짝 넘지 못한다.
   - PPO 대비: +13.3 pp [−10.3, +36.9]이다. PPO 시드 하나(46.7 %)가 약해 편차가 크다.
   - 두 비교는 추가 학습 시드로 확인할 대상이다.
 - Isaac 평가와 로컬 평가는 같은 학습 모델을 쓴다. 두 결과는 독립적인 반복이 아니라, 같은 모델이 두 플랜트에서 보인 일관성이다.
 - 관계의 의미 배치만 무작위로 섞은 대조군은 기준 항법에서 평가했다. 이 조건에서는 의미 배치가 성능 이점을 주지 않았다(−1.2 pp).
   따라서 열화 조건의 이점이 관계 유형 구분에서 오는지, 특정 의미 배치에서 오는지는 아직 분리되지 않았다.
+- **자기 항법 추정기에 대한 의존성:** 비교 정책 대비 뚜렷한 차이는 Kinematic WLS 조건에서만 나타났다.
+  - 이 추정기는 저자가 별도 연구에서 개발한 것이다. 그래서 그 특성(결측 중 추정 오차의 형태)이 제안 정책에 유리하게 작용했을 가능성을 배제할 수 없다.
+  - 기존 추정기인 칼만(CA-KF) 조건에서는 제안 정책과 PPO가 비슷했다. 로컬 10개 셀은 73.2 % 대 73.0 %, Isaac은 150회 중 145회 대 142회 성공이다.
+  - 따라서 이 추정기를 배제한 검증은 CA-KF 등 기존 추정기로 같은 실험을 다시 하는 별도 작업이 필요하다. 재실험 전에는 이 결과를 다른 추정기의 결과로 옮기지 않는다.
 
 ## 4. 기여
+
+본 연구의 **제안 방법**은 다음 네 가지이다.
+
+- 착륙 온톨로지 정의
+- 의미 특징과 관계 그래프 구성
+- R-GAT 상태 인코딩
+- PPO 정책 기반 3축 자율 착륙
+
+다음은 **실험 환경을 이루는 구성 요소**로, 본 연구의 기여로 주장하지 않는다.
+
+- Isaac Sim과 PX4 SITL
+- ArUco 기반 상대 상태 추정
+- 자기 항법 추정기(Kinematic WLS는 저자의 별도 연구, CA-KF는 기존 방법)
+- GNSS 결측과 센서 열화 모델
 
 1. **착륙 상황의 온톨로지 구조화**
    - 관측 품질, 상대 기하·운동, 시야 기하, 접지 조건을 명시적인 개념과 관계로 정의했다.
@@ -311,10 +338,11 @@ Semantic MLP는 세 항법 모두에서 학습된 시드 3개만 비교하므로
    - R-GAT가 관계 유형마다 다른 변환과 상태 의존 어텐션으로 메시지를 모은다.
    - 그 결과 착륙 상황을 8차원 임베딩으로 요약해 PPO 정책에 공급한다.
 3. **항법 열화에 대한 강건성**
-   - Isaac Sim–PX4 폐루프에서 WMON 항법(GNSS 결측) 조건의 결과는 다음과 같다.
+   - Isaac Sim–PX4 폐루프에서 Kinematic WLS 자기 항법(GNSS 결측) 조건의 결과는 다음과 같다.
      - 착륙 성공률: R-GAT 96.0 %, Semantic MLP 84.7 %, 일반 PPO 82.7 %, Untyped GNN 70.7 %
      - 위험 판정(150회 중): 2건, 18건, 19건, 26건
    - 기준 항법 대비 성능 저하가 가장 작았다(−3.3 pp vs −16.0 ~ −27.3 pp).
+   - 이 강건성은 Kinematic WLS 조건에서 관측된 것이다. CA-KF 조건에서는 뚜렷한 차이가 없었다(3.4 해석 범위).
 4. **3축 가속도 제어로의 확장**
    - 2D 상대 운동 기반 착륙 문제를 월드 3축 순가속도 제어로 확장했다. 자세는 행동에서 유도한다.
    - 이동 플랫폼의 전 방향 접근, 패드 가속, 시야 차단, 광학 잡음 조건에서 평가할 수 있다.
@@ -326,13 +354,14 @@ Semantic MLP는 세 항법 모두에서 학습된 시드 3개만 비교하므로
 - 관계별 기여도 분석: 어텐션 가중치와 관계 제거
 - 상황별 안전 판단 기능으로 확장
 - 학습 시드를 늘린 확인 실험
+- 기존 추정기(CA-KF 등)만 쓰는 조건에서의 같은 실험 반복
 
 ## 5. 실행
 
 모든 명령은 저장소 루트에서 실행한다. Isaac을 쓰는 단계는 `--allow-isaac`를 명시해야만 비행한다.
 
 ```bash
-C=Ontology_RGAT_UAV_RL_ISAAC_PX4/config/current_semantics/spatial_view_contact_v1_nav4_wmon.yaml   # WMON 항법
+C=Ontology_RGAT_UAV_RL_ISAAC_PX4/config/current_semantics/spatial_view_contact_v1_nav4_wmon.yaml   # Kinematic WLS 항법 (파일명의 wmon은 내부 식별자)
 # 기준 항법: .../spatial_view_contact_v1.yaml,  칼만 항법: .../spatial_view_contact_v1_nav4_kalman.yaml
 
 ./run.sh current-semantics-3d --config $C --stage audit                  # 관측·특징·그래프 계약 점검
@@ -364,7 +393,7 @@ python3 Ontology_RGAT_UAV_RL_ISAAC_PX4/tools/make_doc_figures.py all
 | ├ `reward.py`, `ppo.py` | 접근 속도장 퍼텐셜 보상, PPO |
 | ├ `backend.py`, `navigation.py`, `scenario.py` | 로컬/Isaac 백엔드, 항법 열화와 추정기, 시나리오 추출 |
 | └ `development.py`, `confirmation.py`, `isaac_development.py` | 개발 단계, 사전 등록 확인 실험, Isaac 폐루프 평가 |
-| `Ontology_RGAT_UAV_RL_ISAAC_PX4/python/ontology_rgat/spatial/` | 3축 플랜트와 판정, Isaac/PX4 연동, WMON·칼만 항법 추정기 |
+| `Ontology_RGAT_UAV_RL_ISAAC_PX4/python/ontology_rgat/spatial/` | 3축 플랜트와 판정, Isaac/PX4 연동, 자기 항법 추정기(`wmon.py` = Kinematic WLS, `kinematic_kf.py` = CA-KF) |
 | `Ontology_RGAT_UAV_RL_ISAAC_PX4/isaac_sim/` | Isaac Sim 착륙 월드, 패드 운동, 센서, 외란 |
 | `Ontology_RGAT_UAV_RL_ISAAC_PX4/config/current_semantics/` | 과제·관측·모델·학습·평가 설정 |
 | `Ontology_RGAT_UAV_RL_ISAAC_PX4/tests/current_semantics/` | 단위 테스트 |

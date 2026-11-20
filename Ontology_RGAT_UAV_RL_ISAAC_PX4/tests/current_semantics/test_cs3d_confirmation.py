@@ -282,3 +282,30 @@ def test_models_fly_as_soon_as_they_are_evaluated(tmp_path, plan):
         cf.bind_models(plan, tmp_path, ["20/ontology_rgat_ppo"])
     order = cf.model_order(plan, ["20/raw_ppo"])
     assert len(order) == len(plan.isaac.seeds) and {k for _, _, k in order} == {"20/raw_ppo"}
+
+
+KALMAN = PROJECT / "config" / "current_semantics" / "spatial_view_contact_v1_nav4_kalman.yaml"
+REPLICATION = PROJECT / "config" / "current_semantics" / "replication_mini_kalman_v1.yaml"
+
+
+def test_the_kalman_replication_pairs_with_the_miniature_confirmation(mini):
+    kconfig = load_config(KALMAN)
+    rep = cf.load_plan(REPLICATION, kconfig)
+    assert rep.protocol == cf.REPLICATION_PROTOCOL and rep.folder == "replication_mini"
+    assert rep.models.arms == ("raw_ppo", "untyped_gnn_ppo", "ontology_rgat_ppo")
+    for field in ("training_seeds", "train_seed_base", "validation_seeds", "env_seed_base",
+                  "episodes_per_cell", "cells", "dropout_start_s"):
+        assert getattr(rep.models, field) == getattr(mini.models, field), field
+    assert rep.updates == mini.updates and rep.isaac.conditions == mini.isaac.conditions
+    assert kconfig.navigation.manifest_part()["estimator"]["kind"] == "kalman"
+
+
+def test_only_a_replication_skips_the_gate_and_names_arms(tmp_path, config):
+    data = yaml.safe_load(cf.DEFAULT_PATH.read_text(encoding="utf-8"))
+    data["arms"] = ["raw_ppo", "ontology_rgat_ppo"]
+    path = tmp_path / "plan.yaml"
+    path.write_text(yaml.safe_dump(data), encoding="utf-8")
+    with pytest.raises(ValueError, match="replication"):
+        cf.load_plan(path, config)
+    kconfig = load_config(KALMAN)
+    assert "registration" in cf.blocker(kconfig, tmp_path, require_gate=False)

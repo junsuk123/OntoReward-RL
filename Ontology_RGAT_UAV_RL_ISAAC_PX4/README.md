@@ -20,7 +20,7 @@
 | 보상 | `current_semantics/reward.py` | 접근 속도장 퍼텐셜, 시간·제어·기울기 비용 |
 | PPO | `current_semantics/ppo.py`, `pilot.py` | 완결 에피소드 배치, 목표 KL, 성공률 기반 커리큘럼, 체크포인트 선택 |
 | 시나리오 | `current_semantics/scenario.py` | 패드 방위 A × 진행 방향 B, 학습 제외 조합, 패드 가속 |
-| 항법 열화 | `current_semantics/navigation.py`, `spatial/wmon.py`, `spatial/kinematic_kf.py` | GNSS 결측 창, WMON·칼만 자기 항법 |
+| 항법 열화 | `current_semantics/navigation.py`, `spatial/wmon.py`, `spatial/kinematic_kf.py` | GNSS 결측 창과 자기 항법 추정기. `wmon` = FFT-assisted kinematic WLS 추정기(저자의 별도 연구, 실험 환경 구성 요소), `kalman` = CA-KF. 표시 이름은 `navigation.ESTIMATOR_DISPLAY_NAMES` |
 | 플랜트와 판정 | `current_semantics/backend.py`, `spatial/dynamics.py`, `spatial/environment.py` | Isaac 응답에 보정한 로컬 플랜트, Isaac/PX4 백엔드, 착륙 판정기 |
 | 실험 절차 | `current_semantics/development.py`, `confirmation.py`, `isaac_development.py` | 개발 단계, 확인 실험, Isaac 폐루프 평가 |
 | 계약과 해시 | `current_semantics/contracts.py`, `experiment.py` | 관측·특징·그래프·과제·학습 설정의 해시, 실행 폴더, 단일 실행 잠금 |
@@ -31,8 +31,8 @@
 | 파일 | 역할 |
 |---|---|
 | `spatial_view_contact_v1.yaml` | 기준 항법 설정 (과제, 관측, 모델, 학습) |
-| `spatial_view_contact_v1_nav4_wmon.yaml` | 같은 설정 + WMON 항법, GNSS 결측 |
-| `spatial_view_contact_v1_nav4_kalman.yaml` | 같은 설정 + 칼만 항법, GNSS 결측 |
+| `spatial_view_contact_v1_nav4_wmon.yaml` | 같은 설정 + Kinematic WLS 자기 항법, GNSS 결측 (파일명의 `wmon`은 내부 식별자) |
+| `spatial_view_contact_v1_nav4_kalman.yaml` | 같은 설정 + CA-KF 자기 항법, GNSS 결측 |
 | `development_v1.yaml` | 개발 단계 계획 (학습 시드 5개, 평가 셀 10개, 판정 기준) |
 | `confirmation_mini_v1.yaml` | 축소 확인 실험 계획 (새 학습 시드 6개, 모델당 300 업데이트, 사전 등록한 판정 규칙, Isaac 케이스). `confirm` 단계의 기본값 |
 | `confirmation_v1.yaml` | 전체 규모 확인 실험 계획 (새 학습 시드 20개, 600 업데이트, Isaac 2,400회). `--plan`으로 지정 |
@@ -62,7 +62,7 @@
   인프라 중단이 나면 스택을 다시 띄워 이어서 비행하고, 판정이 난 에피소드는 다시 비행하지 않는다.
 - `--dry-run`은 어느 단계에서든 아무것도 만들지 않고 해석된 계획만 출력한다.
 
-예시 (WMON 항법 축소 확인 실험, 4개 샤드가 정책 하나씩 학습):
+예시 (Kinematic WLS 항법 축소 확인 실험, 4개 샤드가 정책 하나씩 학습):
 
 ```bash
 C=$PWD/Ontology_RGAT_UAV_RL_ISAAC_PX4/config/current_semantics/spatial_view_contact_v1_nav4_wmon.yaml

@@ -1,5 +1,7 @@
 # bond/1: WMON의 관계 결합 평형을 온톨로지 R-GAT에 이식
 
+> **명칭 안내:** 이 문서의 WMON(Wave-to-Matter Ontological Network)은 저자가 별도 연구에서 개발한 자기 항법 추정기의 내부 명칭이다. 기술적으로는 인과적 FFT 전처리, 주파수 기반 측정 신뢰도, 운동학적 일관성 잔차를 쓰는 가중 최소제곱 상태 추정기이며, 계수는 SPSA + Adam으로 보정한다. README와 그림에서는 *FFT-Assisted Kinematic Weighted Least Squares (WLS) Estimator*(약칭 Kinematic WLS)로 표기한다. 착륙 정책 연구에서는 실험 환경의 구성 요소로만 쓰며, 본 연구의 기여로 주장하지 않는다. 이 문서는 실험 기록이므로 내부 명칭과 수치를 그대로 둔다.
+
 작성일: 2026-11-14 (KST)  
 상태: **구현·검증·평가 완료.** `bond-development/1`(로컬 플랜트) 판정은 /3, /4 WMON 모두 INCONCLUSIVE(§5).
 등록 arm·계약 해시는 HEAD와 동일.

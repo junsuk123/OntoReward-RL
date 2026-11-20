@@ -72,11 +72,55 @@ def _rolling(values: list, window: int = 10) -> list:
     return out
 
 
-CONFIRMATION_DIRS = {"confirmation_mini": "축소 확인 실험", "confirmation": "확인 실험"}
+CONFIRMATION_DIRS = {"confirmation_mini": "축소 확인 실험", "confirmation": "확인 실험",
+                     "replication_mini": "CA-KF 축소 재현 실험"}
+SPEED_DIR = "learning_speed"      # learning-speed/1 (speed.py)
+EXTENSION_DIR = "extension"       # learning-speed-extension/1 (extension.py), per confirmation
+STOP_AT_FULL_CAP = 600            # both stop at the first update trained at difficulty 1.0
+ARM_NAMES = {"raw_ppo": "PPO (raw obs.)", "untyped_gnn_ppo": "Untyped GNN",
+             "semantic_mlp_ppo": "Semantic MLP", "ontology_rgat_ppo": "R-GAT (등록 arm)"}
+# Each config's run root, by the self-navigation it uses (user 2026-11-20: the kinematic WLS
+# estimator is separate research and carries no claim of this study).
+ROOT_CONFIGS = (("spatial_view_contact_v1.yaml", "기준 항법"),
+                ("spatial_view_contact_v1_nav4_kalman.yaml", "CA-KF 항법"),
+                ("spatial_view_contact_v1_nav4_wmon.yaml",
+                 "Kinematic WLS 항법 (별도 연구 · 주장에 쓰지 않음)"))
+_ROOT_LABELS: dict[str, str] | None = None
+
+
+def arm_name(arm: str) -> str:
+    if arm.startswith("orl_ppo"):
+        return "ORL (제안)"
+    return ARM_NAMES.get(arm, arm)
+
+
+def root_labels() -> dict[str, str]:
+    """Run-root directory name -> its navigation, computed once from the configs."""
+    global _ROOT_LABELS
+    if _ROOT_LABELS is None:
+        from .contracts import load_config
+        from .experiment import config_run_root
+        out = {}
+        for name, text in ROOT_CONFIGS:
+            try:
+                out[config_run_root(load_config(PROJECT_ROOT / "config" / "current_semantics"
+                                                / name)).name] = text
+            except (OSError, ValueError, KeyError):
+                continue
+        _ROOT_LABELS = out
+    return _ROOT_LABELS
+
+
+def _stops_at_full(rel: tuple[str, ...]) -> bool:
+    return bool(rel) and (rel[0] == SPEED_DIR or (len(rel) > 1 and rel[1] == EXTENSION_DIR))
 
 
 def _run_kind(rel: Path) -> str:
     parts = rel.parts
+    if parts[0] == SPEED_DIR:
+        return f"학습 속도 실험 · {arm_name(parts[-1])}"
+    if parts[0] in CONFIRMATION_DIRS and len(parts) > 1 and parts[1] == EXTENSION_DIR:
+        return f"{CONFIRMATION_DIRS[parts[0]]} 연장 · {arm_name(parts[-1])}"
     if parts[0] in CONFIRMATION_DIRS:
         return f"{CONFIRMATION_DIRS[parts[0]]} · {parts[-1]}"
     if parts[0] == "g4_pilot":
@@ -99,6 +143,11 @@ def _planned_updates(task_root: Path, run_dir: Path) -> int:
     """600 is the registered budget of every G4 pilot, design run and development model; a
     confirmation registers its own (``updates``)."""
     rel = run_dir.relative_to(task_root).parts
+    if rel and rel[0] == SPEED_DIR:
+        reg = _cached(task_root / SPEED_DIR / "learning_speed_registration.json", _json) or {}
+        return int(reg.get("cap") or STOP_AT_FULL_CAP)
+    if _stops_at_full(rel):
+        return STOP_AT_FULL_CAP
     if rel and rel[0] in CONFIRMATION_DIRS:
         reg = _cached(task_root / rel[0] / "confirmation_registration.json", _json) or {}
         return int(reg.get("updates") or 600)
@@ -136,7 +185,8 @@ def run_state(results: Path, task_root: Path, run_dir: Path, now: float) -> dict
         state["state"] = "running" if age is not None and age < STALL_S else "stalled"
     update, wall, planned = state["update"], state["wall_s"], state["planned"]
     state["eta_s"] = (wall / (update + 1) * max(planned - update - 1, 0)
-                      if state["state"] == "running" and update and wall else None)
+                      if state["state"] == "running" and update and wall
+                      and not state["stops_at_full"] else None)
     return state
 
 
@@ -162,8 +212,9 @@ def _run_state(results: Path, task_root: Path, run_dir: Path, now: float) -> dic
                  else "stalled" if rows else "pending")
     update = last.get("update")
     wall = _finite(last.get("wall_s"))
+    stops = _stops_at_full(run_dir.relative_to(task_root).parts)
     eta = None
-    if state == "running" and update is not None and wall and update > 0:
+    if state == "running" and update is not None and wall and update > 0 and not stops:
         eta = wall / (update + 1) * max(planned - update - 1, 0)
     statuses = [r.get("statuses") or {} for r in rows]
     unsafe = [sum(v for k, v in s.items() if k in UNSAFE) / max(int(r.get("episodes") or 0), 1)
@@ -179,7 +230,8 @@ def _run_state(results: Path, task_root: Path, run_dir: Path, now: float) -> dic
     return {
         "path": str(run_dir.relative_to(results)),
         "kind": _run_kind(run_dir.relative_to(task_root)),
-        "state": state, "update": update, "planned": planned,
+        "state": state, "update": update, "planned": planned, "stops_at_full": stops,
+        "seconds_per_update": wall / (update + 1) if wall and update is not None else None,
         "difficulty": _finite(last.get("difficulty")),
         "success_10": _rolling(success)[-1] if success else None,
         "return_10": _rolling([_finite(r.get("mean_return")) for r in rows])[-1] if rows else None,
@@ -215,7 +267,10 @@ def _history_dirs(task_root: Path) -> list[Path]:
                 "orl5/control/g4_pilot/seed*/history.jsonl",
                 "orl5/control/development/seed*/history.jsonl",
                 "confirmation_mini/development/seed*/*/history.jsonl",
-                "confirmation/development/seed*/*/history.jsonl")
+                "confirmation/development/seed*/*/history.jsonl",
+                "replication_mini/development/seed*/*/history.jsonl",
+                f"{SPEED_DIR}/seed*/*/history.jsonl",
+                *(f"{d}/{EXTENSION_DIR}/seed*/*/history.jsonl" for d in CONFIRMATION_DIRS))
     found = []
     for pattern in patterns:
         found += [p.parent for p in task_root.glob(pattern)]
@@ -461,6 +516,127 @@ def confirmation_state(results: Path, task: str, root: Path) -> list[dict[str, A
     return out
 
 
+def _speed_model(directory: Path, seed: int, arm: str, now: float) -> dict[str, Any]:
+    """One stop-at-difficulty-1.0 model: its state, progress and (once known) its event."""
+    summary = (_cached(directory / "summary.json", _json)
+               if (directory / "summary.json").exists() else None)
+    rows = (_cached(directory / "history.jsonl", _jsonl)
+            if (directory / "history.jsonl").exists() else None) or []
+    first = next((r.get("update") for r in rows if (r.get("difficulty") or 0) >= 1.0), None)
+    if summary is not None:
+        state = "done"
+        first = summary.get("first_full_update")
+    elif rows:
+        state = "running" if now - _mtime(directory / "history.jsonl") < STALL_S else "stalled"
+    else:
+        state = "pending"
+    last = rows[-1] if rows else {}
+    wall = _finite(last.get("wall_s"))
+    return {"seed": seed, "arm": arm, "state": state, "update": len(rows),
+            "difficulty": _finite(last.get("difficulty")),
+            "success_10": _rolling([_finite(r.get("success")) for r in rows])[-1] if rows else None,
+            "seconds_per_update": wall / len(rows) if wall and rows else None,
+            "first_full": first,
+            "censored": None if summary is None else bool(summary.get("censored")),
+            "replay_identical": ((summary or {}).get("replay") or {}).get("identical")}
+
+
+def _time(model: dict[str, Any], cap: int) -> int | None:
+    if model["state"] != "done":
+        return None
+    return cap if model["censored"] else model["first_full"]
+
+
+def _arm_summary(models: list[dict[str, Any]], arms: list[str], cap: int
+                 ) -> dict[str, dict[str, Any]]:
+    out = {}
+    for arm in arms:
+        own = [m for m in models if m["arm"] == arm]
+        times = [t for t in (_time(m, cap) for m in own) if t is not None]
+        out[arm] = {"models": len(own), "done": sum(m["state"] == "done" for m in own),
+                    "reached": sum(m["state"] == "done" and not m["censored"] for m in own),
+                    "censored": sum(bool(m["censored"]) for m in own),
+                    "mean": sum(times) / len(times) if times else None,
+                    "median": (sorted(times)[len(times) // 2] if len(times) % 2 else
+                               sum(sorted(times)[len(times) // 2 - 1:len(times) // 2 + 1]) / 2)
+                    if times else None}
+    return out
+
+
+def _provisional(models: list[dict[str, Any]], proposed: str, others: list[str], cap: int
+                 ) -> dict[str, dict[str, Any]]:
+    """Seeds where both arms are done: geometric-mean ratio and who got there first.  A
+    running tally only; the registered verdict is written by the protocol itself."""
+    import math
+    out = {}
+    by = {(m["seed"], m["arm"]): m for m in models}
+    seeds = sorted({m["seed"] for m in models})
+    for other in others:
+        pairs = [(_time(by[(s, proposed)], cap), _time(by[(s, other)], cap)) for s in seeds
+                 if (s, proposed) in by and (s, other) in by]
+        pairs = [(a, b) for a, b in pairs if a is not None and b is not None and a > 0 and b > 0]
+        diffs = [math.log(a) - math.log(b) for a, b in pairs]
+        out[other] = {"pairs": len(pairs),
+                      "ratio": math.exp(sum(diffs) / len(diffs)) if diffs else None,
+                      "proposed_first": sum(d < 0 for d in diffs),
+                      "other_first": sum(d > 0 for d in diffs),
+                      "ties": sum(d == 0 for d in diffs)}
+    return out
+
+
+def speed_state(results: Path, task: str, root: Path, root_label: str,
+                now: float) -> list[dict[str, Any]]:
+    """learning-speed/1 (one per root) and every confirmation's learning-speed extension."""
+    out = []
+    base = root / SPEED_DIR
+    reg = (_cached(base / "learning_speed_registration.json", _json)
+           if (base / "learning_speed_registration.json").exists() else None)
+    if reg:
+        arms = [reg["proposed_arm"], *reg.get("comparisons", [])]
+        cap = int(reg.get("cap") or STOP_AT_FULL_CAP)
+        models = [_speed_model(base / f"seed{s}" / a.replace(":", "_"), s, a, now)
+                  for s in reg.get("training_seeds", []) for a in arms]
+        result = (_cached(base / "learning_speed.json", _json)
+                  if (base / "learning_speed.json").exists() else None)
+        verdict = None
+        if result and result.get("comparisons"):
+            verdict = {"faster_than_every": (result.get("verdict") or {}).get(
+                           "proposed_faster_than_every_comparison"),
+                       "comparisons": {a: {"verdict": c.get("verdict"), "ratio": c.get("ratio"),
+                                           "interval": c.get("ratio_interval"),
+                                           "confidence": (c.get("log_ratio") or {}).get(
+                                               "confidence"),
+                                           "proposed_first": c.get("proposed_first"),
+                                           "other_first": c.get("other_first")}
+                                       for a, c in result["comparisons"].items()}}
+        out.append({"kind": "speed", "title": "학습 속도 실험", "task": task,
+                    "root_label": root_label, "folder": str(base.relative_to(results)),
+                    "protocol": reg.get("protocol"), "registered_utc": reg.get("registered_utc"),
+                    "plan_hash": reg.get("plan_hash"), "arms": arms, "proposed": arms[0],
+                    "seeds": reg.get("training_seeds", []), "cap": cap, "models": models,
+                    "models_done": sum(m["state"] == "done" for m in models),
+                    "arm_summary": _arm_summary(models, arms, cap),
+                    "provisional": _provisional(models, arms[0], arms[1:], cap),
+                    "verdict": verdict})
+    for folder, title in CONFIRMATION_DIRS.items():
+        ext = root / folder / EXTENSION_DIR
+        reg = (_cached(ext / "extension_registration.json", _json)
+               if (ext / "extension_registration.json").exists() else None)
+        if not reg:
+            continue
+        cap = int(reg.get("cap") or STOP_AT_FULL_CAP)
+        models = []
+        for key in reg.get("models", []):
+            seed, arm = key.split("/", 1)
+            models.append(_speed_model(ext / f"seed{seed}" / arm, int(seed), arm, now))
+        out.append({"kind": "extension", "title": f"{title} 연장", "task": task,
+                    "root_label": root_label, "folder": str(ext.relative_to(results)),
+                    "protocol": reg.get("protocol"), "registered_utc": reg.get("registered_utc"),
+                    "registered_budget": reg.get("registered_budget"), "cap": cap,
+                    "models": models, "models_done": sum(m["state"] == "done" for m in models)})
+    return out
+
+
 def _tail(path: Path, lines: int = 8) -> list[str]:
     try:
         with path.open("rb") as handle:
@@ -477,7 +653,10 @@ def recent_logs(results: Path, roots: list[Path], now: float) -> list[dict[str, 
     out = []
     for root in roots:
         for path in (list(root.glob("*.log")) + list(root.glob("development_design/*.log"))
-                     + [q for d in CONFIRMATION_DIRS for q in root.glob(f"{d}/*.log")]):
+                     + [q for d in CONFIRMATION_DIRS for q in root.glob(f"{d}/*.log")]
+                     + [q for d in CONFIRMATION_DIRS
+                        for q in root.glob(f"{d}/{EXTENSION_DIR}/*.log")]
+                     + list(root.glob(f"{SPEED_DIR}/*.log"))):
             try:
                 age = now - path.stat().st_mtime
             except FileNotFoundError:
@@ -495,12 +674,14 @@ def snapshot(results: Path | None = None) -> dict[str, Any]:
     results = RESULTS if results is None else Path(results)
     now = time.time()
     roots = {task: (results / root.name) for task, root in TASK_RUN_ROOTS.items()}
-    # observation-profile /4 roots (experiment.config_run_root), shown under their task
+    labels = root_labels()
+    # observation-profile /4 roots (experiment.config_run_root), shown under their task with
+    # the self-navigation estimator they use
     for task, root in list(roots.items()):
         for nav_root in sorted(results.glob(f"{root.name}{NAVIGATION_ROOT_TAG}*")):
             if nav_root.is_dir():
                 tag = nav_root.name.split(NAVIGATION_ROOT_TAG, 1)[1]
-                roots[f"{task} obs/4 {tag}"] = nav_root
+                roots[f"{task} · {labels.get(nav_root.name, 'obs/4 ' + tag)}"] = nav_root
     runs = []
     for task, root in roots.items():
         if not root.exists():
@@ -513,7 +694,7 @@ def snapshot(results: Path | None = None) -> dict[str, Any]:
             state["task"] = task
             runs.append(state)
     runs = [r for r in runs if r["state"] in ("running", "evaluating")
-            or "confirmation" in r["path"]
+            or "confirmation" in r["path"] or SPEED_DIR in r["path"]
             or (r.get("seconds_since_update") is not None
                 and r["seconds_since_update"] <= RECENT_S)]
     active_tasks = {r["task"] for r in runs}
@@ -533,7 +714,11 @@ def snapshot(results: Path | None = None) -> dict[str, Any]:
                   if task in active_tasks],
         "recent_window_h": RECENT_S / 3600.0,
         "encoding_runs": _encoding_runs(runs),
-        "confirmations": [c for task, root in roots.items() if root.exists()
+        "speeds": [s for task, root in roots.items() if root.exists()
+                   for s in speed_state(results, task, root,
+                                        labels.get(root.name, task), now)],
+        "confirmations": [{**c, "root_label": labels.get(root.name, task)}
+                          for task, root in roots.items() if root.exists()
                           for c in confirmation_state(results, task, root)],
         "logs": recent_logs(results, [r for r in roots.values() if r.exists()], now),
     }
@@ -655,6 +840,7 @@ svg text{fill:var(--muted);font-size:10px}.code{font-family:ui-monospace,SFMono-
 </style></head><body>
 <header><h1>현재 상태 모니터</h1><span class="sub" id="meta">불러오는 중…</span></header>
 <main>
+<section class="card s12"><h2>학습 속도 실험 (실시간): 난이도 1.0까지 걸린 업데이트</h2><div id="speed"></div></section>
 <section class="card s12"><h2>확인 실험 (실시간)</h2><div id="conf"></div></section>
 <section class="card s12"><h2>온톨로지 R-GAT 인코딩 (실시간, 최신 체크포인트)</h2>
 <div class="enc-bar"><label>실행 <select id="encRun"></select></label>
@@ -681,29 +867,68 @@ const pct=x=>x==null?"–":(100*x).toFixed(1)+"%";
 function dur(s){if(s==null)return"–";s=Math.max(0,Math.round(s));const h=Math.floor(s/3600),m=Math.floor(s%3600/60),x=s%60;
  return h?`${h}시간 ${m}분`:m?`${m}분 ${x}초`:`${x}초`}
 const STATE={running:"학습 중",evaluating:"평가 중",done:"완료",stalled:"멈춤?",pending:"대기",excluded:"제외",training:"학습 중"};
-const ARM={ontology_rgat_ppo:"Ontology R-GAT (제안)",raw_ppo:"PPO (raw obs.)",untyped_gnn_ppo:"Untyped GNN",semantic_mlp_ppo:"Semantic MLP"};
+const ARM={ontology_rgat_ppo:"R-GAT (등록 arm)",raw_ppo:"PPO (raw obs.)",untyped_gnn_ppo:"Untyped GNN",semantic_mlp_ppo:"Semantic MLP"};
+const armName=a=>String(a||"").startsWith("orl_ppo")?"ORL (제안)":(ARM[a]||a);
 function conf(C){if(!C.length)return `<div class="empty">등록된 확인 실험이 없습니다.</div>`;
  return C.map(c=>{const n=c.models.length,done=c.models_done,I=c.isaac;
   const bar=(a,b)=>`<div class="bar"><i style="width:${b?(100*a/b).toFixed(1):0}%"></i></div>`;
-  const head=`<div class="kv"><div><span>프로토콜</span><b>${esc(c.protocol)}</b></div><div><span>정책</span><b>${c.arms.map(a=>esc(ARM[a]||a)).join(" · ")}</b></div>
+  const head=`<div class="sub">${esc(c.title)} · <b>${esc(c.root_label||"")}</b></div><div class="kv"><div><span>프로토콜</span><b>${esc(c.protocol)}</b></div><div><span>정책</span><b>${c.arms.map(a=>esc(armName(a))).join(" · ")}</b></div>
    <div><span>학습 시드</span><b>${c.seeds.length}개 (${c.seeds[0]}–${c.seeds[c.seeds.length-1]})</b></div><div><span>모델당 업데이트</span><b>${c.updates}</b></div>
    <div><span>모델 완료</span><b>${done} / ${n}</b></div><div><span>Isaac 비행</span><b>${I.flown} / ${I.expected} ${I.stack_alive?'<span class="pill running">스택 실행 중</span>':'<span class="pill pending">스택 꺼짐</span>'}</b></div></div>
    <div class="sub">모델 학습·평가</div>${bar(done+c.models.filter(m=>m.state!=="done").reduce((s,m)=>s+Math.min(m.update/(c.updates||1),1),0),n)}
    <div class="sub">Isaac 비행</div>${bar(I.flown,I.expected)}
-   ${c.amendment?`<div class="sub">정정 ${esc(c.amendment.amended_utc)}: 정책 ${c.amendment.arms.map(a=>esc(ARM[a]||a)).join(", ")}</div>`:""}`;
+   ${c.amendment?`<div class="sub">정정 ${esc(c.amendment.amended_utc)}: 정책 ${c.amendment.arms.map(a=>esc(armName(a))).join(", ")}</div>`:""}`;
   const seeds=[...new Set(c.models.map(m=>m.seed))];
-  const grid=`<div class="wrap"><table><tr><th>시드</th>${c.arms.map(a=>`<th>${esc(ARM[a]||a)}</th>`).join("")}</tr>`+seeds.map(s=>`<tr><td>${s}</td>`+c.arms.map(a=>{const m=c.models.find(x=>x.seed===s&&x.arm===a);
+  const grid=`<div class="wrap"><table><tr><th>시드</th>${c.arms.map(a=>`<th>${esc(armName(a))}</th>`).join("")}</tr>`+seeds.map(s=>`<tr><td>${s}</td>`+c.arms.map(a=>{const m=c.models.find(x=>x.seed===s&&x.arm===a);
     if(!m)return"<td>–</td>";const st=m.state==="training"?"running":m.state;
     const body=m.state==="done"?`10셀 ${pct(m.ten_cell_success)} · 검증 det ${pct(m.validation_det)} @${m.best_update}`:m.state==="pending"?"":`${m.update}/${c.updates} · 난이도 ${m.difficulty==null?"–":m.difficulty.toFixed(1)}`;
     return `<td><span class="pill ${st}">${STATE[m.state]||m.state}</span> <span class="sub">${body}</span></td>`}).join("")+"</tr>").join("")+"</table></div>";
   const isaac=`<div class="wrap"><table><tr><th>정책</th><th class="n">비행</th><th class="n">성공</th><th class="n">위험 판정</th><th class="n">그 밖의 실패</th></tr>`+
-   c.arms.map(a=>{const r=I.per_arm[a]||{};return `<tr><td>${esc(ARM[a]||a)}</td><td class="n">${r.flown||0}</td><td class="n">${r.success||0}${r.flown?` (${pct(r.success/r.flown)})`:""}</td><td class="n">${r.risk||0}</td><td class="n">${r.other||0}</td></tr>`}).join("")+"</table></div>"+
+   c.arms.map(a=>{const r=I.per_arm[a]||{};return `<tr><td>${esc(armName(a))}</td><td class="n">${r.flown||0}</td><td class="n">${r.success||0}${r.flown?` (${pct(r.success/r.flown)})`:""}</td><td class="n">${r.risk||0}</td><td class="n">${r.other||0}</td></tr>`}).join("")+"</table></div>"+
    (I.last.length?`<div class="sub" style="margin-top:6px">최근 비행</div><pre>${esc(I.last.map(r=>`${r.condition} ${r.seed} ${r.model} -> ${r.status} (${(r.elapsed_s||0).toFixed(1)} s)`).join("\n"))}</pre>`:"")+
    (I.interruptions.length?`<div class="sub">인프라 중단 ${I.interruptions.length}건 (판정된 에피소드는 다시 비행하지 않음)</div><pre>${esc(I.interruptions.map(x=>x.error).join("\n"))}</pre>`:"");
   const V=c.verdict,vt=(name,v)=>!v?"":`<div class="sub" style="margin-top:8px">${name} 판정: ${v.passed?'<span class="ok">확인됨</span>':'<span class="no">확인되지 않음</span>'}</div><table><tr><th>R-GAT − 비교 정책</th><th class="n">평균</th><th class="n">구간</th><th>판정</th></tr>`+
-   Object.entries(v.comparisons).map(([a,x])=>`<tr><td>${esc(ARM[a]||a)}</td><td class="n">${pct(x.mean)}</td><td class="n">[${pct(x.low)}, ${pct(x.high)}] ${(100*x.confidence).toFixed(1)}%</td><td>${x.passed?'<span class="ok">통과</span>':'<span class="no">미통과</span>'}</td></tr>`).join("")+"</table>";
+   Object.entries(v.comparisons).map(([a,x])=>`<tr><td>${esc(armName(a))}</td><td class="n">${pct(x.mean)}</td><td class="n">[${pct(x.low)}, ${pct(x.high)}] ${(100*x.confidence).toFixed(1)}%</td><td>${x.passed?'<span class="ok">통과</span>':'<span class="no">미통과</span>'}</td></tr>`).join("")+"</table>";
   return head+`<div style="margin-top:8px">${grid}</div><div style="margin-top:8px">${isaac}</div>`+vt("로컬",V.local)+vt("Isaac",V.isaac)+
    `<div class="sub" style="margin-top:6px">완료 모델의 10셀 성공률은 개별 모델 값이며 비교 판정이 아닙니다. 판정은 모든 모델과 비행이 끝난 뒤 사전 등록 규칙으로 계산합니다.</div>`}).join("<hr>")}
+const VERD={faster:'<span class="ok">ORL이 더 빠름</span>',slower:'<span class="no">ORL이 더 느림</span>',"not established":'<span class="mid">확립되지 않음</span>'};
+function strip(c){const A=c.arms,cap=c.cap,W=1200,rowH=26,L=150,R=14,T=8,H=T+rowH*A.length+22;
+ const done=c.models.filter(m=>m.state==="done").map(m=>m.censored?cap:m.first_full).filter(x=>x!=null);
+ const live=c.models.filter(m=>m.state!=="done"&&m.state!=="pending").map(m=>m.update);
+ const x1=Math.max(100,...done,...live)*1.08,X=x=>L+Math.min(x,x1)/x1*(W-L-R),cols=[css('--a'),css('--b'),css('--c'),css('--bad')];
+ let g="";for(let v=0;v<=x1;v+=x1>400?100:50){g+=`<line x1="${X(v)}" x2="${X(v)}" y1="${T}" y2="${H-20}" stroke="${css('--grid')}"/><text x="${X(v)}" y="${H-6}" text-anchor="middle">${v}</text>`}
+ A.forEach((a,i)=>{const y=T+rowH*i+rowH/2,col=cols[i%cols.length];g+=`<text x="${L-8}" y="${y+4}" text-anchor="end" style="font-size:12px;fill:${css('--ink')}">${esc(armName(a))}</text>`;
+  c.models.filter(m=>m.arm===a).forEach(m=>{if(m.state==="pending")return;
+   if(m.state==="done"){const t=m.censored?cap:m.first_full;g+=`<circle cx="${X(t)}" cy="${y}" r="5" fill="${m.censored?"none":col}" stroke="${col}" stroke-width="2"><title>시드 ${m.seed}: ${m.censored?"상한 "+cap+"까지 미도달":"update "+t+"에 d=1.0"}</title></circle>`}
+   else g+=`<line x1="${X(0)}" x2="${X(m.update)}" y1="${y+8}" y2="${y+8}" stroke="${col}" stroke-opacity="0.35" stroke-width="2"><title>시드 ${m.seed}: 학습 중 update ${m.update}, 난이도 ${m.difficulty==null?"–":m.difficulty.toFixed(1)}</title></line>`});
+  const s=c.arm_summary&&c.arm_summary[a];if(s&&s.mean!=null)g+=`<line x1="${X(s.mean)}" x2="${X(s.mean)}" y1="${y-10}" y2="${y+10}" stroke="${css('--ink')}" stroke-width="2"><title>평균 ${s.mean.toFixed(0)} (미도달=상한)</title></line>`});
+ return `<svg width="100%" viewBox="0 0 ${W} ${H}">${g}</svg><div class="legend"><span>● 도달한 업데이트</span><span>○ 상한까지 미도달</span><span>│ 평균</span><span>옅은 선 = 학습 중 진행</span></div>`}
+function speedCell(m,cap){if(!m)return"<td>–</td>";const st=m.state;
+ const body=st==="done"?(m.censored?`상한 ${cap}까지 미도달`:`<b>d=1.0 @ ${m.first_full}</b>`)+(m.replay_identical===false?' <span class="no">재현 불일치</span>':""):st==="pending"?"":`update ${m.update} · 난이도 ${m.difficulty==null?"–":m.difficulty.toFixed(1)} · 성공 ${pct(m.success_10)}${m.seconds_per_update?` · ${m.seconds_per_update.toFixed(0)} s/update`:""}`;
+ return `<td><span class="pill ${st}">${STATE[st]||st}</span> <span class="sub">${body}</span></td>`}
+function speedPanel(L){if(!L.length)return `<div class="empty">등록된 학습 속도 실험이 없습니다.</div>`;
+ return L.map(c=>{const n=c.models.length,done=c.models_done;
+  const prog=c.models.reduce((s,m)=>s+(m.state==="done"?1:m.state==="pending"?0:Math.min(m.difficulty||0,0.99)),0);
+  const head=`<div class="sub">${esc(c.title)} · <b>${esc(c.root_label)}</b> · <span class="code">${esc(c.folder)}</span></div>
+   <div class="kv"><div><span>프로토콜</span><b>${esc(c.protocol)}</b></div><div><span>정책</span><b>${(c.arms||[...new Set(c.models.map(m=>m.arm))]).map(a=>esc(armName(a))).join(" · ")}</b></div>
+   ${c.seeds?`<div><span>학습 시드</span><b>${c.seeds.length}개 (${c.seeds[0]}–${c.seeds[c.seeds.length-1]})</b></div>`:""}
+   <div><span>상한</span><b>${c.cap} update</b></div><div><span>모델 완료</span><b>${done} / ${n}</b></div>
+   ${c.registered_utc?`<div><span>등록</span><b>${new Date(c.registered_utc).toLocaleString()}</b></div>`:""}</div>
+   <div class="bar"><i style="width:${n?(100*prog/n).toFixed(1):0}%"></i></div>`;
+  if(c.kind==="extension"){
+   return head+`<div class="wrap"><table><tr><th>모델</th><th>상태 (등록 예산 ${c.registered_budget} → 상한 ${c.cap})</th></tr>`+
+    c.models.map(m=>`<tr><td>시드 ${m.seed} · ${esc(armName(m.arm))}</td>${speedCell(m,c.cap)}</tr>`).join("")+"</table></div>"}
+  const seeds=c.seeds,A=c.arms;
+  const grid=`<div class="wrap"><table><tr><th>시드</th>${A.map(a=>`<th>${esc(armName(a))}</th>`).join("")}</tr>`+
+   seeds.map(s=>`<tr><td>${s}</td>`+A.map(a=>speedCell(c.models.find(m=>m.seed===s&&m.arm===a),c.cap)).join("")+"</tr>").join("")+"</table></div>";
+  const sum=`<div class="wrap"><table><tr><th>정책</th><th class="n">완료</th><th class="n">도달</th><th class="n">미도달</th><th class="n">평균 (미도달=상한)</th><th class="n">중앙값</th></tr>`+
+   A.map(a=>{const x=c.arm_summary[a];return `<tr><td>${esc(armName(a))}</td><td class="n">${x.done}/${x.models}</td><td class="n">${x.reached}</td><td class="n">${x.censored}</td><td class="n">${x.mean==null?"–":x.mean.toFixed(0)}</td><td class="n">${x.median==null?"–":x.median.toFixed(0)}</td></tr>`}).join("")+"</table></div>";
+  const pv=`<div class="wrap"><table><tr><th>ORL ÷ 비교 정책 (둘 다 끝난 시드만, 잠정)</th><th class="n">짝 시드</th><th class="n">소요 비율 (기하평균)</th><th class="n">먼저 도달 ORL : 비교</th></tr>`+
+   Object.entries(c.provisional).map(([a,x])=>`<tr><td>${esc(armName(a))}</td><td class="n">${x.pairs}</td><td class="n">${x.ratio==null?"–":"×"+x.ratio.toFixed(2)}</td><td class="n">${x.proposed_first} : ${x.other_first}${x.ties?` (동률 ${x.ties})`:""}</td></tr>`).join("")+"</table></div>";
+  const V=c.verdict,vt=!V?`<div class="sub" style="margin-top:6px">판정은 모든 모델이 끝난 뒤 등록된 규칙(로그 소요 시간의 짝지은 t, 비교마다 97.5 %)으로 계산합니다. 위 잠정 비율은 판정이 아닙니다.</div>`:
+   `<div class="sub" style="margin-top:8px">등록 규칙 판정: ${V.faster_than_every?'<span class="ok">ORL이 두 비교 정책보다 모두 빠름</span>':'<span class="mid">모든 비교에서 확립되지는 않음</span>'}</div><table><tr><th>ORL ÷ 비교 정책</th><th class="n">소요 비율</th><th class="n">구간</th><th class="n">먼저 도달</th><th>판정</th></tr>`+
+   Object.entries(V.comparisons).map(([a,x])=>`<tr><td>${esc(armName(a))}</td><td class="n">×${x.ratio==null?"–":x.ratio.toFixed(2)}</td><td class="n">${x.interval?`[×${x.interval[0].toFixed(2)}, ×${x.interval[1].toFixed(2)}] ${(100*x.confidence).toFixed(1)}%`:"–"}</td><td class="n">${x.proposed_first} : ${x.other_first}</td><td>${VERD[x.verdict]||esc(x.verdict)}</td></tr>`).join("")+"</table>";
+  return head+strip(c)+`<div style="margin-top:8px">${grid}</div><div style="margin-top:8px">${sum}</div><div style="margin-top:8px">${pv}</div>`+vt}).join("<hr>")}
 function spark(r){const s=r.series,W=320,H=110,L=30,R=6,T=6,B=16;const xs=s.update.filter(x=>x!=null);
  const x1=Math.max(r.planned||600,...xs,10);const X=x=>L+x/x1*(W-L-R),Y=y=>T+(1-y)*(H-T-B);
  let g="";for(const y of [0,.5,1])g+=`<line x1="${L}" x2="${W-R}" y1="${Y(y)}" y2="${Y(y)}" stroke="${css('--grid')}"/><text x="${L-4}" y="${Y(y)+3}" text-anchor="end">${y*100}%</text>`;
@@ -715,6 +940,7 @@ function spark(r){const s=r.series,W=320,H=110,L=30,R=6,T=6,B=16;const xs=s.upda
  s.val_update.forEach((u,i)=>{if(s.val_det[i]!=null)p+=`<circle cx="${X(u)}" cy="${Y(s.val_det[i])}" r="2.4" fill="${css('--b')}"/>`});
  return `<svg width="100%" viewBox="0 0 ${W} ${H}">${g}${p}</svg>`}
 function render(S){
+ document.getElementById("speed").innerHTML=speedPanel(S.speeds||[]);
  document.getElementById("conf").innerHTML=conf(S.confirmations||[]);
  encOptions(S);
  document.getElementById("meta").textContent=`갱신 ${new Date(S.generated_utc).toLocaleTimeString()} · 5초마다 · 읽기 전용`;
@@ -725,15 +951,15 @@ function render(S){
   ["학습 중 실행",S.runs.filter(r=>r.state==="running").length],["프로세스",S.processes.length]]
   .map(([k,v])=>`<div><span>${k}</span><b>${v}</b></div>`).join("");
  const runs=S.runs.filter(r=>r.state!=="done").concat(S.runs.filter(r=>r.state==="done").slice(0,12));
- document.getElementById("runs").innerHTML=runs.length?runs.map(r=>{const frac=r.update==null?0:(r.update+1)/r.planned;
+ document.getElementById("runs").innerHTML=runs.length?runs.map(r=>{const frac=r.stops_at_full?(r.difficulty||0):r.update==null?0:(r.update+1)/r.planned;
   const bv=r.best_validation;return `<div class="run"><div class="t"><span class="p">${esc(r.path)}</span><span class="pill ${r.state}">${STATE[r.state]||r.state}</span></div>
   <div class="sub">${esc(r.kind)} · ${esc((r.task||"").replace("spatial-current-",""))}</div>
   <div class="bar"><i style="width:${(100*Math.min(frac,1)).toFixed(1)}%"></i></div>
-  <div class="kv" style="gap:12px"><div><span>update</span><b>${r.update==null?"–":r.update+1} / ${r.planned}</b></div>
+  <div class="kv" style="gap:12px"><div><span>update</span><b>${r.update==null?"–":r.update+1} / ${r.stops_at_full?"≤":""}${r.planned}</b></div>
   <div><span>난이도</span><b>${r.difficulty==null?"–":r.difficulty.toFixed(1)}</b></div>
   <div><span>성공률(10)</span><b>${pct(r.success_10)}</b></div>
   <div><span>최고 검증 det/smp</span><b>${bv?`${pct(bv.deterministic)} / ${pct(bv.sampled)}`:"–"}</b></div>
-  <div><span>${r.state==="running"?"남은 시간":"마지막 갱신"}</span><b>${r.state==="running"?dur(r.eta_s):dur(r.seconds_since_update)+" 전"}</b></div></div>
+  <div><span>${r.state==="running"?(r.stops_at_full?"종료 조건":"남은 시간"):"마지막 갱신"}</span><b>${r.state==="running"?(r.stops_at_full?`d=1.0 도달 · ${r.seconds_per_update==null?"–":r.seconds_per_update.toFixed(0)+" s/update"}`:dur(r.eta_s)):dur(r.seconds_since_update)+" 전"}</b></div></div>
   ${spark(r)}<div class="legend"><span><i style="background:${css('--a')}"></i>학습 성공률(10)</span><span><i style="background:${css('--c')}"></i>난이도</span>
   <span><i style="background:${css('--bad')}"></i>unsafe(10)</span><span><i style="background:${css('--b')};height:6px;width:6px;border-radius:3px"></i>검증 det</span></div>
   <div class="sub">d=1.0 도달 ${r.full_difficulty_at==null?"–":"update "+r.full_difficulty_at} · log σ ${r.log_std==null?"–":r.log_std.toFixed(2)} · KL 수락/거부 ${r.accepted??"–"}/${r.rejected??"–"}</div></div>`}).join("")
@@ -771,7 +997,7 @@ async function loadEnc(force){const run=document.getElementById("encRun").value,
   const changed=ENC&&ENC.checkpoint_mtime!==d.checkpoint_mtime;ENC=d;if(!changed)encIdx=0;encIdx=Math.min(encIdx,d.steps.length-1);
   const sl=document.getElementById("encStep");sl.max=d.steps.length-1;sl.value=encIdx;
   const when=new Date(d.checkpoint_mtime*1000).toLocaleTimeString();
-  document.getElementById("encMeta").innerHTML=`${esc(ARM[d.arm]||d.arm)} · 체크포인트 <b>${esc(d.checkpoint)}</b> (update ${d.checkpoint_update??"–"}, ${when} 저장)${changed?' <span class="pill running">새 체크포인트</span>':""} · 프로브 ${esc(d.probe_cell)} 시드 ${d.probe_seed} → <b>${esc(d.status)}</b>, ${d.decisions}회 결정, 계산 ${d.compute_s}s`;
+  document.getElementById("encMeta").innerHTML=`${esc(armName(d.arm))} · 체크포인트 <b>${esc(d.checkpoint)}</b> (update ${d.checkpoint_update??"–"}, ${when} 저장)${changed?' <span class="pill running">새 체크포인트</span>':""} · 프로브 ${esc(d.probe_cell)} 시드 ${d.probe_seed} → <b>${esc(d.status)}</b>, ${d.decisions}회 결정, 계산 ${d.compute_s}s`;
   document.getElementById("encNote").textContent=d.note+". 간선 굵기 = 어텐션 α(같은 노드로 들어오는 간선끼리 합 1), 노드 진하기 = 노드 상태 크기 ‖h‖.";
   drawEnc()}catch(e){document.getElementById("encMeta").textContent="인코딩을 불러오지 못했습니다"}}
 function mix(a,b,t){const p=x=>[1,3,5].map(i=>parseInt(x.slice(i,i+2),16));const A=p(a),B=p(b);return`rgb(${A.map((v,i)=>Math.round(v+(B[i]-v)*t)).join(",")})`}

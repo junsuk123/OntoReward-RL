@@ -340,164 +340,218 @@ def _feature_count(orl):
     return sum(dims[c] for c in orl.SHARED_ROLES) + 2 * sum(dims[c] for c in orl.PLANE_ROLES)
 
 
+PATH_C, PATH_FILL = "#7B2FBE", "#F1E6FB"      # the graph's output path (decision-node states)
+HEAD_PROPOSED, HEAD_BASELINE = "#2F5597", "#6B6B6B"
+
+
+def _badge(ax, x, y, text, color=PATH_C, r=1.45):
+    ax.add_patch(Circle((x, y), r, fc="white", ec=color, lw=1.4, zorder=7))
+    badge = ax.text(x, y, text, ha="center", va="center", fontsize=NOTE, weight="bold", color=color,
+                    zorder=8)
+    badge._on_rim = True
+    return badge
+
+
+def _network(ax, x0, x1, layers, r=1.0, fc=None):
+    """A fully connected net drawn bottom-up: layers = [(y, n_shown, ellipsis_at, colour)]."""
+    pts = []
+    for y, n, cut, colour in layers:
+        width = n * 2 * r + (n - 1) * 1.0 + (2.6 * r if cut is not None else 0.0)
+        x = (x0 + x1) / 2 - width / 2 + r
+        row = []
+        for i in range(n):
+            if cut is not None and i == cut:
+                ax.text(x + 0.3 * r, y, "...", ha="center", va="center", fontsize=NOTE, zorder=5)
+                x += 2.6 * r
+            row.append((x, y, colour))
+            x += 2 * r + 1.0
+        pts.append(row)
+    for lower, upper in zip(pts[:-1], pts[1:]):
+        for (xa, ya, _) in lower:
+            for (xb, yb, _) in upper:
+                ax.plot([xa, xb], [ya + r, yb - r], color="#9A9A9A", lw=0.5, zorder=3)
+    for row in pts:
+        for (x, y, colour) in row:
+            ax.add_patch(Circle((x, y), r, fc=colour, ec=INK, lw=0.8, zorder=4))
+    return pts
+
+
 def overall():
-    """The whole method in one figure, laid out like an encoder paper figure (ORL, orl/1).
+    """ORL next to plain PPO (the raw_ppo arm), with the graph's output path drawn out (orl/1).
     Print millimetres: 1 unit = 1 mm at 168 mm."""
     orl = _orl()
     graph = orl.GRAPHS[ORL_VERSION]
     semantic = [e for e in graph.edges if e[2] != orl.SELF]
     relations = [r for r in orl.RELATIONS if r != orl.SELF]
     dims = orl.input_dimensions()
-    W, H = TEXT_MM, 200.0
+    W, H = TEXT_MM, 180.0
     fig, ax = canvas(W, H)
+    L0, L1, R0, R1 = 0.5, 115.5, 117.5, 167.5          # the two sides
+    top, head = 171.0, 7.5                              # content top, header height
+    pa, pb, pc = (121.0, 49.5), (68.5, 50.0), (21.0, 45.0)   # panel (y, height), both sides
 
-    # ---- top band: observation sources -> ORL actor -> policy -> PX4
-    sources = [("Moving pad", "relative x, y, h"), ("Camera", "vision age"),
-               ("Navigation (EKF2)", "own state, valid"), ("Attitude", "roll, pitch, rate")]
-    uav = (37.5, 180.0)
-    for i, (name, carried) in enumerate(sources):
-        y = 195.0 - i * 9.8
-        ax.add_patch(FancyBboxPatch((0.5, y - 4.2), 24.5, 8.4, boxstyle="round,pad=0,rounding_size=1.2",
-                                    fc=C["kg"][0], ec=C["kg"][1], lw=1.2, zorder=4))
-        ax.text(12.75, y + 1.6, name, ha="center", va="center", fontsize=BODY, weight="bold", zorder=5)
-        ax.text(12.75, y - 1.7, carried, ha="center", va="center", fontsize=NOTE, color=MUTED, zorder=5)
-        ax.plot([25.0, uav[0]], [y, uav[1]], color=INK, lw=1.2, zorder=2)
-    ax.add_patch(Circle(uav, 5.0, fc=C["kg"][0], ec=C["kg"][1], lw=1.2, zorder=4))
-    ax.text(*uav, "UAV", ha="center", va="center", fontsize=TITLE, weight="bold", zorder=5)
-    _line(ax, [(uav[0] + 5.0, uav[1]), (48.5, uav[1])])
-    ax.add_patch(FancyBboxPatch((46.5, 165.0), 121.0, 34.5, boxstyle="round,pad=0,rounding_size=2.5",
-                                fc=C["off"][0], ec="#555555", lw=1.6, ls=(0, (4, 3)), zorder=1))
-    ax.text(48.5, 196.3, "ORL Actor", fontsize=HEAD, weight="bold", color=INK, va="center")
-    yc = 182.5
-    _rect(ax, 48.5, yc - 6.0, 17.0, 12.0, "Semantic\nFeature\nBuilder " + r"$\phi$", "sim")
-    _ellipse(ax, 76.5, yc, 17.5, 11.0, "Typed Node\nEncoders")
-    _rect(ax, 87.5, yc - 10.5, 14.5, 21.0, "Relational\nGraph\nAttention\n(hop 1)", "est")
-    _rect(ax, 104.0, yc - 10.5, 14.5, 21.0, "Relational\nGraph\nAttention\n(hops 2–3,\nshared)", "know")
-    _rect(ax, 120.5, yc - 10.5, 13.5, 21.0, "Decision\nReadouts\n(lateral,\ndescent\ngate)", "pol")
-    _ellipse(ax, 151.0, yc, 29.0, 12.0, "Mirror average\n" + r"$\frac{1}{4}\Sigma_g\, S_g\,f(M_g\phi)$")
-    for a, b in [(65.5, 67.75), (85.25, 87.5), (102.0, 104.0), (118.5, 120.5), (134.0, 136.5)]:
-        _line(ax, [(a, yc), (b, yc)], lw=1.4, size=9)
-    # the four mirrored copies share one set of weights (no raw-observation bypass)
-    ax.plot([67.5, 67.5, 134.0, 134.0], [171.0, 169.6, 169.6, 171.0], color=DASH, lw=1.4, zorder=2)
-    ax.text(100.0, 167.3, r"run on $M_g\phi$ for the 4 reflections $g\in\mathbb{Z}_2\times\mathbb{Z}_2$, "
-            "one set of weights; no raw-observation bypass", fontsize=NOTE, color=INK, va="center",
-            ha="center")
-    _line(ax, [(158.0, yc - 5.8), (158.0, 155.0)], lw=1.6, size=10)
-    _rect(ax, 143.5, 146.5, 24.0, 8.5, "Policy (PPO)", "sim", size=TITLE, weight="bold")
-    ax.add_patch(FancyBboxPatch((0.5, 146.5), 139.0, 8.5, boxstyle="round,pad=0", fc=C["kg"][0], ec=INK,
-                                lw=1.2, zorder=3))
-    ax.text(2.0, 150.75, r"$a_t=(a_x,a_y,a_z)$: world ENU net acceleration $\rightarrow$ roll, pitch and "
-            r"thrust (yaw held, tilt $\leq 20^{\circ}$)" + "\n" + r"$\rightarrow$ PX4 OFFBOARD at about "
-            r"10 Hz $\rightarrow$ Isaac Sim + Pegasus quadrotor", fontsize=BODY, va="center", zorder=4,
-            linespacing=1.25)
-    _line(ax, [(143.5, 150.75), (139.5, 150.75)], lw=1.6, size=10)
-    _line(ax, [(uav[0], 155.0), (uav[0], uav[1] - 5.0)], lw=1.4, size=10)
-    ax.text(uav[0] + 1.5, 160.0, "next decision\n(0.1 s)", fontsize=NOTE, va="center", color=INK,
-            linespacing=1.1)
+    # ---- side frames, header bars, summary banners and the shared band
+    for x0, x1, title, colour in ((L0, L1, "Proposed Model: ORL (Ontology + R-GAT)", HEAD_PROPOSED),
+                                  (R0, R1, "PPO", HEAD_BASELINE)):
+        ax.add_patch(FancyBboxPatch((x0, 19.5), x1 - x0, top + head + 0.5 - 19.5,
+                                    boxstyle="round,pad=0,rounding_size=1.6", fc="white", ec="#B8B8B8",
+                                    lw=1.0, zorder=0.2))
+        ax.add_patch(FancyBboxPatch((x0, top + 0.5), x1 - x0, head, boxstyle="round,pad=0,rounding_size=1.6",
+                                    fc=colour, ec=colour, lw=1.0, zorder=0.3))
+        ax.text((x0 + x1) / 2, top + 0.5 + head / 2, title, ha="center", va="center", fontsize=10,
+                weight="bold", color="white", zorder=1)
+    ax.add_patch(FancyBboxPatch((L0, 11.5), L1 - L0, 6.6, boxstyle="round,pad=0,rounding_size=1.2",
+                                fc="#DCE6F4", ec=HEAD_PROPOSED, lw=1.0, zorder=0.3))
+    ax.text((L0 + L1) / 2, 14.8, "Proposed: semantic ontology + R-GAT + decision-node readouts + "
+            "mirror average", ha="center", va="center", fontsize=TITLE, weight="bold", zorder=1)
+    ax.add_patch(FancyBboxPatch((R0, 11.5), R1 - R0, 6.6, boxstyle="round,pad=0,rounding_size=1.2",
+                                fc="#EDEDED", ec=HEAD_BASELINE, lw=1.0, zorder=0.3))
+    ax.text((R0 + R1) / 2, 14.8, "PPO: raw observations\n+ feed-forward MLP", ha="center",
+            va="center", fontsize=NOTE, weight="bold", zorder=1, linespacing=1.1)
+    ax.add_patch(FancyBboxPatch((L0, 0.5), R1 - L0, 9.6, boxstyle="round,pad=0,rounding_size=1.2",
+                                fc="white", ec="#8C8C8C", lw=1.0, zorder=0.3))
+    ax.text(2.0, 5.3, r"Same in both arms: critic $V(O_t)$ = MLP 21→55→1 on raw $O_t$ (training only); "
+            r"$z_t\sim\mathcal{N}(\mu_t,\mathrm{diag}\,\sigma^2)$ with one learned $\log\sigma$;" + "\n"
+            r"$a_t=a_{max}\odot\tanh(z_t)$, $a_{max}=(2.5,2.5,2.0)$ m/s$^2$; same PPO settings, reward, "
+            "curriculum and seeds.  Parameters: ORL 4,016, PPO 4,022.", fontsize=BODY,
+            va="center", zorder=1, linespacing=1.3)
 
-    # ---- bottom left: the ORL block, drawn as four mirrored copies of one network
+    # ---- the two columns: input -> three blocks -> policy head -> action
+    def column(x0, x1, blocks, centre, label_lines):
+        for y, h, text, role in blocks:
+            _rect(ax, x0, y, x1 - x0, h, text, role, size=TITLE)
+        ax.text(centre, 23.0, label_lines, ha="center", va="center", fontsize=BODY, linespacing=1.1)
+        _line(ax, [(centre, 25.6 if "\n" in label_lines else 24.6), (centre, blocks[0][0])], lw=2.2,
+              size=12)
+        _rect(ax, x0, 158.0, x1 - x0, 7.0, "", "sim")
+        ax.text(centre, 162.6, "policy head", ha="center", va="center", fontsize=BODY, weight="bold",
+                zorder=5)
+        ax.text(centre, 159.9, "Gaussian, tanh", ha="center", va="center", fontsize=NOTE, color=MUTED,
+                zorder=5)
+        _line(ax, [(centre, 165.0), (centre, 166.8)], lw=1.4, size=8)
+        ax.text(centre, 168.8, r"$a_t=(a_x,a_y,a_z)$", ha="center", va="center", fontsize=BODY)
+
+    # proposed column: the ORL block as four mirrored copies of one network
+    cx, bx0, bx1 = 16.25, 5.5, 27.0
     for k in (2, 1):
-        ax.add_patch(FancyBboxPatch((1.0 + 0.8 * k, 10.0 + 0.8 * k), 38.5, 108.0,
-                                    boxstyle="round,pad=0,rounding_size=0.3", fc="white", ec=DASH, lw=1.0,
+        ax.add_patch(FancyBboxPatch((1.5 + 0.7 * k, 29.0 + 0.7 * k), 26.5, 116.5,
+                                    boxstyle="round,pad=0,rounding_size=0.3", fc="white", ec=DASH, lw=0.9,
                                     ls=(0, (3, 3)), zorder=0.5))
-    ax.add_patch(FancyBboxPatch((1.0, 10.0), 38.5, 108.0, boxstyle="round,pad=0,rounding_size=0.3",
-                                fc="white", ec=DASH, lw=2.4, ls=(0, (8, 4)), zorder=1))
-    ax.text(2.5, 113.0, r"$\times 4$ mirrored copies," + "\none set of weights", fontsize=NOTE,
-            ha="left", va="center", color=DASH, linespacing=1.15)
-    blocks = [(17.0, "Semantic Features\n+ Typed Node\nEncoders", "est"),
-              (50.0, "Relational Graph\nAttention", "know"),
-              (83.0, "Decision Readouts\n(lateral MLP,\ndescent gate)", "pol")]
-    for y, text, role in blocks:
-        _rect(ax, 7.0, y, 29.0, 14.0, text, role, size=HEAD)
-    cx = 21.5
-    _line(ax, [(cx, 0.5), (cx, 17.0)], lw=2.4, size=13)
-    ax.text(cx + 1.5, 5.0, r"$O_t$ (21 channels)", fontsize=BODY, va="center")
-    for a, b in [(31.0, 50.0), (64.0, 83.0), (97.0, 120.1)]:
-        _line(ax, [(cx, a), (cx, b)], lw=2.4, size=13)
-    ax.add_patch(FancyArrowPatch((36.0, 61.0), (36.0, 53.0), arrowstyle="-|>", mutation_scale=12,
-                                 connectionstyle="arc3,rad=-1.3", color=INK, lw=2.0, zorder=3))
-    ax.text(cx + 1.8, 40.0, f"{orl.HOPS} hops,\nshared", fontsize=BODY, va="center", linespacing=1.1)
-    ax.add_patch(Circle((cx, 123.5), 3.4, fc="white", ec=INK, lw=2.0, zorder=5))
-    ax.text(cx, 123.5, r"$\frac{1}{4}\Sigma$", fontsize=BODY, ha="center", va="center", zorder=6)
-    ax.text(cx + 4.6, 123.5, "mirror\naverage", fontsize=BODY, va="center", linespacing=1.1)
-    ax.text(4.2, 64.0, r"input $M_g\,\phi(O_t)$, output mapped back by $S_g$", fontsize=BODY,
-            rotation=90, va="center", ha="center")
-    _line(ax, [(cx, 126.9), (cx, 143.5)], lw=2.4, size=13)
-    ax.text(cx + 1.5, 134.0, r"$\mu_t\rightarrow$ policy", fontsize=BODY, va="center")
+    ax.add_patch(FancyBboxPatch((1.5, 29.0), 26.5, 116.5, boxstyle="round,pad=0,rounding_size=0.3",
+                                fc="white", ec=DASH, lw=2.2, ls=(0, (8, 4)), zorder=1))
+    side = ax.text(3.4, 87.0, r"$\times 4$ mirrored copies, one set of weights: input $M_g\,\phi(O_t)$, "
+                   r"output mapped back by $S_g$", fontsize=NOTE, color=DASH, rotation=90, ha="center",
+                   va="center")
+    side._on_rim = True               # runs along the stacked copies' edges by design
+    left_blocks = [(36.0, 14.0, "Semantic\nFeatures +\nTyped Node\nEncoders", "est"),
+                   (86.5, 14.0, "Relational\nGraph Attention\n(R-GAT)", "know"),
+                   (123.0, 14.0, "Decision\nReadouts\n(lateral MLP,\ndescent gate)", "pol")]
+    column(bx0, bx1, left_blocks, cx, r"$O_t$ (21 channels)")
+    _line(ax, [(cx, 50.0), (cx, 86.5)], lw=2.2, size=12)
+    ax.add_patch(FancyArrowPatch((27.0, 97.0), (27.0, 90.0), arrowstyle="-|>", mutation_scale=10,
+                                 connectionstyle="arc3,rad=-1.2", color=INK, lw=1.6, zorder=3))
+    ax.text(cx + 1.4, 68.0, f"{orl.HOPS} hops,\nshared", fontsize=NOTE, va="center", linespacing=1.1)
+    _line(ax, [(cx, 100.5), (cx, 123.0)], color=PATH_C, lw=3.0, size=13)
+    ax.text(cx + 1.6, 111.5, "graph\noutput", fontsize=NOTE, color=PATH_C, va="center", weight="bold",
+            linespacing=1.1)
+    ax.add_patch(Circle((cx, 149.0), 3.2, fc="white", ec=INK, lw=1.8, zorder=5))
+    ax.text(cx, 149.0, r"$\frac{1}{4}\Sigma$", fontsize=BODY, ha="center", va="center", zorder=6)
+    ax.text(cx - 4.4, 149.0, "mirror\naverage", fontsize=NOTE, ha="right", va="center", linespacing=1.1)
+    _line(ax, [(cx, 137.0), (cx, 145.8)], lw=2.2, size=12)
+    _line(ax, [(cx, 152.2), (cx, 158.0)], lw=2.2, size=12)
+    ax.text(cx + 1.4, 155.0, r"$\mu_t$", fontsize=BODY, va="center")
 
-    # ---- right: detail panels with zoom connectors
-    PX, PW = 45.0, 122.5
-    pa, pb, pc = (97.5, 46.0), (49.0, 46.0), (0.5, 46.0)
-    panel(ax, PX, pa[0], PW, pa[1], "Decision Readouts, Mirror Average and Policy")
-    panel(ax, PX, pb[0], PW, pb[1], "Relational Graph Attention (R-GAT)")
-    panel(ax, PX, pc[0], PW, pc[1], "Semantic Features and Typed Node Inputs")
-    for (y, _, _), (py, ph) in zip(reversed(blocks), (pa, pb, pc)):
-        _zoom(ax, (36.0, y + 14.0), (PX, py + ph))
-        _zoom(ax, (36.0, y), (PX, py))
+    # baseline column
+    vx, vx0, vx1 = 127.5, 119.0, 136.0
+    right_blocks = [(36.0, 14.0, "Raw\nObservation\nInput", "est"),
+                    (86.5, 14.0, "MLP Actor\n" + r"$\pi_\theta(O_t)$", "know"),
+                    (123.0, 14.0, "Policy\nReadout\n(linear)", "pol")]
+    column(vx0, vx1, right_blocks, vx, r"$O_t$" + "\n(21 channels)")
+    _line(ax, [(vx, 50.0), (vx, 86.5)], lw=2.2, size=12)
+    _line(ax, [(vx, 100.5), (vx, 123.0)], lw=2.2, size=12)
+    _line(ax, [(vx, 137.0), (vx, 158.0)], lw=2.2, size=12)
+    ax.text(vx + 1.4, 147.5, r"$\mu_t$", fontsize=BODY, va="center")
 
-    # panel A: decision readouts -> mirror average -> policy
+    # ---- detail panels and zoom connectors
+    PX, PW = 31.0, 83.5
+    QX, QW = 138.5, 28.0
+    titles = (("Decision Readouts, Mirror Average and Policy", "Policy Readout"),
+              ("Relational Graph Attention (R-GAT)", "MLP Actor"),
+              ("Semantic Features and Typed Node Inputs", "Raw Input"))
+    for (py, ph), (lt, rt), lb, rb in zip((pa, pb, pc), titles, reversed(left_blocks),
+                                          reversed(right_blocks)):
+        panel(ax, PX, py, PW, ph, lt)
+        panel(ax, QX, py, QW, ph, rt)
+        for (bx, block), (x, w) in (((bx1, lb), (PX, PW)), ((vx1, rb), (QX, QW))):
+            _zoom(ax, (bx, block[0] + block[1]), (x, py + ph))
+            _zoom(ax, (bx, block[0]), (x, py))
+
+    # panel A: the four decision-node states -> readouts -> mirror average
     y0 = pa[0]
     e = orl.EMBEDDING
-    groups = [(48.5, "Lateral x"), (68.5, "Lateral y"), (90.0, "Vertical Z"), (110.0, "Eligibility E")]
+    ax.add_patch(FancyBboxPatch((32.3, y0 + 1.4), 81.0, 10.6, boxstyle="round,pad=0,rounding_size=1.0",
+                                fc=PATH_FILL, ec=PATH_C, lw=1.6, zorder=2))
+    groups = [(34.0, "Lateral x"), (52.5, "Lateral y"), (73.5, "Vertical Z"), (93.0, "Eligibility E")]
     centres = []
     for x0, name in groups:
-        xs, x_end = _circles(ax, x0, y0 + 7.6, 4, 1.4, C["pol"][0], ellipsis_at=3, gap=0.5)
-        ax.text((x0 + x_end) / 2, y0 + 3.2, name, fontsize=NOTE, ha="center", va="center", color=MUTED)
+        _, x_end = _circles(ax, x0, y0 + 8.7, 4, 1.25, C["pol"][0], ellipsis_at=3, gap=0.45)
+        ax.text((x0 + x_end) / 2, y0 + 4.3, name, fontsize=NOTE, ha="center", va="center", color=INK,
+                zorder=4)
         centres.append((x0 + x_end) / 2)
     for c in centres:
-        _line(ax, [(c, y0 + 9.6), (c, y0 + 11.6)], lw=1.2, size=8)
-    _rect(ax, 48.5, y0 + 11.6, 38.0, 7.6, f"Lateral MLP {e}→{orl.LATERAL_HIDDEN}→1\nshared by x and y", "pol",
-          size=BODY)
-    _rect(ax, 89.5, y0 + 11.6, 40.0, 7.6,
+        _line(ax, [(c, y0 + 10.6), (c, y0 + 15.4)], color=PATH_C, lw=1.8, size=9, z=5)
+    _badge(ax, (centres[0] + centres[1]) / 2, y0 + 13.4, "1")
+    _badge(ax, (centres[2] + centres[3]) / 2, y0 + 13.4, "2")
+    _rect(ax, 32.3, y0 + 15.4, 38.0, 7.6, f"Lateral MLP {e}→{orl.LATERAL_HIDDEN}→1\nshared by x and y",
+          "pol", size=BODY)
+    _rect(ax, 72.3, y0 + 15.4, 41.0, 7.6,
           r"$\mathrm{hold}(Z)+\sigma(\mathrm{gate}(E))\cdot\mathrm{descend}(Z)$", "pol", size=BODY)
-    for c in ((centres[0] + centres[1]) / 2, (centres[2] + centres[3]) / 2):
-        _line(ax, [(c, y0 + 19.2), (c, y0 + 21.6)], lw=1.2, size=8)
-    _rect(ax, 48.5, y0 + 21.6, 81.0, 5.4, r"$f(M_g\phi)=(\mu_x,\ \mu_y,\ \mu_z)$ of one mirrored copy",
+    for c in (51.3, 92.8):
+        _line(ax, [(c, y0 + 23.0), (c, y0 + 25.4)], lw=1.2, size=8)
+    _rect(ax, 32.3, y0 + 25.4, 81.0, 5.4, r"$f(M_g\phi)=(\mu_x,\ \mu_y,\ \mu_z)$ of one mirrored copy",
           "sim", size=BODY)
-    _line(ax, [(89.0, y0 + 27.0), (89.0, y0 + 29.6)], lw=1.2, size=8)
-    _rect(ax, 48.5, y0 + 29.6, 81.0, 6.4,
+    _line(ax, [(72.8, y0 + 30.8), (72.8, y0 + 33.2)], lw=1.2, size=8)
+    _rect(ax, 32.3, y0 + 33.2, 81.0, 6.4,
           r"$\mu_t=\frac{1}{4}\Sigma_g\, S_g\,f(M_g\phi)$: exact mirror equivariance", "pol", size=BODY)
-    _line(ax, [(129.5, y0 + 32.8), (132.0, y0 + 32.8)], lw=1.2, size=8)
-    rx = 132.6
-    ax.text(rx, y0 + 32.8, r"$z_t\sim\mathcal{N}(\mu_t,\mathrm{diag}\,\sigma^2)$", fontsize=BODY,
-            va="center")
-    ax.text(rx, y0 + 28.4, r"$a_t=a_{max}\odot\tanh(z_t)$", fontsize=BODY, va="center")
-    ax.text(rx, y0 + 24.2, r"$a_{max}=(2.5,2.5,2.0)$ m/s$^2$", fontsize=NOTE, va="center")
-    ax.text(rx, y0 + 17.4, "critic $V(O_t)$: MLP (55)\non raw $O_t$, training only", fontsize=NOTE,
-            va="center", linespacing=1.15)
-    ax.text(rx, y0 + 7.6, "actor 2,747 parameters,\n4,016 in total", fontsize=NOTE, va="center",
-            color=MUTED, linespacing=1.15)
 
-    # panel B: relational attention over the ORL graph
+    # panel B: relational attention, ending in the graph output
     y0 = pb[0]
     rel_colors = [RELATION_STYLE[r][0] for r in relations] + ["#9A9A9A"]
     for k, col in enumerate(rel_colors):
-        ax.add_patch(Rectangle((48.5 + k * 3.1, y0 + 3.0), 2.4, 2.4, fc=col, ec=INK, lw=0.8, zorder=4))
-    ax.text(74.5, y0 + 4.2, r"neighbour states $h_j$ (colour = relation type, 7 + self)",
-            fontsize=NOTE, va="center")
-    _line(ax, [(52.0, y0 + 5.8), (52.0, y0 + 10.6)], lw=1.2, size=8)
-    ax.text(53.5, y0 + 8.2, r"relation-specific projection $W_{r(ij)}$", fontsize=NOTE, va="center")
+        ax.add_patch(Rectangle((32.5 + k * 2.9, y0 + 2.4), 2.3, 2.3, fc=col, ec=INK, lw=0.7, zorder=4))
+    ax.text(56.5, y0 + 3.55, r"neighbour states $h_j$ (colour = relation, 7 + self)", fontsize=NOTE,
+            va="center")
+    _line(ax, [(35.0, y0 + 5.2), (35.0, y0 + 9.6)], lw=1.1, size=7)
+    ax.text(36.4, y0 + 7.5, r"relation-specific projection $W_{r(ij)}$", fontsize=NOTE, va="center")
     for k, col in enumerate(rel_colors[:5]):
-        _stack(ax, 48.5 + k * 5.0, y0 + 11.2, 2.8, col)
-    ax.text(74.0, y0 + 12.6, "...", fontsize=BODY, va="center")
-    ax.text(48.5, y0 + 17.8, r"messages $m_{ij}=W_{r(ij)}\,h_j$", fontsize=BODY, va="center")
-    ax.add_patch(Rectangle((160.5, y0 + 3.0), 2.8, 2.8, fc="white", ec=INK, lw=1.0, zorder=4))
-    ax.text(159.5, y0 + 4.4, r"target state $h_i$", fontsize=NOTE, ha="right", va="center")
-    _line(ax, [(161.9, y0 + 5.8), (161.9, y0 + 11.6)], lw=1.2, size=8)
-    ax.add_patch(FancyBboxPatch((112.0, y0 + 11.6), 53.5, 5.6, boxstyle="round,pad=0,rounding_size=0.8",
-                                fc="white", ec=INK, lw=1.2, zorder=3))
-    ax.text(138.75, y0 + 14.4, r"$e_{ij}=\mathrm{LeakyReLU}(a_s^\top m_{ij}+a_d^\top h_i+b_{r(ij)})$",
+        _stack(ax, 32.5 + k * 4.4, y0 + 10.0, 2.6, col)
+    ax.text(55.8, y0 + 11.4, "...", fontsize=BODY, va="center")
+    ax.text(32.5, y0 + 16.8, r"messages $m_{ij}=W_{r(ij)}\,h_j$", fontsize=BODY, va="center")
+    ax.add_patch(Rectangle((110.2, y0 + 6.8), 2.6, 2.6, fc="white", ec=INK, lw=0.9, zorder=4))
+    ax.text(109.2, y0 + 8.1, r"target state $h_i$", fontsize=NOTE, ha="right", va="center")
+    _line(ax, [(111.5, y0 + 9.4), (111.5, y0 + 12.6)], lw=1.1, size=7)
+    ax.add_patch(FancyBboxPatch((64.0, y0 + 12.6), 50.0, 5.4, boxstyle="round,pad=0,rounding_size=0.8",
+                                fc="white", ec=INK, lw=1.1, zorder=3))
+    ax.text(89.0, y0 + 15.3, r"$e_{ij}=\mathrm{LeakyReLU}(a_s^\top m_{ij}+a_d^\top h_i+b_{r(ij)})$",
             fontsize=BODY, ha="center", va="center", zorder=4)
-    ax.plot([61.0, 61.0, 138.75, 138.75], [y0 + 19.8, y0 + 22.4, y0 + 22.4, y0 + 17.2], color=INK, lw=1.2,
+    ax.plot([44.0, 44.0, 89.0, 89.0], [y0 + 18.6, y0 + 20.8, y0 + 20.8, y0 + 18.0], color=INK, lw=1.1,
             zorder=3)
-    _line(ax, [(61.0, y0 + 22.4), (61.0, y0 + 27.2)], lw=1.2, size=8)
-    ax.text(64.0, y0 + 24.4, r"softmax over the edges into $i$, weighted sum", fontsize=NOTE, va="center",
+    _line(ax, [(44.0, y0 + 20.8), (44.0, y0 + 25.6)], lw=1.1, size=7)
+    ax.text(46.0, y0 + 22.9, r"softmax over the edges into $i$, weighted sum", fontsize=NOTE, va="center",
             bbox=dict(fc="white", ec="none", pad=0.2), zorder=4)
-    _circles(ax, 48.5, y0 + 29.6, 8, 1.2, C["know"][0], ellipsis_at=6, gap=0.45)
-    ax.text(79.0, y0 + 30.0, r"$h_i'=\tanh(\sum_j \alpha_{ij}\,m_{ij}+b)\in\mathbb{R}^{%d}$" % e,
+    _, row_end = _circles(ax, 32.5, y0 + 27.6, 8, 1.1, C["know"][0], ellipsis_at=6, gap=0.4)
+    ax.text(row_end + 1.6, y0 + 28.0, r"$h_i'=\tanh(\sum_j \alpha_{ij}\,m_{ij}+b)\in\mathbb{R}^{%d}$" % e,
             fontsize=BODY, va="center")
-    ax.text(48.5, y0 + 35.4, f"self loop on every node; the same layer is applied {orl.HOPS} times; "
-            "x and y planes share it", fontsize=NOTE, color=MUTED, va="center")
+    ax.text(32.5, y0 + 36.0, "self loop on every node; one layer,\napplied 3 times, shared by both planes",
+            fontsize=NOTE, color=MUTED, va="center", linespacing=1.15)
+    ax.add_patch(FancyBboxPatch((89.6, y0 + 31.2), 24.4, 12.6, boxstyle="round,pad=0,rounding_size=1.0",
+                                fc=PATH_FILL, ec=PATH_C, lw=1.6, zorder=4))
+    ax.text(101.8, y0 + 37.5, "after 3 hops: the 4\ndecision-node states\n"
+            + r"$h^{(3)}\in\mathbb{R}^{%d}$ each" % e, fontsize=NOTE, ha="center", va="center",
+            color=PATH_C, weight="bold", zorder=5, linespacing=1.2)
+    _line(ax, [(row_end + 35.0, y0 + 28.0), (101.8, y0 + 28.0), (101.8, y0 + 31.2)], color=PATH_C,
+          lw=1.6, size=8)
+    _line(ax, [(101.8, y0 + 43.8), (101.8, pa[0] + 1.4)], color=PATH_C, lw=3.0, size=13, z=6)
 
     # panel C: features and typed node inputs
     y0 = pc[0]
@@ -505,54 +559,84 @@ def overall():
     k = 0
     for col, n in colours:
         for _ in range(n):
-            ax.add_patch(Rectangle((48.5 + (k % 7) * 2.7, y0 + 26.0 - (k // 7) * 2.7), 2.3, 2.3, fc=col,
-                                   ec=INK, lw=0.7, zorder=4))
+            ax.add_patch(Rectangle((32.5 + (k % 7) * 2.4, y0 + 27.0 - (k // 7) * 2.4), 2.05, 2.05, fc=col,
+                                   ec=INK, lw=0.6, zorder=4))
             k += 1
-    ax.text(48.5, y0 + 31.6, r"current observation $O_t$", fontsize=BODY, va="center")
-    ax.text(48.5, y0 + 18.6, "quality · geometry ·\nmotion · attitude", fontsize=NOTE, va="top",
+    ax.text(32.5, y0 + 32.2, r"observation $O_t$", fontsize=BODY, va="center")
+    ax.text(32.5, y0 + 21.4, "quality,\ngeometry,\nmotion, attitude", fontsize=NOTE, va="top",
             color=MUTED, linespacing=1.1)
-    _line(ax, [(68.5, y0 + 23.3), (75.5, y0 + 23.3)], lw=1.4, size=9)
-    ax.add_patch(FancyBboxPatch((75.5, y0 + 11.0), 34.0, 26.5, boxstyle="round,pad=0,rounding_size=0.8",
-                                fc=C["know"][0], ec=C["know"][1], lw=1.6, zorder=3))
-    ax.text(92.5, y0 + 33.3, "semantic features\n" + r"$\phi(O_t)$" + f", {_feature_count(orl)} values",
+    _line(ax, [(49.5, y0 + 24.6), (53.0, y0 + 24.6)], lw=1.3, size=8)
+    ax.add_patch(FancyBboxPatch((53.0, y0 + 12.0), 26.0, 24.5, boxstyle="round,pad=0,rounding_size=0.8",
+                                fc=C["know"][0], ec=C["know"][1], lw=1.5, zorder=3))
+    ax.text(66.0, y0 + 32.6, "semantic features\n" + r"$\phi(O_t)$" + f", {_feature_count(orl)} values",
             fontsize=BODY, ha="center", va="center", zorder=4, linespacing=1.15)
-    ax.text(92.5, y0 + 26.0, r"$B(x;s)=x/(|x|+s)$", fontsize=BODY, ha="center", va="center", zorder=4)
-    ax.text(92.5, y0 + 20.0, "y plane aligned to x\nby declared signs", fontsize=NOTE, ha="center",
+    ax.text(66.0, y0 + 25.8, r"$B(x;s)=x/(|x|+s)$", fontsize=NOTE, ha="center", va="center", zorder=4)
+    ax.text(66.0, y0 + 20.4, "y plane aligned to x\nby declared signs", fontsize=NOTE, ha="center",
             va="center", zorder=4, linespacing=1.1)
-    ax.text(92.5, y0 + 14.0, r"invalid $\rightarrow$ 0 + flag", fontsize=NOTE, ha="center", va="center",
+    ax.text(66.0, y0 + 14.8, r"invalid $\rightarrow$ 0 + flag", fontsize=NOTE, ha="center", va="center",
             zorder=4)
-    _line(ax, [(109.5, y0 + 23.3), (112.6, y0 + 23.3)], lw=1.4, size=9)
+    _line(ax, [(79.0, y0 + 24.6), (82.4, y0 + 24.6)], lw=1.3, size=8)
     shared = list(orl.SHARED_ROLES)
     planar = list(orl.PLANE_ROLES)
-    sx, px, py_ = 117.0, (117.0, 136.0), 2.15
-    ax.text(px[0] + 4.0, y0 + 38.2, "x plane", fontsize=NOTE, ha="center", va="center", color=MUTED)
-    ax.text(px[1] + 4.0, y0 + 38.2, "y plane", fontsize=NOTE, ha="center", va="center", color=MUTED)
+    sx, px, pitch = 85.6, (85.6, 97.6), 2.0
+    ax.text(px[0] + 4.0, y0 + 36.6, "x plane", fontsize=NOTE, ha="center", va="center", color=MUTED)
+    ax.text(px[1] + 4.0, y0 + 36.6, "y plane", fontsize=NOTE, ha="center", va="center", color=MUTED)
     rows = [(c, "shared") for c in shared] + [(c, "plane") for c in planar] + [("decisions", "decision")]
     for i, (concept, kind) in enumerate(rows):
-        yy = y0 + 34.6 - i * 2.8
+        yy = y0 + 33.4 - i * 2.6
         label = "D" if kind == "decision" else ORL_SHORT[concept]
-        ax.text(114.5, yy + 1.15, label, fontsize=NOTE, ha="center", va="center")
+        ax.text(84.0, yy + 1.0, label, fontsize=MIN_PT, ha="center", va="center")
         if kind == "shared":
             for j in range(dims[concept]):
-                ax.add_patch(Rectangle((sx + j * py_, yy), 1.9, 2.3, fc=C["est"][0], ec=INK, lw=0.6,
+                ax.add_patch(Rectangle((sx + j * pitch, yy), 1.75, 2.0, fc=C["est"][0], ec=INK, lw=0.5,
                                        zorder=4))
             if concept == "VerticalState":
-                ax.text(sx + 8 * py_ + 1.0, yy + 1.15, "shared", fontsize=NOTE, color=MUTED, va="center")
+                ax.text(sx + 8 * pitch + 0.8, yy + 1.0, "shared", fontsize=NOTE, color=MUTED, va="center")
         elif kind == "plane":
             for base in px:
                 for j in range(dims[concept]):
-                    ax.add_patch(Rectangle((base + j * py_, yy), 1.9, 2.3, fc=C["know"][0], ec=INK,
-                                           lw=0.6, zorder=4))
+                    ax.add_patch(Rectangle((base + j * pitch, yy), 1.75, 2.0, fc=C["know"][0], ec=INK,
+                                           lw=0.5, zorder=4))
         else:
             for j, name in enumerate(("Lat x", "Lat y", "E", "Z")):
-                ax.add_patch(Rectangle((sx + j * 8.6, yy - 0.2), 8.0, 2.7, fc=C["pol"][0], ec=INK, lw=0.6,
-                                       zorder=4))
-                ax.text(sx + 4.0 + j * 8.6, yy + 1.15, name, fontsize=MIN_PT, ha="center", va="center",
+                ax.add_patch(Rectangle((sx + j * 7.2, yy - 0.3), 6.9, 2.6, fc=C["pol"][0], ec=INK,
+                                       lw=0.5, zorder=4))
+                ax.text(sx + 3.45 + j * 7.2, yy + 1.0, name, fontsize=MIN_PT, ha="center", va="center",
                         zorder=5)
-    ax.text(48.5, y0 + 5.4, f"{len(dims)} typed encoders, one per concept, both planes;\n"
-            f"{len(orl.NODES)} nodes, {len(semantic)} semantic edges, {len(relations)} relation types;\n"
-            "decision nodes start from a learned state", fontsize=NOTE, color=MUTED, va="center",
+    ax.text(32.5, y0 + 5.6, f"{len(dims)} typed encoders (one per concept);\n"
+            f"{len(orl.NODES)} nodes, {len(semantic)} edges, {len(relations)} relation types;\n"
+            "decision nodes start from learned states", fontsize=NOTE, color=MUTED, va="center",
             linespacing=1.15)
+
+    # baseline panels
+    y0 = pa[0]
+    _circles(ax, QX + 3.5, y0 + 6.0, 5, 1.2, C["know"][0], ellipsis_at=4, gap=0.45)
+    ax.text(QX + QW / 2, y0 + 2.4, "hidden layer (110)", fontsize=NOTE, ha="center", va="center",
+            color=MUTED)
+    _line(ax, [(QX + QW / 2, y0 + 7.8), (QX + QW / 2, y0 + 11.0)], lw=1.2, size=8)
+    _rect(ax, QX + 1.5, y0 + 11.0, QW - 3.0, 5.6, "linear 110 → 3", "sim", size=BODY)
+    _line(ax, [(QX + QW / 2, y0 + 16.6), (QX + QW / 2, y0 + 19.6)], lw=1.2, size=8)
+    _rect(ax, QX + 1.5, y0 + 19.6, QW - 3.0, 6.0, r"$\mu_t=(\mu_x,\mu_y,\mu_z)$", "pol", size=BODY)
+    ax.text(QX + QW / 2, y0 + 32.0, "no mirror average,\nno descent gate", fontsize=NOTE, ha="center",
+            va="center", color=MUTED, linespacing=1.15)
+    y0 = pb[0]
+    _network(ax, QX + 1.0, QX + QW - 5.0,
+             [(y0 + 6.0, 5, 4, C["est"][0]), (y0 + 19.0, 6, 5, C["know"][0]), (y0 + 32.0, 3, None, C["pol"][0])],
+             r=1.05)
+    for y, text in ((y0 + 6.0, "21"), (y0 + 19.0, "110"), (y0 + 32.0, "3")):
+        ax.text(QX + QW - 1.0, y, text, fontsize=NOTE, ha="right", va="center", color=MUTED)
+    ax.text(QX + QW / 2, y0 + 38.2, "tanh hidden layer;\nactor 2,753 parameters", fontsize=NOTE,
+            ha="center", va="center", color=MUTED, linespacing=1.15)
+    y0 = pc[0]
+    k = 0
+    for col, n in colours:
+        for _ in range(n):
+            ax.add_patch(Rectangle((QX + 5.4 + (k % 7) * 2.4, y0 + 22.0 - (k // 7) * 2.4), 2.05, 2.05,
+                                   fc=col, ec=INK, lw=0.6, zorder=4))
+            k += 1
+    ax.text(QX + QW / 2, y0 + 28.2, r"observation $O_t$", fontsize=BODY, ha="center", va="center")
+    ax.text(QX + QW / 2, y0 + 10.0, "no semantic features,\nno graph, no symmetry", fontsize=NOTE,
+            ha="center", va="center", color=MUTED, linespacing=1.15)
     save(fig, "overall_architecture")
 
 

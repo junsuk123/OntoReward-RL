@@ -1,6 +1,7 @@
 # 그림 모음
 
-제안 정책 ORL(온톨로지를 정책 구조로 쓰는 R-GAT, `orl/1`)의 구조, 학습 신호, 검증 결과를 보여 주는 그림이다.
+제안 정책 ORL(온톨로지를 정책 구조로 쓰는 R-GAT, `orl/1`)의 구조, 학습 신호, 검증 결과를 보여 주는 그림과,
+실제 운용 환경(Isaac Sim + PX4 SITL + ROS 2)에서 찍은 시연 영상이다.
 
 - 형식: 모두 흰 배경 PNG(200 dpi)와 SVG로 저장한다. 그림 속 글자는 영문이며, 논문 그림 형식의 세리프 글꼴(Times 계열)을 쓴다.
 - 다이어그램: 코드에서 직접 읽어 그렸다. 노드·간선·슬롯 수·파라미터 수는 `current_semantics/orl.py`(`orl/1`)에서 읽는다.
@@ -59,15 +60,58 @@ Isaac Sim + Pegasus의 이동 패드와 PX4 SITL 쿼드로터에서 정책까지
 - (a) 정책 인계 시점의 시나리오 추출. 패드 방위 A와 패드 진행 방향 B는 4개 구역씩이고, 16개 조합 중 4개는 시험용으로 학습에서 뺀다.
 - (b), (c) 보상 퍼텐셜이 요구하는 드론−패드 상대 속도 `v_des`. `current_semantics/reward.py: desired_velocity`를 격자에서 직접 계산했다.
 
+## 5. 학습 속도 확인 실험 `learning-speed/1`
+
+![learning speed](learning_speed.png)
+
+- 판정 파일 `results/current_semantics_3d/spatial_current_semantics_v1/learning_speed/learning_speed.json`에서 그렸다.
+- (a) 새 학습 시드 40–49에서 처음으로 최고 난이도(1.0)로 학습한 업데이트. 로그 축이고, 같은 시드는 회색 선으로 잇는다.
+  - 굵은 가로선은 중앙값이다.
+  - 빈 원은 상한 600 안에 도달하지 못한 모델이다(시드 45의 Untyped GNN과 PPO). 등록 규칙대로 600으로 센다.
+- (b) 비교마다 T(ORL)/T(비교)의 기하평균과 97.5 % 짝지은 t 구간(Bonferroni)이다.
+  - 채운 원은 등록된 판정이다. 두 구간 모두 1보다 작아 "ORL이 더 빠름"이다.
+  - 빈 원은 시드 45를 뺀 탐색적 재계산이다. 판정에는 쓰지 않는다.
+
+## 6. 실제 운용 환경 시연
+
+![ORL demo flight](orl_isaac_px4_demo.gif)
+
+![Isaac Sim, onboard camera and RViz2](isaac_rviz_operation.png)
+
+- 화면 구성
+  - 왼쪽: Isaac Sim 5.1 GUI
+  - 오른쪽 위: ROS 2 `image_view`로 본 하방 카메라의 ArUco 검출 화면(`/landing_uav0/perception/landing_camera/annotated`)
+  - 오른쪽 아래: RViz2. 기체를 따라가는 시점에서 기체와 패드의 궤적을 그린다.
+- 비행
+  - 모델은 `learning-speed/1` 시드 41의 ORL(`orl/1`) `final.pt`이다. 최고 난이도에 처음 도달한 업데이트에서 학습을 멈춘 모델이다.
+  - 시연 전용 시드 999902–999904로 결정론적으로 비행했다. 두 번 띄운 스택에서 6회 모두 SUCCESS였다.
+- 파일
+  - GIF: 첫 비행, 4배속
+  - [orl_isaac_px4_demo.mp4](orl_isaac_px4_demo.mp4): 세 비행 전체, 4배속, 51 s. 화면 아래에 비행 단계(PX4 호버, 정책 비행, 결과)를 적었다.
+  - PNG: 첫 비행의 한 장면
+- RViz의 궤적 선은 비행 사이의 리셋 이동까지 이어 그린다.
+- 4배속이면 대략 시뮬레이션 시간 기준의 실시간이다. GUI 렌더링 때문에 시뮬레이션이 실제보다 약 3.8배 느리게 돌았다.
+- 시연은 평가가 아니다. 성공률 주장에는 쓰지 않는다.
+
 ## 보관된 결과 그림
 
 이전 단계의 결과 그림 두 개(기존 R-GAT 정책의 Kinematic WLS 항법 조건 Isaac 결과, 항법별 성능 비교)와 그 수치 파일
 `figure_data.json`은 2026-11-20에 `archive/non_orl_20261120.tar.zst`로 옮겼다. 저자의 별도 연구인 추정기 조건에 기대는
-결과라 이 연구의 주장에 쓰지 않는다. ORL의 결과 그림은 학습 속도 확인 실험의 판정이 나온 뒤 추가한다.
+결과라 이 연구의 주장에 쓰지 않는다.
 
 ## 다시 만들기
 
 ```bash
 python3 Ontology_RGAT_UAV_RL_ISAAC_PX4/tools/make_doc_figures.py all       # 모든 그림
-python3 Ontology_RGAT_UAV_RL_ISAAC_PX4/tools/make_doc_figures.py overall   # 하나만 (architecture, graph도 같은 방식)
+python3 Ontology_RGAT_UAV_RL_ISAAC_PX4/tools/make_doc_figures.py overall   # 하나만 (architecture, graph, field, speed도 같은 방식)
 ```
+
+시연 영상과 사진은 `tools/isaac_demo_capture.py`로 만든다.
+
+- `capture`
+  - Isaac Sim GUI, `image_view`, RViz2를 한 화면에 배치하고 비행 동안 화면 전체를 녹화한다.
+  - 비행마다 리셋·인계·결정·종료 시각을 `timeline.json`에 남긴다.
+  - Isaac 비행이므로 사용자 승인과 `--allow-isaac`가 필요하다.
+- `media`
+  - 녹화에서 세 창 영역만 잘라 이 폴더의 GIF, MP4, PNG를 만든다.
+  - 전체 화면 녹화는 다른 창이 찍힐 수 있으므로 올리지 않는다.

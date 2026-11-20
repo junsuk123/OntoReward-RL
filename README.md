@@ -17,12 +17,14 @@ CNN이 합성곱에서, LSTM이 게이트에서 귀납 편향을 얻듯이, ORL�
 검증은 Isaac Sim + Pegasus + PX4 SITL + ROS 2 폐루프와, Isaac/PX4 응답에 맞춘 로컬 플랜트로 한다.
 비교 정책은 파라미터 수, 보상, 학습 예산이 제안 정책과 같다.
 
-> **현재 근거와 진행 중인 확인**
+> **현재 근거**
 >
-> - 개발 단계(기준 항법, 학습 시드 5개)에서 ORL은 최고 난이도에 **평균 70 업데이트** 만에 도달했다.
->   PPO는 108, Untyped GNN은 107, 기존 R-GAT는 109 업데이트가 걸렸고, ORL이 5개 시드 모두에서 먼저 도달했다.
-> - 이 지표는 결과를 본 뒤 고른 것이다. 그래서 새 학습 시드 10개와 미리 등록한 판정 규칙으로 확인 실험 `learning-speed/1`을 진행 중이다(3.4).
+> - **학습 속도(확인됨):** 사전 등록한 확인 실험 `learning-speed/1`(새 학습 시드 10개)에서 ORL은 최고 난이도에 **중앙값 65 업데이트** 만에 도달했다.
+>   Untyped GNN은 100, PPO는 107 업데이트가 걸렸고, ORL이 10개 시드 모두에서 먼저 도달했다.
+>   등록된 규칙의 판정은 두 비교 모두 **"ORL이 더 빠름"** 이다(소요 비율 ×0.56, ×0.53; 97.5 % 구간 상한 0.94, 0.90). 자세한 내용은 3.4.
+> - 이 지표는 개발 단계(학습 시드 5개)에서 결과를 본 뒤 고른 것이었고(ORL 평균 70, 비교 정책 107–109), 새 시드에서 재현됐다.
 > - 착륙 성공률은 아직 확립되지 않았다. 로컬 10개 평가 셀 평균은 ORL 79.5 %, Semantic MLP 77.2 %, PPO 75.6 %이고, 등록된 주 비교(ORL − Semantic MLP)의 95 % 구간은 0을 포함한다.
+> - Isaac Sim + PX4에서는 시연 비행만 했다(3.1의 영상, 6회 모두 착륙). 평가는 아직 하지 않았다.
 
 ![Overall architecture](docs/figures/overall_architecture.png)
 
@@ -180,6 +182,24 @@ z_t ~ N(μ_t, diag σ²),  a_t = a_max ⊙ tanh(z_t),  a_max = (2.5, 2.5, 2.0) m
 
 ### 3.1 시뮬레이션 환경
 
+![ORL demo flight in Isaac Sim + PX4 SITL with ROS 2 tools](docs/figures/orl_isaac_px4_demo.gif)
+
+*실제 운용 환경에서의 ORL 시연 비행(4배속).*
+- 왼쪽: Isaac Sim 5.1 GUI. 기체(Iris)가 정지한 트럭 위에서 PX4로 호버링하다가, 인계 순간 트럭이 출발한다. 그 뒤로는 ORL 정책이 따라가 착륙한다. 파란 선은 기체 궤적이다.
+- 오른쪽 위: ROS 2 `image_view`로 본 하방 카메라. ArUco 검출 결과(태그 ID, 재투영 오차, 패드 기준 기체 위치)가 겹쳐 그려진다. 접지 직전에는 패드가 너무 가까워 검출되지 않는다.
+- 오른쪽 아래: RViz2. 기체를 따라가는 시점에서 기체 궤적(파랑)과 패드 궤적(주황)을 그린다.
+- 모델은 `learning-speed/1` 학습 시드 41의 ORL(`orl/1`)이다. 최고 난이도에 처음 도달한 64번째 업데이트에서 학습을 멈춘 모델이다. 시연 전용 시드로 결정론적으로 비행했다.
+- 같은 모델로 두 번 띄운 스택에서 각각 3회씩, 6회 모두 SUCCESS였다. 첫 번째 스택에서는 RViz2가 뜨지 못했다. 영상은 두 번째 스택이다.
+- 시연은 평가가 아니다. 시드 수가 적고, 성공률 주장에는 쓰지 않는다.
+- 세 비행 전체 영상: [orl_isaac_px4_demo.mp4](docs/figures/orl_isaac_px4_demo.mp4) (51 s, 4배속).
+  - GUI 렌더링 때문에 시뮬레이션이 실제 시간보다 약 3.8배 느리게 돌았다. 그래서 4배속이 대략 시뮬레이션 시간 기준의 실시간이다.
+
+![Isaac Sim, onboard camera and RViz2 during an ORL landing](docs/figures/isaac_rviz_operation.png)
+
+*같은 비행의 한 장면.*
+- 기체가 움직이는 패드를 따라가며 내려가는 중이다. 카메라 추정으로 패드 위 0.35 m이다.
+- 카메라가 태그 4개(ID 10, 21, 24, 25)를 검출하고 있다(quality 0.66, 재투영 오차 1.0 px).
+
 ![System pipeline](docs/figures/system_architecture.png)
 
 | 항목 | 설정 |
@@ -238,7 +258,7 @@ Isaac Sim 쪽 값은 배포 프로필 `config/spatial-isaac-system-v12.yaml`과 
 | noise | 기본 광학 잡음 | 광학 잡음 5배 |
 | combined | 시야 차단 1–3 s | 가속 + 3–4 s 차단 + 잡음 5배 |
 
-- **Isaac 폐루프:** ORL 체크포인트의 Isaac Sim + PX4 평가는 아직 하지 않았다.
+- **Isaac 폐루프:** ORL 체크포인트의 Isaac Sim + PX4 평가는 아직 하지 않았다. 3.1의 영상은 시연 비행이고 평가가 아니다.
 
 ### 3.4 결과
 
@@ -258,9 +278,9 @@ Isaac Sim 쪽 값은 배포 프로필 `config/spatial-isaac-system-v12.yaml`과 
 
 - 소요 비율은 시드별 비율의 기하평균이다.
 - Semantic MLP는 평균 98 업데이트였고, ORL이 5개 시드 중 4개에서 먼저 도달했다.
-- 이 표는 결과를 본 뒤 고른 지표이므로 탐색적이다. 아래 확인 실험이 이 지표를 미리 등록해 검정한다.
+- 이 표는 결과를 본 뒤 고른 지표이므로 탐색적이다. 아래 확인 실험이 이 지표를 미리 등록해 검정했고, 결과가 재현됐다.
 
-#### 학습 속도 확인 실험 `learning-speed/1` (사전 등록, 진행 중)
+#### 학습 속도 확인 실험 `learning-speed/1` (사전 등록, 판정: ORL이 더 빠름)
 
 - **비교:** ORL vs Untyped GNN, ORL vs PPO
 - **조건:** 기준 항법, 새 학습 시드 40–49(다른 실험이 쓴 시드와 겹치면 등록이 거부된다)
@@ -268,7 +288,27 @@ Isaac Sim 쪽 값은 배포 프로필 `config/spatial-isaac-system-v12.yaml`과 
 - **판정 규칙(학습 전에 해시로 고정):** 시드별 ln T(ORL) − ln T(비교)의 짝지은 t 구간을 비교마다 97.5 %(Bonferroni)로 구한다.
   - 상한이 0보다 작고 ORL 모델 중 미도달이 없으면 "ORL이 더 빠름"이다.
   - 하한이 0보다 크면 "더 느림", 그 밖은 "확립되지 않음"이다.
-- 2026-11-20에 등록하고 학습을 시작했다. 결과는 끝나는 대로 이 절에 싣는다.
+- 2026-11-20 12:30에 등록하고 학습을 시작해 18:50에 30개 모델이 끝났다. 판정 전에 등록 검사(plan hash `801902de…`)를 통과했다.
+
+![Learning speed](docs/figures/learning_speed.png)
+
+| 학습 시드 | 40 | 41 | 42 | 43 | 44 | 45 | 46 | 47 | 48 | 49 | 중앙값 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| **ORL** | **67** | **64** | **62** | **72** | **60** | **66** | **81** | **61** | **73** | **62** | **65** |
+| Untyped GNN | 97 | 127 | 81 | 89 | 103 | 미도달 | 89 | 121 | 83 | 114 | 100 |
+| PPO (raw obs.) | 119 | 127 | 95 | 87 | 91 | 미도달 | 89 | 140 | 84 | 124 | 107 |
+
+| 비교 | 소요 비율 T(ORL)/T(비교) | 97.5 % 구간 | ORL이 먼저 도달 | 판정 |
+|---|---:|---:|---:|---|
+| ORL / Untyped GNN | ×0.56 | [0.33, 0.94] | 10/10 | **ORL이 더 빠름** |
+| ORL / PPO (raw obs.) | ×0.53 | [0.32, 0.90] | 10/10 | **ORL이 더 빠름** |
+
+- 소요 비율은 시드별 비율의 기하평균이다. 미도달은 등록 규칙대로 600으로 셌다.
+- **시드 45:** Untyped GNN과 PPO는 600 업데이트 동안 가장 쉬운 단계(난이도 0)를 벗어나지 못했다. 같은 시드에서 ORL은 66번째 업데이트에 최고 난이도에 도달했다.
+  - 이 시드가 평균 차이를 키운다. 시드 45를 뺀 9개 시드로 다시 구하면 ×0.67 [0.54, 0.83], ×0.64 [0.50, 0.81]이다.
+  - 이 재계산은 등록 규칙 밖의 탐색적 확인이고, 판정은 바뀌지 않는다.
+- ORL 모델 10개는 모두 상한 안에 도달했다. 부호 검정(p = 0.002)은 보고만 하고 판정에 쓰지 않는다.
+- 이 실험이 보여 주는 것은 커리큘럼을 끝까지 올라가는 속도이다. 착륙 성능은 측정하지 않았다. 모델은 그 업데이트에서 학습을 멈췄고 평가하지 않았다.
 
 #### 로컬 평가 10셀 (개발 단계, 기준 항법, 학습 시드 10–14)
 
@@ -300,15 +340,21 @@ Isaac Sim 쪽 값은 배포 프로필 `config/spatial-isaac-system-v12.yaml`과 
 - 분포 밖 셀(OOD 4개 + composition OOD, 5개 시드 합)의 위험 판정은 기록된 정책 중 ORL이 가장 적다.
   - ORL 139건(UNSAFE_CONTACT 26 + 기울기 한계 위반 113), 기존 R-GAT 165건, Semantic MLP 210건, PPO 346건이다.
   - 대신 패드 밖 접지는 ORL 627건으로 Semantic MLP 584건, PPO 470건보다 많다.
+- **원 결과 파일:** 개발 단계 ORL(`orl/1`)의 모델과 평가 기록, Semantic MLP 모델은 2026-11-20 결과 정리 때 지워졌다(보관본에도 없다).
+  - ORL 열의 수치는 진행 기록 20절에 남은 값이다.
+  - Semantic MLP의 평가 요약은 `development.json`에 남아 있다.
+  - 기존 R-GAT, Untyped GNN, PPO의 모델과 평가 기록은 남아 있다.
 
 #### 해석 범위
 
 - 착륙 성공률의 우위는 **확립되지 않았다.** 학습 시드 5개에서 사전 등록한 주 비교의 구간이 0을 포함한다. "같다"가 아니라 "가려지지 않았다"는 뜻이다.
-- 학습 속도의 차이가 이 연구에서 정책 간에 처음으로 일관되게 보인 차이다. 다만 지표를 사후에 골랐으므로 `learning-speed/1`의 판정이 나오기 전까지는 가설이다.
+- 학습 속도의 차이는 이 연구에서 정책 간에 처음으로 일관되게 보인 차이다. 사전 등록한 `learning-speed/1`에서 새 시드 10개로 재현됐다.
+  - 측정한 것은 커리큘럼을 끝까지 올라가는 데 필요한 업데이트 수이다. 같은 예산에서 더 잘 착륙한다는 뜻은 아니다.
+  - 비교 정책은 Untyped GNN과 PPO이다. 기존 R-GAT와 Semantic MLP는 이 확인 실험에 넣지 않았다.
 - 네 편향을 함께 넣었으므로 각각의 기여는 분리되지 않았다.
 - `orl/1`의 학습된 하강 게이트는 학습 후 모델마다 거의 상수였다(표준편차 ≤ 0.027). 따라서 이 결과는 실제로는 국소성, 가중치 공유, 거울 등변성 세 가지의 효과이다.
 - 셀은 사후에 나누어 읽었다. 패드를 잃는 셀에서 지는 원인은 진단 중이다.
-- 결과는 모두 로컬 플랜트에서 얻었다. Isaac 평가는 아직 없다.
+- 결과는 모두 로컬 플랜트에서 얻었다. Isaac 평가는 아직 없다. Isaac에서는 시연 비행 6회(모두 착륙)만 했다.
 - 이전 단계에서 기존 R-GAT 정책을 항법 열화 조건(GNSS 결측, CA-KF와 Kinematic WLS 추정기)으로 평가한 실험은 그 코드·결과·문서와 함께 `archive/non_orl_20261120.tar.zst`에 보관했다. 그 결과는 이 연구의 주장에 쓰지 않는다.
 
 ## 4. 기여
@@ -333,17 +379,17 @@ Isaac Sim 쪽 값은 배포 프로필 `config/spatial-isaac-system-v12.yaml`과 
    - 원 관측 우회를 없애, 행동이 선언된 관계를 따라서만 관측에 의존하게 했다.
    - 두 평면이 인코더·관계 가중치·판독을 공유하고, 선언된 부호로 정확한 거울 등변성을 갖는다.
    - 파라미터 예산은 비교 정책과 같다(4,016개).
-3. **학습 효율(확인 중)**
-   - 개발 단계에서 최고 난이도 도달에 필요한 업데이트가 비교 정책의 약 0.65배였다(5/5 시드).
-   - 새 학습 시드 10개로 사전 등록한 확인 실험을 진행 중이다.
+3. **학습 효율**
+   - 사전 등록한 확인 실험(새 학습 시드 10개)에서 최고 난이도 도달에 필요한 업데이트가 Untyped GNN의 0.56배, PPO의 0.53배였다. 두 비교 모두 등록된 규칙으로 "더 빠름"이다(10/10 시드).
+   - 개발 단계(시드 5개)에서는 약 0.65배였다.
 4. **3축 가속도 제어로의 확장**
    - 2D 상대 운동 기반 착륙 문제를 월드 3축 순가속도 제어로 확장했다. 자세는 행동에서 유도한다.
    - 이동 플랫폼의 전 방향 접근, 패드 가속, 시야 차단, 광학 잡음 조건에서 평가할 수 있다.
 
 **향후 과제**
 
-- `learning-speed/1` 판정 반영
-- ORL 체크포인트의 Isaac Sim + PX4 폐루프 평가
+- ORL 체크포인트의 Isaac Sim + PX4 폐루프 평가(현재는 시연 비행만 있다)
+- 같은 학습 예산에서의 착륙 성능 비교(학습 속도 차이가 성능 차이로 이어지는지)
 - 패드를 잃는 셀의 실패 원인 진단과 편향별 제거 실험
 - 학습 시드를 늘린 착륙 성공률 확인 실험
 
@@ -372,6 +418,15 @@ P=$PWD/Ontology_RGAT_UAV_RL_ISAAC_PX4/config/current_semantics
 python3 Ontology_RGAT_UAV_RL_ISAAC_PX4/tools/make_doc_figures.py overall
 python3 Ontology_RGAT_UAV_RL_ISAAC_PX4/tools/make_doc_figures.py architecture
 python3 Ontology_RGAT_UAV_RL_ISAAC_PX4/tools/make_doc_figures.py graph
+python3 Ontology_RGAT_UAV_RL_ISAAC_PX4/tools/make_doc_figures.py speed    # learning_speed.json에서
+```
+
+시연 영상은 GUI가 있는 X 화면에서 다음 명령으로 찍는다. Isaac 비행이므로 사용자 승인과 `--allow-isaac`가 필요하다.
+
+```bash
+cd Ontology_RGAT_UAV_RL_ISAAC_PX4
+python3 tools/isaac_demo_capture.py capture OUT results/.../learning_speed/seed41/orl_ppo_eb68eb947a6a49a2/final.pt --allow-isaac
+python3 tools/isaac_demo_capture.py media OUT ../docs/figures --still OUT/still_999902_048.png
 ```
 
 ## 6. 저장소 구조
@@ -390,5 +445,6 @@ python3 Ontology_RGAT_UAV_RL_ISAAC_PX4/tools/make_doc_figures.py graph
 | `Ontology_RGAT_UAV_RL_ISAAC_PX4/config/current_semantics/` | 과제·관측·모델·학습·평가 설정 |
 | `Ontology_RGAT_UAV_RL_ISAAC_PX4/tests/current_semantics/` | 단위 테스트 |
 | `Ontology_RGAT_UAV_RL_ISAAC_PX4/tools/make_doc_figures.py` | 이 문서의 그림 생성 |
+| `Ontology_RGAT_UAV_RL_ISAAC_PX4/tools/isaac_demo_capture.py`, `demo_tf_relay.py` | Isaac Sim + PX4 시연 비행의 화면 녹화와 영상·그림 생성 |
 | `docs/figures/` | 그림과 그 설명 ([docs/figures/README.md](docs/figures/README.md)) |
 | `archive/` (git 제외) | ORL이 쓰지 않는 경로의 압축 보관본 (`non_orl_20261120.tar.zst`, 목록은 안의 `MANIFEST.md`) |

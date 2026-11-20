@@ -29,6 +29,7 @@
 | 계약과 해시 | `current_semantics/contracts.py`, `experiment.py` | 관측·특징·그래프·과제·학습 설정의 해시, 실행 폴더, 단일 실행 잠금 |
 | 모니터 | `current_semantics/monitor.py`, `encoding_view.py` | 읽기 전용 진행 현황, 학습 중 가중치로 그리는 실시간 인코딩 보기 |
 | Isaac 월드 | `../isaac_sim/` | 착륙 월드, 패드 운동, 센서(IMU, GNSS, 카메라), 인계 교란 |
+| 문서 그림과 시연 영상 | `../tools/make_doc_figures.py`, `../tools/isaac_demo_capture.py`, `../tools/demo_tf_relay.py` | 구조·결과 그림, Isaac Sim + RViz2 시연 비행의 녹화와 GIF·MP4·사진 |
 
 설정 파일은 `config/current_semantics/`에 있다.
 
@@ -85,6 +86,23 @@ Ontology_RGAT_UAV_RL_ISAAC_PX4/scripts/monitor_tailscale.sh start   # 같은 모
   - 프로브 시드(999901)는 등록된 어떤 시드와도 겹치지 않는다. 이 에피소드는 비교 판정의 근거가 아니다.
 
 Isaac Sim + PX4 스택을 띄우는 단계는 `--allow-isaac`를 줄 때만 실행된다. 이미 떠 있는 Isaac은 넘겨받지 않고 거부한다.
+
+`learning-speed/1`의 판정(2026-11-20)은 "ORL이 Untyped GNN·PPO보다 빠름"이다(진행 기록 21.3).
+
+### 실제 운용 환경 시연 영상
+
+`tools/isaac_demo_capture.py`가 README의 시연 GIF·MP4·사진을 만든다(진행 기록 23절).
+
+```bash
+cd Ontology_RGAT_UAV_RL_ISAAC_PX4
+python3 tools/isaac_demo_capture.py capture OUT <checkpoint>/final.pt --allow-isaac   # 비행 + 화면 녹화
+python3 tools/isaac_demo_capture.py media OUT ../docs/figures                         # 잘라서 GIF·MP4·PNG
+```
+
+- `capture`는 소유한 스택을 GUI로 띄운다. 같은 화면에 ROS 2 `image_view`(ArUco 주석 카메라)와 RViz2(`tools/demo_tf_relay.py`의 TF로 기체 추종)를 배치하고, 화면을 녹화한다.
+  - 시드는 시연 전용(기본 999902–999904)이다. 결과는 평가가 아니다.
+  - VS Code(snap) 셸의 GTK·로케일 변수는 rviz2를 죽인다. 도구는 이 변수들을 지우고 ROS 도구를 띄운다.
+- `media`는 녹화에서 세 창 영역만 잘라낸다. 다른 창이 찍혔을 수 있는 전체 화면 녹화는 올리지 않는다.
 
 ## 3. 결과를 믿기 위한 규칙
 

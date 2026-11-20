@@ -1,10 +1,11 @@
 """README figures for the ORL landing policy (docs/figures/*.png, *.svg).
 
     python3 tools/make_doc_figures.py all         # every figure
-    python3 tools/make_doc_figures.py overall | architecture | graph | field
+    python3 tools/make_doc_figures.py overall | architecture | graph | field | speed
 
 Diagrams are drawn from the code: the proposed ORL policy's nodes, edges, slots and sizes from
 current_semantics/orl.py (version ORL_VERSION), the approach field from current_semantics/reward.py.
+``speed`` plots the registered learning-speed/1 verdict (results/.../learning_speed/learning_speed.json).
 White background, English labels, PNG 200 dpi + SVG.  The result figures of the earlier
 navigation-degradation study (registered R-GAT arm) were archived on 2026-11-20
 (archive/non_orl_20261120.tar.zst).
@@ -727,7 +728,121 @@ def field():
 
 
 # ----------------------------------------------------------------------------- 5 results
-FIGURES = {"overall": overall, "architecture": architecture, "graph": graph, "field": field}
+SPEED_RESULT = RESULTS / "spatial_current_semantics_v1" / "learning_speed" / "learning_speed.json"
+SPEED_ARMS = (("orl", "ORL (proposed)"), ("untyped_gnn_ppo", "Untyped GNN"),
+              ("raw_ppo", "PPO (raw obs.)"))
+
+
+def speed():
+    """learning-speed/1 (status doc 21): per-seed first update at difficulty 1.0 and the
+    registered ratio intervals, read from the verdict file speed-report wrote."""
+    from scipy import stats
+    data = json.loads(SPEED_RESULT.read_text())
+    if not data.get("complete"):
+        raise SystemExit("learning-speed/1 is not complete; run --stage speed-report first")
+    proposed = data["proposed_arm"]
+    cap = data["cap"]
+    arms = {key: data["arms"][proposed if key == "orl" else key] for key, _ in SPEED_ARMS}
+    seeds = sorted(int(s) for s in arms["orl"]["first_full_update"])
+    T = {key: [arms[key]["first_full_update"][str(s)] for s in seeds] for key in arms}
+    fig = plt.figure(figsize=(12.6, 4.6))
+    gs = fig.add_gridspec(1, 2, width_ratios=[1.05, 1.0], wspace=0.34)
+    # (a) per-seed first update, paired lines
+    ax = fig.add_subplot(gs[0])
+    jitter = np.linspace(-0.13, 0.13, len(seeds))
+    for k, s in enumerate(seeds):
+        ys = [cap if T[key][k] is None else T[key][k] for key, _ in SPEED_ARMS]
+        ax.plot([i + jitter[k] for i in range(3)], ys, color="#CFCFCF", lw=0.9, zorder=1)
+    for i, (key, _) in enumerate(SPEED_ARMS):
+        color = PROPOSED if key == "orl" else OTHER
+        for k, value in enumerate(T[key]):
+            hit = value is not None
+            ax.plot(i + jitter[k], value if hit else cap, "o", ms=6.5, zorder=3,
+                    mfc=color if hit else "white", mec="white" if hit else color,
+                    mew=1.0 if hit else 1.6)
+        median = arms[key]["median_update_censored_at_cap"]
+        ax.plot([i - 0.24, i + 0.24], [median, median], color=INK, lw=1.8, zorder=4)
+        ax.text(i + 0.27, median, f"median {median:g}", va="center", fontsize=8.4, color=INK)
+    censored = [s for k, s in enumerate(seeds)
+                if any(T[key][k] is None for key, _ in SPEED_ARMS)]
+    ax.text(1.62, cap * 0.84, f"seed {', '.join(map(str, censored))}: never left the easiest "
+            f"stage,\ncounted as the cap ({cap}) by the registered rule",
+            ha="center", va="top", fontsize=7.8, color=MUTED,
+            bbox=dict(fc="white", ec="none", pad=0.6))
+    ax.set_yscale("log")
+    ax.set_ylim(48, 760)
+    ticks = [50, 75, 100, 150, 200, 300, 600]
+    ax.set_yticks(ticks)
+    ax.set_yticklabels([str(t) for t in ticks])
+    ax.minorticks_off()
+    ax.set_xlim(-0.45, 2.75)
+    ax.set_xticks(range(3))
+    ax.set_xticklabels([name for _, name in SPEED_ARMS], fontsize=9.4, color=INK)
+    ax.set_ylabel("first PPO update trained at difficulty 1.0 (log)", fontsize=9, color=MUTED)
+    ax.set_title(f"(a) Learning speed, fresh seeds {seeds[0]}-{seeds[-1]} (lower is faster)",
+                 fontsize=10.5, color=INK, loc="left")
+    style_axes(ax)
+    # (b) registered ratio intervals (filled) and the exploratory seed-45 sensitivity (hollow)
+    ax = fig.add_subplot(gs[1])
+    level = data["comparisons"][SPEED_ARMS[1][0]]["log_ratio"]["confidence"]
+    rows = []
+    for key, name in SPEED_ARMS[1:]:
+        c = data["comparisons"][key]
+        per = c["log_ratio"]["per_seed"]
+        keep = [d for s, d in zip(seeds, per) if s not in censored]
+        n = len(keep)
+        m = float(np.mean(keep))
+        h = stats.t.ppf(1 - (1 - level) / 2, n - 1) * float(np.std(keep, ddof=1)) / math.sqrt(n)
+        rows.append((name, c, (math.exp(m), math.exp(m - h), math.exp(m + h)), n))
+    for j, (name, c, (r, lo, hi), n) in enumerate(rows):
+        y = len(rows) - 1 - j
+        ax.plot(c["ratio_interval"], [y + 0.12] * 2, color=PROPOSED, lw=2.0, solid_capstyle="round")
+        ax.plot(c["ratio"], y + 0.12, "o", ms=8, mfc=PROPOSED, mec="white", mew=1.2, zorder=3)
+        ax.text(1.12, y + 0.12,
+                f"x{c['ratio']:.2f} [{c['ratio_interval'][0]:.2f}, {c['ratio_interval'][1]:.2f}]"
+                f"  {c['verdict']}", va="center", fontsize=8.6, color=INK)
+        ax.plot([lo, hi], [y - 0.16] * 2, color=PROPOSED, lw=1.2, alpha=0.8)
+        ax.plot(r, y - 0.16, "o", ms=6.5, mfc="white", mec=PROPOSED, mew=1.4, zorder=3)
+        ax.text(1.12, y - 0.16, f"x{r:.2f} [{lo:.2f}, {hi:.2f}]", va="center",
+                fontsize=8.0, color=MUTED)
+        ax.text(0.205, y + 0.44, f"ORL / {name}", fontsize=9.2, color=INK, va="center")
+        ax.text(1.12, y + 0.44, f"ORL first on {c['proposed_first']}/"
+                f"{c['proposed_first'] + c['other_first'] + c['ties']} seeds",
+                fontsize=8.2, color=MUTED, va="center")
+    ax.axvline(1.0, color=INK, lw=0.9, ls=(0, (3, 2)))
+    ax.text(1.0, -0.62, "equal speed", ha="center", fontsize=8.0, color=MUTED,
+            bbox=dict(fc="white", ec="none", pad=0.4))
+    ax.set_xscale("log")
+    ax.set_xlim(0.2, 3.4)
+    xt = [0.25, 0.33, 0.5, 0.67, 1.0, 1.5]
+    ax.set_xticks(xt)
+    ax.set_xticklabels([f"{t:g}" for t in xt])
+    ax.minorticks_off()
+    ax.set_ylim(-0.75, len(rows) - 0.4)
+    ax.set_yticks([])
+    ax.set_xlabel(f"ratio of updates T(ORL) / T(comparison), {level * 100:g} % paired-t interval "
+                  "(log)", fontsize=9, color=MUTED)
+    ax.set_title("(b) Registered comparison (Bonferroni over two)", fontsize=10.5, color=INK,
+                 loc="left")
+    style_axes(ax)
+    ax.yaxis.grid(False)
+    ax.spines["left"].set_visible(False)
+    ax.legend(handles=[
+        plt.Line2D([], [], color=PROPOSED, lw=2.0, marker="o", ms=7, mfc=PROPOSED, mec="white",
+                   label=f"registered rule, all {len(seeds)} seeds (cap counted)"),
+        plt.Line2D([], [], color=PROPOSED, lw=1.2, marker="o", ms=6, mfc="white", mec=PROPOSED,
+                   label=f"exploratory: without seed {', '.join(map(str, censored))} "
+                         f"(n = {rows[0][3]})")],
+        loc="lower left", bbox_to_anchor=(0.0, 1.07), ncol=1, frameon=False, fontsize=8.2)
+    fig.text(0.5, -0.06, f"learning-speed/1: plan registered before training (hash "
+             f"{data['plan_hash'][:8]}), base navigation, cap {cap} updates. Verdict: ORL faster "
+             "than both comparisons. Lower ratio = fewer updates for ORL.",
+             ha="center", fontsize=8.4, color=MUTED)
+    save(fig, "learning_speed")
+
+
+FIGURES = {"overall": overall, "architecture": architecture, "graph": graph, "field": field,
+           "speed": speed}
 
 
 def main():

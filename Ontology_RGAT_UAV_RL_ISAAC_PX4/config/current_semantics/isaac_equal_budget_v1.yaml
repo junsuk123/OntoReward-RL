@@ -1,0 +1,23 @@
+# isaac-equal-budget/1 (budget.py): the equal-budget/1 models after 600 updates flown on an
+# owned Isaac Sim + PX4 SITL stack, deterministically, every model on the same cases.
+#
+# Written and committed BEFORE equal-budget/1 trains; `--stage register-isaac-budget` binds
+# it, after that protocol is complete, to the sha256 of every budget-600 checkpoint, and
+# `--stage isaac-budget --allow-isaac` refuses anything else.  The identical cases also fly
+# on the local plant (local_reference.jsonl) for a paired transfer record.
+#
+# Conditions are development cells (development.cell_conditions); the optical-noise cells
+# are local-plant only and cannot fly.  Environment seeds are fresh: 994101-994130
+# (isaac-development) and 994201-994230 (confirmation/1, archived) are spent.
+# 3 conditions x 5 environments x 30 models = 450 Isaac episodes.
+protocol: isaac-equal-budget/1
+source_protocol: equal-budget/1
+budget: 600
+mode: deterministic
+# Bonferroni over the two comparisons (ORL - Untyped GNN, ORL - PPO): 97.5 % paired t over
+# the ten training seeds of each model's Isaac success rate (budget.ISAAC_RULE).
+family_alpha: 0.05
+conditions:
+  composition_id: [994501, 994502, 994503, 994504, 994505]
+  composition_ood: [994511, 994512, 994513, 994514, 994515]
+  combined_id: [994521, 994522, 994523, 994524, 994525]

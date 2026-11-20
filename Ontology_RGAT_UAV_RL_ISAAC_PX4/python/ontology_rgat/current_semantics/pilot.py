@@ -218,9 +218,16 @@ LIVE_EVERY = 5                # updates between snapshots
 def train_seed(config: CurrentSemanticsConfig, config_path: Path, model_seed: int,
                root: Path, pool: Any, *, log: Callable[[str], None],
                updates: int | None = None, stop_at_full: bool = False,
-               live_every: int = LIVE_EVERY) -> dict[str, Any]:
-    """Train one model.  ``stop_at_full`` (extension.py, speed.py) ends training after the
-    first update trained at difficulty 1.0; every earlier update is unchanged.
+               live_every: int = LIVE_EVERY, snapshots: tuple[int, ...] = (),
+               validate: bool = True) -> dict[str, Any]:
+    """Train one model.  ``stop_at_full`` (speed.py) ends training after the first update
+    trained at difficulty 1.0; every earlier update is unchanged.
+
+    ``snapshots`` (budget.py) are training budgets B: the weights after exactly B updates are
+    written to ``budget_<B>.pt`` the same way as ``live.pt`` (a state-dict copy, no generator
+    read), so they change nothing.  ``validate=False`` skips the validation episodes and so
+    the selection of ``best.pt``; those episodes use their own seeds and never feed the
+    update, so the trained weights are the same either way.
 
     Every ``live_every`` updates (and at each promotion) the current weights are written to
     ``live.pt`` for the study monitor's encoding view (encoding_view.py).  The write is an
@@ -238,7 +245,7 @@ def train_seed(config: CurrentSemanticsConfig, config_path: Path, model_seed: in
     root.mkdir(parents=True, exist_ok=True)
     history, validation = root / "history.jsonl", root / "validation.jsonl"
     live = root / LIVE_CHECKPOINT
-    for path in (history, validation, live):
+    for path in (history, validation, live, *(root / f"budget_{b}.pt" for b in snapshots)):
         path.unlink(missing_ok=True)
     torch.manual_seed(0)  # nothing should read it; models use private generators
     model = build_model(g4.arm, config, seed=model_seed)
@@ -265,6 +272,11 @@ def train_seed(config: CurrentSemanticsConfig, config_path: Path, model_seed: in
                "promoted_to": curriculum.difficulty if promoted else None,
                "wall_s": time.monotonic() - started}
         _append(history, row)
+        if update + 1 in snapshots:
+            save_checkpoint(root / f"budget_{update + 1}.pt", model, manifest=manifest,
+                            extra={"update": update, "budget": update + 1,
+                                   "model_seed": model_seed,
+                                   "difficulty": float(difficulty)})
         if live_every and (update % live_every == 0 or promoted):
             save_checkpoint(live, model, manifest=manifest,
                             extra={"update": update, "model_seed": model_seed, "live": True,
@@ -282,7 +294,7 @@ def train_seed(config: CurrentSemanticsConfig, config_path: Path, model_seed: in
             break
         last = update == updates - 1
         at_full += difficulty >= 1.0
-        if difficulty >= 1.0 and (at_full % g4.validate_every == 0 or last):
+        if validate and difficulty >= 1.0 and (at_full % g4.validate_every == 0 or last):
             state = {k: v.detach().clone() for k, v in model.state_dict().items()}
             det = evaluate(pool, g4.arm, state, g4.validation_seeds, deterministic=True,
                            offset=11_000_000)

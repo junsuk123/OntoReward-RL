@@ -8,7 +8,7 @@
 | [그림 모음](../../docs/figures/README.md) | 전체 구조, 시스템 파이프라인, 온톨로지 그래프, 시나리오와 접근 속도장, 학습 속도 결과, Isaac Sim + RViz2 시연 영상 |
 | [구현 안내](../README.md) | 알고리즘 ↔ 코드, 실험 절차, 모니터, 결과를 믿기 위한 규칙 |
 | [설계 지침](current_semantics/CURRENT_SEMANTICS_3D_REFACTOR_GUIDE_KO.md) | 현재 관측만 쓰는 3축 착륙 문제의 설계 원칙, 개발·확인 실험의 통계 규칙 |
-| [진행 기록](current_semantics/G0_G4_STATUS_KO.md) | 학습 가능성 점검과 단계별 판정의 원 기록. ORL은 20절, 학습 속도 확인 실험은 21절(판정 21.3), 정리 기록은 22절, 시연 영상은 23절 |
+| [진행 기록](current_semantics/G0_G4_STATUS_KO.md) | 학습 가능성 점검과 단계별 판정의 원 기록. ORL은 20절, 학습 속도 확인 실험은 21절(판정 21.3), 정리 기록은 22절, 시연 영상은 23절, 같은 예산 실험과 Isaac 평가는 24절 |
 | [코드 감사](current_semantics/SOURCE_AUDIT_KO.md) | 관측·플랜트·판정 코드의 출처 감사 |
 | [참고문헌](REFERENCES.md) | 연구·시뮬레이터·비행 제어 스택 자료 |
 

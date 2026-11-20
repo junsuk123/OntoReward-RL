@@ -32,13 +32,18 @@ ORL_STAGES = ("orl-learnability", "register-orl-development", "orl-develop")
 # learning-speed/1 (current_semantics/speed.py): ORL against PPO and the untyped GNN, updates
 # to difficulty 1.0 on fresh seeds, base navigation, decision rule registered first.
 SPEED_STAGES = ("register-speed", "speed", "speed-report")
+# equal-budget/1 and isaac-equal-budget/1 (current_semantics/budget.py): landing success of the
+# same arms after equal training budgets, locally and on Isaac/PX4, decision rules registered first.
+BUDGET_STAGES = ("register-budget", "budget", "budget-report")
+ISAAC_BUDGET_STAGES = ("register-isaac-budget", "isaac-budget")
 # Every other route (relation shuffle, bond/1, confirmation and its replication, the
 # learning-speed extension, the Isaac handover-fix protocol, navigation degradation) was
 # archived on 2026-11-20 (archive/non_orl_20261120.tar.zst).
 STAGES = ("audit", "fixtures", "smoke", "coupling", "learnability", "isaac-eval",
           "isaac-trace", "report", "dashboard", *DEVELOPMENT_STAGES,
-          *ISAAC_DEVELOPMENT_STAGES, *ORL_STAGES, "monitor", *REFUSED_STAGES, *SPEED_STAGES)
-FLYING_STAGES = ("isaac-eval", "isaac-trace", "isaac-development")
+          *ISAAC_DEVELOPMENT_STAGES, *ORL_STAGES, "monitor", *REFUSED_STAGES, *SPEED_STAGES,
+          *BUDGET_STAGES, *ISAAC_BUDGET_STAGES)
+FLYING_STAGES = ("isaac-eval", "isaac-trace", "isaac-development", "isaac-budget")
 REFUSED_EXIT = 3
 
 
@@ -86,8 +91,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--port", type=int, default=None,
                         help="monitor/dashboard only: first port to try")
     parser.add_argument("--workers", type=int, default=None,
-                        help="speed only: rollout processes of this process (results do "
-                             "not depend on it; default: the plan's)")
+                        help="speed/budget only: rollout processes of this process (results "
+                             "do not depend on it; default: the plan's)")
     parser.add_argument("--reset-recoveries", type=int, default=None,
                         help="coupling --backend isaac / isaac-eval only: owned restarts for "
                              "pre-policy entry failures (default 2)")
@@ -103,20 +108,22 @@ def _validate(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None
     if (args.pairs is not None) != (args.stage == "isaac-trace"):
         parser.error("--pairs is required by, and only by, --stage isaac-trace")
     if args.plan is not None and args.stage not in (*DEVELOPMENT_STAGES, *ORL_STAGES,
-                                                    *SPEED_STAGES, *ISAAC_DEVELOPMENT_STAGES):
+                                                    *SPEED_STAGES, *ISAAC_DEVELOPMENT_STAGES,
+                                                    *BUDGET_STAGES, *ISAAC_BUDGET_STAGES):
         parser.error("--plan applies to --stage register-development/develop, the ORL "
-                     "stages, the learning-speed stages and the Isaac development stages only")
+                     "stages, the learning-speed, equal-budget and Isaac development stages "
+                     "only")
     if (args.host is not None or args.port is not None) and args.stage not in ("monitor",
                                                                                "dashboard"):
         parser.error("--host/--port apply to --stage monitor/dashboard only")
-    if args.workers is not None and args.stage != "speed":
-        parser.error("--workers applies to --stage speed only")
+    if args.workers is not None and args.stage not in ("speed", "budget"):
+        parser.error("--workers applies to --stage speed/budget only")
     if args.checkpoint_root is not None and args.stage != "isaac-trace":
         parser.error("--checkpoint-root applies to --stage isaac-trace only")
     if not flies and (args.headless or args.reset_recoveries is not None or args.allow_isaac):
         parser.error("--allow-isaac/--headless/--reset-recoveries apply to --stage coupling "
                      "--backend isaac and the flying stages (isaac-eval, isaac-trace, "
-                     "isaac-development) only")
+                     "isaac-development, isaac-budget) only")
     if args.stage == "coupling" and args.backend is None:
         parser.error("--stage coupling needs --backend local|isaac")
     if args.stage == "smoke" and args.steps is not None and args.steps < 1:
@@ -541,6 +548,156 @@ def _speed(args, config_path: Path, root: Path) -> int:
     return 0
 
 
+def _budget(args, config_path: Path, root: Path) -> int:
+    """register-budget / budget / budget-report (equal-budget/1): landing success of ORL, PPO
+    and the untyped GNN after the same numbers of updates, base navigation.  Any number of
+    ``budget`` processes share the models; whichever finds them all complete writes the
+    verdict."""
+    from ontology_rgat.current_semantics import budget
+    plan_path = (args.plan or budget.DEFAULT_PATH).expanduser().resolve()
+    config = load_config(config_path)
+    try:
+        plan = budget.load_plan(plan_path, config)
+    except ValueError as exc:
+        _print({"stage": args.stage, "status": "REFUSED", "reason": str(exc)})
+        return REFUSED_EXIT
+    out = budget.out_dir(root)
+    if args.dry_run:
+        _print(resolved_plan(config_path, args.stage, root, dry_run=True, extra={
+            "plan_file": str(plan_path), **budget.resolved(plan, config),
+            "will_write": [str(out)]}))
+        return 0
+    if args.stage == "register-budget":
+        with owned(out / "registration"):
+            status, payload = budget.register(config_path, plan_path, root)
+        _print(payload)
+        return status
+    if args.stage == "budget":
+        status, payload = budget.run(config_path, plan_path, root,
+                                     log=lambda line: print(line, flush=True),
+                                     workers=args.workers)
+        if status:
+            _print(payload)
+            return status
+    try:
+        with owned(out / "report"):
+            payload = budget.report(config_path, plan_path, root)
+            write_json(out / budget.RESULT, payload)
+    except SystemExit:
+        _print({"stage": args.stage, "status": "REPORT_HELD_ELSEWHERE"})
+        return 0
+    except ValueError as exc:
+        _print({"stage": args.stage, "status": "REFUSED", "reason": str(exc)})
+        return REFUSED_EXIT
+    _print({k: payload[k] for k in ("protocol", "complete", "pending", "verdict")})
+    return 0
+
+
+def _isaac_budget(args, config_path: Path, root: Path) -> int:
+    """register-isaac-budget / isaac-budget (isaac-equal-budget/1): every equal-budget/1
+    model at the registered budget on the same Isaac cases, inside an owned stack, with a
+    paired local reference on the identical cases."""
+    from dataclasses import asdict
+    from ontology_rgat.current_semantics import budget
+    from ontology_rgat.current_semantics import development as dev
+    config = load_config(config_path)
+    iplan_path = (args.plan or budget.ISAAC_DEFAULT_PATH).expanduser().resolve()
+    try:
+        plan = budget.load_plan(budget.DEFAULT_PATH, config)
+        iplan = budget.load_isaac_plan(iplan_path, config, plan)
+    except ValueError as exc:
+        _print({"stage": args.stage, "status": "REFUSED", "reason": str(exc)})
+        return REFUSED_EXIT
+    out = budget.isaac_dir(root)
+    summary = {"plan_file": str(iplan_path), "plan": iplan.to_dict(),
+               "models": len(budget.isaac_keys(plan)),
+               "episodes": len(iplan.seeds) * len(budget.isaac_keys(plan))}
+    if args.stage == "register-isaac-budget":
+        if args.dry_run:
+            _print(resolved_plan(config_path, args.stage, root, dry_run=True, extra={
+                **summary, "starts_isaac": False,
+                "will_write": [str(out / budget.ISAAC_REGISTRATION)]}))
+            return 0
+        with owned(out / "registration"):
+            status, payload = budget.register_isaac(config_path, budget.DEFAULT_PATH,
+                                                    iplan_path, root)
+        _print({k: v for k, v in payload.items() if k != "checkpoints"})
+        return status
+    problem = budget.check_isaac_registration(config, plan, iplan, root)
+    if problem:
+        _print({"stage": args.stage, "status": "REFUSED", "reason": problem})
+        return REFUSED_EXIT
+    previous = out / budget.ISAAC_RESULT
+    if previous.exists() and json.loads(previous.read_text(encoding="utf-8")).get(
+            "protocol_complete"):
+        _print({"stage": args.stage, "status": "REFUSED",
+                "reason": f"this registration's Isaac flight is complete ({previous})"})
+        return REFUSED_EXIT
+    extra = {**summary, "out_dir": str(out), "resume": (out / "episodes.jsonl").exists(),
+             "starts_owned_stack": True, "adopts_running_isaac": False,
+             "headless": args.headless,
+             "reset_recoveries": 2 if args.reset_recoveries is None else args.reset_recoveries}
+    if args.dry_run:
+        _print(resolved_plan(config_path, args.stage, root, dry_run=True, extra={
+            **extra, "will_write": [str(previous), str(out / "episodes.jsonl")]}))
+        return 0
+    from ontology_rgat.current_semantics.backend import (CurrentSpatialBackend,
+                                                         make_isaac_backend)
+    from ontology_rgat.live_stack import live_stack
+    from ontology_rgat.spatial.runtime_contract import deployment_profile
+    with owned(out):
+        local_path = out / budget.LOCAL_REFERENCE
+        if local_path.exists():
+            local = [json.loads(line) for line in
+                     local_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+        else:  # deterministic, so its order relative to the flight does not matter
+            print("isaac-budget: local reference on the identical cases", flush=True)
+            local = budget.isaac_local_reference(config_path, plan, iplan, root)
+            local_path.write_text("".join(json.dumps(r, allow_nan=False) + "\n" for r in local),
+                                  encoding="utf-8")
+        profile = Path(deployment_profile("spatial-reference/12")["path"])
+        wrappers: list = []
+
+        def make(cell):  # one Isaac flight, one wrapper per condition
+            factors, dropout = dev.cell_conditions(config, asdict(cell), plan.dropout_start_s)
+            if not wrappers:
+                backend = make_isaac_backend(config, allow_isaac=True, split=cell.split,
+                                             factors=factors, dropout=dropout)
+            else:
+                backend = CurrentSpatialBackend(wrappers[0].flight, config, name="isaac_v12",
+                                                scientific=False, split=cell.split,
+                                                factors=factors, dropout=dropout)
+            wrappers.append(backend)
+            return backend
+
+        stack_root = out / "isaac_stack"
+        stack_root.mkdir(parents=True, exist_ok=True)
+        with live_stack(stack_root, adopt=False, headless=extra["headless"],
+                        schema="spatial-reference/12",
+                        reset_recoveries=extra["reset_recoveries"], profile_path=profile):
+            try:
+                flown = budget.isaac_run(config, plan, iplan, root, make, out,
+                                         log=lambda line: print(line, flush=True),
+                                         resume=extra["resume"])
+            finally:
+                error = None
+                for backend in sorted(wrappers, key=lambda w: not w.active):
+                    try:
+                        backend.close()
+                    except Exception as exc:  # keep closing; report the first failure
+                        error = error or exc
+                if error is not None:
+                    raise error
+        flight = wrappers[0].flight if wrappers else None
+        payload = budget.isaac_report(config, plan, iplan, flown, local,
+                                      backend=getattr(flight, "name", None),
+                                      profile_sha256=getattr(flight, "profile_sha256", None))
+        write_json(previous, payload)
+    status = 0 if payload["protocol_complete"] else 1
+    print(f"{args.stage}: wrote {previous} (exit {status})")
+    return status
+
+
 def main(argv=None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -590,6 +747,10 @@ def main(argv=None) -> int:
         return 0
     if args.stage in SPEED_STAGES:
         return _speed(args, config_path, root)
+    if args.stage in BUDGET_STAGES:
+        return _budget(args, config_path, root)
+    if args.stage == "register-isaac-budget":
+        return _isaac_budget(args, config_path, root)
     if args.stage in REFUSED_STAGES:
         _print({"stage": args.stage, "status": "REFUSED", "dry_run": args.dry_run,
                 "reason": "this stage is registered as refused (experiment.REFUSED_STAGES)"})
@@ -614,6 +775,8 @@ def main(argv=None) -> int:
         return REFUSED_EXIT
     if args.stage in ISAAC_DEVELOPMENT_STAGES:
         return _isaac_development(args, config_path, root)
+    if args.stage == "isaac-budget":
+        return _isaac_budget(args, config_path, root)
     if args.stage == "coupling" and args.backend == "isaac" and not args.allow_isaac:
         _print({"stage": "coupling", "backend": "isaac", "status": "REFUSED",
                 "allow_isaac": False,

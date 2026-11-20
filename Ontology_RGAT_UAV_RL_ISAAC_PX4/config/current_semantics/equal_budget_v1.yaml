@@ -1,0 +1,42 @@
+# equal-budget/1 (python/ontology_rgat/current_semantics/budget.py): landing success of ORL,
+# PPO and the untyped GNN after the SAME number of PPO updates, on the BASE self-navigation
+# contract (spatial_view_contact_v1.yaml; no navigation estimator).
+#
+# Why: learning-speed/1 (status doc 21.3, seeds 40-49) found ORL reaching difficulty 1.0
+# first on 10/10 seeds (median 65 updates against 100 and 107), but it measured the
+# curriculum, not landing; this protocol asks whether that speed becomes landing success at
+# an equal training budget (user, 2026-11-20: "do those tasks").
+#
+# Registered by `./run.sh current-semantics-3d --stage register-budget` before any model
+# trains; `--stage budget` (any number of processes share the models) trains and evaluates,
+# `--stage budget-report` writes the verdict.  The decision rule is budget.RULE, hashed into
+# the registration together with this file and the contract.
+protocol: equal-budget/1
+proposed: orl/1
+comparisons: [untyped_gnn_ppo, raw_ppo]
+# Fresh model-initialisation seeds: 0-1 G4 pilots, 10-14 development, 20-39 confirmation/1
+# and its miniature/replication, 40-49 learning-speed/1.
+training_seeds: [50, 51, 52, 53, 54, 55, 56, 57, 58, 59]
+# Training episode seed = base + seed * 1e6 + update * 12 + episode: 450,000,000-459,007,199,
+# outside every audited, diagnostic, pilot, development, confirmation and learning-speed
+# range (budget._audit refuses an overlap).
+train_seed_base: 400000000
+# The fixed testing sequence, fixed from learning-speed/1 (other seeds) before training:
+#   100 = about the comparison arms' median first update at difficulty 1.0 (100, 107);
+#   200 = past every learning-speed/1 model that reached 1.0 at all (latest 140);
+#   600 = the development budget (G4 recipe).
+# The weights after exactly B updates are evaluated; no checkpoint is selected.
+budgets: [100, 200, 600]
+# Episode workers per `budget` process.
+workers: 3
+# Bonferroni over the two comparisons: each is a two-sided 97.5 % paired-t interval; the
+# fixed sequence over budgets needs no further split.
+family_alpha: 0.05
+evaluation:
+  # The ten development cells of development/1 (development_v1.yaml), flown exactly as
+  # there (development.cell_conditions, deterministic policy, difficulty 1.0), with fresh
+  # environments: seed = base + seed index * 100000 + cell index * 1000 + k, shared by every
+  # arm and budget of a training seed (70,000,000-70,909,049; action seeds +9,000,000).
+  episodes_per_cell: 50
+  env_seed_base: 70000000
+  cells_from: development/1

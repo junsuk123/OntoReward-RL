@@ -1899,3 +1899,51 @@ ORL과 저장된 semantic MLP(학습 seed 10·12·13·14)를 dropout_ood·motion
   - RViz2는 시작 화면(제목 `rviz2`)을 먼저 띄운다. 창 배치는 본 창(제목 `… - RViz`)을 기다린다.
   - 전체 화면 녹화에는 다른 창이 찍힐 수 있다. 올리는 것은 세 창 영역을 잘라낸 결과뿐이다.
 - **결과물:** `docs/figures/orl_isaac_px4_demo.gif`(6.3 MB), `orl_isaac_px4_demo.mp4`(4.0 MB, 51 s), `isaac_rviz_operation.png`. 루트 README 3.1과 그림 안내 6절에 넣었다.
+
+## 24. 같은 예산 착륙 성능 `equal-budget/1`과 Isaac 평가 `isaac-equal-budget/1` (사용자 "do those tasks", 2026-11-20)
+
+### 24.1 왜 이 실험인가
+
+- `learning-speed/1`(§21.3)은 커리큘럼을 끝까지 올라가는 속도만 쟀다. 모델은 그 업데이트에서 멈췄고 평가하지 않았다.
+- 남은 질문은 두 가지다.
+  - 같은 학습 예산에서 ORL이 더 잘 착륙하는가?
+  - ORL 정책이 Isaac Sim + PX4에서도 착륙하는가?
+
+### 24.2 `equal-budget/1` 등록 내용 (`config/current_semantics/equal_budget_v1.yaml`, `current_semantics/budget.py`)
+
+- 정책: ORL(`orl/1` = `orl_ppo:eb68eb947a6a49a2`), Untyped GNN, PPO(raw). `learning-speed/1`과 같다.
+- 학습 시드: 50–59. 0–1, 10–14, 20–39, 40–49는 다른 프로토콜이 썼다.
+- 학습 에피소드 시드: 450,000,000–459,007,199. 감사한 모든 범위와 겹치지 않는다.
+- 학습: 기준 계약의 G4 레시피를 600 업데이트 동안 그대로 쓴다.
+  - 업데이트 100, 200, 600 직후의 가중치를 그대로 저장한다(`pilot.train_seed(snapshots=...)`).
+  - 검증과 체크포인트 선택은 하지 않는다(`validate=False`).
+- 예산은 학습 전에 `learning-speed/1`(다른 시드)에서 정했다.
+  - 100: 비교 정책이 최고 난이도에 처음 도달한 중앙값(100, 107)
+  - 200: `learning-speed/1`에서 도달한 모든 모델이 이미 도달한 뒤(가장 늦은 도달 140)
+  - 600: 개발 단계의 예산
+- 평가: 개발 단계의 셀 10개를 같은 정의로 쓴다(`development.cell_conditions`, 결정론적 정책, 난이도 1.0).
+  - 셀마다 50 에피소드이다.
+  - 환경 시드는 70,000,000부터 새로 쓴다. 같은 학습 시드의 모든 정책과 예산이 같은 환경을 비행한다.
+- 판정 규칙(`budget.RULE`, 해시에 포함):
+  - 모델 점수는 예산 B에서 셀 10개 성공률의 평균이다.
+  - 비교 정책 X마다 학습 시드별 차이 점수(ORL) − 점수(X)의 양측 paired-t 97.5 % 구간(Bonferroni, 비교 2개)을 구한다.
+  - 하한 > 0이면 better, 상한 < 0이면 worse, 그 밖은 not established이다.
+  - 예산은 100 → 200 → 600 순서의 고정 순서 검정이다. better나 worse가 나와야 다음 예산을 검정한다. 멈춘 뒤의 예산은 판정 없이 보고만 한다.
+- 규모: 모델 30개, 학습 에피소드 216,000개, 평가 에피소드 45,000개.
+
+### 24.3 `isaac-equal-budget/1` 계획 (`config/current_semantics/isaac_equal_budget_v1.yaml`)
+
+- `equal-budget/1`이 학습하기 전에 계획 파일을 커밋했다. 그 프로토콜이 끝난 뒤 `register-isaac-budget`이 예산 600 체크포인트 30개의 sha256에 묶는다.
+- 조건: composition_id, composition_ood, combined_id. 조건마다 새 환경 5개(994501–994525)이고, 모델당 15사례, 모두 450 에피소드이다.
+  - 994101–994130(isaac-development)과 994201–994230(보관된 confirmation/1)은 이미 썼다.
+  - 광학 잡음 셀은 로컬 플랜트만 적용하므로 비행하지 않는다.
+- 같은 사례를 로컬 플랜트로도 비행해 짝지은 전이 기록을 남긴다(`local_reference.jsonl`).
+- 판정 규칙(`budget.ISAAC_RULE`): 모델마다 Isaac 성공률을 구하고, 학습 시드별 차이(ORL − X)의 97.5 % paired-t 구간으로 better / worse / not established를 정한다.
+
+### 24.4 사전 점검
+
+- 임시 폴더에서 돌린 연기 시험(2 업데이트, ORL)
+  - 예산 가중치를 저장하고 검증을 끈 학습의 `final.pt`가 그렇지 않은 학습과 비트 단위로 같았다. `budget_2.pt`는 `final.pt`와 같았다.
+  - 셀 평가는 중단 뒤 다시 돌리면 기록을 읽어 그대로 이어 갔다.
+  - Isaac 비행 경로(`isaac_run`)는 로컬 백엔드로 끝까지 돌았고, 다시 돌리면 이미 비행한 사례를 건너뛰었다.
+- 테스트: `tests/current_semantics/test_cs3d_budget.py`.

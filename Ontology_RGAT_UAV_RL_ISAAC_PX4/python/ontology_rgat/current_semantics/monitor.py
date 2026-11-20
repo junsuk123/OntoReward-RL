@@ -73,6 +73,7 @@ def _rolling(values: list, window: int = 10) -> list:
 
 
 SPEED_DIR = "learning_speed"      # learning-speed/1 (speed.py)
+BUDGET_DIR = "equal_budget"       # equal-budget/1 (budget.py)
 STOP_AT_FULL_CAP = 600            # learning-speed runs stop at the first update at difficulty 1.0
 ARM_NAMES = {"raw_ppo": "PPO (raw obs.)", "untyped_gnn_ppo": "Untyped GNN",
              "semantic_mlp_ppo": "Semantic MLP", "ontology_rgat_ppo": "R-GAT (등록 arm)"}
@@ -113,6 +114,8 @@ def _run_kind(rel: Path) -> str:
     parts = rel.parts
     if parts[0] == SPEED_DIR:
         return f"학습 속도 실험 · {arm_name(parts[-1])}"
+    if parts[0] == BUDGET_DIR:
+        return f"같은 예산 실험 · {arm_name(parts[-1])}"
     if parts[0] == "g4_pilot":
         return "G4 pilot"
     if parts[0] == "development":
@@ -134,6 +137,9 @@ def _planned_updates(task_root: Path, run_dir: Path) -> int:
     if rel and rel[0] == SPEED_DIR:
         reg = _cached(task_root / SPEED_DIR / "learning_speed_registration.json", _json) or {}
         return int(reg.get("cap") or STOP_AT_FULL_CAP)
+    if rel and rel[0] == BUDGET_DIR:
+        reg = _cached(task_root / BUDGET_DIR / "equal_budget_registration.json", _json) or {}
+        return int(reg.get("updates_per_model") or 600)
     for candidate in (task_root / "development_registration.json",):
         data = _cached(candidate, _json) if candidate.exists() else None
         if data and data.get("updates") and "development" in run_dir.parts:
@@ -248,7 +254,7 @@ def _history_dirs(task_root: Path) -> list[Path]:
                 "orl5/g4_pilot/seed*/history.jsonl", "orl5/development/seed*/history.jsonl",
                 "orl5/control/g4_pilot/seed*/history.jsonl",
                 "orl5/control/development/seed*/history.jsonl",
-                f"{SPEED_DIR}/seed*/*/history.jsonl")
+                f"{SPEED_DIR}/seed*/*/history.jsonl", f"{BUDGET_DIR}/seed*/*/history.jsonl")
     found = []
     for pattern in patterns:
         found += [p.parent for p in task_root.glob(pattern)]
@@ -528,7 +534,8 @@ def recent_logs(results: Path, roots: list[Path], now: float) -> list[dict[str, 
     out = []
     for root in roots:
         for path in (list(root.glob("*.log")) + list(root.glob("development_design/*.log"))
-                     + list(root.glob(f"{SPEED_DIR}/*.log"))):
+                     + list(root.glob(f"{SPEED_DIR}/*.log"))
+                     + list(root.glob(f"{BUDGET_DIR}/*.log"))):
             try:
                 age = now - path.stat().st_mtime
             except FileNotFoundError:
@@ -566,7 +573,7 @@ def snapshot(results: Path | None = None) -> dict[str, Any]:
             state["task"] = task
             runs.append(state)
     runs = [r for r in runs if r["state"] in ("running", "evaluating")
-            or SPEED_DIR in r["path"]
+            or SPEED_DIR in r["path"] or BUDGET_DIR in r["path"]
             or (r.get("seconds_since_update") is not None
                 and r["seconds_since_update"] <= RECENT_S)]
     active_tasks = {r["task"] for r in runs}

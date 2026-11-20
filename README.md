@@ -415,11 +415,14 @@ P=$PWD/Ontology_RGAT_UAV_RL_ISAAC_PX4/config/current_semantics
 그림은 다음 명령으로 다시 만든다. 구조 그림은 코드(`orl.py`, `reward.py`)에서 직접 읽는다.
 
 ```bash
-python3 Ontology_RGAT_UAV_RL_ISAAC_PX4/tools/make_doc_figures.py overall
-python3 Ontology_RGAT_UAV_RL_ISAAC_PX4/tools/make_doc_figures.py architecture
-python3 Ontology_RGAT_UAV_RL_ISAAC_PX4/tools/make_doc_figures.py graph
-python3 Ontology_RGAT_UAV_RL_ISAAC_PX4/tools/make_doc_figures.py speed    # learning_speed.json에서
+python3 Ontology_RGAT_UAV_RL_ISAAC_PX4/tools/make_doc_figures.py all      # overall, architecture, graph, field, speed
+python3 Ontology_RGAT_UAV_RL_ISAAC_PX4/tools/make_doc_figures.py speed    # 하나만 (speed는 learning_speed.json에서)
+python3 Ontology_RGAT_UAV_RL_ISAAC_PX4/tools/make_doc_figures.py all --formats tif,eps,pdf --out OUT   # IJCAS 투고용
 ```
+
+- 그림은 IJCAS 지면의 두 단 전체 폭(168 mm)에 맞췄다. 그 크기에서 가장 작은 글자가 7 pt이다.
+- 제목과 설명 문장은 그림 안에 넣지 않고 캡션으로 쓴다.
+- 자세한 규칙은 [docs/figures/README.md](docs/figures/README.md)에 있다.
 
 시연 영상은 GUI가 있는 X 화면에서 다음 명령으로 찍는다. Isaac 비행이므로 사용자 승인과 `--allow-isaac`가 필요하다.
 

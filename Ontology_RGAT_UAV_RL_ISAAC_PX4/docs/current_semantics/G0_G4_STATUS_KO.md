@@ -1807,3 +1807,39 @@ ORL과 저장된 semantic MLP(학습 seed 10·12·13·14)를 dropout_ood·motion
   - 부호검정과 평균 비는 보고만 하고 판정에 쓰지 않는다.
 - 실행: 2026-11-20 12:30 KST에 `--stage speed` 프로세스 4개를 띄웠다(각 3 worker, 모델은 claim으로 나눈다).
   - 같은 시각 CA-KF와 WLS의 learning-speed-extension/1이 돌고 있다. WLS 쪽 3개는 nice 19로 낮췄다.
+
+## 22. ORL 이외 경로의 보관과 제거 (사용자, 2026-11-20)
+
+- **사용자 결정:** "ORL 실험 결과가 좋으니 다른 것은 모두 중단하고, 관련 코드와 프로세스를 제거하고, 관련 자료는 따로 정리해 압축 보관한 뒤 원래 위치에서 제거한다."
+  - 범위는 저장소 전체로 정했다. 보관본은 저장소 안 `archive/`(git 제외)에 두고, 정리 후 커밋·푸시한다.
+- **중단한 프로세스:** learning-speed-extension/1의 학습 5개를 멈췄다(Kinematic WLS 3개, CA-KF 2개).
+  - 멈출 때까지 기록된 도달 업데이트: CA-KF PPO seed 21은 361, Untyped seed 24는 369.
+  - 나머지 세 모델은 미완료 상태로 보관했다.
+  - learning-speed/1의 학습 프로세스 4개는 계속 돈다.
+- **보관본:** `archive/non_orl_20261120.tar.zst` (72 MB, 파일 3,131개, zstd 무결성 확인). 내용은 다음과 같다.
+  - 지운 추적 파일 442개
+  - 결과 폴더: 항법 열화 실험의 두 루트, 기준 항법의 기존 R-GAT Isaac 개발 평가 `isaac_development_2`
+  - 고쳐 쓴 파일의 정리 직전 사본
+  - 안의 `MANIFEST.md`에 목록과 복원 방법이 있다.
+- **남긴 것을 정한 방법:** 추측이 아니라 측정으로 정했다.
+  1. CLI와 Isaac 스택에서 출발해, 함수 안쪽 import까지 따라간 정적 import closure를 계산했다. Python 파일 225개 중 92개가 남았다.
+  2. ORL·비교 정책의 학습 에피소드, 프로브, 모니터를 실제로 돌리며 연 파일을 기록했다.
+     배포·시스템 프로필(`spatial-isaac-system*.yaml`, `shin2026-*.yaml`, `system.yaml`)이 여기서 걸려 남았다.
+  3. Isaac 스택 스크립트가 부르는 스크립트·설정·에셋·게이트웨이 ROS 패키지를 따라갔다.
+- **옮긴 코드:** Isaac 비행에 쓰는 `live_stack`을 보관한 `run_spatial_pipeline.py`에서 `ontology_rgat/live_stack.py`로 그대로 옮겼다.
+  이것만으로 이전 3축 학습기와 이전 보상·R-GAT 패키지 41개 파일이 더 빠졌다.
+- **남긴 코드에서 보관 모듈로 가던 경로:**
+  - `speed.py`: confirmation의 헬퍼 다섯 개를 그대로 복사했다.
+  - `orl_development.py`: relation_control의 t 구간 함수를 그대로 복사했다.
+  - `models.build_model`: bond와 관계 섞기 분기를 지웠다. 모르는 arm 이름은 거부한다.
+  - `contracts`: `navigation` 섹션이 있는 설정은 거부한다.
+  - CLI: 보관한 경로의 단계 핸들러 8개를 지웠다.
+  - 모니터: 확인 실험, extension, 항법 루트 패널을 지웠다.
+  - 그림 스크립트: 결과 그림을 지웠다.
+- **바뀌지 않은 것:** learning-speed/1의 계획 해시는 `801902de…` 그대로이다. 계약 해시는 설정과 선언 상수만 묶고 소스 파일은 묶지 않는다.
+  ORL 해시와 학습 중인 프로세스는 영향을 받지 않았다. 프로세스는 코드를 이미 메모리에 올려 두었다.
+- **테스트:** 남은 전체 묶음이 통과했다.
+  - 보관 경로를 다루던 테스트는 보관했다.
+  - 남은 파일 안에 섞여 있던 보관 경로 테스트 함수 일부는 지우거나 남은 코드 기준으로 고쳤다.
+  - Meta-Sejong 설정 두 개는 남은 Isaac 센서 프로필 테스트가 기반으로 써서 되살렸다.
+- **run.sh:** `current-semantics-3d` 경로만 남겼다. 인자 없는 `./run.sh`는 사용법만 출력한다.

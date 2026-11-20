@@ -36,6 +36,7 @@ from concurrent.futures import ProcessPoolExecutor
 from dataclasses import asdict, dataclass, replace
 import datetime as dt
 import json
+import math
 import multiprocessing
 from pathlib import Path
 import time
@@ -408,6 +409,19 @@ def check_registration(plan, development, config, root: Path) -> str | None:
     return None
 
 
+def _t_interval(values: list[float]) -> dict[str, Any]:
+    """Two-sided 95 % t-interval of the mean over training seeds (moved from the archived
+    relation_control.py, 2026-11-20)."""
+    from scipy import stats
+    x = np.asarray(values, dtype=float)
+    n, m = len(x), float(x.mean())
+    sd = float(x.std(ddof=1)) if n > 1 else math.nan
+    half = float(stats.t.ppf(0.975, n - 1) * sd / math.sqrt(n)) if n > 1 else math.nan
+    return {"per_seed": [float(v) for v in x], "mean": m, "sd": sd,
+            "t": m / (sd / math.sqrt(n)) if n > 1 and sd > 0 else None,
+            "ci95": [m - half, m + half]}
+
+
 def judge(development, orl: dict[int, dict], stored: dict[str, dict[int, dict]],
           protocol: str = "orl-development/1",
           control: dict[int, dict] | None = None) -> dict[str, Any]:
@@ -415,7 +429,6 @@ def judge(development, orl: dict[int, dict], stored: dict[str, dict[int, dict]],
     ``control`` (orl-development/4): training seed -> rule-control summary, the primary
     comparison."""
     from .development import CELLS, FOUR_OOD, ID_CELLS, OOD_CELLS
-    from .relation_control import _t_interval
     seeds = list(development.training_seeds)
     metrics = {"all_cells": (CELLS, "success"), "id_mean": (ID_CELLS, "success"),
                "four_ood_mean": (FOUR_OOD, "success"),

@@ -307,9 +307,10 @@ class CurrentActorCritic(nn.Module):
 
 
 def build_model(arm: str, config: CurrentSemanticsConfig, *, seed: int) -> CurrentActorCritic:
-    """A registered arm, the ORL arm (``orl``) or a relation-shuffle control arm
-    (``relation_control``); the name carries the ORL spec / shuffle hash, so a worker
-    rebuilds the same network from it and a checkpoint never binds to another."""
+    """A registered arm, an ORL arm (``orl``) or ORL's rule control (``rule_control``); the
+    name carries the ORL spec hash, so a worker rebuilds the same network from it and a
+    checkpoint never binds to another.  The relation-shuffle and bond/1 arms were archived
+    on 2026-11-20 (archive/non_orl_20261120.tar.zst)."""
     if arm in ARMS:
         return CurrentActorCritic(arm, config, seed=seed)
     if isinstance(arm, str) and arm.startswith("orl_ppo"):
@@ -318,11 +319,8 @@ def build_model(arm: str, config: CurrentSemanticsConfig, *, seed: int) -> Curre
     if isinstance(arm, str) and arm.startswith("semantic_mlp_rule_ppo"):
         from .rule_control import control_model
         return control_model(arm, config, seed=seed)
-    if isinstance(arm, str) and arm.startswith("bond_rgat_ppo"):
-        from .bond import bond_model   # WMON's relational bond equilibrium (bond.py)
-        return bond_model(arm, config, seed=seed)
-    from .relation_control import shuffled_model
-    return shuffled_model(arm, config, seed=seed)
+    raise ValueError(f"unknown arm {arm!r}: registered {ARMS}, orl_ppo:<hash> or "
+                     "semantic_mlp_rule_ppo:<hash>")
 
 
 # ----------------------------------------------------------------- tensors

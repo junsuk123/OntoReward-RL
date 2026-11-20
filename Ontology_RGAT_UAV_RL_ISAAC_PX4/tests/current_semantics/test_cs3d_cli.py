@@ -20,7 +20,7 @@ PROJECT = Path(__file__).resolve().parents[2]
 REPOSITORY = PROJECT.parent
 RUN_SH = REPOSITORY / "run.sh"
 ROUTE = "current-semantics-3d"
-GATED = ("register-development", "develop", "register-confirmation", "confirm")
+GATED = ("register-development", "develop")
 
 
 def run(*args, timeout=180):
@@ -37,17 +37,22 @@ def test_help_lists_the_route_and_keeps_the_guarded_strings():
     done = subprocess.run(["bash", str(RUN_SH), "--help"], capture_output=True, text=True,
                           timeout=30)
     assert done.returncode == 0
-    for text in (ROUTE, "WHOLE minimal-observation system", "TRAINS", "FLIES",
-                 "reference-smoke"):
+    for text in (ROUTE, "--allow-isaac", "starts nothing", "archived"):
         assert text in done.stdout
 
 
-def test_every_pre_existing_route_is_still_dispatched():
+def test_only_the_current_semantics_route_remains_and_a_bare_call_starts_nothing():
+    """Every other route was archived on 2026-11-20; a bare ./run.sh prints the usage."""
     body = RUN_SH.read_text()
-    for name in ("system", "all", "reference-smoke", "reference", "status", "spatial",
-                 "matlab-port", "matlab-port-all", "matlab-port-final",
-                 "matlab-port-dashboard", "isaac-legacy", ROUTE):
-        assert re.search(rf"^\s+{re.escape(name)}\)\s*$", body, re.M), name
+    assert re.search(rf"^\s+{re.escape(ROUTE)}\)\s*$", body, re.M)
+    for gone in ("system", "all", "reference", "spatial", "matlab-port", "isaac-legacy",
+                 "wmon-demo"):
+        assert not re.search(rf"^\s+{re.escape(gone)}\)\s*$", body, re.M), gone
+    bare = subprocess.run(["bash", str(RUN_SH)], capture_output=True, text=True, timeout=30)
+    assert bare.returncode == 0 and "Usage" in bare.stdout
+    unknown = subprocess.run(["bash", str(RUN_SH), "system"], capture_output=True, text=True,
+                             timeout=30)
+    assert unknown.returncode == 2
     assert "--takeover" not in body.split("case")[0]
 
 

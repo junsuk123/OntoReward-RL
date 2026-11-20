@@ -4,7 +4,6 @@
 
 - 형식: 모두 흰 배경 PNG(200 dpi)와 SVG로 저장한다. 그림 속 글자는 영문이며, 논문 그림 형식의 세리프 글꼴(Times 계열)을 쓴다.
 - 다이어그램: 코드에서 직접 읽어 그렸다. 노드·간선·슬롯 수·파라미터 수는 `current_semantics/orl.py`(`orl/1`)에서 읽는다.
-- 결과 그림: [`figure_data.json`](figure_data.json)만 읽는다. 이 파일은 `extract` 단계가 비행별 기록과 평가 요약에서 뽑은 것이다.
 - 색 규칙:
   - 블록: 단계마다 파스텔 채움에 같은 색의 진한 테두리. 묶음은 파란 점선 상자로, 상세 패널은 점선으로 본 블록에 잇는다.
   - 결과 그림: 제안 정책만 강조색, 나머지 정책은 회색
@@ -60,19 +59,15 @@ Isaac Sim + Pegasus의 이동 패드와 PX4 SITL 쿼드로터에서 정책까지
 - (a) 정책 인계 시점의 시나리오 추출. 패드 방위 A와 패드 진행 방향 B는 4개 구역씩이고, 16개 조합 중 4개는 시험용으로 학습에서 뺀다.
 - (b), (c) 보상 퍼텐셜이 요구하는 드론−패드 상대 속도 `v_des`. `current_semantics/reward.py: desired_velocity`를 격자에서 직접 계산했다.
 
-## 보관: 이전 비교 실험의 결과 그림
+## 보관된 결과 그림
 
-아래 두 그림은 이전 단계에서 기존 R-GAT 정책(원 관측 우회가 있는 등록 arm)을 항법 열화 조건으로 평가한 결과이다.
-제안 정책이 ORL로 바뀌었고, 이 결과는 저자의 별도 연구인 Kinematic WLS 추정기(내부 명칭 WMON) 조건에 기대므로 README와 연구의 주장에 쓰지 않는다.
-기록 보존을 위해서만 남겨 둔다. 그림 속 "proposed" 표기는 당시의 제안 정책(기존 R-GAT)을 가리킨다.
-
-- [`isaac_wmon_results.png`](isaac_wmon_results.png): Kinematic WLS 자기 항법 조건의 Isaac 폐루프 성공률과 위험 판정
-- [`navigation_robustness.png`](navigation_robustness.png): 같은 케이스를 기준 항법, CA-KF, Kinematic WLS로 비행한 성공률
+이전 단계의 결과 그림 두 개(기존 R-GAT 정책의 Kinematic WLS 항법 조건 Isaac 결과, 항법별 성능 비교)와 그 수치 파일
+`figure_data.json`은 2026-11-20에 `archive/non_orl_20261120.tar.zst`로 옮겼다. 저자의 별도 연구인 추정기 조건에 기대는
+결과라 이 연구의 주장에 쓰지 않는다. ORL의 결과 그림은 학습 속도 확인 실험의 판정이 나온 뒤 추가한다.
 
 ## 다시 만들기
 
 ```bash
-python3 Ontology_RGAT_UAV_RL_ISAAC_PX4/tools/make_doc_figures.py extract   # results/ → figure_data.json
 python3 Ontology_RGAT_UAV_RL_ISAAC_PX4/tools/make_doc_figures.py all       # 모든 그림
 python3 Ontology_RGAT_UAV_RL_ISAAC_PX4/tools/make_doc_figures.py overall   # 하나만 (architecture, graph도 같은 방식)
 ```

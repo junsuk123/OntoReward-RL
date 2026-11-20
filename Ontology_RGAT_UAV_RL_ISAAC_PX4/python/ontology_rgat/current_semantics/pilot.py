@@ -211,11 +211,22 @@ def evaluate(pool: Any, arm: str, state: dict[str, Any], seeds: tuple[int, ...],
                           "refused": e.get("refused")} for e in episodes]}
 
 
+LIVE_CHECKPOINT = "live.pt"   # monitor-only snapshot of the weights being trained
+LIVE_EVERY = 5                # updates between snapshots
+
+
 def train_seed(config: CurrentSemanticsConfig, config_path: Path, model_seed: int,
                root: Path, pool: Any, *, log: Callable[[str], None],
-               updates: int | None = None, stop_at_full: bool = False) -> dict[str, Any]:
-    """Train one model.  ``stop_at_full`` (extension.py only) ends training after the first
-    update trained at difficulty 1.0; every earlier update is unchanged."""
+               updates: int | None = None, stop_at_full: bool = False,
+               live_every: int = LIVE_EVERY) -> dict[str, Any]:
+    """Train one model.  ``stop_at_full`` (extension.py, speed.py) ends training after the
+    first update trained at difficulty 1.0; every earlier update is unchanged.
+
+    Every ``live_every`` updates (and at each promotion) the current weights are written to
+    ``live.pt`` for the study monitor's encoding view (encoding_view.py).  The write is an
+    atomic ``save_checkpoint`` of a state-dict copy: it reads no generator and changes no
+    optimiser state, so training is bit-identical with or without it.  It is never a
+    selectable checkpoint and is removed when training ends."""
     from .features import build_feature_batch
     from .models import build_model, save_checkpoint
     from .ppo import PPOTrainer, build_batch
@@ -226,7 +237,8 @@ def train_seed(config: CurrentSemanticsConfig, config_path: Path, model_seed: in
     manifest = contract_manifest(config)
     root.mkdir(parents=True, exist_ok=True)
     history, validation = root / "history.jsonl", root / "validation.jsonl"
-    for path in (history, validation):
+    live = root / LIVE_CHECKPOINT
+    for path in (history, validation, live):
         path.unlink(missing_ok=True)
     torch.manual_seed(0)  # nothing should read it; models use private generators
     model = build_model(g4.arm, config, seed=model_seed)
@@ -253,6 +265,10 @@ def train_seed(config: CurrentSemanticsConfig, config_path: Path, model_seed: in
                "promoted_to": curriculum.difficulty if promoted else None,
                "wall_s": time.monotonic() - started}
         _append(history, row)
+        if live_every and (update % live_every == 0 or promoted):
+            save_checkpoint(live, model, manifest=manifest,
+                            extra={"update": update, "model_seed": model_seed, "live": True,
+                                   "difficulty": float(curriculum.difficulty)})
         if promoted:
             log(f"seed {model_seed} promoted to difficulty {curriculum.difficulty:.1f} "
                 f"after update {update}")
@@ -283,6 +299,7 @@ def train_seed(config: CurrentSemanticsConfig, config_path: Path, model_seed: in
     save_checkpoint(root / "final.pt", model, manifest=manifest,
                     extra={"update": updates - 1 if stopped is None else stopped,
                            "model_seed": model_seed})
+    live.unlink(missing_ok=True)
     out = {"model_seed": model_seed, "updates": updates, "best_update": best,
            "best_validation_key": list(best_key) if best_key else None,
            "final_training_difficulty": curriculum.difficulty,

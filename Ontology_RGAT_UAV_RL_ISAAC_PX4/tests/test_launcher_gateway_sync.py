@@ -18,41 +18,23 @@ import re
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-LAUNCHERS = ("run_two_pipeline.sh", "run_three_pipeline.sh",
-             "run_shin2026_benchmark.sh")
+# Since 2026-11-20 the one launcher is ontology_rgat.live_stack (the shell launchers of the
+# archived pipelines are in archive/non_orl_20261120.tar.zst).
+LAUNCHER = ROOT / "python" / "ontology_rgat" / "live_stack.py"
 
 
-# The path is quoted in the scripts, so the call reads
-# ``"$workspace_root/scripts/sync_gateway.sh" --check``.
-CHECK = re.compile(r'sync_gateway\.sh"?\s+--check')
+def test_the_launcher_refreshes_the_gateway_before_starting():
+    source = LAUNCHER.read_text(encoding="utf-8")
+    check = source.index('"scripts/sync_gateway.sh"), "--check"')
+    assert check < source.index("stack.start()"), "the gateway is synced after the stack starts"
 
 
-def _script(name: str) -> str:
-    return (ROOT / "scripts" / name).read_text(encoding="utf-8")
-
-
-@pytest.mark.parametrize("name", LAUNCHERS)
-def test_the_launcher_refreshes_the_gateway_before_starting(name):
-    script = _script(name)
-    found = CHECK.search(script)
-    assert found is not None, (
-        f"{name} can start a gateway that does not match the repository")
-    launch = script.index("exec ") if "exec " in script else len(script)
-    assert found.start() < launch, (
-        f"{name} syncs after it has already handed off")
-
-
-@pytest.mark.parametrize("name", LAUNCHERS)
-def test_the_launcher_actually_syncs_when_the_check_fails(name):
+def test_the_launcher_actually_syncs_when_the_check_fails():
     """``--check`` alone only reports; the repair call has to follow it."""
-    script = _script(name)
-    found = CHECK.search(script)
-    assert found is not None, f"{name} never checks the gateway mirror at all"
-    body = script[found.start():]
-    body = body[:body.index("fi") + 2]
-    repairs = [line for line in body.splitlines()
-               if "sync_gateway.sh" in line and "--check" not in line]
-    assert repairs, f"{name} detects a stale mirror and then uses it anyway"
+    source = LAUNCHER.read_text(encoding="utf-8")
+    body = source[source.index('"--check"'):source.index("stack = ExternalStack(")]
+    assert "if check.returncode:" in body
+    assert 'subprocess.run([str(ROOT / "scripts/sync_gateway.sh")], check=True)' in body
 
 
 def test_the_deck_vocabulary_the_gateway_validates_matches_the_simulator():

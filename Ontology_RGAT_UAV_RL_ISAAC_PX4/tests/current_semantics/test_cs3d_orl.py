@@ -388,7 +388,6 @@ def test_the_development_plan_pins_this_orl_spec_and_waits_for_learnability(tmp_
     from pathlib import Path
     import yaml
     from ontology_rgat.current_semantics import orl_development as od
-    from ontology_rgat.current_semantics.contracts import TASK_CONFIG_PATHS
     path = od.DEFAULT_PLAN_PATHS[version]
     assert od.plan_version(path) == version
     plan, development = od.load_plan(path, CONFIG)
@@ -400,8 +399,6 @@ def test_the_development_plan_pins_this_orl_spec_and_waits_for_learnability(tmp_
     stale.write_text(yaml.safe_dump(data), encoding="utf-8")
     with pytest.raises(ValueError, match="not this code's ORL arm"):
         od.load_plan(stale, CONFIG)
-    with pytest.raises(ValueError, match="extends development/1"):
-        od.load_plan(path, load_config(TASK_CONFIG_PATHS["spatial-current-task/6"]))
     status, payload = od.register(DEFAULT_CONFIG_PATH, path, tmp_path)
     assert status == 3 and "not registered" in payload["reason"]
     status, payload = od.run(DEFAULT_CONFIG_PATH, path, tmp_path)

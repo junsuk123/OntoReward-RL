@@ -193,13 +193,3 @@ def test_contact_snapshot_rejects_old_reset_and_nonfinite_event():
     event.update(angular_rate=[0,0,0],episode_id='previous-client-4')
     node._on_spatial_contact_event(SimpleNamespace(data=json.dumps(event)))
     assert 'truth_contact_event' not in node.sample.extra
-
-
-def test_spatial_profile_is_not_a_live_training_configuration():
-    from ontology_rgat.benchmarks.experiment import load_experiment
-    root = Path(__file__).resolve().parents[1]
-    profile = yaml.safe_load((root/"config/control/spatial_acceleration_v1.yaml").read_text())
-    assert profile["execution_status"] == "control_boundary_only"
-    SpatialAccelerationController.from_mapping(profile["control"])
-    with pytest.raises(ValueError, match="no compatible live training backend"):
-        load_experiment(root/"config/control/spatial_acceleration_v1.yaml")

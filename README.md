@@ -309,7 +309,7 @@ Isaac Sim 쪽 값은 배포 프로필 `config/spatial-isaac-system-v12.yaml`과 
 - `orl/1`의 학습된 하강 게이트는 학습 후 모델마다 거의 상수였다(표준편차 ≤ 0.027). 따라서 이 결과는 실제로는 국소성, 가중치 공유, 거울 등변성 세 가지의 효과이다.
 - 셀은 사후에 나누어 읽었다. 패드를 잃는 셀에서 지는 원인은 진단 중이다.
 - 결과는 모두 로컬 플랜트에서 얻었다. Isaac 평가는 아직 없다.
-- 이전 단계에서 등록 R-GAT 정책을 항법 열화 조건(GNSS 결측, CA-KF와 Kinematic WLS 추정기)으로 평가한 실험은 [항법 열화 실험 기록](Ontology_RGAT_UAV_RL_ISAAC_PX4/docs/current_semantics/WMON_LIVE_NAVIGATION_KO.md)에 남아 있다. 그 결과는 이 연구의 주장에 쓰지 않는다.
+- 이전 단계에서 기존 R-GAT 정책을 항법 열화 조건(GNSS 결측, CA-KF와 Kinematic WLS 추정기)으로 평가한 실험은 그 코드·결과·문서와 함께 `archive/non_orl_20261120.tar.zst`에 보관했다. 그 결과는 이 연구의 주장에 쓰지 않는다.
 
 ## 4. 기여
 
@@ -366,7 +366,7 @@ P=$PWD/Ontology_RGAT_UAV_RL_ISAAC_PX4/config/current_semantics
 ./run.sh current-semantics-3d --stage monitor          # 읽기 전용 진행 현황 페이지 (http://127.0.0.1:8780/)
 ```
 
-그림은 다음 명령으로 다시 만든다. 구조 그림은 코드(`orl.py`)에서, 결과 수치는 `docs/figures/figure_data.json`에서 읽는다.
+그림은 다음 명령으로 다시 만든다. 구조 그림은 코드(`orl.py`, `reward.py`)에서 직접 읽는다.
 
 ```bash
 python3 Ontology_RGAT_UAV_RL_ISAAC_PX4/tools/make_doc_figures.py overall
@@ -385,9 +385,10 @@ python3 Ontology_RGAT_UAV_RL_ISAAC_PX4/tools/make_doc_figures.py graph
 | ├ `reward.py`, `ppo.py` | 접근 속도장 퍼텐셜 보상, PPO |
 | ├ `backend.py`, `scenario.py` | 로컬/Isaac 백엔드, 시나리오 추출 |
 | └ `speed.py`, `development.py`, `orl_development.py` | 학습 속도 확인 실험, 개발 단계, ORL 개발 비교 |
-| `Ontology_RGAT_UAV_RL_ISAAC_PX4/python/ontology_rgat/spatial/` | 3축 플랜트와 판정, Isaac/PX4 연동 |
+| `Ontology_RGAT_UAV_RL_ISAAC_PX4/python/ontology_rgat/spatial/`, `live_stack.py` | 3축 플랜트와 판정, Isaac/PX4 연동, 소유한 비행 스택 |
 | `Ontology_RGAT_UAV_RL_ISAAC_PX4/isaac_sim/` | Isaac Sim 착륙 월드, 패드 운동, 센서, 외란 |
 | `Ontology_RGAT_UAV_RL_ISAAC_PX4/config/current_semantics/` | 과제·관측·모델·학습·평가 설정 |
 | `Ontology_RGAT_UAV_RL_ISAAC_PX4/tests/current_semantics/` | 단위 테스트 |
 | `Ontology_RGAT_UAV_RL_ISAAC_PX4/tools/make_doc_figures.py` | 이 문서의 그림 생성 |
 | `docs/figures/` | 그림과 그 설명 ([docs/figures/README.md](docs/figures/README.md)) |
+| `archive/` (git 제외) | ORL이 쓰지 않는 경로의 압축 보관본 (`non_orl_20261120.tar.zst`, 목록은 안의 `MANIFEST.md`) |

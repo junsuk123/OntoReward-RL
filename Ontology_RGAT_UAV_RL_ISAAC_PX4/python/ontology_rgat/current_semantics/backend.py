@@ -310,7 +310,7 @@ class CurrentObserver:
     (contracts.TRACK_REACQUIRE_RULE); while it accepts frames nothing changes.
 
     ``track_factory`` (opt-in, unregistered) replaces the pad track, e.g.
-    ``spatial.wmon_track.wmon_track_factory()``; it must return an object with
+    an alternative pad estimator; it must return an object with
     the reference track's ``update``/fields.  None is the registered ABG track,
     bit for bit.  A replaced track is named in the provenance
     (``pad_estimator``) because ``observation_hash`` still describes the ABG one.

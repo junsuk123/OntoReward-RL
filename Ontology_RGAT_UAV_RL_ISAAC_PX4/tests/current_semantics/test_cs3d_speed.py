@@ -35,11 +35,15 @@ def test_the_registered_plan_is_orl_against_untyped_and_raw_on_fresh_seeds(confi
     assert not set(plan.training_seeds) & speed.SPENT_MODEL_SEEDS
 
 
-@pytest.mark.parametrize("name", ["spatial_view_contact_v1_nav4_wmon.yaml",
-                                  "spatial_view_contact_v1_nav4_kalman.yaml"])
-def test_a_navigation_estimator_config_is_refused(name):
-    with pytest.raises(ValueError, match="base navigation"):
-        speed.load_plan(speed.DEFAULT_PATH, load_config(CONFIGS / name))
+def test_a_navigation_estimator_config_is_refused(tmp_path):
+    """Observation profile /4 (own navigation through an estimator) was archived with its
+    estimators on 2026-11-20; a config that still carries it does not load at all."""
+    data = yaml.safe_load(BASE.read_text(encoding="utf-8"))
+    data["navigation"] = {"estimator": "kalman"}
+    path = tmp_path / "nav.yaml"
+    path.write_text(yaml.safe_dump(data), encoding="utf-8")
+    with pytest.raises(ValueError, match="archived"):
+        load_config(path)
 
 
 def test_spent_model_or_episode_seeds_are_refused(config, tmp_path):

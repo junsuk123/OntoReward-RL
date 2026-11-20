@@ -6,3 +6,6 @@ past/
 # Simulator and middleware logs: PX4 ulogs alone run ~15 GB/day.
 # Kept on disk (and in Synology Drive) but never in git.
 Ontology_RGAT_UAV_RL_ISAAC_PX4/logs/
+
+# compressed archives of retired routes (kept locally, not versioned)
+archive/

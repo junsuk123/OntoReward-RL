@@ -1,14 +1,13 @@
-"""README figures for the ontology R-GAT landing policy (docs/figures/*.png, *.svg).
+"""README figures for the ORL landing policy (docs/figures/*.png, *.svg).
 
-    python3 tools/make_doc_figures.py extract     # results/ -> docs/figures/figure_data.json
-    python3 tools/make_doc_figures.py all         # every figure from figure_data.json + code
-    python3 tools/make_doc_figures.py overall | architecture | graph | field | effects | results | robustness
+    python3 tools/make_doc_figures.py all         # every figure
+    python3 tools/make_doc_figures.py overall | architecture | graph | field
 
-Diagrams are drawn from the code (the proposed ORL policy's nodes, edges, slots and sizes from
-current_semantics/orl.py, version ORL_VERSION; the approach field from current_semantics/reward.py).  Result
-figures read only docs/figures/figure_data.json, which ``extract`` builds from the confirmation
-report (20 fresh training seeds), the per-episode Isaac records and the local evaluation summaries
-under results/current_semantics_3d (results/ is not versioned, so the extracted numbers are).  White background, English labels, PNG 200 dpi + SVG.
+Diagrams are drawn from the code: the proposed ORL policy's nodes, edges, slots and sizes from
+current_semantics/orl.py (version ORL_VERSION), the approach field from current_semantics/reward.py.
+White background, English labels, PNG 200 dpi + SVG.  The result figures of the earlier
+navigation-degradation study (registered R-GAT arm) were archived on 2026-11-20
+(archive/non_orl_20261120.tar.zst).
 """
 from __future__ import annotations
 
@@ -24,13 +23,14 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
-from matplotlib.patches import Circle, FancyArrowPatch, FancyBboxPatch, Rectangle, Wedge  # noqa: E402
+from matplotlib.patches import (Circle, Ellipse, FancyArrowPatch, FancyBboxPatch,  # noqa: E402
+                                Rectangle, Wedge)
+from matplotlib.path import Path as MplPath  # noqa: E402
 
 PACKAGE = Path(__file__).resolve().parents[1]
 REPO = PACKAGE.parent
 sys.path.insert(0, str(PACKAGE / "python"))
 OUT = REPO / "docs" / "figures"
-DATA = OUT / "figure_data.json"
 RESULTS = PACKAGE / "results" / "current_semantics_3d"
 CONFIG = PACKAGE / "config" / "current_semantics" / "spatial_view_contact_v1.yaml"
 
@@ -58,18 +58,6 @@ RELATION_STYLE = {
     "gatesDescent": ("#008300", (0, (8, 2))),
     "informsVertical": ("#6250d6", (0, (2, 1.2, 6, 1.2))),
 }
-ARM_LABEL = {"ontology_rgat_ppo": "Ontology R-GAT\n(proposed)", "semantic_mlp_ppo": "Semantic MLP",
-             "raw_ppo": "PPO (raw obs.)", "untyped_gnn_ppo": "Untyped GNN"}
-SHORT_LABEL = {"ontology_rgat_ppo": "Ontology\nR-GAT", "semantic_mlp_ppo": "Semantic\nMLP",
-               "raw_ppo": "PPO\n(raw obs.)", "untyped_gnn_ppo": "Untyped\nGNN"}
-ARMS = ("ontology_rgat_ppo", "semantic_mlp_ppo", "raw_ppo", "untyped_gnn_ppo")
-UNSAFE = {"UNSAFE_CONTACT", "SAFETY_ENVELOPE_VIOLATION"}
-SEEDS = (10, 11, 12, 13, 14)
-# Result keys and folders keep the internal estimator identifiers ("wmon", "kalman");
-# every label shown in a figure goes through current_semantics.navigation's display names.
-WMON_ROOT = RESULTS / "spatial_current_semantics_v1_nav4_5aa4091b"   # internal: kinematic WLS
-CONFIRMATION = WMON_ROOT / "confirmation_mini" / "confirmation.json"
-COMPARED = ("semantic_mlp_ppo", "untyped_gnn_ppo", "raw_ppo")
 
 
 # ----------------------------------------------------------------------------- drawing helpers
@@ -142,134 +130,6 @@ def style_axes(ax):
 
 
 # ----------------------------------------------------------------------------- data extraction
-def _episodes(path):
-    rows = {}
-    for line in open(path, encoding="utf-8"):
-        r = json.loads(line)
-        rows[(r["condition"], r["seed"], r["training_seed"], r["arm"])] = r["status"]
-    return rows
-
-
-def extract():
-    isaac_src = {
-        "truth": RESULTS / "spatial_current_semantics_v1/isaac_development_2/episodes.jsonl",
-        "kalman": RESULTS / "spatial_current_semantics_v1_nav4_489abc2d/isaac_development_2/episodes.jsonl",
-        "wmon": RESULTS / "spatial_current_semantics_v1_nav4_5aa4091b/isaac_development/episodes.jsonl",
-    }
-    local_src = {
-        "truth": RESULTS / "spatial_current_semantics_v1/development.json",
-        "kalman": RESULTS / "spatial_current_semantics_v1_nav4_489abc2d/development.json",
-        "wmon": RESULTS / "spatial_current_semantics_v1_nav4_5aa4091b/development.json",
-    }
-    rows = {k: _episodes(p) for k, p in isaac_src.items()}
-    common = set.intersection(*(set(r) for r in rows.values()))
-    isaac = {}
-    for nav, rec in rows.items():
-        per_arm = {}
-        for arm in ARMS:
-            keys = [k for k in rec if k[3] == arm]
-            statuses = defaultdict(int)
-            for k in keys:
-                statuses[rec[k]] += 1
-            seeds = {}
-            for s in SEEDS:
-                ks = [k for k in keys if k[2] == s]
-                if ks:
-                    seeds[str(s)] = sum(rec[k] == "SUCCESS" for k in ks) / len(ks)
-            ck = [k for k in common if k[3] == arm]
-            per_arm[arm] = {"episodes": len(keys), "success": statuses["SUCCESS"],
-                            "unsafe": sum(v for s, v in statuses.items() if s in UNSAFE),
-                            "statuses": dict(statuses), "seed_success": seeds,
-                            "common_episodes": len(ck),
-                            "common_success": sum(rec[k] == "SUCCESS" for k in ck)}
-        isaac[nav] = per_arm
-    local = {}
-    for nav, path in local_src.items():
-        models = json.load(open(path, encoding="utf-8"))["models"]
-        per_arm = {}
-        for arm in ARMS:
-            vals, trained = [], []
-            for s in SEEDS:
-                m = models[f"{s}/{arm}"]
-                cells = m.get("cells") or {}
-                trained.append(bool(cells))
-                vals.append(float(np.mean([c["success"] for c in cells.values()])) if cells else 0.0)
-            per_arm[arm] = {"ten_cell_success_per_seed": vals, "trained": trained}
-        local[nav] = per_arm
-    # development stage, WMON root: the same paired-t intervals the confirmation registers, for
-    # comparison only (5 seeds; the confirmation is the test)
-    from ontology_rgat.current_semantics.confirmation import paired_interval
-    development = {}
-    for family, values in (("local_success", {a: local["wmon"][a]["ten_cell_success_per_seed"]
-                                              for a in ARMS}),
-                           ("isaac_success", {a: [isaac["wmon"][a]["seed_success"][str(s)] for s in SEEDS]
-                                              for a in ARMS})):
-        development[family] = {a: paired_interval([p - q for p, q in zip(values["ontology_rgat_ppo"],
-                                                                         values[a])],
-                                                  0.975 if a != "raw_ppo" else 0.95)
-                               for a in COMPARED}
-    data = {"note": "extracted by tools/make_doc_figures.py extract; development: 5 training seeds "
-                    "(10-14) per policy; confirmation: 20 fresh training seeds (20-39)",
-            "isaac": isaac, "local": local, "development_intervals": development,
-            "confirmation": _confirmation()}
-    OUT.mkdir(parents=True, exist_ok=True)
-    DATA.write_text(json.dumps(data, indent=1), encoding="utf-8")
-    print("wrote", DATA)
-
-
-def _confirmation():
-    """The registered confirmation report, reduced to what the README and figures quote."""
-    if not CONFIRMATION.exists():
-        return None
-    c = json.load(open(CONFIRMATION, encoding="utf-8"))
-    keep = ("n", "mean", "sd", "confidence", "low", "high", "t", "p", "passed", "opened",
-            "holm_rejected", "lower_risk")
-    trim = lambda d: {k: v for k, v in d.items() if k in keep}
-    out = {"plan_hash": c["plan_hash"], "local_complete": c["local"]["complete"],
-           "isaac_complete": c["isaac"]["complete"]}
-    lv = c["local"]["verdict"]
-    if lv:
-        out["local"] = {"means": lv["means"], "confirmation_passed": lv["confirmation_passed"],
-                        "practical_passed": lv["practical_passed"],
-                        "primary": {a: trim(v) for a, v in lv["primary"].items()},
-                        "practical": {a: trim(v) for a, v in lv["practical"].items()},
-                        "guards": {g: trim(v) for g, v in lv["guards"].items()},
-                        "composition_ood": {
-                            "means": lv["secondary"]["composition_ood_success"]["means"],
-                            "primary": {a: trim(v) for a, v in
-                                        lv["secondary"]["composition_ood_success"]["primary"].items()},
-                            "practical": {a: trim(v) for a, v in
-                                          lv["secondary"]["composition_ood_success"]["practical"].items()}},
-                        "learnability": {k: lv["learnability"][k] for k in
-                                         ("validated", "with_checkpoint", "models")},
-                        "success_by_arm_and_cell": lv["success_by_arm_and_cell"],
-                        "unsafe_by_arm_and_cell": lv["unsafe_by_arm_and_cell"],
-                        "ten_cell_success_by_seed": lv["ten_cell_success_by_seed"]}
-    iv = c["isaac"]["verdict"]
-    if iv:
-        out["isaac"] = {"means": iv["means"], "isaac_passed": iv["isaac_passed"],
-                        "practical_passed": iv["practical_passed"],
-                        "primary": {a: trim(v) for a, v in iv["primary"].items()},
-                        "practical": {a: trim(v) for a, v in iv["practical"].items()},
-                        "risk_family": {a: trim(v) for a, v in iv["risk_family"].items()},
-                        "risk_means": iv["risk_means"], "statuses_by_arm": iv["statuses_by_arm"],
-                        "flights_per_arm": iv["flights_per_arm"],
-                        "success_by_condition": iv["success_by_condition"],
-                        "success_by_seed": iv["success_by_seed"], "risk_by_seed": iv["risk_by_seed"],
-                        "excluded_models": iv["excluded_models"],
-                        "paired_with_local": c["isaac"]["paired_with_local"]}
-    return out
-
-
-def load_data():
-    return json.loads(DATA.read_text(encoding="utf-8"))
-
-
-
-# ----------------------------------------------------------------------------- 0 overall (paper style)
-from matplotlib.patches import Ellipse  # noqa: E402
-
-
 def _rect(ax, x, y, w, h, text, role, size=11.5, weight="normal", z=3):
     fc, ec = C[role]
     ax.add_patch(FancyBboxPatch((x, y), w, h, boxstyle="round,pad=0,rounding_size=1.0", fc=fc, ec=ec,
@@ -633,6 +493,62 @@ def architecture():
 
 # ----------------------------------------------------------------------------- 2 model
 # ----------------------------------------------------------------------------- 3 graph
+def _qpt(p, c, q, t):
+    u = 1.0 - t
+    return (u * u * p[0] + 2 * u * t * c[0] + t * t * q[0], u * u * p[1] + 2 * u * t * c[1] + t * t * q[1])
+
+
+def _qcut(p, c, q, centre, radius, t_from, t_to):
+    """The curve parameter, moving from ``t_from`` to ``t_to``, where it leaves the circle."""
+    lo, hi, prev = t_from, t_to, t_from
+    for i in range(1, 41):
+        t = t_from + (t_to - t_from) * i / 40
+        x = _qpt(p, c, q, t)
+        if math.hypot(x[0] - centre[0], x[1] - centre[1]) >= radius:
+            lo, hi = prev, t
+            break
+        prev = t
+    for _ in range(24):
+        mid = (lo + hi) / 2
+        x = _qpt(p, c, q, mid)
+        if math.hypot(x[0] - centre[0], x[1] - centre[1]) >= radius:
+            hi = mid
+        else:
+            lo = mid
+    return hi
+
+
+def _route_edge(p, q, obstacles, radius, *, clearance, step, cut_source, cut_target, tries=24):
+    """A quadratic edge from node centre ``p`` to ``q``, bent just enough to keep every other
+    node centre at least ``clearance`` away (the most clearance found if none does), trimmed
+    to the two node circles: (start, control, end) of the drawn curve.  The monitor's encoding
+    view routes its edges the same way (monitor.py ``routeEdges``)."""
+    dx, dy = q[0] - p[0], q[1] - p[1]
+    length = math.hypot(dx, dy)
+    nx, ny = -dy / length, dx / length
+    mid = ((p[0] + q[0]) / 2, (p[1] + q[1]) / 2)
+    best, best_clear = None, -1.0
+    for j in range(tries + 1):
+        k = 0 if j == 0 else (1 if j % 2 else -1) * math.ceil(j / 2)
+        c = (mid[0] + nx * k * step, mid[1] + ny * k * step)
+        clear = min((math.hypot(x[0] - o[0], x[1] - o[1])
+                     for x in (_qpt(p, c, q, i / 32) for i in range(1, 32)) for o in obstacles),
+                    default=math.inf)
+        if clear >= clearance:
+            best = c
+            break
+        if clear > best_clear:
+            best, best_clear = c, clear
+    c = best
+    t0 = _qcut(p, c, q, p, cut_source, 0.0, 1.0)
+    t1 = _qcut(p, c, q, q, cut_target, 1.0, 0.0)
+    start, end = _qpt(p, c, q, t0), _qpt(p, c, q, t1)
+    d0 = (2 * (1 - t0) * (c[0] - p[0]) + 2 * t0 * (q[0] - c[0]),
+          2 * (1 - t0) * (c[1] - p[1]) + 2 * t0 * (q[1] - c[1]))
+    half = (t1 - t0) / 2
+    return start, (start[0] + half * d0[0], start[1] + half * d0[1]), end
+
+
 def graph():
     """The ORL ontology graph: both planes, the shared state concepts and the decision nodes."""
     orl = _orl()
@@ -685,16 +601,15 @@ def graph():
         ax.text(X3 + 5.2, y1 - 1.6, name, ha="right", va="center", fontsize=10.5, color=MUTED,
                 style="italic")
     for (src, dst, rel) in semantic:
-        (x0, y0), (x1, y1) = pos[src], pos[dst]
-        dx, dy = x1 - x0, y1 - y0
-        L = math.hypot(dx, dy)
-        a = (x0 + dx / L * R, y0 + dy / L * R)
-        b = (x1 - dx / L * (R + 0.3), y1 - dy / L * (R + 0.3))
+        others = [pos[n] for n in pos if n not in (src, dst)]
+        start, control, end = _route_edge(pos[src], pos[dst], others, R, clearance=R + 1.6,
+                                          step=1.4, cut_source=R + 0.2, cut_target=R + 0.5)
         color, ls = RELATION_STYLE[rel]
-        ax.add_patch(FancyArrowPatch(a, b, arrowstyle="-|>", mutation_scale=10, color=color,
+        ax.add_patch(FancyArrowPatch(path=MplPath([start, control, end],
+                                                  [MplPath.MOVETO, MplPath.CURVE3, MplPath.CURVE3]),
+                                     arrowstyle="-|>", mutation_scale=10, color=color,
                                      lw=1.9 if rel in ("informsLanding", "informsVertical") else 1.3,
-                                     linestyle=ls, connectionstyle="arc3,rad=0.0", zorder=2, shrinkA=0,
-                                     shrinkB=0, alpha=0.95))
+                                     linestyle=ls, zorder=2, alpha=0.95))
     for n, (x, y) in pos.items():
         fc, ec = C[role(n)]
         ax.add_patch(Circle((x, y), R, fc=fc, ec=ec if role(n) != "kg" else INK, lw=1.6, zorder=4))
@@ -812,209 +727,15 @@ def field():
 
 
 # ----------------------------------------------------------------------------- 5 results
-def results():
-    """Isaac Sim + PX4 under the kinematic WLS navigation (internal estimator id "wmon"):
-    the confirmation as bars and seed
-    dots, the development stage (5 seeds) as hollow diamonds."""
-    data = load_data()
-    conf = (data.get("confirmation") or {}).get("isaac")
-    dev = data["isaac"]["wmon"]
-    fig, (a1, a2) = plt.subplots(1, 2, figsize=(11.8, 4.5), gridspec_kw=dict(width_ratios=[1.25, 1.0],
-                                                                                wspace=0.30))
-    x = np.arange(len(ARMS))
-    colors = [PROPOSED if a == "ontology_rgat_ppo" else OTHER for a in ARMS]
-    dev_succ = [100 * dev[a]["success"] / dev[a]["episodes"] for a in ARMS]
-    dev_risk = [100 * dev[a]["unsafe"] / dev[a]["episodes"] for a in ARMS]
-    if conf:
-        succ = [100 * conf["means"][a] for a in ARMS]
-        risk = [100 * conf["risk_means"][a] for a in ARMS]
-        flights = conf["flights_per_arm"]["ontology_rgat_ppo"]
-        n_seeds = len(conf["success_by_seed"]["ontology_rgat_ppo"])
-    else:
-        succ, risk, flights, n_seeds = dev_succ, dev_risk, dev["ontology_rgat_ppo"]["episodes"], len(SEEDS)
-    a1.bar(x, succ, width=0.56, color=colors, zorder=2)
-    rng = np.random.default_rng(3)
-    for i, a in enumerate(ARMS):
-        ys = [100 * v for v in (conf["success_by_seed"][a].values() if conf else dev[a]["seed_success"].values())]
-        a1.scatter(i + rng.uniform(-0.16, 0.16, len(ys)), ys, s=13, color="white", edgecolor=INK, lw=0.7,
-                   zorder=3)
-        a1.text(i, 3.0, f"{succ[i]:.1f} %", ha="center", va="bottom", fontsize=9.8, color="white",
-                weight="bold")
-        if conf:
-            a1.scatter([i + 0.36], [dev_succ[i]], marker="D", s=30, color="white", edgecolor=INK, lw=1.1,
-                       zorder=4)
-    a1.set_xticks(x, [SHORT_LABEL[a] for a in ARMS], fontsize=9)
-    a1.set_xlim(-0.5, len(ARMS) - 0.35)
-    a1.set_ylim(0, 108)
-    a1.set_ylabel("landing success [%]", fontsize=9.5, color=MUTED)
-    a1.set_title(f"Landing success  (o = one training seed, {flights // n_seeds} flights)", fontsize=10.5,
-                 color=INK, loc="left")
-    style_axes(a1)
-    a2.bar(x, risk, width=0.56, color=colors, zorder=2)
-    for i, a in enumerate(ARMS):
-        a2.text(i, risk[i] + 0.5, f"{risk[i]:.1f} %", ha="center", va="bottom", fontsize=9.4, color=INK,
-                weight="bold" if a == "ontology_rgat_ppo" else "normal")
-        if conf:
-            a2.scatter([i + 0.36], [dev_risk[i]], marker="D", s=30, color="white", edgecolor=INK, lw=1.1,
-                       zorder=4)
-    a2.set_xticks(x, [SHORT_LABEL[a] for a in ARMS], fontsize=9)
-    a2.set_xlim(-0.5, len(ARMS) - 0.35)
-    a2.set_ylim(0, max(risk + dev_risk) * 1.25 + 1)
-    a2.set_ylabel("flights with a risk verdict [%]", fontsize=9.5, color=MUTED)
-    a2.set_title("Unsafe contact or envelope violation", fontsize=10.5, color=INK, loc="left")
-    style_axes(a2)
-    from ontology_rgat.current_semantics.navigation import estimator_display_name
-    fig.suptitle("Isaac Sim + PX4 SITL, own navigation from the FFT-assisted kinematic WLS estimator "
-                 "with GNSS outages", x=0.06, y=1.04, ha="left", fontsize=12, weight="bold", color=INK)
-    fig.text(0.06, -0.12 if conf else -0.06,
-             f"Estimator: {estimator_display_name('wmon')}, recorded internally as 'wmon'; developed by "
-             "the author in separate research and part of the experimental setup, not a contribution "
-             "of this study.", fontsize=8.2, color=MUTED)
-    if conf:
-        fig.text(0.06, -0.06, f"Bars: confirmation, {n_seeds} fresh training seeds x {flights // n_seeds} "
-                 f"flights = {flights} flights per policy.   "
-                 "Hollow diamond: development stage, 5 seeds x 30 flights (other seeds and environments).",
-                 fontsize=8.4, color=MUTED)
-    save(fig, "isaac_wmon_results")
-
-
-def effects():
-    """Registered decision of the confirmation: R-GAT minus each policy, per-seed paired-t intervals."""
-    data = load_data()
-    conf = data["confirmation"]
-    devi = data["development_intervals"]
-    names = {"semantic_mlp_ppo": "vs Semantic MLP", "untyped_gnn_ppo": "vs Untyped GNN",
-             "raw_ppo": "vs PPO (raw obs.)"}
-    fig = plt.figure(figsize=(11.0, 7.4))
-    a1 = fig.add_axes([0.25, 0.42, 0.40, 0.50])
-    a2 = fig.add_axes([0.25, 0.10, 0.40, 0.20])
-
-    def verdict(v, a):
-        if v.get("passed"):
-            return "confirmed"
-        if a == "raw_ppo" and not v.get("opened", True):
-            return "not opened"
-        return "not confirmed"
-
-    def draw(ax, y, v, good, dev=None):
-        col = PROPOSED if good else OTHER
-        ax.plot([100 * v["low"], 100 * v["high"]], [y, y], color=col, lw=3.0, solid_capstyle="round", zorder=3)
-        ax.scatter([100 * v["mean"]], [y], s=46, color=col, edgecolor="white", lw=1.0, zorder=4)
-        if dev is not None:
-            ax.scatter([100 * dev["mean"]], [y + 0.3], marker="D", s=22, color="white", edgecolor=INK, lw=0.9,
-                       zorder=4)
-
-    def finish(ax, ticks, labels, xlabel, title):
-        ax.axvline(0, color=INK, lw=1.0, zorder=2)
-        ax.set_yticks(ticks, labels, fontsize=9)
-        ax.set_xlabel(xlabel, fontsize=9.2, color=MUTED)
-        style_axes(ax)
-        ax.yaxis.grid(False)
-        ax.xaxis.grid(True, color=GRID, lw=0.8)
-        ax.set_title(title, fontsize=10.5, color=INK, loc="left")
-
-    n = (conf.get("local") or conf.get("isaac"))["primary"]["semantic_mlp_ppo"]["n"]
-    y, ticks, labels = 0.0, [], []
-    for title, fam, dkey in (("Local plant: ten-cell mean success", conf.get("local"), "local_success"),
-                             ("Isaac + PX4: landing success", conf.get("isaac"), "isaac_success")):
-        if fam is None:
-            continue
-        a1.text(-0.02, y, title, transform=a1.get_yaxis_transform(), ha="right", va="center",
-                fontsize=9.6, weight="bold", color=INK)
-        y += 1
-        for a in COMPARED:
-            v = fam["primary"][a] if a in fam["primary"] else fam["practical"][a]
-            good = bool(v.get("passed"))
-            draw(a1, y, v, good, devi[dkey][a])
-            level = f"{100 * v['confidence']:.1f}".rstrip("0").rstrip(".")
-            a1.text(1.03, y, f"{100 * v['mean']:+.1f} pp  [{100 * v['low']:+.1f}, {100 * v['high']:+.1f}]  "
-                    f"{level} %   {verdict(v, a)}", transform=a1.get_yaxis_transform(), va="center",
-                    fontsize=8.6, color=PROPOSED if good else INK, weight="bold" if good else "normal")
-            ticks.append(y)
-            labels.append(names[a])
-            y += 1
-        y += 0.5
-    a1.set_ylim(y - 0.6, -0.7)
-    finish(a1, ticks, labels, "R-GAT minus compared policy, landing success [pp]",
-           f"Landing success: registered comparisons, {n} fresh training seeds, paired by seed")
-    iv = conf.get("isaac")
-    if iv:
-        for i, a in enumerate(COMPARED):
-            v = iv["risk_family"][a]
-            good = bool(v.get("lower_risk"))
-            draw(a2, i, v, good)
-            a2.text(1.03, i, f"{100 * v['mean']:+.1f} pp  [{100 * v['low']:+.1f}, {100 * v['high']:+.1f}]  95 %   "
-                    + ("fewer (Holm)" if good else "not established"), transform=a2.get_yaxis_transform(),
-                    va="center", fontsize=8.6, color=PROPOSED if good else INK,
-                    weight="bold" if good else "normal")
-        a2.set_ylim(len(COMPARED) - 0.5, -0.5)
-        finish(a2, list(range(len(COMPARED))), [names[a] for a in COMPARED],
-               "R-GAT minus compared policy, risk verdicts [pp]  (negative = fewer)",
-               "Isaac + PX4: unsafe contact or envelope violation")
-    fig.text(0.02, -0.02, f"Line: paired-t interval of the mean over the {n} per-seed differences (97.5 % for the two "
-             "primary comparisons, Bonferroni; 95 % for PPO,\nread only after both primaries pass; risk family "
-             "Holm-adjusted).  Dot: mean.  Hollow diamond: development-stage estimate (5 other seeds).\n"
-             "Rule and seeds were registered before training: config/current_semantics/confirmation_mini_v1.yaml.",
-             fontsize=8.2, color=MUTED, linespacing=1.45, va="top")
-    save(fig, "confirmation_effects")
-
-
-def robustness():
-    d = load_data()["isaac"]
-    from ontology_rgat.current_semantics.navigation import estimator_display_name
-    navs = [("truth", "reference\nnavigation"),
-            ("kalman", f"{estimator_display_name('kalman', short=True)}\n(GNSS outages)"),
-            ("wmon", f"{estimator_display_name('wmon', short=True)}\n(GNSS outages)")]
-    fig, ax = plt.subplots(figsize=(7.6, 4.6))
-    markers = {"ontology_rgat_ppo": "o", "semantic_mlp_ppo": "s", "raw_ppo": "^", "untyped_gnn_ppo": "D"}
-    x = np.arange(len(navs))
-    ends = []
-    for a in ARMS:
-        ys = [100 * d[n][a]["common_success"] / d[n][a]["common_episodes"] for n, _ in navs]
-        prop = a == "ontology_rgat_ppo"
-        ax.plot(x, ys, color=PROPOSED if prop else OTHER, lw=2.6 if prop else 1.5, marker=markers[a],
-                ms=8.5 if prop else 7, mec="white", mew=1.2, zorder=4 if prop else 3)
-        ends.append((ys[-1], a, ys))
-    ends.sort()
-    last = -99.0
-    for y, a, ys in ends:
-        yl = max(y, last + 3.4)
-        last = yl
-        name = ARM_LABEL[a].replace("\n", " ")
-        ax.text(x[-1] + 0.08, yl, f"{name}  {y:.1f} %", va="center", fontsize=9,
-                color=PROPOSED if a == "ontology_rgat_ppo" else INK,
-                weight="bold" if a == "ontology_rgat_ppo" else "normal")
-    ax.set_xticks(x, [lab for _, lab in navs], fontsize=9)
-    ax.set_xlim(-0.2, 2.95)
-    ax.set_ylim(64, 101)
-    ax.set_ylabel("landing success in Isaac Sim + PX4 [%]", fontsize=9.5, color=MUTED)
-    ax.set_title("Same flights, degrading own-navigation source", fontsize=11.5, color=INK, loc="left",
-                 weight="bold")
-    style_axes(ax)
-    n = d["wmon"]["ontology_rgat_ppo"]["common_episodes"]
-    m = d["wmon"]["semantic_mlp_ppo"]["common_episodes"]
-    fig.text(0.02, -0.04, f"Identical cases in every column: 30 environments x 5 training seeds = {n} flights per "
-             f"policy ({m} for the MLP,\nwhose seeds common to all three profiles are 3).  Kinematic WLS = "
-             "FFT-assisted kinematic WLS estimator (internal id 'wmon'); Kalman = constant-acceleration "
-             "Kalman filter.", fontsize=8.2, color=MUTED)
-    save(fig, "navigation_robustness")
-
-
-FIGURES = {"overall": overall, "architecture": architecture, "graph": graph, "field": field, "effects": effects,
-           "results": results, "robustness": robustness}
+FIGURES = {"overall": overall, "architecture": architecture, "graph": graph, "field": field}
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("what", choices=["extract", "all", *FIGURES])
+    parser.add_argument("what", choices=["all", *FIGURES])
     args = parser.parse_args()
-    if args.what == "extract":
-        extract()
-    elif args.what == "all":
-        for name, f in FIGURES.items():
-            if name == "effects" and not load_data().get("confirmation"):
-                print("skip effects: no confirmation report yet")
-                continue
+    if args.what == "all":
+        for f in FIGURES.values():
             f()
     else:
         FIGURES[args.what]()

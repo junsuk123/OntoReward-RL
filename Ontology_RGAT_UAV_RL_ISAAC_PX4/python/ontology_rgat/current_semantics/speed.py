@@ -35,6 +35,7 @@ import datetime as dt
 import json
 import math
 import multiprocessing
+import os
 from pathlib import Path
 import time
 from typing import Any, Callable
@@ -42,11 +43,85 @@ from typing import Any, Callable
 import numpy as np
 import yaml
 
-from . import confirmation as cf
 from . import development as dev
 from . import orl
 from .contracts import (AUDITED_SEED_RANGES, DIAGNOSTIC_SEED_RANGES, PROJECT_ROOT,
                         CurrentSemanticsConfig, contract_manifest, load_config)
+
+# Isaac environment seeds the development's Isaac flights spent.
+SPENT_ISAAC_SEEDS = (("isaac-development environments", 994_101, 994_130),)
+
+
+# ----------------------------------------------------- helpers (from confirmation.py, archived
+# 2026-11-20 with every non-ORL route; copied verbatim so the protocol's behaviour is unchanged)
+
+def _alpha(value: Any, where: str) -> float:
+    alpha = dev._number(value, where, low=0.0)
+    if not 0.0 < alpha < 0.5:
+        raise ValueError(f"{where} must lie in (0, 0.5)")
+    return alpha
+
+
+CLAIM = "claim"   # one per model directory: the pid training it
+
+
+def _alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
+def claim(directory: Path) -> bool:
+    """Atomically claim one model for this process.  A claim whose pid is gone is cleared,
+    together with the dead run's checkpoints, so a model is trained from scratch exactly once
+    by whichever process holds it (``train_seed`` restarts its own history files)."""
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / CLAIM
+    for _ in range(2):
+        try:
+            handle = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError:
+            text = path.read_text(encoding="utf-8").split()
+            pid = int(text[0]) if text and text[0].isdigit() else -1
+            if pid > 0 and _alive(pid):
+                return pid == os.getpid()
+            path.unlink(missing_ok=True)
+            continue
+        os.write(handle, f"{os.getpid()} {dt.datetime.now().isoformat()}\n".encode())
+        os.close(handle)
+        for stale in ("best.pt", "final.pt"):
+            (directory / stale).unlink(missing_ok=True)
+        return True
+    return False
+
+
+def release(directory: Path) -> None:
+    (directory / CLAIM).unlink(missing_ok=True)
+
+
+def paired_interval(diffs: list[float], confidence: float) -> dict[str, Any]:
+    """Two-sided paired-t interval of the mean of ``diffs`` (one per training seed)."""
+    from scipy import stats
+    d = np.asarray(diffs, dtype=float)
+    n = len(d)
+    mean = float(d.mean())
+    sd = float(d.std(ddof=1)) if n > 1 else math.nan
+    se = sd / math.sqrt(n) if n > 1 else math.nan
+    if n < 2 or not math.isfinite(se):
+        return {"n": n, "mean": mean, "sd": sd, "confidence": confidence, "low": None,
+                "high": None, "t": None, "p": None, "per_seed": d.tolist()}
+    q = float(stats.t.ppf(0.5 + confidence / 2.0, n - 1))
+    if se == 0.0:
+        t, p = (math.inf if mean else 0.0), (0.0 if mean else 1.0)
+    else:
+        t = mean / se
+        p = float(2.0 * stats.t.sf(abs(t), n - 1))
+    return {"n": n, "mean": mean, "sd": sd, "confidence": confidence,
+            "low": mean - q * se, "high": mean + q * se, "t": t, "p": p,
+            "per_seed": d.tolist()}
+
 
 PROTOCOL = "learning-speed/1"
 DEFAULT_PATH = PROJECT_ROOT / "config" / "current_semantics" / "learning_speed_v1.yaml"
@@ -117,7 +192,7 @@ def load_plan(path: str | Path, config: CurrentSemanticsConfig) -> SpeedPlan:
         train_seed_base=int(dev._number(data["train_seed_base"], "train_seed_base", low=0)),
         cap=int(dev._number(data["cap"], "cap", low=1)),
         workers=int(dev._number(data["workers"], "workers", low=1)),
-        family_alpha=cf._alpha(data["family_alpha"], "family_alpha"))
+        family_alpha=_alpha(data["family_alpha"], "family_alpha"))
     _check_contract(config)
     _audit(plan, config)
     return plan
@@ -141,7 +216,7 @@ def _audit(plan: SpeedPlan, config: CurrentSemanticsConfig) -> None:
                          "confirmation model seed")
     used = [(name, first, last) for name, first, last, _ in AUDITED_SEED_RANGES]
     used += list(DIAGNOSTIC_SEED_RANGES) + list(dev.SPENT_DEVELOPMENT_SEEDS)
-    used += list(cf.SPENT_ISAAC_SEEDS) + list(SPENT_TRAINING_SEEDS)
+    used += list(SPENT_ISAAC_SEEDS) + list(SPENT_TRAINING_SEEDS)
     used += [("g4 pilot training", *dev._PILOT_SEEDS)]
     taken = (set(g4.validation_seeds) | set(g4.test_seeds) | set(config.g3.pilot_seeds)
              | set(config.isaac_eval.seeds))
@@ -289,7 +364,7 @@ def run(config_path: Path, plan_path: Path, root: Path, *,
             for key in pending:
                 directory = model_dir(root, key)
                 if _summary(directory / "summary.json", digest) is not None \
-                        or not cf.claim(directory):
+                        or not claim(directory):
                     continue
                 seed_text, arm = key.split("/", 1)
                 acfg = arm_config(config, plan, arm)
@@ -305,7 +380,7 @@ def run(config_path: Path, plan_path: Path, root: Path, *,
                     "first_full_update": event, "censored": event is None,
                     "final_difficulty": float(rows[-1]["difficulty"]),
                     "updates_run": len(rows), "training": trained})
-                cf.release(directory)
+                release(directory)
                 dev._status(directory, "done")
                 done_here.append(key)
                 log(f"speed: {key} first difficulty-1.0 update "
@@ -323,7 +398,7 @@ def compare(plan: SpeedPlan, proposed: dict[int, dict[str, Any]],
     seeds = sorted(set(proposed) & set(other))
     t = lambda r: plan.cap if r["censored"] else r["first_full_update"]
     diffs = [math.log(t(proposed[s])) - math.log(t(other[s])) for s in seeds]
-    interval = cf.paired_interval(diffs, 1.0 - plan.family_alpha / len(plan.comparisons))
+    interval = paired_interval(diffs, 1.0 - plan.family_alpha / len(plan.comparisons))
     proposed_censored = sum(proposed[s]["censored"] for s in seeds)
     if interval["high"] is not None and interval["high"] < 0.0 and not proposed_censored:
         verdict = "faster"

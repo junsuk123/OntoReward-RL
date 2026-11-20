@@ -1278,8 +1278,11 @@ def _pilot_seeds(value: Any) -> tuple[int, ...]:
 def _navigation(section: Any) -> Any:
     if section is None:
         return None
-    from .navigation import NavigationProfile
-    return NavigationProfile.from_mapping(section)
+    # Observation profile /4 (live own navigation with the kinematic WLS or CA-KF estimator)
+    # was archived on 2026-11-20 with every non-ORL route (archive/non_orl_20261120.tar.zst).
+    raise ValueError("this config carries a 'navigation' section (observation profile /4), "
+                     "whose estimators were archived on 2026-11-20; ORL runs on the base "
+                     "navigation contract (spatial_view_contact_v1.yaml)")
 
 
 def load_config(path: str | Path | None = None) -> CurrentSemanticsConfig:

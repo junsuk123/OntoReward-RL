@@ -109,18 +109,6 @@ def test_the_server_publishes_the_page_and_the_state(tmp_path):
         server.server_close()
 
 
-def test_relation_shuffle_runs_and_their_verdict_are_shown(tmp_path):
-    v5 = tmp_path / TASK_RUN_ROOTS["spatial-current-task/5"].name
-    _history(v5 / "relation_shuffle" / "seed10" / "shuffle1", 40)
-    (v5 / "relation_shuffle_registration.json").write_text(json.dumps(
-        {"protocol": "relation-shuffle/1", "models": 10}))
-    state = snapshot(tmp_path)
-    (run,) = state["runs"]
-    assert run["kind"] == "관계 섞기 대조군" and run["update"] == 39
-    (task,) = [t for t in state["tasks"] if t["task"] == "spatial-current-task/5"]
-    assert task["relation_shuffle"] == {"protocol": "relation-shuffle/1", "models": 10,
-                                        "complete": None, "verdict": None, "delta": None,
-                                        "ci95": None}
 
 
 def test_records_older_than_the_window_are_not_shown(tmp_path):

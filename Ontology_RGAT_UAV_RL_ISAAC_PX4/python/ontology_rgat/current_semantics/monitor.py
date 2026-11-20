@@ -12,9 +12,9 @@ page answers "what is running and how far is it" across the whole study:
   * tasks      -- per task root (v5 / v6 / v7): the G4 verdict, the design
                   calibration verdict, the development registration and result, and
                   the Isaac flights on record;
-  * confirmation -- the registered confirmation runs (``confirmation*/``): models trained
-                  and evaluated, the amendment's arm set and rule, Isaac flights per arm,
-                  interruptions and, once written, the verdict;
+  * speed      -- the registered learning-speed protocol (``learning_speed/``): every
+                  model's first update at difficulty 1.0, per-arm summaries, a running
+                  paired tally and, once written, the registered verdict;
   * encoding   -- for a graph-arm run (R-GAT or untyped GNN), its newest checkpoint flown
                   for one probe episode with the encoder traced: per-edge attention per hop,
                   node-state norms and the 8-D LandingContext readout per decision
@@ -52,7 +52,7 @@ TASK_LABELS = {"spatial-current-task/5": "과제 v5 (조합: 방향 보류)",
 STALL_S = 300.0
 LOG_WINDOW_S = 3600.0
 # Runs and task verdicts untouched for longer than this are past records and are not shown
-# (live runs and registered confirmation runs always are).
+# (live runs and the learning-speed runs always are).
 RECENT_S = 24 * 3600.0
 PROCESS_KEYS = ("run_current_semantics_3d.py", "development_design/", "isaac-sim", "kit/python",
                 "px4", "MicroXRCEAgent", "gateway")
@@ -72,19 +72,13 @@ def _rolling(values: list, window: int = 10) -> list:
     return out
 
 
-CONFIRMATION_DIRS = {"confirmation_mini": "축소 확인 실험", "confirmation": "확인 실험",
-                     "replication_mini": "CA-KF 축소 재현 실험"}
 SPEED_DIR = "learning_speed"      # learning-speed/1 (speed.py)
-EXTENSION_DIR = "extension"       # learning-speed-extension/1 (extension.py), per confirmation
-STOP_AT_FULL_CAP = 600            # both stop at the first update trained at difficulty 1.0
+STOP_AT_FULL_CAP = 600            # learning-speed runs stop at the first update at difficulty 1.0
 ARM_NAMES = {"raw_ppo": "PPO (raw obs.)", "untyped_gnn_ppo": "Untyped GNN",
              "semantic_mlp_ppo": "Semantic MLP", "ontology_rgat_ppo": "R-GAT (등록 arm)"}
 # Each config's run root, by the self-navigation it uses (user 2026-11-20: the kinematic WLS
 # estimator is separate research and carries no claim of this study).
-ROOT_CONFIGS = (("spatial_view_contact_v1.yaml", "기준 항법"),
-                ("spatial_view_contact_v1_nav4_kalman.yaml", "CA-KF 항법"),
-                ("spatial_view_contact_v1_nav4_wmon.yaml",
-                 "Kinematic WLS 항법 (별도 연구 · 주장에 쓰지 않음)"))
+ROOT_CONFIGS = (("spatial_view_contact_v1.yaml", "기준 항법"),)
 _ROOT_LABELS: dict[str, str] | None = None
 
 
@@ -112,25 +106,19 @@ def root_labels() -> dict[str, str]:
 
 
 def _stops_at_full(rel: tuple[str, ...]) -> bool:
-    return bool(rel) and (rel[0] == SPEED_DIR or (len(rel) > 1 and rel[1] == EXTENSION_DIR))
+    return bool(rel) and rel[0] == SPEED_DIR
 
 
 def _run_kind(rel: Path) -> str:
     parts = rel.parts
     if parts[0] == SPEED_DIR:
         return f"학습 속도 실험 · {arm_name(parts[-1])}"
-    if parts[0] in CONFIRMATION_DIRS and len(parts) > 1 and parts[1] == EXTENSION_DIR:
-        return f"{CONFIRMATION_DIRS[parts[0]]} 연장 · {arm_name(parts[-1])}"
-    if parts[0] in CONFIRMATION_DIRS:
-        return f"{CONFIRMATION_DIRS[parts[0]]} · {parts[-1]}"
     if parts[0] == "g4_pilot":
         return "G4 pilot"
     if parts[0] == "development":
         return "development"
     if parts[0] == "development_design":
         return "design (등록 아님)"
-    if parts[0] == "relation_shuffle":
-        return "관계 섞기 대조군"
     if parts[0] in ("orl", "orl2", "orl3", "orl4", "orl5"):
         name = "ORL" if parts[0] == "orl" else f"ORL/{parts[0][3:]}"
         if parts[1] == "control":  # orl/4-/5's rule control (MLP + view rule)
@@ -140,17 +128,12 @@ def _run_kind(rel: Path) -> str:
 
 
 def _planned_updates(task_root: Path, run_dir: Path) -> int:
-    """600 is the registered budget of every G4 pilot, design run and development model; a
-    confirmation registers its own (``updates``)."""
+    """600 is the registered budget of every G4 pilot, design run and development model; the
+    learning-speed protocol registers its cap."""
     rel = run_dir.relative_to(task_root).parts
     if rel and rel[0] == SPEED_DIR:
         reg = _cached(task_root / SPEED_DIR / "learning_speed_registration.json", _json) or {}
         return int(reg.get("cap") or STOP_AT_FULL_CAP)
-    if _stops_at_full(rel):
-        return STOP_AT_FULL_CAP
-    if rel and rel[0] in CONFIRMATION_DIRS:
-        reg = _cached(task_root / rel[0] / "confirmation_registration.json", _json) or {}
-        return int(reg.get("updates") or 600)
     for candidate in (task_root / "development_registration.json",):
         data = _cached(candidate, _json) if candidate.exists() else None
         if data and data.get("updates") and "development" in run_dir.parts:
@@ -256,7 +239,6 @@ def _history_dirs(task_root: Path) -> list[Path]:
     """Live-layout training directories only; archived pilots (g4_pilot_v*) are skipped."""
     patterns = ("g4_pilot/seed*/history.jsonl", "development/seed*/*/history.jsonl",
                 "development_design/*/seed*/history.jsonl",
-                "relation_shuffle/seed*/shuffle*/history.jsonl",
                 "orl/g4_pilot/seed*/history.jsonl", "orl/development/seed*/history.jsonl",
                 "orl2/g4_pilot/seed*/history.jsonl", "orl2/development/seed*/history.jsonl",
                 "orl3/g4_pilot/seed*/history.jsonl", "orl3/development/seed*/history.jsonl",
@@ -266,11 +248,7 @@ def _history_dirs(task_root: Path) -> list[Path]:
                 "orl5/g4_pilot/seed*/history.jsonl", "orl5/development/seed*/history.jsonl",
                 "orl5/control/g4_pilot/seed*/history.jsonl",
                 "orl5/control/development/seed*/history.jsonl",
-                "confirmation_mini/development/seed*/*/history.jsonl",
-                "confirmation/development/seed*/*/history.jsonl",
-                "replication_mini/development/seed*/*/history.jsonl",
-                f"{SPEED_DIR}/seed*/*/history.jsonl",
-                *(f"{d}/{EXTENSION_DIR}/seed*/*/history.jsonl" for d in CONFIRMATION_DIRS))
+                f"{SPEED_DIR}/seed*/*/history.jsonl")
     found = []
     for pattern in patterns:
         found += [p.parent for p in task_root.glob(pattern)]
@@ -305,15 +283,6 @@ def _verdicts(results: Path, task: str, root: Path) -> dict[str, Any]:
         "protocol": reg.get("protocol"), "registered_utc": reg.get("registered_utc"),
         "complete": (result or {}).get("procedure_complete"),
         "gate": ((result or {}).get("verdict") or {}).get("development_gate_passed")}
-    shuffle_reg = _cached(root / "relation_shuffle_registration.json", _json)
-    shuffle = _cached(root / "relation_shuffle.json", _json)
-    verdict = (shuffle or {}).get("verdict") or {}
-    out["relation_shuffle"] = None if shuffle_reg is None else {
-        "protocol": shuffle_reg.get("protocol"), "models": shuffle_reg.get("models"),
-        "complete": (shuffle or {}).get("procedure_complete"),
-        "verdict": verdict.get("semantic_placement"),
-        "delta": (verdict.get("primary") or {}).get("mean"),
-        "ci95": (verdict.get("primary") or {}).get("ci95")}
     flights = []
     for path in sorted(root.glob("isaac_*.json")):
         if path.name.endswith("registration.json"):
@@ -405,19 +374,22 @@ def machine() -> dict[str, Any]:
 
 
 def _encoding_runs(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Graph-arm runs that have a checkpoint to trace: live confirmation runs first."""
-    from .encoding_view import GRAPH_ARMS
+    """Graph-arm runs with weights to trace (live.pt, best.pt or final.pt): the proposed ORL
+    policy first, then running before finished, then the registered R-GAT arms."""
+    from .encoding_view import arm_of, newest_checkpoint
     out = []
     for r in runs:
-        name = Path(r["path"]).name
-        if name in GRAPH_ARMS and r.get("has_best") is not None:
-            final = (RESULTS / r["path"] / "final.pt").exists()
-            if r.get("has_best") or final:
-                out.append({"path": r["path"], "arm": name, "state": r["state"],
-                            "kind": r["kind"], "task": r.get("task"),
-                            "confirmation": "confirmation" in r["path"]})
+        arm = arm_of(Path(r["path"]).name)
+        if arm is None:
+            continue
+        checkpoint = newest_checkpoint(RESULTS / r["path"])
+        if checkpoint is None:
+            continue
+        out.append({"path": r["path"], "arm": arm, "state": r["state"], "kind": r["kind"],
+                    "task": r.get("task"), "checkpoint": checkpoint.name,
+                    "orl": arm.startswith("orl_ppo")})
     live = {"running": 0, "evaluating": 0, "stalled": 1}
-    out.sort(key=lambda r: (not r["confirmation"], live.get(r["state"], 2),
+    out.sort(key=lambda r: (not r["orl"], live.get(r["state"], 2),
                             r["arm"] != "ontology_rgat_ppo", r["path"]))
     return out
 
@@ -433,87 +405,6 @@ def _isaac_stack_alive() -> bool:
         if any(Path(t).name == "landing_world.py" for t in tokens[:3]):
             return True
     return False
-
-
-def confirmation_state(results: Path, task: str, root: Path) -> list[dict[str, Any]]:
-    """Every registered confirmation run of one root, as the monitor shows it."""
-    out = []
-    for folder, title in CONFIRMATION_DIRS.items():
-        base = root / folder
-        reg = _cached(base / "confirmation_registration.json", _json) if base.exists() else None
-        if not reg:
-            continue
-        amendment = _cached(base / "confirmation_amendment.json", _json)
-        plan = reg.get("plan") or {}
-        arms = (amendment or {}).get("arms") or plan.get("models", {}).get("arms") or []
-        seeds = reg.get("training_seeds") or []
-        analysis = (amendment or {}).get("analysis") or reg.get("analysis") or {}
-        conditions = (plan.get("isaac") or {}).get("conditions") or {}
-        cases = sum(len(v) for v in conditions.values())
-        models = []
-        for seed in seeds:
-            for arm in arms:
-                d = base / "development" / f"seed{seed}" / arm
-                summary = _cached(d / "summary.json", _json) if (d / "summary.json").exists() else None
-                rows = _cached(d / "history.jsonl", _jsonl) if (d / "history.jsonl").exists() else []
-                phase = (_cached(d / "status.json", _json) or {}).get("phase")
-                cells = (summary or {}).get("cells") or {}
-                ten = ([c.get("success") for c in cells.values() if c.get("success") is not None]
-                       if cells else [])
-                val = (summary or {}).get("validation") or {}
-                models.append({"seed": seed, "arm": arm,
-                               "state": ("done" if summary else "evaluating" if phase == "evaluating"
-                                         else "training" if rows else "pending"),
-                               "update": len(rows), "difficulty": (rows[-1].get("difficulty")
-                                                                    if rows else None),
-                               "ten_cell_success": sum(ten) / len(ten) if ten else None,
-                               "best_update": val.get("best_update"),
-                               "validation_det": val.get("deterministic_success")})
-        isaac_rows = _cached(base / "isaac" / "episodes.jsonl", _jsonl) \
-            if (base / "isaac" / "episodes.jsonl").exists() else []
-        per_arm = {}
-        for arm in arms:
-            own = [r for r in isaac_rows or [] if r.get("arm") == arm]
-            per_arm[arm] = {"flown": len(own),
-                            "success": sum(r.get("status") == "SUCCESS" for r in own),
-                            "risk": sum(r.get("status") in ("UNSAFE_CONTACT",
-                                                            "SAFETY_ENVELOPE_VIOLATION")
-                                        for r in own),
-                            "other": sum(r.get("status") not in ("SUCCESS", "UNSAFE_CONTACT",
-                                                                 "SAFETY_ENVELOPE_VIOLATION")
-                                         for r in own)}
-        interruptions = _cached(base / "isaac" / "interruptions.jsonl", _jsonl) \
-            if (base / "isaac" / "interruptions.jsonl").exists() else []
-        result = _cached(base / "confirmation.json", _json) if (base / "confirmation.json").exists() \
-            else None
-
-        def verdict(part):
-            v = ((result or {}).get(part) or {}).get("verdict")
-            if not v:
-                return None
-            rows_ = {}
-            for arm, iv in {**(v.get("primary") or {}), **(v.get("practical") or {})}.items():
-                rows_[arm] = {k: iv.get(k) for k in ("mean", "low", "high", "confidence", "passed")}
-            return {"means": v.get("means"), "comparisons": rows_,
-                    "passed": v.get("confirmation_passed", v.get("isaac_passed"))}
-        out.append({
-            "task": task, "folder": str(base.relative_to(results)), "title": title,
-            "protocol": reg.get("protocol"), "registered_utc": reg.get("registered_utc"),
-            "amendment": None if not amendment else {
-                "amended_utc": amendment.get("amended_utc"), "arms": amendment.get("arms"),
-                "reason": amendment.get("reason")},
-            "arms": arms, "seeds": seeds, "updates": reg.get("updates"),
-            "primary_comparisons": analysis.get("primary_comparisons"),
-            "models": models,
-            "models_done": sum(m["state"] == "done" for m in models),
-            "isaac": {"expected": cases * len(models), "flown": len(isaac_rows or []),
-                      "per_arm": per_arm, "stack_alive": _isaac_stack_alive(),
-                      "last": [{k: r.get(k) for k in ("condition", "seed", "model", "status",
-                                                      "elapsed_s", "wall_s")}
-                               for r in (isaac_rows or [])[-8:]][::-1],
-                      "interruptions": (interruptions or [])[-5:]},
-            "verdict": {"local": verdict("local"), "isaac": verdict("isaac")}})
-    return out
 
 
 def _speed_model(directory: Path, seed: int, arm: str, now: float) -> dict[str, Any]:
@@ -586,7 +477,7 @@ def _provisional(models: list[dict[str, Any]], proposed: str, others: list[str],
 
 def speed_state(results: Path, task: str, root: Path, root_label: str,
                 now: float) -> list[dict[str, Any]]:
-    """learning-speed/1 (one per root) and every confirmation's learning-speed extension."""
+    """The learning-speed protocol of one root (learning-speed/1)."""
     out = []
     base = root / SPEED_DIR
     reg = (_cached(base / "learning_speed_registration.json", _json)
@@ -618,22 +509,6 @@ def speed_state(results: Path, task: str, root: Path, root_label: str,
                     "arm_summary": _arm_summary(models, arms, cap),
                     "provisional": _provisional(models, arms[0], arms[1:], cap),
                     "verdict": verdict})
-    for folder, title in CONFIRMATION_DIRS.items():
-        ext = root / folder / EXTENSION_DIR
-        reg = (_cached(ext / "extension_registration.json", _json)
-               if (ext / "extension_registration.json").exists() else None)
-        if not reg:
-            continue
-        cap = int(reg.get("cap") or STOP_AT_FULL_CAP)
-        models = []
-        for key in reg.get("models", []):
-            seed, arm = key.split("/", 1)
-            models.append(_speed_model(ext / f"seed{seed}" / arm, int(seed), arm, now))
-        out.append({"kind": "extension", "title": f"{title} 연장", "task": task,
-                    "root_label": root_label, "folder": str(ext.relative_to(results)),
-                    "protocol": reg.get("protocol"), "registered_utc": reg.get("registered_utc"),
-                    "registered_budget": reg.get("registered_budget"), "cap": cap,
-                    "models": models, "models_done": sum(m["state"] == "done" for m in models)})
     return out
 
 
@@ -653,9 +528,6 @@ def recent_logs(results: Path, roots: list[Path], now: float) -> list[dict[str, 
     out = []
     for root in roots:
         for path in (list(root.glob("*.log")) + list(root.glob("development_design/*.log"))
-                     + [q for d in CONFIRMATION_DIRS for q in root.glob(f"{d}/*.log")]
-                     + [q for d in CONFIRMATION_DIRS
-                        for q in root.glob(f"{d}/{EXTENSION_DIR}/*.log")]
                      + list(root.glob(f"{SPEED_DIR}/*.log"))):
             try:
                 age = now - path.stat().st_mtime
@@ -694,7 +566,7 @@ def snapshot(results: Path | None = None) -> dict[str, Any]:
             state["task"] = task
             runs.append(state)
     runs = [r for r in runs if r["state"] in ("running", "evaluating")
-            or "confirmation" in r["path"] or SPEED_DIR in r["path"]
+            or SPEED_DIR in r["path"]
             or (r.get("seconds_since_update") is not None
                 and r["seconds_since_update"] <= RECENT_S)]
     active_tasks = {r["task"] for r in runs}
@@ -717,9 +589,6 @@ def snapshot(results: Path | None = None) -> dict[str, Any]:
         "speeds": [s for task, root in roots.items() if root.exists()
                    for s in speed_state(results, task, root,
                                         labels.get(root.name, task), now)],
-        "confirmations": [{**c, "root_label": labels.get(root.name, task)}
-                          for task, root in roots.items() if root.exists()
-                          for c in confirmation_state(results, task, root)],
         "logs": recent_logs(results, [r for r in roots.values() if r.exists()], now),
     }
 
@@ -841,17 +710,16 @@ svg text{fill:var(--muted);font-size:10px}.code{font-family:ui-monospace,SFMono-
 <header><h1>현재 상태 모니터</h1><span class="sub" id="meta">불러오는 중…</span></header>
 <main>
 <section class="card s12"><h2>학습 속도 실험 (실시간): 난이도 1.0까지 걸린 업데이트</h2><div id="speed"></div></section>
-<section class="card s12"><h2>확인 실험 (실시간)</h2><div id="conf"></div></section>
-<section class="card s12"><h2>온톨로지 R-GAT 인코딩 (실시간, 최신 체크포인트)</h2>
+<section class="card s12"><h2>온톨로지 그래프 인코딩 (실시간: 학습 중 가중치 스냅샷)</h2>
 <div class="enc-bar"><label>실행 <select id="encRun"></select></label>
 <label>프로브 <select id="encProbe"><option value="nominal">기본 조건</option><option value="blackout">시야 차단 1–3 s</option></select></label>
-<label>홉 <select id="encHop"><option value="1">2 (판독 직전)</option><option value="0">1</option></select></label>
+<label>홉 <select id="encHop" data-n="2"><option value="1">2 (판독 직전)</option><option value="0">1</option></select></label>
 <button id="encPlay">▶ 재생</button><input id="encStep" type="range" min="0" max="0" value="0" style="flex:1;min-width:160px">
 <span class="sub" id="encT"></span></div>
-<div class="sub" id="encMeta">실행을 고르면 그 실행의 최신 체크포인트로 프로브 에피소드 하나를 돌려 인코더 내부를 기록합니다.</div>
+<div class="sub" id="encMeta">실행을 고르면 그 실행의 최신 가중치(학습 중이면 몇 업데이트마다 쓰는 live.pt)로 프로브 에피소드 하나를 돌려 인코더 내부를 기록합니다.</div>
 <div class="enc"><div><svg id="encGraph" viewBox="0 0 660 445" width="100%"></svg><div class="legend" id="encLegend"></div></div>
-<div><div class="sub">LandingContext 판독 g<sub>t</sub> (8차원, 현재 시점)</div><svg id="encBars" viewBox="0 0 320 150" width="100%"></svg>
-<div class="sub">g<sub>t</sub> 시간 변화 (행 = 차원, 열 = 결정 시점, 파랑 음수 · 빨강 양수)</div><svg id="encHeat" viewBox="0 0 320 120" width="100%" preserveAspectRatio="none" style="height:120px"></svg>
+<div><div class="sub" id="encBarsTitle">판독 (현재 시점)</div><svg id="encBars" viewBox="0 0 320 150" width="100%"></svg>
+<div class="sub">시간 변화 (행 = 판독 차원, 열 = 결정 시점, 파랑 음수 · 빨강 양수)</div><svg id="encHeat" viewBox="0 0 320 120" width="100%" preserveAspectRatio="none" style="height:120px"></svg>
 <div class="sub">정책이 본 패드 추정 높이 h와 시야 나이</div><svg id="encCtx" viewBox="0 0 320 90" width="100%"></svg></div></div>
 <div class="sub" id="encNote"></div></section>
 <section class="card s12"><h2>기계</h2><div class="kv" id="machine"></div></section>
@@ -869,28 +737,6 @@ function dur(s){if(s==null)return"–";s=Math.max(0,Math.round(s));const h=Math.
 const STATE={running:"학습 중",evaluating:"평가 중",done:"완료",stalled:"멈춤?",pending:"대기",excluded:"제외",training:"학습 중"};
 const ARM={ontology_rgat_ppo:"R-GAT (등록 arm)",raw_ppo:"PPO (raw obs.)",untyped_gnn_ppo:"Untyped GNN",semantic_mlp_ppo:"Semantic MLP"};
 const armName=a=>String(a||"").startsWith("orl_ppo")?"ORL (제안)":(ARM[a]||a);
-function conf(C){if(!C.length)return `<div class="empty">등록된 확인 실험이 없습니다.</div>`;
- return C.map(c=>{const n=c.models.length,done=c.models_done,I=c.isaac;
-  const bar=(a,b)=>`<div class="bar"><i style="width:${b?(100*a/b).toFixed(1):0}%"></i></div>`;
-  const head=`<div class="sub">${esc(c.title)} · <b>${esc(c.root_label||"")}</b></div><div class="kv"><div><span>프로토콜</span><b>${esc(c.protocol)}</b></div><div><span>정책</span><b>${c.arms.map(a=>esc(armName(a))).join(" · ")}</b></div>
-   <div><span>학습 시드</span><b>${c.seeds.length}개 (${c.seeds[0]}–${c.seeds[c.seeds.length-1]})</b></div><div><span>모델당 업데이트</span><b>${c.updates}</b></div>
-   <div><span>모델 완료</span><b>${done} / ${n}</b></div><div><span>Isaac 비행</span><b>${I.flown} / ${I.expected} ${I.stack_alive?'<span class="pill running">스택 실행 중</span>':'<span class="pill pending">스택 꺼짐</span>'}</b></div></div>
-   <div class="sub">모델 학습·평가</div>${bar(done+c.models.filter(m=>m.state!=="done").reduce((s,m)=>s+Math.min(m.update/(c.updates||1),1),0),n)}
-   <div class="sub">Isaac 비행</div>${bar(I.flown,I.expected)}
-   ${c.amendment?`<div class="sub">정정 ${esc(c.amendment.amended_utc)}: 정책 ${c.amendment.arms.map(a=>esc(armName(a))).join(", ")}</div>`:""}`;
-  const seeds=[...new Set(c.models.map(m=>m.seed))];
-  const grid=`<div class="wrap"><table><tr><th>시드</th>${c.arms.map(a=>`<th>${esc(armName(a))}</th>`).join("")}</tr>`+seeds.map(s=>`<tr><td>${s}</td>`+c.arms.map(a=>{const m=c.models.find(x=>x.seed===s&&x.arm===a);
-    if(!m)return"<td>–</td>";const st=m.state==="training"?"running":m.state;
-    const body=m.state==="done"?`10셀 ${pct(m.ten_cell_success)} · 검증 det ${pct(m.validation_det)} @${m.best_update}`:m.state==="pending"?"":`${m.update}/${c.updates} · 난이도 ${m.difficulty==null?"–":m.difficulty.toFixed(1)}`;
-    return `<td><span class="pill ${st}">${STATE[m.state]||m.state}</span> <span class="sub">${body}</span></td>`}).join("")+"</tr>").join("")+"</table></div>";
-  const isaac=`<div class="wrap"><table><tr><th>정책</th><th class="n">비행</th><th class="n">성공</th><th class="n">위험 판정</th><th class="n">그 밖의 실패</th></tr>`+
-   c.arms.map(a=>{const r=I.per_arm[a]||{};return `<tr><td>${esc(armName(a))}</td><td class="n">${r.flown||0}</td><td class="n">${r.success||0}${r.flown?` (${pct(r.success/r.flown)})`:""}</td><td class="n">${r.risk||0}</td><td class="n">${r.other||0}</td></tr>`}).join("")+"</table></div>"+
-   (I.last.length?`<div class="sub" style="margin-top:6px">최근 비행</div><pre>${esc(I.last.map(r=>`${r.condition} ${r.seed} ${r.model} -> ${r.status} (${(r.elapsed_s||0).toFixed(1)} s)`).join("\n"))}</pre>`:"")+
-   (I.interruptions.length?`<div class="sub">인프라 중단 ${I.interruptions.length}건 (판정된 에피소드는 다시 비행하지 않음)</div><pre>${esc(I.interruptions.map(x=>x.error).join("\n"))}</pre>`:"");
-  const V=c.verdict,vt=(name,v)=>!v?"":`<div class="sub" style="margin-top:8px">${name} 판정: ${v.passed?'<span class="ok">확인됨</span>':'<span class="no">확인되지 않음</span>'}</div><table><tr><th>R-GAT − 비교 정책</th><th class="n">평균</th><th class="n">구간</th><th>판정</th></tr>`+
-   Object.entries(v.comparisons).map(([a,x])=>`<tr><td>${esc(armName(a))}</td><td class="n">${pct(x.mean)}</td><td class="n">[${pct(x.low)}, ${pct(x.high)}] ${(100*x.confidence).toFixed(1)}%</td><td>${x.passed?'<span class="ok">통과</span>':'<span class="no">미통과</span>'}</td></tr>`).join("")+"</table>";
-  return head+`<div style="margin-top:8px">${grid}</div><div style="margin-top:8px">${isaac}</div>`+vt("로컬",V.local)+vt("Isaac",V.isaac)+
-   `<div class="sub" style="margin-top:6px">완료 모델의 10셀 성공률은 개별 모델 값이며 비교 판정이 아닙니다. 판정은 모든 모델과 비행이 끝난 뒤 사전 등록 규칙으로 계산합니다.</div>`}).join("<hr>")}
 const VERD={faster:'<span class="ok">ORL이 더 빠름</span>',slower:'<span class="no">ORL이 더 느림</span>',"not established":'<span class="mid">확립되지 않음</span>'};
 function strip(c){const A=c.arms,cap=c.cap,W=1200,rowH=26,L=150,R=14,T=8,H=T+rowH*A.length+22;
  const done=c.models.filter(m=>m.state==="done").map(m=>m.censored?cap:m.first_full).filter(x=>x!=null);
@@ -915,9 +761,6 @@ function speedPanel(L){if(!L.length)return `<div class="empty">등록된 학습 
    <div><span>상한</span><b>${c.cap} update</b></div><div><span>모델 완료</span><b>${done} / ${n}</b></div>
    ${c.registered_utc?`<div><span>등록</span><b>${new Date(c.registered_utc).toLocaleString()}</b></div>`:""}</div>
    <div class="bar"><i style="width:${n?(100*prog/n).toFixed(1):0}%"></i></div>`;
-  if(c.kind==="extension"){
-   return head+`<div class="wrap"><table><tr><th>모델</th><th>상태 (등록 예산 ${c.registered_budget} → 상한 ${c.cap})</th></tr>`+
-    c.models.map(m=>`<tr><td>시드 ${m.seed} · ${esc(armName(m.arm))}</td>${speedCell(m,c.cap)}</tr>`).join("")+"</table></div>"}
   const seeds=c.seeds,A=c.arms;
   const grid=`<div class="wrap"><table><tr><th>시드</th>${A.map(a=>`<th>${esc(armName(a))}</th>`).join("")}</tr>`+
    seeds.map(s=>`<tr><td>${s}</td>`+A.map(a=>speedCell(c.models.find(m=>m.seed===s&&m.arm===a),c.cap)).join("")+"</tr>").join("")+"</table></div>";
@@ -941,7 +784,6 @@ function spark(r){const s=r.series,W=320,H=110,L=30,R=6,T=6,B=16;const xs=s.upda
  return `<svg width="100%" viewBox="0 0 ${W} ${H}">${g}${p}</svg>`}
 function render(S){
  document.getElementById("speed").innerHTML=speedPanel(S.speeds||[]);
- document.getElementById("conf").innerHTML=conf(S.confirmations||[]);
  encOptions(S);
  document.getElementById("meta").textContent=`갱신 ${new Date(S.generated_utc).toLocaleTimeString()} · 5초마다 · 읽기 전용`;
  const m=S.machine,g=m.gpu;
@@ -972,20 +814,20 @@ function render(S){
   S.tasks.map(t=>{if(!t.root)return `<tr><td>${esc(t.label)}</td><td colspan="4" class="sub">결과 폴더 없음</td></tr>`;
    const g4=t.g4?`${esc(t.g4.protocol||"학습 중")} ${t.g4.running?"":yes(t.g4.passed)}<br><span class="sub">${Object.entries(t.g4.tests||{}).map(([k,v])=>`seed ${k}: ${pct(v[0])}/${pct(v[1])}`).join(" · ")}</span>`:"–";
    const cal=(t.calibrations||[]).map(c=>`${esc(c.file)} ${yes(c.passed)}`).join("<br>")||"–";
-   const rs=t.relation_shuffle;const d=(t.development?`${esc(t.development.protocol)} · ${t.development.complete?"완료 · gate "+(t.development.gate?"통과":"미통과"):"등록됨"}`:"–")
-    +(rs?`<br>${esc(rs.protocol)} · ${rs.complete?`판정: ${esc(rs.verdict)} <span class="sub">Δ ${pct(rs.delta)} [${pct(rs.ci95[0])}, ${pct(rs.ci95[1])}]</span>`:`등록됨 · 모델 ${rs.models}`}`:"");
+   const d=(t.development?`${esc(t.development.protocol)} · ${t.development.complete?"완료 · gate "+(t.development.gate?"통과":"미통과"):"등록됨"}`:"–")
+;
    const isaac=(t.isaac||[]).map(f=>`${esc(f.file)} ${f.verified==null?"":yes(f.verified)}${f.success?` <span class="sub">${f.success.after??""}${f.episodes?"/"+f.episodes:""}</span>`:""}`).join("<br>")||"–";
    return `<tr><td>${esc(t.label)}<br><span class="sub">${esc(t.root)}</span></td><td>${g4}</td><td>${cal}</td><td>${d}</td><td>${isaac}</td></tr>`}).join("")+"</table>";
  document.getElementById("logs").innerHTML=S.logs.length?S.logs.map(l=>`<div style="margin-bottom:10px"><span class="code">${esc(l.path)}</span> <span class="sub">${dur(l.age_s)} 전</span><pre>${esc(l.tail.join("\n"))}</pre></div>`).join("")
   :`<div class="empty">최근 1시간 안에 쓰인 로그가 없습니다.</div>`;
 }
 
-const REL={qualifiesEstimate:"#2a78d6",informsApproach:"#eb6834",affectsVisibility:"#1baf7a",conditionsContact:"#eda100",informsLanding:"#e87ba4",self:"#9a9a9a",related:"#7a7a7a"};
+const REL={qualifiesEstimate:"#2a78d6",informsApproach:"#eb6834",affectsVisibility:"#1baf7a",conditionsContact:"#eda100",informsLanding:"#e87ba4",gatesDescent:"#008300",informsVertical:"#6250d6",self:"#9a9a9a",related:"#7a7a7a"};
 const NPOS={ObservationQuality:[90,55],RelativeGeometry:[90,160],MotionState:[90,265],AttitudeState:[90,370],ApproachSituation:[340,110],ViewGeometry:[340,215],ContactCondition:[340,320],LandingContext:[570,215]};
 const SHORT={ObservationQuality:"Q",RelativeGeometry:"G",MotionState:"M",AttitudeState:"A",ApproachSituation:"P",ViewGeometry:"O",ContactCondition:"C",LandingContext:"L"};
 let ENC=null,encIdx=0,encTimer=null,encKey="",encMtime=null;
 function encOptions(S){const sel=document.getElementById("encRun"),cur=sel.value;const R=S.encoding_runs||[];
- const html=R.map(r=>`<option value="${esc(r.path)}">${r.confirmation?"[확인] ":""}${esc(r.path.split("/").slice(-3).join("/"))} · ${STATE[r.state]||r.state}</option>`).join("");
+ const html=R.map(r=>`<option value="${esc(r.path)}">${r.orl?"[ORL 제안] ":""}${esc(r.path.split("/").slice(-3).join("/"))} · ${STATE[r.state]||r.state} · ${esc(r.checkpoint)}</option>`).join("");
  if(sel.dataset.h!==html){sel.innerHTML=html||`<option value="">체크포인트가 있는 그래프 정책 실행이 없습니다</option>`;sel.dataset.h=html;if(cur&&R.some(r=>r.path===cur))sel.value=cur}
  if(!encKey&&R.length)loadEnc()}
 async function loadEnc(force){const run=document.getElementById("encRun").value,probe=document.getElementById("encProbe").value;if(!run)return;
@@ -996,34 +838,61 @@ async function loadEnc(force){const run=document.getElementById("encRun").value,
   if(ENC&&ENC.checkpoint_mtime===d.checkpoint_mtime&&!force)return;
   const changed=ENC&&ENC.checkpoint_mtime!==d.checkpoint_mtime;ENC=d;if(!changed)encIdx=0;encIdx=Math.min(encIdx,d.steps.length-1);
   const sl=document.getElementById("encStep");sl.max=d.steps.length-1;sl.value=encIdx;
+  const hs=document.getElementById("encHop");if(+hs.dataset.n!==d.hops){hs.innerHTML=[...Array(d.hops).keys()].reverse().map(k=>`<option value="${k}">${k+1}${k===d.hops-1?" (판독 직전)":""}</option>`).join("");hs.dataset.n=d.hops}
+  document.getElementById("encBarsTitle").textContent=d.g_title||"판독 (현재 시점)";
   const when=new Date(d.checkpoint_mtime*1000).toLocaleTimeString();
-  document.getElementById("encMeta").innerHTML=`${esc(armName(d.arm))} · 체크포인트 <b>${esc(d.checkpoint)}</b> (update ${d.checkpoint_update??"–"}, ${when} 저장)${changed?' <span class="pill running">새 체크포인트</span>':""} · 프로브 ${esc(d.probe_cell)} 시드 ${d.probe_seed} → <b>${esc(d.status)}</b>, ${d.decisions}회 결정, 계산 ${d.compute_s}s`;
+  const ck=d.live?`학습 중 스냅샷 <b>live.pt</b> (update ${d.checkpoint_update??"–"}, 난이도 ${d.checkpoint_difficulty==null?"–":(+d.checkpoint_difficulty).toFixed(1)}, ${when} 저장)`:`체크포인트 <b>${esc(d.checkpoint)}</b> (update ${d.checkpoint_update??"–"}, ${when} 저장)`;
+  document.getElementById("encMeta").innerHTML=`${esc(armName(d.arm))}${d.version?" "+esc(d.version):""} · ${ck}${changed?' <span class="pill running">새 가중치</span>':""} · 프로브 ${esc(d.probe_cell)} 시드 ${d.probe_seed} → <b>${esc(d.status)}</b>, ${d.decisions}회 결정, 계산 ${d.compute_s}s`;
   document.getElementById("encNote").textContent=d.note+". 간선 굵기 = 어텐션 α(같은 노드로 들어오는 간선끼리 합 1), 노드 진하기 = 노드 상태 크기 ‖h‖.";
   drawEnc()}catch(e){document.getElementById("encMeta").textContent="인코딩을 불러오지 못했습니다"}}
 function mix(a,b,t){const p=x=>[1,3,5].map(i=>parseInt(x.slice(i,i+2),16));const A=p(a),B=p(b);return`rgb(${A.map((v,i)=>Math.round(v+(B[i]-v)*t)).join(",")})`}
+// Edge routing: a quadratic curve per edge, bent just enough to keep every OTHER node (and its
+// self-loop ring) at least R+9 away, then trimmed to the two node circles so the arrowhead
+// touches the target's rim.  Computed once per payload; independent of the attention values.
+function qpt(p,c,q,t){const u=1-t;return [u*u*p[0]+2*u*t*c[0]+t*t*q[0],u*u*p[1]+2*u*t*c[1]+t*t*q[1]]}
+function qcut(p,c,q,ctr,r,from,to){let lo=from,hi=to,prev=from;for(let i=1;i<=40;i++){const t=from+(to-from)*i/40,x=qpt(p,c,q,t);if(Math.hypot(x[0]-ctr[0],x[1]-ctr[1])>=r){lo=prev;hi=t;break}prev=t}
+ for(let k=0;k<24;k++){const m=(lo+hi)/2,x=qpt(p,c,q,m);if(Math.hypot(x[0]-ctr[0],x[1]-ctr[1])>=r)hi=m;else lo=m}return hi}
+function routeEdges(d,POS,R){const need=R+9,step=Math.max(10,R*0.6);
+ return d.edges.map(ed=>{if(ed.source===ed.target)return null;const p=POS[ed.source],q=POS[ed.target];
+  const obst=d.nodes.filter(nm=>nm!==ed.source&&nm!==ed.target).map(nm=>POS[nm]);
+  const dx=q[0]-p[0],dy=q[1]-p[1],L=Math.hypot(dx,dy),nx=-dy/L,ny=dx/L,m=[(p[0]+q[0])/2,(p[1]+q[1])/2];
+  let best=null,bestClear=-1;
+  for(let j=0;j<=24;j++){const k=j===0?0:(j%2?1:-1)*Math.ceil(j/2),c=[m[0]+nx*k*step,m[1]+ny*k*step];let clear=Infinity;
+   for(let i=1;i<32;i++){const x=qpt(p,c,q,i/32);for(const o of obst){const dd=Math.hypot(x[0]-o[0],x[1]-o[1]);if(dd<clear)clear=dd}}
+   if(clear>=need){best=c;break}if(clear>bestClear){bestClear=clear;best=c}}
+  const c=best,t0=qcut(p,c,q,p,R+3,0,1),t1=qcut(p,c,q,q,R+6,1,0),P0=qpt(p,c,q,t0),P1=qpt(p,c,q,t1);
+  const d0=[2*(1-t0)*(c[0]-p[0])+2*t0*(q[0]-c[0]),2*(1-t0)*(c[1]-p[1])+2*t0*(q[1]-c[1])],h=(t1-t0)/2;
+  return [P0,[P0[0]+h*d0[0],P0[1]+h*d0[1]],P1,qpt(p,c,q,t0+(t1-t0)*0.35)]})}
 function drawEnc(){const G=document.getElementById("encGraph"),B=document.getElementById("encBars"),H=document.getElementById("encHeat"),C=document.getElementById("encCtx");
  if(!ENC){[G,B,H,C].forEach(x=>x.innerHTML="");document.getElementById("encT").textContent="";return}
  const d=ENC,st=d.steps[encIdx],hop=Math.min(+document.getElementById("encHop").value,d.hops-1),al=st.alpha[hop],nm=st.norm[hop+1];
+ const POS=d.layout||NPOS,SH=d.short||SHORT,R=d.radius||27,small=R<24;
  document.getElementById("encT").textContent=`t = ${st.t.toFixed(1)} s · ${encIdx+1}/${d.steps.length}`;
- const ink=css('--ink'),muted=css('--muted'),panel=css('--panel'),line=css('--line');
+ const ink=css('--ink'),muted=css('--muted'),line=css('--line');
  let defs="<defs>"+Object.entries(REL).map(([k,c])=>`<marker id="m-${k}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" fill="${c}"/></marker>`).join("")+"</defs>";
- let e="",n="";d.edges.forEach((ed,i)=>{const a=al[i],c=REL[ed.relation]||"#888",[x0,y0]=NPOS[ed.source],[x1,y1]=NPOS[ed.target],w=(1+11*a).toFixed(1),op=(0.25+0.75*a).toFixed(2);
-  if(ed.source===ed.target){e+=`<circle cx="${x0}" cy="${y0}" r="${(33+5.5*a).toFixed(1)}" fill="none" stroke="${c}" stroke-width="${w}" opacity="${op}"><title>${ed.source} self α=${a.toFixed(3)}</title></circle>`;return}
-  const dx=x1-x0,dy=y1-y0,L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L,sx=x0+ux*30,sy=y0+uy*30,tx=x1-ux*33,ty=y1-uy*33,mx=(sx+tx)/2-uy*14,my=(sy+ty)/2+ux*14;
-  e+=`<path d="M${sx},${sy} Q${mx},${my} ${tx},${ty}" fill="none" stroke="${c}" stroke-width="${w}" opacity="${op}" marker-end="url(#m-${ed.relation})"><title>${ed.source} → ${ed.target} (${ed.relation}) α=${a.toFixed(3)}</title></path>`;
-  if(ed.target===d.readout)e+=`<text x="${mx}" y="${my-6}" text-anchor="middle" style="font-size:11px;font-weight:600;fill:${c}">α ${a.toFixed(2)}</text>`});
- const nmax=Math.sqrt(8);d.nodes.forEach((name,i)=>{const[x,y]=NPOS[name],v=Math.min(nm[i]/nmax,1),fill=mix("#f1eef4","#8e3f6c",v);
-  n+=`<circle cx="${x}" cy="${y}" r="27" fill="${fill}" stroke="${ink}" stroke-width="1.2"><title>${name} ‖h‖=${nm[i].toFixed(3)}</title></circle>
-  <text x="${x}" y="${y+5}" text-anchor="middle" style="font-size:16px;font-weight:700;fill:${v>0.55?"#fff":"#1d232b"}">${SHORT[name]}</text>
-  <text x="${x}" y="${y+53}" text-anchor="middle" style="font-size:10px;fill:${muted}">${name}</text>`});
- G.innerHTML=defs+e+n+`<text x="90" y="440" text-anchor="middle" style="font-size:11px">관측 상태</text><text x="340" y="440" text-anchor="middle" style="font-size:11px">착륙 상황</text><text x="570" y="440" text-anchor="middle" style="font-size:11px">결정 맥락</text><text x="570" y="290" text-anchor="middle" style="font-size:10px">자기 루프 = 노드 둘레 고리</text>`;
+ if(!d._routes)d._routes=routeEdges(d,POS,R);const routes=d._routes;
+ let e="",n="";d.edges.forEach((ed,i)=>{const a=al[i],c=REL[ed.relation]||"#888",[x0,y0]=POS[ed.source],[x1,y1]=POS[ed.target],w=((small?0.7:1)+(small?6:11)*a).toFixed(1),op=(0.22+0.78*a).toFixed(2);
+  if(ed.source===ed.target){e+=`<circle cx="${x0}" cy="${y0}" r="${(R+(small?4:6)+(small?2:5.5)*a).toFixed(1)}" fill="none" stroke="${c}" stroke-width="${w}" opacity="${op}"><title>${ed.source} self α=${a.toFixed(3)}</title></circle>`;return}
+  const rt=routes[i],sx=rt[0][0],sy=rt[0][1],mx=rt[1][0],my=rt[1][1],tx=rt[2][0],ty=rt[2][1],lx=rt[3][0],ly=rt[3][1];
+  e+=`<path d="M${sx.toFixed(1)},${sy.toFixed(1)} Q${mx.toFixed(1)},${my.toFixed(1)} ${tx.toFixed(1)},${ty.toFixed(1)}" fill="none" stroke="${c}" stroke-width="${w}" opacity="${op}" marker-end="url(#m-${ed.relation})"><title>${ed.source} → ${ed.target} (${ed.relation}) α=${a.toFixed(3)}</title></path>`;
+  if(ed.target===d.readout)e+=`<text x="${lx.toFixed(1)}" y="${(ly-6).toFixed(1)}" text-anchor="middle" style="font-size:${small?10:11}px;font-weight:600;fill:${c}">α ${a.toFixed(2)}</text>`});
+ const nmax=Math.sqrt(d.state_dim||8);d.nodes.forEach((name,i)=>{const[x,y]=POS[name],v=Math.min(nm[i]/nmax,1),fill=mix("#f1eef4","#8e3f6c",v);
+  n+=`<circle cx="${x}" cy="${y}" r="${R}" fill="${fill}" stroke="${ink}" stroke-width="1.2"><title>${name} ‖h‖=${nm[i].toFixed(3)}</title></circle>
+  <text x="${x}" y="${y+(small?4:5)}" text-anchor="middle" style="font-size:${small?12:16}px;font-weight:700;fill:${v>0.55?"#fff":"#1d232b"}">${SH[name]}</text>`+(d.layout?"":`<text x="${x}" y="${y+53}" text-anchor="middle" style="font-size:10px;fill:${muted}">${name}</text>`)});
+ const cols=d.columns||[[90,"관측 상태"],[340,"착륙 상황"],[570,"결정 맥락"]];
+ G.innerHTML=defs+e+n+cols.map(([x,t])=>`<text x="${x}" y="440" text-anchor="middle" style="font-size:11px">${t}</text>`).join("")+
+  (d.layout?`<text x="615" y="290" text-anchor="middle" style="font-size:10px">위: x 평면</text><text x="615" y="304" text-anchor="middle" style="font-size:10px">아래: y 평면</text><text x="615" y="318" text-anchor="middle" style="font-size:10px">고리 = 자기 루프</text>`
+   :`<text x="570" y="290" text-anchor="middle" style="font-size:10px">자기 루프 = 노드 둘레 고리</text>`);
  document.getElementById("encLegend").innerHTML=[...new Set(d.edges.map(x=>x.relation))].map(r=>`<span><i style="background:${REL[r]||"#888"};height:4px"></i>${r}</span>`).join("");
- const gmax=Math.max(1e-6,...d.steps.flatMap(s=>s.g.map(Math.abs)));
- let b=`<line x1="20" x2="310" y1="75" y2="75" stroke="${line}"/>`;st.g.forEach((v,i)=>{const x=24+i*36,h=Math.abs(v)/gmax*62,y=v>=0?75-h:75;
-  b+=`<rect x="${x}" y="${y}" width="28" height="${Math.max(h,0.5)}" rx="3" fill="${v>=0?"#d14a2f":"#2a78d6"}"><title>g${i+1} = ${v.toFixed(4)}</title></rect><text x="${x+14}" y="148" text-anchor="middle">g${i+1}</text>`});
- B.innerHTML=b+`<text x="4" y="12">±${gmax.toFixed(3)}</text>`;
- const T=d.steps.length,cw=320/T;let hm="";for(let i=0;i<8;i++)d.steps.forEach((s,j)=>{const v=s.g[i]/gmax;
-  hm+=`<rect x="${(j*cw).toFixed(2)}" y="${i*15}" width="${(cw+0.3).toFixed(2)}" height="15" fill="${v>=0?mix("#f2f2f2","#d14a2f",v):mix("#f2f2f2","#2a78d6",-v)}"/>`});
+ const K=st.g.length,lab=d.g_labels||st.g.map((_,i)=>"g"+(i+1)),gall=Math.max(1e-6,...d.steps.flatMap(s=>s.g.map(Math.abs)));
+ const sc=lab.map((_,i)=>d.g_row_scale?Math.max(1e-6,...d.steps.map(s=>Math.abs(s.g[i]))):gall);
+ const gap=290/K,bw=Math.min(28,gap-6);
+ let b=`<line x1="20" x2="310" y1="72" y2="72" stroke="${line}"/>`;st.g.forEach((v,i)=>{const x=24+i*gap,h=Math.abs(v)/sc[i]*48,y=v>=0?72-h:72;
+  b+=`<rect x="${x}" y="${y}" width="${bw}" height="${Math.max(h,0.5)}" rx="3" fill="${v>=0?"#d14a2f":"#2a78d6"}"><title>${lab[i]} = ${v.toFixed(4)}</title></rect><text x="${x+bw/2}" y="146" text-anchor="middle">${lab[i]}</text>`+
+   (d.g_row_scale?`<text x="${x+bw/2}" y="${v>=0?y-3:y+h+10}" text-anchor="middle" style="font-size:9px">${v.toFixed(2)}</text>`:"")});
+ B.innerHTML=b+(d.g_row_scale?`<text x="4" y="12">막대 = 출력마다 자기 최대값으로 정규화</text>`:`<text x="4" y="12">±${gall.toFixed(3)}</text>`);
+ const T=d.steps.length,cw=320/T,rh=120/K;let hm="";for(let i=0;i<K;i++)d.steps.forEach((s,j)=>{const v=s.g[i]/sc[i];
+  hm+=`<rect x="${(j*cw).toFixed(2)}" y="${(i*rh).toFixed(2)}" width="${(cw+0.3).toFixed(2)}" height="${rh.toFixed(2)}" fill="${v>=0?mix("#f2f2f2","#d14a2f",v):mix("#f2f2f2","#2a78d6",-v)}"><title>${lab[i]}</title></rect>`});
  H.innerHTML=hm+`<rect x="${(encIdx*cw).toFixed(2)}" y="0" width="${Math.max(cw,1.5).toFixed(2)}" height="120" fill="none" stroke="${ink}" stroke-width="1.5"/>`;
  const hs=d.steps.map(s=>s.seen.h),hmax=Math.max(0.5,...hs.filter(x=>x!=null));let pth="",pen=false;
  hs.forEach((h,j)=>{if(h==null){pen=false;return}pth+=(pen?"L":"M")+(j*cw).toFixed(1)+","+(80-h/hmax*70).toFixed(1);pen=true});

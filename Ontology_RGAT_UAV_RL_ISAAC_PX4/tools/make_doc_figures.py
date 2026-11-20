@@ -4,8 +4,8 @@
     python3 tools/make_doc_figures.py all         # every figure from figure_data.json + code
     python3 tools/make_doc_figures.py overall | architecture | graph | field | effects | results | robustness
 
-Diagrams are drawn from the code (graph edges from current_semantics/graph.py, node slots from
-current_semantics/features.py, the approach field from current_semantics/reward.py).  Result
+Diagrams are drawn from the code (the proposed ORL policy's nodes, edges, slots and sizes from
+current_semantics/orl.py, version ORL_VERSION; the approach field from current_semantics/reward.py).  Result
 figures read only docs/figures/figure_data.json, which ``extract`` builds from the confirmation
 report (20 fresh training seeds), the per-episode Isaac records and the local evaluation summaries
 under results/current_semantics_3d (results/ is not versioned, so the extracted numbers are).  White background, English labels, PNG 200 dpi + SVG.
@@ -54,6 +54,9 @@ RELATION_STYLE = {
     "affectsVisibility": ("#1baf7a", (0, (1.2, 1.6))),
     "conditionsContact": ("#eda100", (0, (6, 2, 1.5, 2))),
     "informsLanding": ("#e87ba4", "-"),
+    # ORL's two decision relations: categorical slots 6-7 (same validator, 7-slot palette passes)
+    "gatesDescent": ("#008300", (0, (8, 2))),
+    "informsVertical": ("#6250d6", (0, (2, 1.2, 6, 1.2))),
 }
 ARM_LABEL = {"ontology_rgat_ppo": "Ontology R-GAT\n(proposed)", "semantic_mlp_ppo": "Semantic MLP",
              "raw_ppo": "PPO (raw obs.)", "untyped_gnn_ppo": "Untyped GNN"}
@@ -323,16 +326,30 @@ def _zoom(ax, a, b):
     ax.plot([a[0], b[0]], [a[1], b[1]], color=DASH, lw=2.0, ls=(0, (5, 3)), zorder=1)
 
 
+ORL_VERSION = "orl/1"     # the proposed model of learning-speed/1 (status doc 21)
+ORL_SHORT = {"ObservationQuality": "Q", "VerticalState": "V", "HeadingState": "H",
+             "RelativeGeometry": "G", "MotionState": "M", "AttitudeState": "A",
+             "ApproachSituation": "P", "ViewGeometry": "O", "ContactCondition": "C",
+             "LateralDecision": "Lat", "DescentEligibility": "E", "VerticalDecision": "Z"}
+
+
+def _orl():
+    from ontology_rgat.current_semantics import orl
+    return orl
+
+
 def overall():
-    """The whole method in one figure, laid out like an encoder paper figure."""
-    from ontology_rgat.current_semantics.contracts import NODE_ORDER
-    from ontology_rgat.current_semantics.graph import SEMANTIC_EDGES
+    """The whole method in one figure, laid out like an encoder paper figure (ORL, orl/1)."""
+    orl = _orl()
+    graph = orl.GRAPHS[ORL_VERSION]
+    semantic = [e for e in graph.edges if e[2] != orl.SELF]
+    dims = orl.input_dimensions()
     fig, ax = canvas(150, 172)
-    # ---- top band: scene graph -> encoder -> actor -> PX4
+    # ---- top band: scene graph -> ORL actor -> policy -> PX4
     kg = {"UAV": (16.5, 154.0), "Moving\npad": (5.2, 165.5), "Camera": (28.6, 166.5),
-          "Self-\nNavigation\nEstimator": (5.2, 142.5), "Attitude": (28.6, 142.0)}
-    edge_lab = {"Moving\npad": "relative x, y, h", "Camera": "vision age", "Self-\nNavigation\nEstimator": "valid, age",
-                "Attitude": "roll, pitch, rate"}
+          "Navigation\n(PX4 EKF2)": (5.2, 142.5), "Attitude": (28.6, 142.0)}
+    edge_lab = {"Moving\npad": "relative x, y, h", "Camera": "vision age",
+                "Navigation\n(PX4 EKF2)": "own state, valid", "Attitude": "roll, pitch, rate"}
     for name, (x, y) in kg.items():
         if name != "UAV":
             ax.plot([kg["UAV"][0], x], [kg["UAV"][1], y], color=INK, lw=1.2, zorder=2)
@@ -342,26 +359,30 @@ def overall():
                     bbox=dict(fc="white", ec="none", pad=0.1), zorder=3)
         r = 5.2 if name == "UAV" else 4.3
         ax.add_patch(Circle((x, y), r, fc=C["kg"][0], ec=C["kg"][1], lw=1.2, zorder=4))
-        ax.text(x, y, name, ha="center", va="center", fontsize=8.6 if name.count("\n") > 1 else 10.5,
+        ax.text(x, y, name, ha="center", va="center", fontsize=8.6 if "\n(" in name else 10.5,
                 zorder=5, linespacing=1.0)
     _line(ax, [(34.5, 154.0), (39.0, 154.0)])
     ax.add_patch(FancyBboxPatch((37.5, 138.5), 109.5, 33.0, boxstyle="round,pad=0,rounding_size=3.5",
                                 fc=C["off"][0], ec="#555555", lw=1.6, ls=(0, (4, 3)), zorder=1))
-    ax.text(44.0, 166.6, "Ontology R-GAT Encoder", fontsize=14, weight="bold", color=INK, va="center")
-    _rect(ax, 39.5, 150.0, 17.0, 8.0, "Semantic Feature\nBuilder  " + r"$\phi$", "sim", size=11)
-    _ellipse(ax, 65.5, 154.0, 13.0, 7.0, "Node\nProjection", size=10.5)
-    _rect(ax, 75.5, 144.0, 9.0, 24.5, "Relational\nGraph\nAttention\n(hop 1)", "est", size=10.5)
-    _rect(ax, 90.5, 144.0, 9.0, 20.5, "Relational\nGraph\nAttention\n(hop 2,\nshared)", "know", size=10.5)
-    _rect(ax, 106.0, 144.0, 9.0, 24.5, "Landing-\nContext\nReadout", "pol", size=10.5)
-    _ellipse(ax, 131.0, 154.0, 20.0, 7.0, r"Concat $[\,O_t\,;\,g_t\,]$", size=11)
-    for a, b in [((56.5, 154), (59.0, 154)), ((72.0, 154), (75.5, 154)), ((84.5, 154), (90.5, 154)),
-                 ((99.5, 154), (106.0, 154)), ((115.0, 154), (121.0, 154))]:
+    ax.text(41.0, 166.6, "ORL Actor", fontsize=14,
+            weight="bold", color=INK, va="center")
+    _rect(ax, 39.5, 150.0, 15.5, 8.0, "Semantic Feature\nBuilder  " + r"$\phi$", "sim", size=10.5)
+    _ellipse(ax, 62.5, 154.0, 12.0, 7.0, "Typed Node\nEncoders", size=10.5)
+    _rect(ax, 71.5, 144.0, 8.5, 24.5, "Relational\nGraph\nAttention\n(hop 1)", "est", size=10.5)
+    _rect(ax, 84.0, 144.0, 8.5, 20.5, "Relational\nGraph\nAttention\n(hops 2–3,\nshared)", "know", size=10.5)
+    _rect(ax, 96.5, 144.0, 9.0, 24.5, "Decision\nReadouts\n(lateral,\ndescent\ngate)", "pol", size=10.5)
+    _ellipse(ax, 124.5, 154.0, 25.0, 8.0, "Mirror average\n" + r"$\frac{1}{4}\sum_g S_g\,f(M_g\phi)$",
+             size=10.5)
+    for a, b in [((55.0, 154), (56.5, 154)), ((68.5, 154), (71.5, 154)), ((80.0, 154), (84.0, 154)),
+                 ((92.5, 154), (96.5, 154)), ((105.5, 154), (112.0, 154))]:
         _line(ax, [a, b])
-    _line(ax, [(48.0, 150.0), (48.0, 140.4), (131.0, 140.4), (131.0, 150.5)])
-    ax.text(58.0, 140.9, r"raw current observation $O_t$ (21 channels), bypassing the graph", fontsize=10,
-            color=INK, va="bottom")
-    _line(ax, [(141.0, 154.0), (148.5, 154.0), (148.5, 134.2)])
-    _rect(ax, 129.0, 126.5, 19.0, 7.5, "Actor (PPO)", "sim", size=12)
+    # the four mirrored copies share one set of weights (no raw-observation bypass)
+    ax.plot([57.0, 57.0, 105.0, 105.0], [143.0, 141.6, 141.6, 143.0], color=DASH, lw=1.4, zorder=2)
+    ax.text(81.0, 140.9, r"run on $M_g\phi$ for the 4 reflections $g\in\mathbb{Z}_2\times\mathbb{Z}_2$, "
+            "one set of weights; no raw-observation bypass", fontsize=9.8, color=INK, va="top",
+            ha="center")
+    _line(ax, [(137.0, 154.0), (148.5, 154.0), (148.5, 134.2)])
+    _rect(ax, 129.0, 126.5, 19.0, 7.5, "Policy (PPO)", "sim", size=12)
     ax.add_patch(FancyBboxPatch((1.0, 127.0), 123.5, 6.5, boxstyle="round,pad=0", fc=C["kg"][0], ec=INK,
                                 lw=1.2, zorder=3))
     ax.text(2.0, 130.25, r"$a_t=(a_x,a_y,a_z)$: world ENU net acceleration $\rightarrow$ roll, pitch and "
@@ -372,64 +393,85 @@ def overall():
     _line(ax, [(9.0, 133.5), (9.0, 137.6)], lw=1.4, size=10)
     ax.text(10.0, 135.6, "next decision (0.1 s)", fontsize=9.5, va="center", color=INK)
 
-    # ---- bottom left: the encoder block
-    ax.text(1.5, 121.0, "R-GAT Encoder Block", fontsize=16, weight="bold", color=INK, va="center")
-    ax.add_patch(FancyBboxPatch((2.0, 10.0), 56.0, 106.5, boxstyle="round,pad=0,rounding_size=0.3",
-                                fc="none", ec=DASH, lw=2.6, ls=(0, (8, 4)), zorder=1))
-    _rect(ax, 8.0, 14.0, 44.0, 14.0, "Semantic Features\n+ Node Projection", "est", size=15)
+    # ---- bottom left: the ORL block, drawn as four mirrored copies of one network
+    ax.text(1.5, 121.0, "ORL Encoder Block", fontsize=16, weight="bold", color=INK, va="center")
+    for k in (2, 1):
+        ax.add_patch(FancyBboxPatch((2.0 + 0.8 * k, 10.0 + 0.8 * k), 56.0, 90.0,
+                                    boxstyle="round,pad=0,rounding_size=0.3", fc="white", ec=DASH, lw=1.0,
+                                    ls=(0, (3, 3)), alpha=0.6, zorder=0.5))
+    ax.add_patch(FancyBboxPatch((2.0, 10.0), 56.0, 90.0, boxstyle="round,pad=0,rounding_size=0.3",
+                                fc="white", ec=DASH, lw=2.6, ls=(0, (8, 4)), zorder=1))
+    ax.text(4.0, 96.4, r"$\times 4$ mirrored copies," + "\none set of weights", fontsize=10.5,
+            ha="left", va="center", color=DASH, linespacing=1.2)
+    _rect(ax, 8.0, 14.0, 44.0, 14.0, "Semantic Features\n+ Typed Node Encoders", "est", size=15)
     _rect(ax, 8.0, 46.0, 44.0, 14.0, "Relational Graph Attention", "know", size=15)
-    _rect(ax, 8.0, 78.0, 44.0, 14.0, "LandingContext Readout", "pol", size=15)
+    _rect(ax, 8.0, 78.0, 44.0, 14.0, "Decision Readouts\n(lateral MLP, descent gate)", "pol", size=15)
     _line(ax, [(30.0, 1.0), (30.0, 14.0)], lw=2.6, size=15)
     ax.text(31.5, 4.0, r"Current observation $O_t$" + "\n(21 channels)", fontsize=13, va="center")
-    for a, b in [((30.0, 28.0), (30.0, 46.0)), ((30.0, 60.0), (30.0, 78.0)), ((30.0, 92.0), (30.0, 102.1))]:
+    for a, b in [((30.0, 28.0), (30.0, 46.0)), ((30.0, 60.0), (30.0, 78.0)), ((30.0, 92.0), (30.0, 103.6))]:
         _line(ax, [a, b], lw=2.6, size=15)
     ax.add_patch(FancyArrowPatch((52.0, 57.0), (52.0, 49.0), arrowstyle="-|>", mutation_scale=14,
                                  connectionstyle="arc3,rad=-1.4", color=INK, lw=2.2, zorder=3))
-    ax.text(54.6, 41.0, "2 hops,\nshared", fontsize=11, ha="center", va="center")
-    _oplus(ax, 30.0, 104.0)
-    _line(ax, [(5.0, 1.0), (5.0, 104.0), (28.1, 104.0)], lw=2.6, size=15)
-    ax.text(6.2, 66.0, r"raw $O_t$ bypass", fontsize=12, rotation=90, va="center")
-    _line(ax, [(30.0, 105.9), (30.0, 124.5)], lw=2.6, size=15)
-    ax.text(31.5, 112.0, r"$[\,O_t\,;\,g_t\,]\ \rightarrow$ Actor", fontsize=13, va="center")
+    ax.text(54.6, 41.0, f"{orl.HOPS} hops,\nshared", fontsize=11, ha="center", va="center")
+    ax.add_patch(Circle((30.0, 106.0), 2.4, fc="white", ec=INK, lw=2.0, zorder=5))
+    ax.text(30.0, 106.0, r"$\frac{1}{4}\Sigma$", fontsize=12, ha="center", va="center", zorder=6)
+    ax.text(33.2, 106.0, r"mirror average over $g$", fontsize=12, va="center")
+    ax.text(5.6, 56.0, r"input $M_g\,\phi(O_t)$, output mapped back by $S_g$", fontsize=11.5, rotation=90,
+            va="center", ha="center")
+    _line(ax, [(30.0, 108.4), (30.0, 124.5)], lw=2.6, size=15)
+    ax.text(31.5, 113.5, r"$\mu_t\ \rightarrow$ Policy (no raw $O_t$ bypass)", fontsize=13, va="center")
 
     # ---- right: detail panels with zoom connectors
-    panel(ax, 61.5, 86.0, 87.0, 37.5, "LandingContext Readout and Actor")
+    panel(ax, 61.5, 86.0, 87.0, 37.5, "Decision Readouts, Mirror Average and Policy")
     panel(ax, 61.5, 45.0, 87.0, 38.5, "Relational Graph Attention (R-GAT)")
-    panel(ax, 61.5, 3.0, 87.0, 39.5, "Semantic Feature Builder and Node Inputs")
+    panel(ax, 61.5, 3.0, 87.0, 39.5, "Semantic Features and Typed Node Inputs")
     _zoom(ax, (52.0, 92.0), (61.5, 123.5)); _zoom(ax, (52.0, 78.0), (61.5, 86.0))
     _zoom(ax, (52.0, 60.0), (61.5, 83.5)); _zoom(ax, (52.0, 46.0), (61.5, 45.0))
     _zoom(ax, (52.0, 28.0), (61.5, 42.5)); _zoom(ax, (52.0, 14.0), (61.5, 3.0))
 
-    # panel A: readout and actor
-    _circles(ax, 70.0, 90.8, 8, 1.15, C["pol"][0])
-    ax.text(94.4, 90.8, r"state of L after 2 hops, $h_L^{(2)}\in\mathbb{R}^8$", fontsize=10.5, va="center")
-    _line(ax, [(79.5, 92.6), (79.5, 95.6)], lw=1.6, size=10)
-    _rect(ax, 68.0, 95.6, 23.0, 4.4, r"Readout $g_t=W_o\,h_L^{(2)}$", "pol", size=10.5)
-    gx, gend = _circles(ax, 66.0, 104.6, 8, 1.1, "#F4D3C8")
-    ox, oend = _circles(ax, 90.0, 104.6, 5, 1.1, C["kg"][0], ellipsis_at=3)
-    ax.text(66.0, 107.6, r"$g_t$ (8)", fontsize=10.5); ax.text(90.0, 107.6, r"$O_t$ (21)", fontsize=10.5)
-    _line(ax, [(79.5, 100.0), (79.5, 103.0)], lw=1.6, size=10)
-    ax.plot([76.0, 76.0, 98.0, 98.0], [106.2, 109.5, 109.5, 106.2], color="#6E98DA", lw=1.2, zorder=3)
-    ax.text(99.0, 110.2, "concat", fontsize=10, color="#3A6FC4")
-    _line(ax, [(87.0, 109.5), (87.0, 112.0)], lw=1.6, size=10)
-    _rect(ax, 77.0, 112.0, 20.0, 5.0, "Actor MLP (66)", "sim", size=10.5)
-    _line(ax, [(97.0, 114.5), (110.0, 114.5)], lw=1.6, size=10)
-    ax.text(110.6, 116.6, r"$\mu_t \rightarrow z_t\sim\mathcal{N}(\mu_t,\mathrm{diag}\,\sigma^2)$", fontsize=11,
-            va="center")
-    ax.text(110.6, 112.3, r"$a_t=a_{max}\odot\tanh(z_t)$", fontsize=11, va="center")
-    ax.text(110.6, 108.3, r"$a_{max}=(2.5,\,2.5,\,2.0)$ m/s$^2$", fontsize=10.5, va="center")
-    ax.text(110.6, 104.4, r"critic $V(O_t)$: MLP (55)", fontsize=10.5, va="center")
-    ax.text(110.6, 100.5, "4,016 parameters in total", fontsize=10.5, va="center", color=MUTED)
+    # panel A: decision readouts -> mirror average -> policy
+    e = orl.EMBEDDING
+    groups = [(64.5, "LateralDecision x"), (80.0, "LateralDecision y"), (97.0, "VerticalDecision Z"),
+              (111.0, "Eligibility E")]
+    centres = []
+    for x0, name in groups:
+        xs, x_end = _circles(ax, x0, 94.1, 4, 0.95, C["pol"][0], ellipsis_at=3)
+        ax.text((x0 + x_end) / 2, 91.1, name, fontsize=8.8, ha="center", va="center", color=MUTED)
+        centres.append((x0 + x_end) / 2)
+    for c in centres:
+        _line(ax, [(c, 95.7), (c, 97.5)], lw=1.4, size=9)
+    _rect(ax, 64.5, 97.5, 30.0, 4.6, f"Lateral MLP {e}→{orl.LATERAL_HIDDEN}→1\nshared by x and y",
+          "pol", size=9.6)
+    _rect(ax, 97.0, 97.5, 27.0, 4.6, r"$\mathrm{hold}(Z)+\sigma(\mathrm{gate}(E))\cdot\mathrm{descend}(Z)$",
+          "pol", size=9.6)
+    for c in (centres[0], centres[1], 110.5):
+        _line(ax, [(c, 102.1), (c, 104.1)], lw=1.4, size=9)
+    _rect(ax, 64.5, 104.1, 59.5, 4.2, r"$f(M_g\phi)=(\mu_x,\ \mu_y,\ \mu_z)$ of one mirrored copy", "sim",
+          size=10)
+    _line(ax, [(94.0, 108.3), (94.0, 110.5)], lw=1.4, size=9)
+    _rect(ax, 64.5, 110.5, 59.5, 4.8, r"$\mu_t=\frac{1}{4}\sum_{g} S_g\,f(M_g\phi)$: exact mirror equivariance",
+          "pol", size=10.2)
+    _line(ax, [(124.0, 112.9), (126.4, 112.9)], lw=1.4, size=9)
+    ax.text(126.8, 112.9, r"$z_t\sim\mathcal{N}(\mu_t,\mathrm{diag}\,\sigma^2)$", fontsize=10.5, va="center")
+    ax.text(126.8, 109.1, r"$a_t=a_{max}\odot\tanh(z_t)$", fontsize=10.5, va="center")
+    ax.text(126.8, 105.4, r"$a_{max}=(2.5,2.5,2.0)$ m/s$^2$", fontsize=10, va="center")
+    ax.text(126.8, 101.1, "critic $V(O_t)$: MLP (55)\non raw $O_t$, training only", fontsize=9.6,
+            va="center", linespacing=1.25)
+    ax.text(126.8, 95.6, "actor 2,747 parameters,\n4,016 in total", fontsize=9.6, va="center",
+            color=MUTED, linespacing=1.25)
 
-    # panel B: relational attention
-    rel_colors = [c for c, _ in RELATION_STYLE.values()]
+    # panel B: relational attention over the ORL graph
+    relations = [r for r in orl.RELATIONS if r != orl.SELF]
+    rel_colors = [RELATION_STYLE[r][0] for r in relations] + ["#9A9A9A"]
     for k, col in enumerate(rel_colors):
         ax.add_patch(Rectangle((66.5 + k * 3.2, 48.6), 2.4, 2.4, fc=col, ec=INK, lw=0.8, zorder=4))
-    ax.text(66.0, 53.0, r"neighbour states $h_j$ (one colour per relation type)", fontsize=10, va="bottom")
+    ax.text(66.0, 53.0, r"neighbour states $h_j$ (one colour per relation type, 7 + self)", fontsize=10,
+            va="bottom")
     _line(ax, [(73.5, 56.0), (73.5, 59.2)], lw=1.4, size=9)
     ax.text(75.0, 57.6, r"relation-specific projection $W_{r(ij)}$", fontsize=10, va="center")
-    for k, col in enumerate(rel_colors[:4]):
+    for k, col in enumerate(rel_colors[:5]):
         _stack(ax, 66.5 + k * 5.6, 60.0, 3.0, col)
+    ax.text(95.4, 61.8, "...", fontsize=12, va="center")
     ax.text(66.0, 65.8, r"messages $m_{ij}=W_{r(ij)}\,h_j$", fontsize=10.5, va="bottom")
     ax.add_patch(Rectangle((140.0, 48.6), 3.0, 3.0, fc="white", ec=INK, lw=1.0, zorder=4))
     ax.text(139.2, 50.1, r"target state $h_i$", fontsize=10.5, ha="right", va="center")
@@ -441,12 +483,13 @@ def overall():
     ax.plot([80.5, 80.5, 122.5, 122.5], [68.8, 71.2, 71.2, 65.8], color=INK, lw=1.4, zorder=3)
     _line(ax, [(80.5, 71.2), (80.5, 75.7)], lw=1.4, size=9)
     ax.text(84.0, 73.0, "softmax over the edges into $i$, weighted sum", fontsize=10.5, va="center")
-    _circles(ax, 70.0, 77.2, 8, 1.1, C["know"][0])
-    ax.text(93.5, 77.2, r"$h_i'=\tanh(\sum_j \alpha_{ij}\,m_{ij}+b)$", fontsize=11.5, va="center")
-    ax.text(120.5, 53.4, "self loop on every node;\nthe same layer is applied twice", fontsize=10, color=MUTED,
+    _circles(ax, 70.0, 77.2, 8, 1.1, C["know"][0], ellipsis_at=6)
+    ax.text(96.0, 77.2, r"$h_i'=\tanh(\sum_j \alpha_{ij}\,m_{ij}+b)\in\mathbb{R}^{%d}$" % e, fontsize=11.5,
             va="center")
+    ax.text(110.5, 53.4, f"self loop on every node; the same layer is\napplied {orl.HOPS} times; "
+            "x and y planes share it", fontsize=10, color=MUTED, va="center")
 
-    # panel C: features and node inputs
+    # panel C: features and typed node inputs
     groups = [("#FFC20E", 4), ("#6E98DA", 3), ("#4FA862", 7), ("#B59AD8", 7)]
     k = 0
     for col, n in groups:
@@ -456,33 +499,57 @@ def overall():
             k += 1
     ax.text(66.0, 31.6, r"current observation $O_t$", fontsize=10.5)
     ax.text(66.0, 16.0, "quality · geometry ·\nmotion · attitude", fontsize=9.5, va="top", color=MUTED)
-    _line(ax, [(86.5, 25.0), (91.0, 25.0)], lw=1.6, size=10)
-    ax.add_patch(FancyBboxPatch((91.0, 15.5), 26.0, 19.0, boxstyle="round,pad=0,rounding_size=0.8",
+    _line(ax, [(86.5, 25.0), (90.0, 25.0)], lw=1.6, size=10)
+    ax.add_patch(FancyBboxPatch((90.0, 15.5), 26.0, 19.0, boxstyle="round,pad=0,rounding_size=0.8",
                                 fc=C["know"][0], ec=C["know"][1], lw=1.6, zorder=3))
-    ax.text(104.0, 31.4, r"semantic features $\phi(O_t)$ (44)", fontsize=10.5, ha="center", va="center", zorder=4)
-    ax.text(104.0, 26.6, r"$B(x;s)=x/(|x|+s)$", fontsize=11.5, ha="center", va="center", zorder=4)
-    ax.text(104.0, 21.6, "approach, view geometry,\ncontact condition", fontsize=9.5, ha="center",
+    ax.text(103.0, 31.4, r"semantic features $\phi(O_t)$ (44)", fontsize=10.5, ha="center", va="center",
+            zorder=4)
+    ax.text(103.0, 26.8, r"$B(x;s)=x/(|x|+s)$", fontsize=11.5, ha="center", va="center", zorder=4)
+    ax.text(103.0, 22.0, "y plane aligned to x\nby declared signs", fontsize=9.5, ha="center",
             va="center", zorder=4)
-    ax.text(104.0, 17.3, r"invalid $\rightarrow$ 0 + flag", fontsize=10, ha="center", va="center", zorder=4)
-    _line(ax, [(117.0, 25.0), (121.5, 25.0)], lw=1.6, size=10)
-    short = {"ObservationQuality": "Q", "RelativeGeometry": "G", "MotionState": "M", "AttitudeState": "A",
-             "ApproachSituation": "P", "ViewGeometry": "O", "ContactCondition": "C", "LandingContext": "L"}
-    for i, node in enumerate(NODE_ORDER):
-        yy = 34.0 - i * 2.75
-        ax.text(123.6, yy + 1.0, short[node], fontsize=9.5, ha="center", va="center")
-        for j in range(10):
-            col = C["pol"][0] if node == "LandingContext" else (C["est"][0] if i < 4 else C["know"][0])
-            ax.add_patch(Rectangle((125.0 + j * 2.1, yy), 1.85, 2.2, fc=col, ec=INK, lw=0.5, zorder=4))
-    ax.text(135.5, 9.5, "node inputs (8 × 10)", fontsize=10.5, ha="center")
-    ax.text(66.0, 7.0, f"{len(SEMANTIC_EDGES)} semantic edges, 5 relation types; L has no input slots",
-            fontsize=10, color=MUTED)
+    ax.text(103.0, 17.6, r"invalid $\rightarrow$ 0 + flag", fontsize=10, ha="center", va="center", zorder=4)
+    _line(ax, [(116.0, 25.0), (119.5, 25.0)], lw=1.6, size=10)
+    shared = list(orl.SHARED_ROLES)
+    planar = list(orl.PLANE_ROLES)
+    ax.text(129.0, 37.2, "x plane", fontsize=9, ha="center", color=MUTED)
+    ax.text(140.0, 37.2, "y plane", fontsize=9, ha="center", color=MUTED)
+    rows = [(c, "shared") for c in shared] + [(c, "plane") for c in planar] + [("decisions", "decision")]
+    for i, (concept, kind) in enumerate(rows):
+        yy = 34.0 - i * 2.55
+        label = "D" if kind == "decision" else ORL_SHORT[concept]
+        ax.text(122.0, yy + 1.0, label, fontsize=9.2, ha="center", va="center")
+        if kind == "shared":
+            for j in range(dims[concept]):
+                ax.add_patch(Rectangle((124.0 + j * 2.05, yy), 1.8, 2.1, fc=C["est"][0], ec=INK, lw=0.5,
+                                       zorder=4))
+            if concept == "VerticalState":
+                ax.text(141.3, yy + 1.0, "shared", fontsize=8.4, color=MUTED, va="center")
+        elif kind == "plane":
+            for base in (124.0, 135.0):
+                for j in range(dims[concept]):
+                    ax.add_patch(Rectangle((base + j * 2.05, yy), 1.8, 2.1, fc=C["know"][0], ec=INK,
+                                           lw=0.5, zorder=4))
+        else:
+            for j, name in enumerate(("Lat x", "Lat y", "E", "Z")):
+                ax.add_patch(Rectangle((124.0 + j * 5.6, yy), 5.0, 2.1, fc=C["pol"][0], ec=INK, lw=0.5,
+                                       zorder=4))
+                ax.text(126.5 + j * 5.6, yy + 1.05, name, fontsize=7.6, ha="center", va="center", zorder=5)
+    ax.text(134.5, 6.4, f"{len(orl.NODES)} nodes; decision nodes\nstart from a learned state",
+            fontsize=9.6, ha="center", va="center", linespacing=1.25)
+    ax.text(66.0, 7.0, f"{len(dims)} typed encoders (one per concept, shared by both planes)\n"
+            f"{len(semantic)} semantic edges, {len(relations)} relation types",
+            fontsize=10, color=MUTED, va="center", linespacing=1.3)
     save(fig, "overall_architecture")
 
 
 # ----------------------------------------------------------------------------- 1 architecture
 def architecture():
+    orl = _orl()
+    graph = orl.GRAPHS[ORL_VERSION]
+    semantic = [e for e in graph.edges if e[2] != orl.SELF]
+    relations = [r for r in orl.RELATIONS if r != orl.SELF]
     fig, ax = canvas(140, 86)
-    ax.text(1, 83.6, "Ontology R-GAT landing policy on a moving platform: system pipeline",
+    ax.text(1, 83.6, "ORL landing policy on a moving platform: system pipeline",
             fontsize=13.5, weight="bold", color=INK, va="center")
     PW, GAP, X0 = 29.5, 6.0, 1.0
     PX = [X0 + i * (PW + GAP) for i in range(4)]
@@ -494,22 +561,25 @@ def architecture():
             ("Moving landing pad", ["UGV deck with 17-tag ArUco board", "any bearing x heading, accel."]),
             ("Quadrotor + PX4 SITL", ["lockstep physics · OFFBOARD", "attitude + thrust setpoints"]),
             ("Sensors", ["downward camera · IMU · GNSS", "seeded wind and handover kick"]),
-            ("Degradation", ["GNSS outage · vision dropout", "optical noise · pad acceleration"])]),
+            ("Degradation", ["vision dropout · optical noise", "pad acceleration"])]),
         1: ("2  Perception & navigation", "est", [
             ("ArUco detection + PnP", ["ROS 2 camera stream", "capture-time aligned"]),
             ("Pad track", ["relative position, velocity", "re-acquired after rejections"]),
-            ("Self-Navigation Estimator", ["GNSS + velocity + IMU fusion",
-                                           "GNSS-outage-aware state estimation"]),
+            ("Own navigation state", ["PX4 EKF2 output", "no additional estimator"]),
             (r"Current observation  $O_t$", ["21 channels, no history", "quality · geometry · motion · att."])]),
         2: ("3  Ontology semantics", "know", [
-            ("Concepts and relations", ["8 concepts · 5 relation types", "14 semantic edges + self loops"]),
+            ("Concepts and relations", [f"{len(orl.input_dimensions())} concepts x 2 planes · "
+                                        f"{len(relations)} relation types",
+                                        f"{len(semantic)} semantic edges + self loops"]),
             ("Semantic features", ["approach, view geometry,", "contact condition (44 values)"]),
             ("Validity rules", ["no estimate or camera behind", "-> neutral 0 + explicit flag"]),
-            ("Node inputs  8 x 10", ["raw slots copied exactly", "+ derived slots + node id"])]),
+            (f"Typed node inputs  ({len(orl.NODES)} nodes)", ["x / y planes share encoders",
+                                                               "y aligned to x by declared signs"])]),
         3: ("4  Policy & flight control", "pol", [
-            ("Relational GAT encoder", ["one typed attention layer", "shared over 2 hops"]),
-            ("LandingContext embedding", [r"$g_t \in \mathbb{R}^8$ read from node L", "situation summary"]),
-            ("Actor (PPO)", [r"$[\,O_t\,;\,g_t\,] \rightarrow a_t=(a_x,a_y,a_z)$", "world ENU net acceleration"]),
+            ("ORL relational encoder", ["one typed attention layer", f"shared over {orl.HOPS} hops"]),
+            ("Decision readouts", ["lateral MLP shared by x and y", "descent gate on eligibility E"]),
+            ("Mirror-equivariant actor (PPO)",
+             [r"$\mu_t=\frac{1}{4}\sum_g S_g f(M_g\phi)\rightarrow a_t$", "no raw-observation bypass"]),
             ("Attitude adapter", ["roll / pitch / thrust, yaw held", "20 deg command limit -> PX4"])]),
     }
     for i, (title, role, items) in content.items():
@@ -528,10 +598,6 @@ def architecture():
     p = C["pol"][1]
     for a, b in zip(rows[:-1], rows[1:]):
         arrow(ax, (PX[3] + PW / 2, a), (PX[3] + PW / 2, b + bh), color=p, lw=1.4)
-    # raw bypass of the current observation into the actor
-    route(ax, [(PX[1] + PW * 0.82, py), (PX[1] + PW * 0.82, py - 2.2), (PX[3] - 2.2, py - 2.2),
-               (PX[3] - 2.2, rows[2] + bh / 2), (PX[3] + 1.2, rows[2] + bh / 2)],
-          color=C["est"][1], lw=1.3, ls=(0, (4, 2)), label=r"raw $O_t$ also enters the actor", lseg=1)
     # closed loop back to the vehicle
     route(ax, [(PX[3] + PW * 0.75, py), (PX[3] + PW * 0.75, py - 4.6), (PX[0] + PW * 0.5, py - 4.6),
                (PX[0] + PW * 0.5, py)], color=p, lw=1.5, label="setpoints to PX4 (closed loop, ~10 Hz)", lseg=1)
@@ -550,11 +616,16 @@ def architecture():
     box(ax, xs[2], ty, tw, th, "Rollouts", ["12 complete episodes", "per update, every policy"], role="off")
     box(ax, xs[3], ty, tw, th, "Reward", [r"$\Phi(s')-\Phi(s)$, approach field", "+ terminal verdict table"],
         role="off")
-    box(ax, xs[4], ty, tw, th, "PPO update", ["clip 0.2 · GAE 0.95", "target KL 0.02"], role="off")
+    box(ax, xs[4], ty, tw, th, "PPO update", ["clip 0.2 · GAE 0.95", r"critic $V(O_t)$ on raw $O_t$"],
+        role="off")
     for a, b in zip(xs[1:-1], xs[2:]):
         arrow(ax, (a + tw, ty + th / 2), (b, ty + th / 2), color=C["off"][1])
     route(ax, [(xs[0] + tw / 2, ty), (xs[0] + tw / 2, ty - 1.6), (xs[3] + tw / 2, ty - 1.6), (xs[3] + tw / 2, ty)],
           color=C["gt"][1], ls=(0, (3, 2)))
+    # the raw observation reaches the critic only (training), never the actor
+    route(ax, [(PX[1] + PW * 0.82, py), (PX[1] + PW * 0.82, py - 2.2), (xs[4] + 1.6, py - 2.2),
+               (xs[4] + 1.6, ty + th)], color=C["est"][1], lw=1.3, ls=(0, (4, 2)),
+          label=r"raw $O_t$ reaches the critic only (training)", lseg=1)
     route(ax, [(xs[4] + tw * 0.6, ty + th), (xs[4] + tw * 0.6, py - 7.0), (PX[3] + PW * 0.35, py - 7.0),
                (PX[3] + PW * 0.35, py)], color=p, ls=(0, (3, 2)), label="learned weights", lseg=1)
     save(fig, "system_architecture")
@@ -563,68 +634,93 @@ def architecture():
 # ----------------------------------------------------------------------------- 2 model
 # ----------------------------------------------------------------------------- 3 graph
 def graph():
-    """The landing ontology as a concept graph: circles for concepts, one colour per relation."""
-    from ontology_rgat.current_semantics.features import FEATURES
-    from ontology_rgat.current_semantics.graph import SEMANTIC_EDGES
-    slots = defaultdict(int)
-    for f in FEATURES:
-        slots[f.node] += 1
-    fig, ax = canvas(124, 76)
-    ax.text(2, 73.0, "Landing ontology read by the R-GAT  (8 concepts, 5 relation types)", fontsize=15,
-            weight="bold", color=INK, va="center")
-    pos = {"ObservationQuality": (28, 58), "RelativeGeometry": (28, 43), "MotionState": (28, 28),
-           "AttitudeState": (28, 13), "ApproachSituation": (68, 50.5), "ViewGeometry": (68, 35.5),
-           "ContactCondition": (68, 20.5), "LandingContext": (102, 35.5)}
-    label = {"ObservationQuality": "Observation\nQuality", "RelativeGeometry": "Relative\nGeometry",
+    """The ORL ontology graph: both planes, the shared state concepts and the decision nodes."""
+    orl = _orl()
+    spec = orl.GRAPHS[ORL_VERSION]
+    semantic = [e for e in spec.edges if e[2] != orl.SELF]
+    dims = orl.input_dimensions()
+    fig, ax = canvas(136, 96)
+    ax.text(2, 93.0, f"ORL ontology graph  ({len(orl.NODES)} nodes, {len(set(r for *_, r in semantic))} "
+            "relation types; the x and y planes share every weight)", fontsize=14.5, weight="bold",
+            color=INK, va="center")
+    X1, X2, X3 = 24.0, 62.0, 100.0
+    # x plane on top, its mirror image (y plane) below; the shared state concepts sit between
+    # the planes on the left, the decision nodes on the right
+    pos = {"RelativeGeometry_x": (X1, 79.0), "MotionState_x": (X1, 68.5), "AttitudeState_x": (X1, 58.0),
+           "RelativeGeometry_y": (X1, 12.0), "MotionState_y": (X1, 22.5), "AttitudeState_y": (X1, 33.0),
+           "ObservationQuality": (X1 - 14.0, 56.0), "VerticalState": (X1 - 14.0, 45.5),
+           "HeadingState": (X1 - 14.0, 35.0),
+           "ApproachSituation_x": (X2, 78.0), "ViewGeometry_x": (X2, 66.5), "ContactCondition_x": (X2, 55.0),
+           "ApproachSituation_y": (X2, 13.0), "ViewGeometry_y": (X2, 24.5), "ContactCondition_y": (X2, 36.0),
+           "LateralDecision_x": (X3, 70.0), "LateralDecision_y": (X3, 21.0),
+           "DescentEligibility": (X3, 50.5), "VerticalDecision": (X3 + 14.0, 41.0)}
+    names = {"ObservationQuality": "Observation\nQuality", "VerticalState": "Vertical\nState",
+             "HeadingState": "Heading\nState", "RelativeGeometry": "Relative\nGeometry",
              "MotionState": "Motion\nState", "AttitudeState": "Attitude\nState",
              "ApproachSituation": "Approach\nSituation", "ViewGeometry": "View\nGeometry",
-             "ContactCondition": "Contact\nCondition", "LandingContext": "Landing\nContext"}
-    sub = {"ObservationQuality": "vision / navigation age, validity", "RelativeGeometry": "relative x, y, height",
-           "MotionState": "relative, pad and own velocity", "AttitudeState": "roll, pitch, yaw, body rates",
-           "ApproachSituation": "approach error and closure", "ViewGeometry": "image position, rate, margins",
-           "ContactCondition": "touchdown speed, tilt, rate", "LandingContext": "readout g (8-D), no input"}
-    role = {n: ("kg" if p[0] == 28 else "know" if p[0] == 68 else "pol") for n, p in pos.items()}
-    R = 5.4
-    for x, title in ((28, "observed state"), (68, "landing situations"), (102, "decision context")):
-        ax.text(x, 66.5, title, ha="center", fontsize=12.5, weight="bold", color=INK)
-    for (src, dst, rel) in SEMANTIC_EDGES:
+             "ContactCondition": "Contact\nCondition", "LateralDecision": "Lateral\nDecision",
+             "DescentEligibility": "Descent\nEligibility", "VerticalDecision": "Vertical\nDecision"}
+
+    def concept(node):
+        return node.rsplit("_", 1)[0] if node.endswith(("_x", "_y")) else node
+
+    def role(node):
+        c = concept(node)
+        if c in orl.SHARED_ROLES:
+            return "est"
+        if c in ("RelativeGeometry", "MotionState", "AttitudeState"):
+            return "kg"
+        if c in ("ApproachSituation", "ViewGeometry", "ContactCondition"):
+            return "know"
+        return "pol"
+
+    R = 4.0
+    for x, title in ((X1 - 7.0, "observed state"), (X2, "landing situations"), (X3 + 7.0, "decisions")):
+        ax.text(x, 86.6, title, ha="center", fontsize=12.5, weight="bold", color=INK)
+    # plane bands
+    for (y0, y1, name) in ((50.2, 84.0, "x plane"), (7.0, 41.2, "y plane")):
+        ax.add_patch(FancyBboxPatch((X1 - 6.0, y0), X3 + 6.0 - (X1 - 6.0), y1 - y0,
+                                    boxstyle="round,pad=0,rounding_size=1.2", fc="#FAFAFA", ec=GRID,
+                                    lw=1.0, zorder=0))
+        ax.text(X3 + 5.2, y1 - 1.6, name, ha="right", va="center", fontsize=10.5, color=MUTED,
+                style="italic")
+    for (src, dst, rel) in semantic:
         (x0, y0), (x1, y1) = pos[src], pos[dst]
         dx, dy = x1 - x0, y1 - y0
         L = math.hypot(dx, dy)
         a = (x0 + dx / L * R, y0 + dy / L * R)
         b = (x1 - dx / L * (R + 0.3), y1 - dy / L * (R + 0.3))
         color, ls = RELATION_STYLE[rel]
-        ax.add_patch(FancyArrowPatch(a, b, arrowstyle="-|>", mutation_scale=13, color=color,
-                                     lw=2.2 if rel == "informsLanding" else 1.7, linestyle=ls,
-                                     connectionstyle="arc3,rad=0.0", zorder=2, shrinkA=0, shrinkB=0))
+        ax.add_patch(FancyArrowPatch(a, b, arrowstyle="-|>", mutation_scale=10, color=color,
+                                     lw=1.9 if rel in ("informsLanding", "informsVertical") else 1.3,
+                                     linestyle=ls, connectionstyle="arc3,rad=0.0", zorder=2, shrinkA=0,
+                                     shrinkB=0, alpha=0.95))
     for n, (x, y) in pos.items():
-        fc, ec = C[role[n]]
-        ax.add_patch(Circle((x, y), R, fc=fc, ec=ec if role[n] != "kg" else INK, lw=1.8, zorder=4))
-        ax.add_patch(Circle((x, y), R + 1.0, fc="none", ec=MUTED, lw=0.9, ls=(0, (1.5, 1.5)), zorder=3))
-        ax.text(x, y, label[n], ha="center", va="center", fontsize=10.5, color=INK, zorder=5, linespacing=1.05)
-        if slots.get(n):
-            ax.text(x + R * 0.78, y + R * 0.78, str(slots[n]), fontsize=9, color=INK, zorder=6, ha="center",
-                    va="center", bbox=dict(boxstyle="circle,pad=0.18", fc="white", ec=INK, lw=0.8))
-        if role[n] == "kg":
-            ax.text(x - R - 1.6, y, sub[n], ha="right", va="center", fontsize=9.5, color=MUTED)
-        else:
-            ax.text(x, y - R - 1.9, sub[n], ha="center", va="center", fontsize=9.5, color=MUTED,
-                    bbox=dict(fc="white", ec="none", pad=0.1), zorder=5)
-    lx, ly = 88.0, 20.5
-    ax.add_patch(FancyBboxPatch((lx - 1.6, ly - 14.0), 36.5, 17.5, boxstyle="round,pad=0,rounding_size=1.2",
-                                fc="white", ec=DASH, lw=1.6, ls=(0, (5, 3)), zorder=1))
+        fc, ec = C[role(n)]
+        ax.add_patch(Circle((x, y), R, fc=fc, ec=ec if role(n) != "kg" else INK, lw=1.6, zorder=4))
+        ax.add_patch(Circle((x, y), R + 0.8, fc="none", ec=MUTED, lw=0.8, ls=(0, (1.5, 1.5)), zorder=3))
+        c = concept(n)
+        text = names[c] + (f" {n[-1]}" if n.endswith(("_x", "_y")) else "")
+        ax.text(x, y, text, ha="center", va="center", fontsize=8.2, color=INK, zorder=5, linespacing=1.0)
+        if c in dims:
+            ax.text(x + R * 0.78, y + R * 0.78, str(dims[c]), fontsize=7.8, color=INK, zorder=6, ha="center",
+                    va="center", bbox=dict(boxstyle="circle,pad=0.15", fc="white", ec=INK, lw=0.7))
     counts = defaultdict(int)
-    for _, _, r in SEMANTIC_EDGES:
+    for _, _, r in semantic:
         counts[r] += 1
-    for i, (r, (color, ls)) in enumerate(RELATION_STYLE.items()):
-        yy = ly + 1.6 - i * 2.6
-        ax.plot([lx, lx + 5.5], [yy, yy], color=color, lw=2.2, ls=ls)
-        ax.text(lx + 6.6, yy, f"{r}  ({counts[r]})", fontsize=10, color=INK, va="center")
-    ax.text(lx, ly - 11.6, "dotted ring = self loop on every node;\none attention layer applied twice",
-            fontsize=9, color=MUTED, va="center", linespacing=1.3)
-    ax.text(2, 1.8, "Edges read from current_semantics/graph.py; the number on a concept is its input slot count "
-            "(44 in total). The untyped GNN keeps every edge and erases only the relation names.",
-            fontsize=9.5, color=MUTED)
+    lx, ly = 109.5, 30.0
+    ax.add_patch(FancyBboxPatch((lx - 1.6, 2.0), 25.5, 31.0, boxstyle="round,pad=0,rounding_size=1.2",
+                                fc="white", ec=DASH, lw=1.6, ls=(0, (5, 3)), zorder=1))
+    for i, r in enumerate(orl.RELATIONS[:-1]):
+        color, ls = RELATION_STYLE[r]
+        yy = ly - i * 3.0
+        ax.plot([lx, lx + 4.0], [yy, yy], color=color, lw=2.2, ls=ls)
+        ax.text(lx + 5.0, yy, f"{r}  ({counts[r]})", fontsize=9.2, color=INK, va="center")
+    ax.text(lx, 5.6, "dotted ring = self loop on every\nnode; one attention layer\n"
+            f"applied {orl.HOPS} times", fontsize=8.4, color=MUTED, va="center", linespacing=1.25)
+    ax.text(2, 1.2, f"Edges read from current_semantics/orl.py ({ORL_VERSION}); the number on a concept is its "
+            "input slot count (44 in total). One encoder per concept type serves both planes; decision nodes "
+            "have no input.", fontsize=9.2, color=MUTED)
     save(fig, "ontology_graph")
 
 

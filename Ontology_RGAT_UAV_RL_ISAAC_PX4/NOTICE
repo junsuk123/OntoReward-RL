@@ -1,6 +1,15 @@
 Ontology-RGAT UAV 착륙: Isaac Sim + PX4
 =======================================
 
+저작권과 관리자
+---------------
+
+Copyright (c) 2026 Jun Suk Kim (김준석)
+관리자: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
+
+이 저장소의 코드, 설정, 문서, 그림은 위 저자가 작성했다. 아래 제3자 저작물과
+외부 의존성은 각자의 저작권자와 라이선스를 따른다.
+
 이 저장소가 기반으로 삼은 제3자 저작물
 ---------------------------------------
 
@@ -26,3 +35,10 @@ logit의 학습 가능한 relation별 embedding과 이 저장소의 나머지 �
 
 Apache License, Version 2.0 전문은 다음 주소에서 확인할 수 있다.
 https://www.apache.org/licenses/LICENSE-2.0
+
+UGV 모델
+--------
+
+assets/ranger_mini_v3/source/ 는 AgileX Robotics의 ugv_gazebo_sim 저장소(commit
+27633a956c845903ee630538afeb17fe70afdd84)에서 변경 없이 복사한 ranger_mini_v3
+package이다. upstream package.xml은 license를 BSD로 선언한다.

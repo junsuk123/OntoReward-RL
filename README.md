@@ -1,5 +1,7 @@
 # 온톨로지 기반 관계 그래프 어텐션 강화학습을 이용한 이동 플랫폼 UAV 착륙
 
+**ORL: Ontology-Structured Reinforcement Learning** · 관리자 Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
+
 이동하는 지상 플랫폼(UGV) 위에 쿼드로터를 착륙시키는 강화학습 정책이다.
 정책은 매 결정 시점의 현재 관측만 받아 월드 좌표계 3축 순가속도 `(a_x, a_y, a_z)`를 낸다.
 현재 관측은 카메라 기반 패드 추정값과 기체의 항법 상태로 이루어진다.
@@ -457,3 +459,13 @@ python3 tools/isaac_demo_capture.py media OUT ../docs/figures --still OUT/still_
 | `Ontology_RGAT_UAV_RL_ISAAC_PX4/tools/isaac_demo_capture.py`, `demo_tf_relay.py` | Isaac Sim + PX4 시연 비행의 화면 녹화와 영상·그림 생성 |
 | `docs/figures/` | 그림과 그 설명 ([docs/figures/README.md](docs/figures/README.md)) |
 | `archive/` (git 제외) | 압축 보관본: ORL이 쓰지 않는 경로(`non_orl_20261120.tar.zst`), 이전 단계 결과가 담긴 문서 원본(`superseded_docs_20261121.tar.zst`). 목록은 각각 안의 `MANIFEST.md` |
+
+## 7. 저작권과 관리자
+
+- **저작권:** Copyright © 2026 Jun Suk Kim (김준석). 이 저장소의 코드, 설정, 문서, 그림의 저작권은 저자에게 있다.
+- **관리자:** Jun Suk Kim (김준석), <junsuk55944587@gmail.com>
+- **인용:** 저장소 인용 정보는 [CITATION.cff](CITATION.cff)에 있다.
+- **제3자 저작물:**
+  - R-GAT 층의 개념과 그 출처: [NOTICE](Ontology_RGAT_UAV_RL_ISAAC_PX4/NOTICE)
+  - UGV 모델(AgileX Ranger Mini 3.0, BSD): `Ontology_RGAT_UAV_RL_ISAAC_PX4/assets/ranger_mini_v3/`
+  - Isaac Sim, Pegasus Simulator, PX4-Autopilot, Micro XRCE-DDS Agent, `px4_msgs`는 이 저장소에 포함하지 않는 외부 의존성이며 각자의 라이선스를 따른다.

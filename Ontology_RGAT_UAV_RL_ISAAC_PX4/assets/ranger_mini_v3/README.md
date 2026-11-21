@@ -25,3 +25,8 @@ Trajectory dynamics는 `isaac_sim/pad_motion.py`의 결정론적 코드가 담�
 Import한 URDF/USD는 appearance와 geometry provenance일 뿐 학습되거나 wheel physics를
 사용하는 controller가 아니다. 설정된 carrier 치수는 0.720×0.500×0.345 m,
 질량 75 kg, payload rating 120 kg, 속도 제한 1.0 m/s다.
+
+---
+
+이 안내문: Copyright © 2026 Jun Suk Kim (김준석). 관리자: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
+`source/` 아래 파일은 AgileX Robotics의 저작물이며 upstream 라이선스(BSD)를 따른다.

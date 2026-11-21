@@ -20,3 +20,7 @@ ORL이 쓰지 않는 경로의 문서는 2026-11-20에 `archive/non_orl_20261120
 최소 관측 ROS 파이프라인, 2축 기준 이식, MATLAB 이식, 이전 Isaac 비교 경로, 온톨로지를 보상에 쓰던 비교 실험,
 항법 열화 실험(Kinematic WLS = 내부 명칭 WMON, CA-KF), bond/1, 비행 시연, 실제 기체 안전 문서가 여기에 들어 있다.
 목록과 복원 방법은 보관본 안의 `MANIFEST.md`에 있다.
+
+---
+
+Copyright © 2026 Jun Suk Kim (김준석). 관리자: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>

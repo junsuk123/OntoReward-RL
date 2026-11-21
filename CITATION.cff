@@ -1,0 +1,16 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "ORL: Ontology-Structured Reinforcement Learning for UAV Landing on a Moving Platform"
+authors:
+  - family-names: Kim
+    given-names: Jun Suk
+    alias: "김준석"
+    email: junsuk55944587@gmail.com
+repository-code: "https://github.com/junsuk123/ONTOLOGY-STRUCTURED-REINFORCEMENT-LEARNING"
+keywords:
+  - reinforcement learning
+  - ontology
+  - relational graph attention
+  - UAV landing
+  - Isaac Sim
+  - PX4

@@ -67,3 +67,7 @@
 3. 접촉 tilt·rate의 정의는 하나만 등록한다: thrust 축 각도 `acos(cosφ cosθ)`와 `‖(p,q)‖`, 한계 5°와 10°/s(spatial `settled` 정의). direct 판정의 `norm(roll,pitch)`과 섞지 않는다. G2에서 확정할 잠정값이다.
 4. direct_policy local toy는 smoke 전용이다. 과학적 비교에서는 거부한다. 축이 뒤바뀐 자세 규약 때문에 실행 결과를 Isaac 성능 근거로도 쓸 수 없다.
 5. `CausalIsaacObservation`의 receive 시각 기준 KF·visionAge, 상수 nav 채널, local과 Isaac의 추적기 갱신 수 차이(결정당 2 vs 1), 진입 yaw 차이는 G2/G3 미완 항목으로 남기고 성능 캠페인을 막는다.
+
+---
+
+Copyright © 2026 Jun Suk Kim (김준석). 관리자: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>

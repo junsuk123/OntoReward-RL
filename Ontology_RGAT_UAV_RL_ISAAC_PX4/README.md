@@ -140,3 +140,7 @@ python3 -m pytest -q tests/current_semantics  # ORL과 실험 절차만
 - 위 경로의 도구, 스크립트, 설정, 테스트, 문서
 
 보관본 안의 `MANIFEST.md`에 목록과 복원 방법이 있다. 코드는 git 기록에서도 복원할 수 있다.
+
+---
+
+Copyright © 2026 Jun Suk Kim (김준석). 관리자: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>

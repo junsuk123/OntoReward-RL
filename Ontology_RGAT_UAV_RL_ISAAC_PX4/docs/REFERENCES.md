@@ -68,3 +68,7 @@
 저장소의 다이어그램은 코드와 설정에서 확정된 interface를 설명한다. 실제 경로 PNG는
 현재 waypoint 설정에서 생성하고, runtime screenshot은 Isaac/RViz/dashboard의 실제
 실행 화면을 사용한다.
+
+---
+
+Copyright © 2026 Jun Suk Kim (김준석). 관리자: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>

@@ -148,3 +148,7 @@ python3 Ontology_RGAT_UAV_RL_ISAAC_PX4/tools/make_doc_figures.py all --formats t
 - `media`
   - 녹화에서 세 창 영역만 잘라 이 폴더의 GIF, MP4, PNG를 만든다.
   - 전체 화면 녹화는 다른 창이 찍힐 수 있으므로 올리지 않는다.
+
+---
+
+Copyright © 2026 Jun Suk Kim (김준석). 관리자: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>

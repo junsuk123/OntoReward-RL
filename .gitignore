@@ -9,3 +9,16 @@ Ontology_RGAT_UAV_RL_ISAAC_PX4/logs/
 
 # compressed archives of retired routes (kept locally, not versioned)
 archive/
+
+# AI coding-assistant instructions and session state (local only, never versioned)
+AGENTS.md
+**/AGENTS.md
+CLAUDE.md
+**/CLAUDE.md
+GEMINI.md
+.claude/
+.codex/
+.cursor/
+.cursorrules
+.aider*
+.github/copilot-instructions.md

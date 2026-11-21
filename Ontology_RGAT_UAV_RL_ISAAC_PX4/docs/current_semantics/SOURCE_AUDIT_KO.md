@@ -1,9 +1,11 @@
 # 3D 리팩토링 가이드 §4 출처·계약·실행 환경 감사표
 
 감사일: 2026-10-28 (KST)  
-기준: HEAD `cab3dd2123c7eee3968a8c00753f2ba29d55fe71` + 같은 날 작업 트리(커밋되지 않은 사용자 변경 포함)  
+기준: HEAD `cab3dd2123c7eee3968a8c00753f2ba29d55fe71` + 같은 날 작업 트리(커밋되지 않은 변경 포함)  
 방법: 영역별 독립 감사 6건과 반박 검증 6건. 모든 판정은 파일·행을 직접 열어 확인했다.  
 범위: 코드·설정·기록의 정적 확인과 순수 함수 호출만 했다. 학습·Isaac·PX4·ROS·MATLAB은 실행하지 않았다.
+
+> 2026-11-21: 이 감사가 따르는 3D 설계 지침과 2D 근거 표는 `archive/superseded_docs_20261121.tar.zst`로 옮겼다. 코드가 보정 상수의 근거로 1·2·4절과 3절의 시드 목록을 인용하므로 그 부분은 남겼다.
 
 판정 표기: **확인**(코드가 주장 그대로), **부분**(맞지만 조건·기전이 다름), **반박**, **확인 불가**.  
 경로의 `P/`는 `Ontology_RGAT_UAV_RL_ISAAC_PX4/`이다.
@@ -13,7 +15,6 @@
 | 가이드 행 | 판정 | 근거 (파일:행) | 정밀화 |
 | --- | --- | --- | --- |
 | 루트 `run.sh` bare 실행이 minimal teacher→BC→PPO→Isaac | 확인 | `run.sh:10-12` → `P/scripts/run_minimal_system.sh`; `P/tools/minimal_full_pipeline.py:326-334` | 실제 순서는 ROS colcon build → teacher → BC → PPO → held-out → stress → Isaac이다. 이 컴퓨터는 Isaac 사전 조건(`/opt/ros/humble`, ASCII ws, `ISAACSIM_PATH`)을 모두 만족하므로 bare 실행은 실제 비행까지 간다. `--help`는 **첫 인자일 때만** 안전하다. `./run.sh system --help`나 `./run.sh --no-isaac --help`는 colcon build를 먼저 실행한다. |
-| 루트 `README.md`·`AGENTS.md` 시대 혼재, bare 설명 불일치 | 확인 | `README.md:110,113`("인자 없는 실행은 도움말만") ↔ `run.sh:2,10-12` | README 경로표(`README.md:118-123`)에 system/all/matlab-port* 경로가 없다. README의 활성 계약은 `spatial-reference/2`·`spatial-causal-rgat/5`이고 AGENTS의 활성 계약은 `/12`다. `P/README.md:172-173`, `P/docs/OPERATIONS.md:19,133-134`, `P/tools/run_full_pipeline.py:4`, `P/tests/conftest.py:12-26`의 설명도 낡았다. 문서에 남은 `./run.sh --mode quick`은 이제 minimal 시스템으로 들어간다. |
 | `direct_policy/contracts.py` 옛 MATLAB `6082258`, source21D/stable24D 혼재 | 확인 | `contracts.py:22-24` SHA·버전 고정, `:291-313` 21D, `:361-367` stable에 `tracking_bias_x/y`·`handover_progress` 추가 | 21D는 MATLAB 원본이 아니라 포트의 자체 3D 확장이다(고정된 MATLAB 계약은 평면 12D, `runner.py:551-552`). stable 묶음도 `source_sha 6082258`과 같은 `execution_hash`를 쓴다. `ObservationField.scale`은 어디서도 읽지 않는 서술용 값이다. 실제 척도는 `observation.py`에 하드코딩되어 있다. |
 | `runner.py` stable 적분·handover 입력, seed/CLI↔manifest 불일치 | 확인 | 작업 트리 `runner.py:84-102`(HEAD `:81-96`), 그래프 전 노드 broadcast `:41-45` | 적분은 고정 `policy_dt_s`(0.1 s), handover 진행도는 실제 `transition_s`를 써서 시간 기준이 서로 다르다. 계획에 seed·graph_seed·updates 등이 빠져 있다. `ScenarioManifest`의 seed 구간과 4–8 m 높이는 해시되지만 읽히지 않는다(실제 seed는 100000+, 1000001+, 12000+). `TrainingSpec`의 예산은 `algorithm_hash`에 들어가지만 CLI가 덮어쓴다. 초기화·행동·minibatch RNG seed는 기록되지 않는다. |
 | `models.py` analytic prior·상황별 action transform·graph Critic | 부분 | prior `models.py:184-185,198-282`, 변환 `:284-324`, critic `:143-156` | **stable profile에서만** 활성이다(runner 기본값 `source`, pipeline 기본값 `stable`). 하강 허가는 prior 안의 연한 latent bias다. 강제 변환은 세 가지다: 수평 0.75 m/s²(시야 경과 8 s 초과 시 0.3) cap, handover climb floor, stale 하강 floor. 따라서 실행 수평 권한은 ActionSpec 2.5의 30 %이며 어떤 hash에도 남지 않는다. graph Critic은 graph 군에만 있다. stable의 `zero_last_layer_initialization` 때문에 초기 encoder 기울기가 정확히 0이다. |
@@ -41,13 +42,7 @@
 | 접촉 높이 (§7.2) | 부분 | 설정 `core.py:399` 0.12 m; Isaac 다리 없는 첫 접촉 78건 | 실제 body 높이는 0.0636–0.0732 m다. 따라서 접촉 시 카메라는 패드 면 아래 **0.087–0.096 m**로, 가이드의 0.04 m보다 깊다. local은 Isaac보다 약 0.05 m 높은 곳에서 접촉을 선언한다. |
 | direct 접촉 판정 | 확인 | `reward.py:176-183`; `backends.py:262-265,317-320` | `norm(roll,pitch) ≤ 5°`, `norm(p,q) ≤ 10°/s`, footprint는 world 축 정렬 \|x\|,\|y\| ≤ 0.5다. 강제 envelope는 25°로 spatial-reference의 21°와 다르다. Isaac deck은 1.5×1.5 m라서 중심에서 0.5–0.75 m 떨어진 deck 위 접촉도 MISSED로 판정된다. |
 
-## 3. 2D 근거 (가이드 §1, G0/G1)
-
-| 항목 | 판정 | 결과 |
-| --- | --- | --- |
-| v1 증거 묶음이 이 컴퓨터에 있는가 | **반박** | `registration.json`·checkpoint·CSV가 없다. 커밋 `5853781`과 `d438a7d`는 이 컴퓨터의 어느 git 저장소(약 90개)에도 없다. 동기화된 2D 폴더는 git이 아니며 마지막 파일이 2026-10-27 12:27 KST(`relational_residual_v7` 학습 중)다. 가이드 §1.1의 83.7/80.6/76.9/72.6 %를 뒷받침하는 로컬 파일은 없다. |
-| `branchRollouts.m` | 확인 | `src/orchestration/+landing2d/+bias_diagnostics/branchRollouts.m`이다. a_x에만 ±0.25 섭동을 주며, 분기 시점은 FOV 경계가 아니라 UGV 가속 시각에 묶여 있다. struct 복사 snapshot은 perception mode에서만 정확하다(`env.sensorStream`은 handle). |
-| v1 10D/Φ19/7노드 설계 | 부분 | 10D 필드는 로컬 `vectorSchema.m`에 있다(v1에서 바뀌었는지는 확인 불가). Φ19는 어디에도 없다. 로컬에 있는 7노드 설계 두 가지(2D 보관본 tosm7_v5/rgat_v2, 3D 포트의 direct_ppo_v1 12D)는 **모두 v1이 아니므로 fixture로 대체하면 안 된다.** |
+## 3. 사용 이력이 있는 시드
 
 로컬에서 사용 이력이 확인된 seed(가이드 §11.4 seed 감사용): 2D train 291–465, 2D 환경 9001–9300; 3D train 828–832, held-out 4100–4147, teacher stress 5000–5095, Isaac 12000+, matlab-port 3001–3200·100000+·1000001+.
 

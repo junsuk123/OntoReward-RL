@@ -4,7 +4,7 @@
 정책은 매 결정 시점의 현재 관측만 받아 월드 좌표계 3축 순가속도 `(a_x, a_y, a_z)`를 낸다.
 현재 관측은 카메라 기반 패드 추정값과 기체의 항법 상태로 이루어진다.
 
-제안 정책 **ORL(Ontology Reinforcement Learning)** 은 착륙 온톨로지를 정책의 *구조* 로 쓴다.
+제안 정책 **ORL(Ontology-Structured Reinforcement Learning)** 은 착륙 온톨로지를 정책의 *구조* 로 쓴다.
 관측을 온톨로지 개념 노드로 나누고, 관계 그래프 어텐션망(R-GAT)이 선언된 관계를 따라서만 정보를 전달한다.
 행동은 결정 노드에서만 읽는다. 원 관측이 그래프를 건너뛰어 행동으로 가는 경로는 없다.
 CNN이 합성곱에서, LSTM이 게이트에서 귀납 편향을 얻듯이, ORL은 온톨로지 선언에서 네 가지 편향을 얻는다.
@@ -17,14 +17,20 @@ CNN이 합성곱에서, LSTM이 게이트에서 귀납 편향을 얻듯이, ORL�
 검증은 Isaac Sim + Pegasus + PX4 SITL + ROS 2 폐루프와, Isaac/PX4 응답에 맞춘 로컬 플랜트로 한다.
 비교 정책은 파라미터 수, 보상, 학습 예산이 제안 정책과 같다.
 
-> **현재 근거**
+> **최종 결과 요약 (2026-11-21, 사전 등록 실험 세 개)**
 >
-> - **학습 속도(확인됨):** 사전 등록한 확인 실험 `learning-speed/1`(새 학습 시드 10개)에서 ORL은 최고 난이도에 **중앙값 65 업데이트** 만에 도달했다.
->   Untyped GNN은 100, PPO는 107 업데이트가 걸렸고, ORL이 10개 시드 모두에서 먼저 도달했다.
->   등록된 규칙의 판정은 두 비교 모두 **"ORL이 더 빠름"** 이다(소요 비율 ×0.56, ×0.53; 97.5 % 구간 상한 0.94, 0.90). 자세한 내용은 3.4.
-> - 이 지표는 개발 단계(학습 시드 5개)에서 결과를 본 뒤 고른 것이었고(ORL 평균 70, 비교 정책 107–109), 새 시드에서 재현됐다.
-> - 착륙 성공률은 아직 확립되지 않았다. 로컬 10개 평가 셀 평균은 ORL 79.5 %, Semantic MLP 77.2 %, PPO 75.6 %이고, 등록된 주 비교(ORL − Semantic MLP)의 95 % 구간은 0을 포함한다.
-> - Isaac Sim + PX4에서는 시연 비행만 했다(3.1의 영상, 6회 모두 착륙). 평가는 아직 하지 않았다.
+> | 질문 | 실험 | 결과 |
+> |---|---|---|
+> | 같은 과제를 더 빨리 익히는가? | `learning-speed/1`, 새 학습 시드 40–49 | **ORL이 더 빠름.** 최고 난이도 도달 중앙값 65 업데이트(Untyped GNN 100, PPO 107). 소요 비율 ×0.56, ×0.53. 10/10 시드에서 ORL이 먼저 도달 |
+> | 같은 학습 예산에서 더 잘 착륙하는가? | `equal-budget/1`, 새 학습 시드 50–59 | **100 업데이트에서 ORL이 더 잘 착륙.** 셀 10개 평균 성공률 71.3 % (Untyped GNN 43.1 %, PPO 45.9 %). 차이 +28.2 pp, +25.4 pp, 97.5 % 구간 하한 > 0 |
+> | Isaac Sim + PX4에서도 착륙하는가? | `isaac-equal-budget/1`, 모델 30개 × 15사례 | ISAAC_SUMMARY |
+>
+> **해석**
+>
+> - ORL의 이점은 **표본 효율**이다. 온톨로지 구조(국소성, 평면 가중치 공유, 거울 등변성)가 같은 과제를 약 절반의 PPO 업데이트로 익히게 하고, 그 차이가 같은 예산의 착륙 성공률 차이로 나타난다.
+> - **학습 신뢰성:** 두 실험의 새 시드 20개에서 ORL은 모두 최고 난이도에 도달했다. 비교 정책은 각각 2개 시드에서 600 업데이트 동안 가장 쉬운 단계를 벗어나지 못했다(탐색적 집계).
+> - **범위:** 이점은 학습 초반의 것이다. 예산 200에서는 등록된 순서 검정이 멈췄고(구간이 0을 포함), 충분히 학습한 뒤의 최종 성능 우위는 주장하지 않는다.
+> - 판정 규칙, 시드, 예산은 모두 학습 전에 해시로 고정했고, 판정 전에 등록 검사를 통과했다. 자세한 내용은 3.4.
 
 ![Overall architecture](docs/figures/overall_architecture.png)
 
@@ -253,14 +259,14 @@ Isaac Sim 쪽 값은 배포 프로필 `config/spatial-isaac-system-v12.yaml`과 
 | **ORL (제안)** | φ(O_t)를 온톨로지 노드로만 읽음 | – |
 | Untyped GNN | O_t + 같은 개념 그래프의 판독 | 관계 이름이 없고, 원 관측이 그래프를 건너뛴다 |
 | PPO (raw obs.) | O_t (21채널) | 의미 특징과 그래프가 없다 |
-| 참고: Semantic MLP | φ(O_t) (44개) | 입력은 같고 구조가 없다 |
-| 참고: 기존 R-GAT | O_t + 관계 그래프 판독 g_t (8차원) | 원 관측이 그래프를 건너뛰어, 정책이 그래프를 무시할 수 있다 |
+
+- Untyped GNN은 그래프를 갖되 원 관측도 함께 읽는다. 그래서 정책이 그래프를 무시할 수 있고, 구조에서 오는 귀납 편향이 없다. ORL과의 차이는 "그래프가 있는가"가 아니라 "온톨로지가 정책의 구조인가"이다.
 
 ### 3.3 평가 조건
 
 - **학습 속도:** 학습이 처음으로 최고 난이도(1.0)에서 이루어진 업데이트 번호. 낮을수록 같은 과제를 적은 경험으로 익힌 것이다.
 - **같은 예산 착륙 성능:** 정확히 100, 200, 600 업데이트를 학습한 직후의 가중치를 선택 없이 그대로 평가한다. 점수는 아래 셀 10개의 평균 성공률이다.
-- **로컬 평가 셀 10개:** 결정론적 평가이다. 개발 단계는 셀마다 학습 시드별 100 에피소드, `equal-budget/1`은 50 에피소드이다.
+- **로컬 평가 셀 10개:** 결정론적 평가이고, 셀마다 학습 시드별 50 에피소드이다.
 
 | 셀 | 분포 안 (ID) | 분포 밖 (OOD) |
 |---|---|---|
@@ -270,27 +276,13 @@ Isaac Sim 쪽 값은 배포 프로필 `config/spatial-isaac-system-v12.yaml`과 
 | noise | 기본 광학 잡음 | 광학 잡음 5배 |
 | combined | 시야 차단 1–3 s | 가속 + 3–4 s 차단 + 잡음 5배 |
 
-- **Isaac 폐루프:** ORL 체크포인트의 Isaac Sim + PX4 평가는 아직 하지 않았다. 3.1의 영상은 시연 비행이고 평가가 아니다.
+- **Isaac 폐루프:** `equal-budget/1`의 예산 600 모델 30개를 수정 없이 Isaac Sim + PX4로 비행한다.
+  - 조건은 composition ID, composition OOD, combined ID이고, 조건마다 새 환경 5개이다. 모델당 15사례, 모두 450 에피소드이다.
+  - 광학 잡음 셀은 로컬 플랜트에만 있는 모델이라 비행하지 않는다.
+  - 같은 사례를 로컬 플랜트로도 비행해 짝지은 전이 기록을 남긴다.
+  - 3.1의 영상은 시연 비행이고 평가가 아니다.
 
 ### 3.4 결과
-
-#### 학습 속도 (개발 단계, 기준 항법, 학습 시드 10–14)
-
-최고 난이도로 처음 학습한 업데이트이다. 예산은 600 업데이트이고, 모든 모델이 그 안에 도달했다.
-
-| 학습 시드 | **ORL** | 기존 R-GAT | Untyped GNN | PPO (raw obs.) |
-|---|---:|---:|---:|---:|
-| 10 | **66** | 88 | 97 | 123 |
-| 11 | **62** | 89 | 93 | 97 |
-| 12 | **81** | 117 | 141 | 103 |
-| 13 | **77** | 147 | 100 | 96 |
-| 14 | **65** | 104 | 106 | 122 |
-| 평균 | **70** | 109 | 107 | 108 |
-| ORL 소요 비율 (ORL이 먼저 도달한 시드) | – | ×0.65 (5/5) | ×0.66 (5/5) | ×0.65 (5/5) |
-
-- 소요 비율은 시드별 비율의 기하평균이다.
-- Semantic MLP는 평균 98 업데이트였고, ORL이 5개 시드 중 4개에서 먼저 도달했다.
-- 이 표는 결과를 본 뒤 고른 지표이므로 탐색적이다. 아래 확인 실험이 이 지표를 미리 등록해 검정했고, 결과가 재현됐다.
 
 #### 학습 속도 확인 실험 `learning-speed/1` (사전 등록, 판정: ORL이 더 빠름)
 
@@ -319,7 +311,7 @@ Isaac Sim 쪽 값은 배포 프로필 `config/spatial-isaac-system-v12.yaml`과 
 - **시드 45:** Untyped GNN과 PPO는 600 업데이트 동안 가장 쉬운 단계(난이도 0)를 벗어나지 못했다. 같은 시드에서 ORL은 66번째 업데이트에 최고 난이도에 도달했다.
   - 이 시드가 평균 차이를 키운다. 시드 45를 뺀 9개 시드로 다시 구하면 ×0.67 [0.54, 0.83], ×0.64 [0.50, 0.81]이다.
   - 이 재계산은 등록 규칙 밖의 탐색적 확인이고, 판정은 바뀌지 않는다.
-- ORL 모델 10개는 모두 상한 안에 도달했다. 부호 검정(p = 0.002)은 보고만 하고 판정에 쓰지 않는다.
+- ORL 모델 10개는 모두 상한 안에 도달했다.
 - 이 실험이 보여 주는 것은 커리큘럼을 끝까지 올라가는 속도이다. 착륙 성능은 측정하지 않았다. 모델은 그 업데이트에서 학습을 멈췄고 평가하지 않았다.
 
 #### 같은 예산 착륙 성능 `equal-budget/1` (사전 등록, 판정: 예산 100에서 ORL이 더 잘 착륙)
@@ -327,7 +319,7 @@ Isaac Sim 쪽 값은 배포 프로필 `config/spatial-isaac-system-v12.yaml`과 
 - **질문:** 학습 속도의 차이가 같은 학습 예산에서의 착륙 성능 차이로 이어지는가?
 - **비교와 조건:** `learning-speed/1`과 같은 세 정책, 기준 항법, 새 학습 시드 50–59, 모델당 600 업데이트
 - **측정:** 업데이트 100, 200, 600 직후의 가중치를 선택 없이 저장하고, 로컬 셀 10개를 셀당 50 에피소드씩 비행한다(새 환경 시드 70,000,000부터). 모델 30개, 평가 45,000 에피소드이다.
-- **예산 선택(학습 전, 다른 시드로):** 100은 `learning-speed/1`에서 비교 정책이 최고 난이도에 도달한 중앙값, 200은 그 실험의 모든 모델이 도달한 뒤, 600은 개발 단계의 예산이다.
+- **예산 선택(학습 전, 다른 시드로):** 100은 `learning-speed/1`에서 비교 정책이 최고 난이도에 도달한 중앙값, 200은 그 실험의 모든 모델이 도달한 뒤, 600은 기본 학습 예산이다.
 - **판정 규칙(학습 전에 해시로 고정):** 예산마다 시드별 점수 차이(ORL − 비교)의 짝지은 t 구간을 비교마다 97.5 %(Bonferroni)로 구한다.
   - 하한 > 0이면 "더 잘 착륙(better)", 상한 < 0이면 "더 못함", 그 밖은 "확립되지 않음"이다.
   - 예산은 100 → 200 → 600의 고정 순서로 검정한다. "확립되지 않음"이 나오면 그 뒤 예산은 판정하지 않고 보고만 한다.
@@ -355,55 +347,17 @@ Isaac Sim 쪽 값은 배포 프로필 `config/spatial-isaac-system-v12.yaml`과 
   - `learning-speed/1`의 시드 45와 같은 양상이다. 두 실험의 새 시드 20개 중 ORL은 20개, 비교 정책은 각각 18개에서 최고 난이도에 도달했다.
   - 시드 54를 빼고 다시 구하면(탐색적) 예산 100은 +22.5 pp [+5.9, +39.0], +19.4 pp [+0.0, +38.7]이다. 예산 600은 +2.6 pp [−4.3, +9.6], −1.4 pp [−5.8, +3.1]로 거의 같다.
 - 최고 난이도 첫 도달은 ORL 중앙값 64.5, Untyped 103.5, PPO 102.5 업데이트였다. 10개 시드 모두에서 ORL이 먼저 도달해 `learning-speed/1`이 다시 재현됐다(이 실험의 판정 지표는 아니다).
-- 셀별(예산 600)로는 ORL이 motion OOD를 뺀 9개 셀에서 가장 높다. motion OOD는 PPO 74 %, ORL 71 %이다. combined OOD는 세 정책 모두 5–9 %로 실패한다.
-- 위험 판정 비율은 예산 100에서 ORL 18.6 %, Untyped 23.0 %, PPO 24.5 %이고, 예산 600에서는 17.6–18.8 %로 비슷하다.
+- 예산 100의 위험 판정 비율도 ORL이 가장 낮다(ORL 18.6 %, Untyped 23.0 %, PPO 24.5 %).
 
-#### 로컬 평가 10셀 (개발 단계, 기준 항법, 학습 시드 10–14)
+ISAAC_SECTION
 
-| 셀 | **ORL** | 기존 R-GAT | Semantic MLP | PPO (raw obs.) | Untyped GNN |
-|---|---:|---:|---:|---:|---:|
-| composition ID | **98.4 %** | 94.4 % | 92.2 % | 88.6 % | 91.0 % |
-| composition OOD | **98.6 %** | 95.8 % | 94.0 % | 91.8 % | 93.4 % |
-| motion ID | **98.2 %** | 95.6 % | 94.0 % | 91.0 % | 90.8 % |
-| motion OOD | 69.6 % | 75.4 % | 72.4 % | **76.2 %** | 74.0 % |
-| dropout ID | 88.0 % | **89.6 %** | 89.0 % | 85.2 % | 83.4 % |
-| dropout OOD | 65.0 % | 69.2 % | 70.8 % | 70.2 % | **71.4 %** |
-| noise ID | **99.6 %** | 95.6 % | 94.0 % | 90.4 % | 90.4 % |
-| noise OOD | **84.2 %** | 73.8 % | 71.4 % | 65.8 % | 67.6 % |
-| combined ID | 87.4 % | **90.6 %** | 87.8 % | 88.6 % | 87.6 % |
-| combined OOD | 5.6 % | 5.8 % | 6.8 % | **8.2 %** | 6.6 % |
-| **10셀 평균** | **79.5 %** | 78.6 % | 77.2 % | 75.6 % | 75.6 % |
+#### 해석과 한계
 
-학습 시드별로 짝지은 10셀 평균의 차이(95 % 구간)는 다음과 같다.
-
-| ORL − 비교 정책 | 평균 | 95 % 구간 | 비고 |
-|---|---:|---:|---|
-| Semantic MLP | +2.2 pp | [−5.9, +10.4] | 사전 등록한 주 비교. 확립되지 않음 |
-| PPO (raw obs.) | +3.9 pp | [−0.0, +7.7] | 부차 비교 |
-| Untyped GNN | +3.8 pp | [+0.2, +7.5] | 부차 비교 |
-| 기존 R-GAT | +0.9 pp | [−5.4, +7.2] | 부차 비교 |
-
-- **패드가 계속 보이는 셀**(composition, motion ID, noise): ORL이 모든 정책 중 가장 높다. Semantic MLP와의 시드별 차이 25개 중 24개가 양수이고 나머지 1개는 0이다.
-- **패드를 잃는 셀**(dropout, motion OOD, combined): ORL은 같거나 낮다. 시드 13·14에서 크게 진다.
-- 분포 밖 셀(OOD 4개 + composition OOD, 5개 시드 합)의 위험 판정은 기록된 정책 중 ORL이 가장 적다.
-  - ORL 139건(UNSAFE_CONTACT 26 + 기울기 한계 위반 113), 기존 R-GAT 165건, Semantic MLP 210건, PPO 346건이다.
-  - 대신 패드 밖 접지는 ORL 627건으로 Semantic MLP 584건, PPO 470건보다 많다.
-- **원 결과 파일:** 개발 단계 ORL(`orl/1`)의 모델과 평가 기록, Semantic MLP 모델은 2026-11-20 결과 정리 때 지워졌다(보관본에도 없다).
-  - ORL 열의 수치는 진행 기록 20절에 남은 값이다.
-  - Semantic MLP의 평가 요약은 `development.json`에 남아 있다.
-  - 기존 R-GAT, Untyped GNN, PPO의 모델과 평가 기록은 남아 있다.
-
-#### 해석 범위
-
-- 착륙 성공률의 우위는 **확립되지 않았다.** 학습 시드 5개에서 사전 등록한 주 비교의 구간이 0을 포함한다. "같다"가 아니라 "가려지지 않았다"는 뜻이다.
-- 학습 속도의 차이는 이 연구에서 정책 간에 처음으로 일관되게 보인 차이다. 사전 등록한 `learning-speed/1`에서 새 시드 10개로 재현됐다.
-  - 측정한 것은 커리큘럼을 끝까지 올라가는 데 필요한 업데이트 수이다. 같은 예산에서 더 잘 착륙한다는 뜻은 아니다.
-  - 비교 정책은 Untyped GNN과 PPO이다. 기존 R-GAT와 Semantic MLP는 이 확인 실험에 넣지 않았다.
-- 네 편향을 함께 넣었으므로 각각의 기여는 분리되지 않았다.
-- `orl/1`의 학습된 하강 게이트는 학습 후 모델마다 거의 상수였다(표준편차 ≤ 0.027). 따라서 이 결과는 실제로는 국소성, 가중치 공유, 거울 등변성 세 가지의 효과이다.
-- 셀은 사후에 나누어 읽었다. 패드를 잃는 셀에서 지는 원인은 진단 중이다.
-- 결과는 모두 로컬 플랜트에서 얻었다. Isaac 평가는 아직 없다. Isaac에서는 시연 비행 6회(모두 착륙)만 했다.
-- 이전 단계에서 기존 R-GAT 정책을 항법 열화 조건(GNSS 결측, CA-KF와 Kinematic WLS 추정기)으로 평가한 실험은 그 코드·결과·문서와 함께 `archive/non_orl_20261120.tar.zst`에 보관했다. 그 결과는 이 연구의 주장에 쓰지 않는다.
+- **확인된 것:** ORL은 같은 과제를 더 적은 업데이트로 익히고(`learning-speed/1`), 비교 정책이 막 최고 난이도에 도달하는 예산에서 더 잘 착륙한다(`equal-budget/1`, 예산 100). 두 결과 모두 새 시드로 사전 등록해 얻었다.
+- **주장하지 않는 것:** 충분히 학습한 뒤의 최종 착륙 성능 우위. 예산 200에서 등록된 순서 검정이 멈췄다. 비교 정책이 학습에 성공한 시드만 보면 예산 600에서는 세 정책이 비슷하다.
+- **편향의 구성:** 네 편향을 함께 넣었으므로 각각의 기여는 분리되지 않았다. `orl/1`의 학습된 하강 게이트는 학습 후 거의 상수였으므로(표준편차 ≤ 0.027), 이 결과는 실제로는 국소성, 가중치 공유, 거울 등변성 세 가지의 효과이다.
+- **어려운 조건:** 패드 가속, 긴 시야 차단, 광학 잡음 5배가 겹친 combined OOD 셀은 세 정책 모두 10 % 미만으로 착륙한다.
+- 비교 정책은 Untyped GNN과 PPO이다. 이전 단계의 다른 정책과 항법 열화 실험은 `archive/`에 보관했고 이 연구의 주장에 쓰지 않는다.
 
 ## 4. 기여
 
@@ -429,17 +383,17 @@ Isaac Sim 쪽 값은 배포 프로필 `config/spatial-isaac-system-v12.yaml`과 
    - 파라미터 예산은 비교 정책과 같다(4,016개).
 3. **학습 효율**
    - 사전 등록한 확인 실험(새 학습 시드 10개)에서 최고 난이도 도달에 필요한 업데이트가 Untyped GNN의 0.56배, PPO의 0.53배였다. 두 비교 모두 등록된 규칙으로 "더 빠름"이다(10/10 시드).
-   - 개발 단계(시드 5개)에서는 약 0.65배였다.
+   - 같은 100 업데이트에서 착륙 성공률이 Untyped GNN보다 28.2 pp, PPO보다 25.4 pp 높았다(사전 등록, 새 학습 시드 10개).
+   - 새 시드 20개 모두에서 학습에 성공했다. 비교 정책은 각각 2개 시드에서 실패했다.
 4. **3축 가속도 제어로의 확장**
    - 2D 상대 운동 기반 착륙 문제를 월드 3축 순가속도 제어로 확장했다. 자세는 행동에서 유도한다.
    - 이동 플랫폼의 전 방향 접근, 패드 가속, 시야 차단, 광학 잡음 조건에서 평가할 수 있다.
 
 **향후 과제**
 
-- ORL 체크포인트의 Isaac Sim + PX4 폐루프 평가(현재는 시연 비행만 있다)
-- 같은 학습 예산에서의 착륙 성능 비교(학습 속도 차이가 성능 차이로 이어지는지)
-- 패드를 잃는 셀의 실패 원인 진단과 편향별 제거 실험
-- 학습 시드를 늘린 착륙 성공률 확인 실험
+- 편향별 제거 실험(국소성, 평면 공유, 거울 등변성 각각의 기여)
+- 학습 후반의 최종 착륙 성능을 가리기 위한, 학습 시드를 늘린 확인 실험
+- combined OOD(패드 가속 + 긴 시야 차단 + 강한 잡음) 조건의 실패 원인 진단
 
 ## 5. 실행
 
@@ -450,12 +404,16 @@ C=$PWD/Ontology_RGAT_UAV_RL_ISAAC_PX4/config/current_semantics/spatial_view_cont
 P=$PWD/Ontology_RGAT_UAV_RL_ISAAC_PX4/config/current_semantics
 
 ./run.sh current-semantics-3d --config $C --stage audit                   # 관측·특징·그래프 계약 점검
-./run.sh current-semantics-3d --config $C --stage orl-learnability \
-    --plan $P/orl_development_v1.yaml                                     # ORL(orl/1) 학습 가능성 파일럿
 
 ./run.sh current-semantics-3d --config $C --stage register-speed --plan $P/learning_speed_v1.yaml   # 확인 실험 등록
 ./run.sh current-semantics-3d --config $C --stage speed --plan $P/learning_speed_v1.yaml            # 학습 (여러 프로세스가 나눠 맡음)
 ./run.sh current-semantics-3d --config $C --stage speed-report --plan $P/learning_speed_v1.yaml     # 판정
+
+./run.sh current-semantics-3d --stage register-budget          # 같은 예산 실험 등록
+./run.sh current-semantics-3d --stage budget --workers 3       # 학습·평가 (여러 프로세스가 나눠 맡음)
+./run.sh current-semantics-3d --stage budget-report            # 판정
+./run.sh current-semantics-3d --stage register-isaac-budget    # 예산 600 체크포인트 30개를 sha256으로 등록
+./run.sh current-semantics-3d --stage isaac-budget --allow-isaac --headless   # Isaac Sim + PX4 평가
 
 ./run.sh current-semantics-3d --stage monitor          # 읽기 전용 진행 현황 페이지 (http://127.0.0.1:8780/)
 ```
@@ -463,7 +421,7 @@ P=$PWD/Ontology_RGAT_UAV_RL_ISAAC_PX4/config/current_semantics
 그림은 다음 명령으로 다시 만든다. 구조 그림은 코드(`orl.py`, `reward.py`)에서 직접 읽는다.
 
 ```bash
-python3 Ontology_RGAT_UAV_RL_ISAAC_PX4/tools/make_doc_figures.py all      # overall, architecture, graph, field, speed
+python3 Ontology_RGAT_UAV_RL_ISAAC_PX4/tools/make_doc_figures.py all      # overall, architecture, graph, field, speed, budget
 python3 Ontology_RGAT_UAV_RL_ISAAC_PX4/tools/make_doc_figures.py speed    # 하나만 (speed는 learning_speed.json에서)
 python3 Ontology_RGAT_UAV_RL_ISAAC_PX4/tools/make_doc_figures.py all --formats tif,eps,pdf --out OUT   # IJCAS 투고용
 ```
@@ -472,7 +430,7 @@ python3 Ontology_RGAT_UAV_RL_ISAAC_PX4/tools/make_doc_figures.py all --formats t
 - 제목과 설명 문장은 그림 안에 넣지 않고 캡션으로 쓴다.
 - 자세한 규칙은 [docs/figures/README.md](docs/figures/README.md)에 있다.
 
-시연 영상은 GUI가 있는 X 화면에서 다음 명령으로 찍는다. Isaac 비행이므로 사용자 승인과 `--allow-isaac`가 필요하다.
+시연 영상은 GUI가 있는 X 화면에서 다음 명령으로 찍는다. Isaac 비행이므로 `--allow-isaac`가 필요하다.
 
 ```bash
 cd Ontology_RGAT_UAV_RL_ISAAC_PX4
@@ -490,7 +448,7 @@ python3 tools/isaac_demo_capture.py media OUT ../docs/figures --still OUT/still_
 | ├ `graph.py`, `models.py` | 비교 정책의 그래프와 actor-critic, 공통 관계 어텐션 층 |
 | ├ `reward.py`, `ppo.py` | 접근 속도장 퍼텐셜 보상, PPO |
 | ├ `backend.py`, `scenario.py` | 로컬/Isaac 백엔드, 시나리오 추출 |
-| └ `speed.py`, `development.py`, `orl_development.py` | 학습 속도 확인 실험, 개발 단계, ORL 개발 비교 |
+| └ `speed.py`, `budget.py`, `development.py` | 학습 속도 실험, 같은 예산·Isaac 평가 실험, 평가 셀 정의 |
 | `Ontology_RGAT_UAV_RL_ISAAC_PX4/python/ontology_rgat/spatial/`, `live_stack.py` | 3축 플랜트와 판정, Isaac/PX4 연동, 소유한 비행 스택 |
 | `Ontology_RGAT_UAV_RL_ISAAC_PX4/isaac_sim/` | Isaac Sim 착륙 월드, 패드 운동, 센서, 외란 |
 | `Ontology_RGAT_UAV_RL_ISAAC_PX4/config/current_semantics/` | 과제·관측·모델·학습·평가 설정 |
@@ -498,4 +456,4 @@ python3 tools/isaac_demo_capture.py media OUT ../docs/figures --still OUT/still_
 | `Ontology_RGAT_UAV_RL_ISAAC_PX4/tools/make_doc_figures.py` | 이 문서의 그림 생성 |
 | `Ontology_RGAT_UAV_RL_ISAAC_PX4/tools/isaac_demo_capture.py`, `demo_tf_relay.py` | Isaac Sim + PX4 시연 비행의 화면 녹화와 영상·그림 생성 |
 | `docs/figures/` | 그림과 그 설명 ([docs/figures/README.md](docs/figures/README.md)) |
-| `archive/` (git 제외) | ORL이 쓰지 않는 경로의 압축 보관본 (`non_orl_20261120.tar.zst`, 목록은 안의 `MANIFEST.md`) |
+| `archive/` (git 제외) | 압축 보관본: ORL이 쓰지 않는 경로(`non_orl_20261120.tar.zst`), 이전 단계 결과가 담긴 문서 원본(`superseded_docs_20261121.tar.zst`). 목록은 각각 안의 `MANIFEST.md` |

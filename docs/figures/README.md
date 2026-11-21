@@ -4,7 +4,7 @@
 실제 운용 환경(Isaac Sim + PX4 SITL + ROS 2)에서 찍은 시연 영상이다.
 
 - 형식: IJCAS(International Journal of Control, Automation, and Systems) 지면에 맞춘다.
-  - 지면은 2단(단 폭 80 mm, 간격 8 mm)이다. 구조·결과 그림 다섯 개는 모두 두 단 전체 폭인 168 mm로 넣는 것을 기준으로 그렸다.
+  - 지면은 2단(단 폭 80 mm, 간격 8 mm)이다. 구조·결과 그림 여섯 개는 모두 두 단 전체 폭인 168 mm로 넣는 것을 기준으로 그렸다.
   - 그 크기로 인쇄했을 때 가장 작은 글자는 7 pt, 본문 글자는 8 pt, 제목은 9.5 pt이다(본문 Times New Roman 10 pt에 맞춤).
   - 캡션은 그림 아래에 따로 쓰므로 그림 안에는 제목이나 설명 문장을 넣지 않는다.
   - PNG는 168 mm 폭에서 600 dpi이고, SVG에는 인쇄 크기(mm)를 적었다.
@@ -91,7 +91,19 @@ Isaac Sim + Pegasus의 이동 패드와 PX4 SITL 쿼드로터에서 정책까지
   - 채운 원은 등록된 판정이다. 두 구간 모두 1보다 작아 "ORL이 더 빠름"이다.
   - 빈 원은 시드 45를 뺀 탐색적 재계산이다. 판정에는 쓰지 않는다.
 
-## 6. 실제 운용 환경 시연
+## 6. 같은 예산 착륙 성능 `equal-budget/1`과 Isaac 평가
+
+![equal budget](equal_budget.png)
+
+- 판정 파일 `results/current_semantics_3d/spatial_current_semantics_v1/equal_budget/equal_budget.json`과 `isaac_equal_budget/isaac_equal_budget.json`에서 그렸다.
+- (a) 학습 시드 50–59의 모델을 정확히 100, 200, 600 업데이트 학습한 직후의 가중치로 평가한 셀 10개 평균 성공률이다. 작은 점은 시드, 큰 점과 선은 평균이다.
+  - 0 % 근처의 회색 점은 시드 54의 Untyped GNN과 PPO이다. 600 업데이트 동안 가장 쉬운 단계를 벗어나지 못했다.
+- (b) 예산마다 시드별 차이(ORL − 비교)의 평균과 97.5 % 짝지은 t 구간(Bonferroni)이다.
+  - 채운 기호는 등록된 순서 검정에서 판정한 예산이다. 예산 100은 두 비교 모두 구간이 0보다 커서 "더 잘 착륙"이다.
+  - 예산 200에서 구간이 0을 포함해 순서 검정이 멈췄다. 빈 기호(예산 600)는 판정 없이 보고만 한다.
+- (c) 예산 600 모델 30개를 Isaac Sim + PX4로 비행한 성공률이다. 작은 점은 모델(15사례), 채운 큰 점은 정책 평균, 빈 점은 같은 사례를 로컬 플랜트로 비행한 평균이다.
+
+## 7. 실제 운용 환경 시연
 
 ![ORL demo flight](orl_isaac_px4_demo.gif)
 
@@ -115,17 +127,11 @@ Isaac Sim + Pegasus의 이동 패드와 PX4 SITL 쿼드로터에서 정책까지
   - 168 mm 폭이면 282 dpi로, IJCAS의 컬러 그림 기준(300 dpi 이상)에 조금 못 미친다.
   - 158 mm 이하 폭으로 넣으면 기준을 넘는다.
 
-## 보관된 결과 그림
-
-이전 단계의 결과 그림 두 개(기존 R-GAT 정책의 Kinematic WLS 항법 조건 Isaac 결과, 항법별 성능 비교)와 그 수치 파일
-`figure_data.json`은 2026-11-20에 `archive/non_orl_20261120.tar.zst`로 옮겼다. 저자의 별도 연구인 추정기 조건에 기대는
-결과라 이 연구의 주장에 쓰지 않는다.
-
 ## 다시 만들기
 
 ```bash
 python3 Ontology_RGAT_UAV_RL_ISAAC_PX4/tools/make_doc_figures.py all       # 모든 그림
-python3 Ontology_RGAT_UAV_RL_ISAAC_PX4/tools/make_doc_figures.py overall   # 하나만 (architecture, graph, field, speed도 같은 방식)
+python3 Ontology_RGAT_UAV_RL_ISAAC_PX4/tools/make_doc_figures.py overall   # 하나만 (architecture, graph, field, speed, budget도 같은 방식)
 python3 Ontology_RGAT_UAV_RL_ISAAC_PX4/tools/make_doc_figures.py all --formats tif,eps,pdf --out OUT   # 투고용 파일
 ```
 
@@ -138,7 +144,7 @@ python3 Ontology_RGAT_UAV_RL_ISAAC_PX4/tools/make_doc_figures.py all --formats t
 - `capture`
   - Isaac Sim GUI, `image_view`, RViz2를 한 화면에 배치하고 비행 동안 화면 전체를 녹화한다.
   - 비행마다 리셋·인계·결정·종료 시각을 `timeline.json`에 남긴다.
-  - Isaac 비행이므로 사용자 승인과 `--allow-isaac`가 필요하다.
+  - Isaac 비행이므로 `--allow-isaac`가 필요하다.
 - `media`
   - 녹화에서 세 창 영역만 잘라 이 폴더의 GIF, MP4, PNG를 만든다.
   - 전체 화면 녹화는 다른 창이 찍힐 수 있으므로 올리지 않는다.

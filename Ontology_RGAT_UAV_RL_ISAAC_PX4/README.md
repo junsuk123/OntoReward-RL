@@ -17,19 +17,20 @@
 |---|---|---|
 | 현재 관측 `O_t` | `current_semantics/observation.py` | 21채널 관측의 정규화와 복원 |
 | 의미 특징 φ | `current_semantics/features.py`, `geometry.py` | 44개 의미 특징, 유효성 규칙, 카메라 좌표계 패드 기하 |
-| **ORL** | `current_semantics/orl.py` | 개념·평면·결정 노드 19개, 관계 7종, 거울 부호, 개념별 인코더, 관계 어텐션 3홉, 결정 판독, 네 거울 반사의 평균. 버전 `orl/1`–`orl/5`, 각자 해시 |
-| ORL의 시야 규칙과 규칙 대조군 | `current_semantics/view_rule.py`, `rule_control.py` | `orl/4`·`orl/5`의 고정 시야 규칙과, 같은 규칙을 단 Semantic MLP 대조군 |
-| 비교 정책 | `current_semantics/graph.py`, `models.py` | PPO(raw), Untyped GNN, 기존 R-GAT(원 관측 우회 있음), Semantic MLP. `models.build_model`이 모든 정책의 단일 생성기 |
+| **ORL** | `current_semantics/orl.py` | 개념·평면·결정 노드 19개, 관계 7종, 거울 부호, 개념별 인코더, 관계 어텐션 3홉, 결정 판독, 네 거울 반사의 평균. 제안 모델은 `orl/1` (`orl_ppo:eb68eb947a6a49a2`) |
+| 비교 정책 | `current_semantics/graph.py`, `models.py` | PPO(raw), Untyped GNN. `models.build_model`이 모든 정책의 단일 생성기 |
 | 보상 | `current_semantics/reward.py` | 접근 속도장 퍼텐셜, 시간·제어·기울기 비용 |
 | PPO와 학습 | `current_semantics/ppo.py`, `pilot.py` | 완결 에피소드 배치, 목표 KL, 성공률 기반 커리큘럼, 체크포인트 선택, 5 업데이트마다 쓰는 `live.pt` |
 | 시나리오 | `current_semantics/scenario.py` | 패드 방위 A × 진행 방향 B, 학습 제외 조합, 패드 가속 |
 | 플랜트와 판정 | `current_semantics/backend.py`, `spatial/` | Isaac 응답에 보정한 로컬 플랜트, Isaac/PX4 백엔드, 착륙 판정기 |
-| 실험 절차 | `current_semantics/speed.py`, `orl_development.py`, `development.py` | 학습 속도 확인 실험, ORL 개발 비교, 비교 정책의 개발 단계(평가 셀 10개) |
-| Isaac 평가 | `current_semantics/isaac_eval.py`, `isaac_development.py`, `live_stack.py` | 소유한 Isaac Sim + PX4 스택에서의 비행과 평가 |
+| 실험 절차 | `current_semantics/speed.py`, `budget.py`, `development.py` | `learning-speed/1`, `equal-budget/1`과 `isaac-equal-budget/1`, 평가 셀 10개의 정의 |
+| Isaac 비행 | `current_semantics/isaac_eval.py`, `live_stack.py` | 소유한 Isaac Sim + PX4 스택에서의 비행 |
 | 계약과 해시 | `current_semantics/contracts.py`, `experiment.py` | 관측·특징·그래프·과제·학습 설정의 해시, 실행 폴더, 단일 실행 잠금 |
 | 모니터 | `current_semantics/monitor.py`, `encoding_view.py` | 읽기 전용 진행 현황, 학습 중 가중치로 그리는 실시간 인코딩 보기 |
 | Isaac 월드 | `../isaac_sim/` | 착륙 월드, 패드 운동, 센서(IMU, GNSS, 카메라), 인계 교란 |
 | 문서 그림과 시연 영상 | `../tools/make_doc_figures.py`, `../tools/isaac_demo_capture.py`, `../tools/demo_tf_relay.py` | 구조·결과 그림, Isaac Sim + RViz2 시연 비행의 녹화와 GIF·MP4·사진 |
+
+- 이전 개발 단계의 코드(`orl/2`–`orl/5`, `view_rule.py`, `rule_control.py`, `orl_development.py`, `isaac_development.py`, 기존 R-GAT·Semantic MLP 정책)는 테스트가 해시를 고정하고 있어 남아 있다. 이 연구의 결과에는 쓰지 않는다.
 
 설정 파일은 `config/current_semantics/`에 있다.
 
@@ -37,9 +38,9 @@
 |---|---|
 | `spatial_view_contact_v1.yaml` | 기준 항법 설정 (과제, 관측, 모델, 학습). ORL과 비교 정책 모두 이 계약에서 학습한다 |
 | `learning_speed_v1.yaml` | `learning-speed/1`: ORL vs PPO·Untyped GNN, 학습 시드 40–49, 사전 등록 판정 규칙 |
-| `orl_development_v1.yaml` – `v5.yaml` | `orl-development/1`–`/5`: 각 ORL 버전을 개발 단계 모델과 짝지은 비교 |
-| `development_v1.yaml` | 비교 정책의 개발 단계 계획 (학습 시드 10–14, 평가 셀 10개) |
-| `isaac_development_v1.yaml`, `v2.yaml` | 개발 모델의 Isaac 평가 케이스 (Isaac 평가 단계의 형식) |
+| `equal_budget_v1.yaml` | `equal-budget/1`: 같은 세 정책, 학습 시드 50–59, 예산 100·200·600, 고정 순서 판정 규칙 |
+| `isaac_equal_budget_v1.yaml` | `isaac-equal-budget/1`: 예산 600 모델 30개의 Isaac 사례(3 조건 × 새 환경 5개) |
+| `development_v1.yaml` | 평가 셀 10개의 정의를 담은 계획. `equal-budget/1`이 같은 셀 정의를 쓴다 |
 
 ## 2. 실험 절차
 
@@ -51,13 +52,12 @@
 | 1 | `audit`, `fixtures` | 관측·특징·그래프 계약 점검 | `audit.json`, `fixtures.json` |
 | 2 | `coupling --backend local` (`isaac`) | 축 결합, 시야 이탈, 접지 높이 확인 | `coupling_*.json` |
 | 3 | `learnability` | 공통 PPO(PPO raw)로 착륙이 학습되는지 확인 | `g4_pilot.json` |
-| 4 | `orl-learnability` | 같은 절차로 ORL의 학습 가능성 확인 | `orl*/orl_learnability.json` |
-| 5 | `register-speed` → `speed` → `speed-report` | 학습 속도 확인 실험 | `learning_speed/` |
-| 6 | `register-orl-development` → `orl-develop` | ORL을 개발 단계 모델과 짝지어 평가 셀 10개에서 비교 | `orl*/orl_development.json` |
-| 7 | `isaac-eval`, `isaac-development` | 선택한 모델을 Isaac Sim + PX4에서 비행 (`--allow-isaac`) | `isaac_*.json` |
+| 4 | `register-speed` → `speed` → `speed-report` | 학습 속도 확인 실험 `learning-speed/1` | `learning_speed/` |
+| 5 | `register-budget` → `budget` → `budget-report` | 같은 예산 착륙 성능 `equal-budget/1` | `equal_budget/` |
+| 6 | `register-isaac-budget` → `isaac-budget` | 예산 600 모델의 Isaac Sim + PX4 평가 `isaac-equal-budget/1` (`--allow-isaac`) | `isaac_equal_budget/` |
 
 - 등록 단계는 학습 전에 계획 파일의 해시를 계약 해시와 묶는다. 이후 단계는 계획이 하나라도 바뀌면 거부한다.
-- `speed`는 여러 프로세스가 모델을 나눠 맡는다. 모든 에피소드에 시드가 정해져 있으므로 `--workers`는 결과를 바꾸지 않는다.
+- `speed`와 `budget`은 여러 프로세스가 모델을 나눠 맡는다. 모든 에피소드에 시드가 정해져 있으므로 `--workers`는 결과를 바꾸지 않는다.
   결과는 `OMP_NUM_THREADS=1`(run.sh가 설정)일 때 비트 단위로 재현된다.
 - `--dry-run`은 어느 단계에서든 아무것도 만들지 않고 해석된 계획만 출력한다.
 
@@ -87,7 +87,7 @@ Ontology_RGAT_UAV_RL_ISAAC_PX4/scripts/monitor_tailscale.sh start   # 같은 모
 
 Isaac Sim + PX4 스택을 띄우는 단계는 `--allow-isaac`를 줄 때만 실행된다. 이미 떠 있는 Isaac은 넘겨받지 않고 거부한다.
 
-`learning-speed/1`의 판정(2026-11-20)은 "ORL이 Untyped GNN·PPO보다 빠름"이다(진행 기록 21.3).
+등록된 판정은 상위 README의 맨 위와 3.4절, 진행 기록 21·24절에 있다.
 
 ### 실제 운용 환경 시연 영상
 
@@ -113,8 +113,8 @@ python3 tools/isaac_demo_capture.py media OUT ../docs/figures                   
   다른 것은 actor의 구조와 입력 표현뿐이다. 파라미터 수는 4,008–4,022개로 맞춘다.
 - **사전 등록:** 판정 규칙과 시드는 학습 전에 등록한다. 시드는 이미 쓴 모든 범위와 겹치지 않는지 로더가 확인한다.
 - **분석 단위:** 분석 단위는 학습 시드이다. 같은 시드의 정책들은 같은 환경을 비행하고, 시드마다 짝지은 차이를 계산한다.
-- **결정론적 평가:** 평가는 결정론적 정책으로 한다. 학습 가능성 점검에서는 확률적 정책도 함께 평가한다.
-- **실패 처리:** 체크포인트를 고르지 못한 모델도 빼지 않는다. 학습 속도 실험에서 상한까지 도달하지 못한 모델은 상한값으로 센다.
+- **결정론적 평가:** 평가는 결정론적 정책으로 한다.
+- **실패 처리:** 학습에 실패한 모델도 빼지 않는다. 학습 속도 실험에서 상한까지 도달하지 못한 모델은 상한값으로 센다. 같은 예산 실험은 예산 시점의 가중치를 선택 없이 평가한다.
 - **인프라 실패와 정책 실패의 분리:** 인프라 실패(스택 시작 실패, PX4 failsafe, 시계 정지)는 판정에 넣지 않고 같은 케이스를 다시 비행한다.
 
 ## 4. 테스트
@@ -130,7 +130,10 @@ python3 -m pytest -q tests/current_semantics  # ORL과 실험 절차만
 
 ## 5. 보관된 경로
 
-2026-11-20 사용자 결정으로, ORL이 쓰지 않는 경로를 모두 `archive/non_orl_20261120.tar.zst`(git에서 제외)로 옮겼다.
+- 2026-11-20에 ORL이 쓰지 않는 경로를 모두 `archive/non_orl_20261120.tar.zst`(git에서 제외)로 옮겼다.
+- 2026-11-21에 이전 단계 결과와 이점이 확인되지 않은 결과를 문서에서 지웠다. 원래 문서는 `archive/superseded_docs_20261121.tar.zst`에 있다.
+
+첫 보관본에 든 것은 다음과 같다.
 
 - 최소 관측 ROS 파이프라인, 3축 기준 사다리(spatial-reference), 2축 기준 이식, MATLAB 이식, 이전 Isaac 비교 경로
 - 항법 열화 실험(Kinematic WLS = 내부 명칭 WMON, CA-KF)과 그 결과, 확인·재현 실험, extension, bond/1, 관계 섞기 대조군

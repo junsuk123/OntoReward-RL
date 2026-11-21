@@ -14,7 +14,7 @@
 ## 보관된 문서
 
 - 2026-11-21에 중복된 과거 결과와 이점이 확인되지 않은 결과를 모든 문서에서 지웠다.
-  - 원래 문서와 3D 설계 지침(`CURRENT_SEMANTICS_3D_REFACTOR_GUIDE_KO.md`)은 `archive/superseded_docs_20261121.tar.zst`(git 제외)로 옮겼다. git 기록(커밋 `a6fcd98`)에도 있다.
+  - 원래 문서와 3D 설계 지침(`CURRENT_SEMANTICS_3D_REFACTOR_GUIDE_KO.md`)은 `archive/superseded_docs_20261121.tar.zst`(git 제외)로 옮겼다. git 기록(커밋 `56c7d19`)에도 있다.
 
 ORL이 쓰지 않는 경로의 문서는 2026-11-20에 `archive/non_orl_20261120.tar.zst`로 옮겼다(git에서 제외).
 최소 관측 ROS 파이프라인, 2축 기준 이식, MATLAB 이식, 이전 Isaac 비교 경로, 온톨로지를 보상에 쓰던 비교 실험,

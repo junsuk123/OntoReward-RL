@@ -1101,8 +1101,120 @@ def speed():
     save(fig, "learning_speed")
 
 
+BUDGET_RESULT = RESULTS / "spatial_current_semantics_v1" / "equal_budget" / "equal_budget.json"
+ISAAC_BUDGET_RESULT = (RESULTS / "spatial_current_semantics_v1" / "isaac_equal_budget"
+                       / "isaac_equal_budget.json")
+BUDGET_ARMS = (("orl", "ORL (proposed)", PROPOSED, "o"), ("untyped_gnn_ppo", "Untyped GNN", "#5E5E5E", "s"),
+               ("raw_ppo", "PPO", "#A8A8A8", "^"))
+
+
+def equal_budget():
+    """equal-budget/1 (status doc 24): landing success at the same number of PPO updates, and,
+    once flown, isaac-equal-budget/1 at the last budget.  Read from the verdict files."""
+    data = json.loads(BUDGET_RESULT.read_text())
+    if not data.get("complete"):
+        raise SystemExit("equal-budget/1 is not complete; run --stage budget-report first")
+    isaac = json.loads(ISAAC_BUDGET_RESULT.read_text()) if ISAAC_BUDGET_RESULT.exists() else None
+    if isaac is not None and not isaac.get("protocol_complete"):
+        isaac = None
+    proposed = data["proposed_arm"]
+    budgets = [str(b) for b in data["budgets"]]
+    arm_of = {key: proposed if key == "orl" else key for key, *_ in BUDGET_ARMS}
+    panels = 3 if isaac else 2
+    fig = plt.figure(figsize=(TEXT_MM / 25.4, 2.75), layout="constrained")
+    fig.get_layout_engine().set(w_pad=0.02, h_pad=0.02, wspace=0.05)
+    gs = fig.add_gridspec(1, panels, width_ratios=[1.0, 1.0, 0.85][:panels])
+    # (a) ten-cell success after exactly B updates, every training seed
+    ax = fig.add_subplot(gs[0])
+    offsets = np.linspace(-0.22, 0.22, len(BUDGET_ARMS))
+    for (key, name, color, marker), off in zip(BUDGET_ARMS, offsets):
+        arm = data["arms"][arm_of[key]]["budgets"]
+        means = []
+        for i, b in enumerate(budgets):
+            seeds = arm[b]["per_seed_success"]
+            ys = [100 * v for v in seeds.values()]
+            ax.plot(np.full(len(ys), i + off) + np.linspace(-0.04, 0.04, len(ys)), ys, marker,
+                    ms=2.6, color=color, alpha=1.0, mec="none", zorder=2)
+            means.append(100 * arm[b]["mean_success"])
+        ax.plot(np.arange(len(budgets)) + off, means, "-", color=color, lw=1.0, zorder=3)
+        ax.plot(np.arange(len(budgets)) + off, means, marker, ms=5.0, color=color, mec="white",
+                mew=0.6, zorder=4, label=name)
+    ax.set_xticks(range(len(budgets)))
+    ax.set_xticklabels(budgets)
+    ax.set_xlim(-0.5, len(budgets) - 0.5)
+    ax.set_ylim(-4, 100)            # room for the seeds that never left difficulty 0
+    ax.set_yticks(range(0, 101, 20))
+    ax.set_xlabel("PPO updates (budget)", color=INK)
+    ax.set_ylabel("ten-cell landing success [%]", color=INK)
+    ax.set_title("(a) Success at the same budget", loc="left", color=INK)
+    ax.legend(loc="lower right", frameon=True, facecolor="white", edgecolor="none", framealpha=1.0,
+              fontsize=NOTE, handlelength=1.2, borderaxespad=0.2)
+    style_axes(ax)
+    # (b) ORL minus each comparison, registered fixed sequence
+    ax = fig.add_subplot(gs[1])
+    level = None
+    for j, (key, name, color, marker) in enumerate(BUDGET_ARMS[1:]):
+        comp = data["comparisons"][key]
+        level = comp["confidence"]
+        for i, b in enumerate(budgets):
+            row = comp["by_budget"][b]
+            d = row["difference"]
+            x = i + (-0.13 if j == 0 else 0.13)
+            mean, lo, hi = 100 * d["mean"], 100 * d["low"], 100 * d["high"]
+            filled = row["tested"]
+            ax.plot([x, x], [lo, hi], color=color, lw=1.4 if filled else 0.9,
+                    ls="-" if filled else (0, (2, 1.5)), zorder=2)
+            ax.plot(x, mean, marker, ms=5.0, mfc=color if filled else "white", mec=color,
+                    mew=1.0, zorder=3)
+    ax.axhline(0.0, color=INK, lw=0.7, ls=(0, (3, 2)), zorder=1)
+    ax.set_xticks(range(len(budgets)))
+    ax.set_xticklabels(budgets)
+    ax.set_xlim(-0.5, len(budgets) - 0.5)
+    ax.set_xlabel("PPO updates (budget)", color=INK)
+    ax.set_ylabel("ORL minus comparison [pp]", color=INK)
+    ax.set_title(f"(b) ORL − comparison, {level * 100:g} % CI", loc="left", color=INK)
+    handles = [plt.Line2D([], [], color=c, marker=m, ls="-", lw=1.2, ms=5, mfc=c, mec=c,
+                          label=f"vs {n}") for _, n, c, m in BUDGET_ARMS[1:]]
+    handles.append(plt.Line2D([], [], color=MUTED, marker="o", ls=(0, (2, 1.5)), lw=0.9, ms=5,
+                              mfc="white", mec=MUTED, label="not tested (sequence stopped)"))
+    ax.legend(handles=handles, loc="best", frameon=True, facecolor="white", edgecolor="none",
+              framealpha=1.0, fontsize=NOTE, handlelength=1.6, borderaxespad=0.2)
+    style_axes(ax)
+    if isaac:
+        ax = fig.add_subplot(gs[2])
+        for i, (key, name, color, marker) in enumerate(BUDGET_ARMS):
+            arm = arm_of[key]
+            models = {k: v for k, v in isaac["per_model"].items() if k.endswith("/" + arm)}
+            ys = [100 * v["success"] for v in models.values() if v["success"] is not None]
+            ls = [100 * v["local_success"] for v in models.values() if v["local_success"] is not None]
+            ax.plot(np.full(len(ys), i - 0.12) + np.linspace(-0.04, 0.04, len(ys)), ys, marker,
+                    ms=2.6, color=color, mec="none", zorder=2)
+            ax.plot(i - 0.12, 100 * isaac["arms"][arm]["success"], marker, ms=5.5, color=color,
+                    mec="white", mew=0.6, zorder=4)
+            if ls:
+                ax.plot(i + 0.14, 100 * isaac["arms"][arm]["local_success"], marker, ms=5.0,
+                        mfc="white", mec=color, mew=1.0, zorder=4)
+        ax.set_xticks(range(len(BUDGET_ARMS)))
+        ax.set_xticklabels(["ORL", "Untyped", "PPO"])
+        ax.set_xlim(-0.5, len(BUDGET_ARMS) - 0.5)
+        ax.set_ylim(-4, 104)
+        ax.set_yticks(range(0, 101, 20))
+        ax.set_ylabel("landing success [%]", color=INK)
+        ax.set_title(f"(c) Isaac Sim + PX4, budget {isaac['plan']['budget']}", loc="left",
+                     color=INK)
+        ax.legend(handles=[
+            plt.Line2D([], [], color=MUTED, marker="o", ls="none", ms=5, mfc=MUTED, mec="white",
+                       label="Isaac (dots: models)"),
+            plt.Line2D([], [], color=MUTED, marker="o", ls="none", ms=5, mfc="white", mec=MUTED,
+                       label="local plant, same cases")],
+            loc="lower left", frameon=True, facecolor="white", edgecolor="none", framealpha=1.0,
+            fontsize=NOTE, handletextpad=0.3, borderaxespad=0.2)
+        style_axes(ax)
+    save(fig, "equal_budget")
+
+
 FIGURES = {"overall": overall, "architecture": architecture, "graph": graph, "field": field,
-           "speed": speed}
+           "speed": speed, "budget": equal_budget}
 
 
 def main():
@@ -1119,8 +1231,13 @@ def main():
         parser.error(f"unknown format(s): {', '.join(sorted(unknown))}")
     OUT = args.out
     if args.what == "all":
-        for f in FIGURES.values():
-            f()
+        for name, f in FIGURES.items():
+            try:
+                f()
+            except (FileNotFoundError, SystemExit) as exc:   # a result not produced yet
+                if name not in ("speed", "budget"):
+                    raise
+                print(f"skipped {name}: {exc}")
     else:
         FIGURES[args.what]()
 

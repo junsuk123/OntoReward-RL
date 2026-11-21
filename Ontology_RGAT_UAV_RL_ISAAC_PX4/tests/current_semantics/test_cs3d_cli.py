@@ -1,3 +1,7 @@
+# Copyright (c) 2026 Jun Suk Kim (김준석)
+# Maintainer: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """``./run.sh current-semantics-3d``: dry runs create nothing, gated stages refuse.
 
 Every invocation passes an explicit stage and writes only under tmp_path; no

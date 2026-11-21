@@ -1,12 +1,18 @@
+# Copyright (c) 2026 Jun Suk Kim (김준석)
+# Maintainer: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """Paper and README figures for the ORL landing policy (docs/figures/*.png, *.svg).
 
     python3 tools/make_doc_figures.py all         # every figure
-    python3 tools/make_doc_figures.py overall | architecture | graph | field | speed
+    python3 tools/make_doc_figures.py overall | architecture | graph | field | speed | budget | isaac
     python3 tools/make_doc_figures.py all --formats tif,eps --out DIR   # IJCAS submission files
 
 Diagrams are drawn from the code: the proposed ORL policy's nodes, edges, slots and sizes from
 current_semantics/orl.py (version ORL_VERSION), the approach field from current_semantics/reward.py.
-``speed`` plots the registered learning-speed/1 verdict (results/.../learning_speed/learning_speed.json).
+``speed`` plots the registered learning-speed/1 verdict (results/.../learning_speed/learning_speed.json),
+``budget`` equal-budget/1 (equal_budget.json) and ``isaac`` isaac-equal-budget/1 (isaac_equal_budget.json
+with its paired local_reference.jsonl).  These three result plots keep every letter at 8-12 pt.
 
 Every figure is sized for the IJCAS page (International Journal of Control, Automation, and
 Systems; Manuscript Template of 2026-02-19 and its final-submission checklist): two columns of
@@ -48,8 +54,15 @@ CONFIG = PACKAGE / "config" / "current_semantics" / "spatial_view_contact_v1.yam
 COLUMN_MM, TEXT_MM = 80.0, 168.0
 MIN_PT = 7.0                   # smallest lettering on the printed page
 HEAD, TITLE, BODY, NOTE = 9.5, 8.5, 8.0, 7.5     # print sizes: headings, box titles, text, notes
-DPI = 600                      # line figures (IJCAS); colour figures need >= 300
+# Result plots (speed, budget, isaac): Springer's artwork guideline (IJCAS is a Springer journal)
+# asks for lettering of 8-12 pt at final size with little variation inside one figure.
+PLOT_MIN_PT = 8.0
+P_HEAD, P_BODY, P_NOTE = 9.0, 8.5, 8.0
+PLOT_RC = {"font.size": P_BODY, "axes.titlesize": P_HEAD, "axes.labelsize": P_BODY,
+           "xtick.labelsize": P_NOTE, "ytick.labelsize": P_NOTE, "legend.fontsize": P_NOTE}
+DPI = 600                     # line figures (IJCAS); colour figures need >= 300
 PAD_IN = 0.04                  # margin around a figure on the page [in]
+PLOT_W = TEXT_MM / 25.4 - 2 * PAD_IN   # result-plot width that prints at 168 mm with that margin
 FORMATS = ("png", "svg")       # docs/figures; --formats adds tif / eps / pdf for submission
 
 plt.rcParams.update({"font.family": "serif",
@@ -83,8 +96,17 @@ RELATION_STYLE = {
 
 # ----------------------------------------------------------------------------- drawing helpers
 def _texts(fig):
+    """Every visible text of the figure, without the tick labels of ticks outside the axis view
+    (matplotlib keeps them as visible Text objects but never draws them)."""
+    hidden = set()
+    for ax in fig.axes:
+        for axis in (ax.xaxis, ax.yaxis):
+            lo, hi = sorted(axis.get_view_interval())
+            for tick, loc in zip(axis.get_major_ticks(), axis.get_majorticklocs()):
+                if not lo - 1e-9 * (hi - lo) <= loc <= hi + 1e-9 * (hi - lo):
+                    hidden.update((id(tick.label1), id(tick.label2)))
     return [t for t in fig.findobj(matplotlib.text.Text)
-            if t.get_visible() and t.get_text().strip() and t.figure is fig]
+            if t.get_visible() and t.get_text().strip() and t.figure is fig and id(t) not in hidden]
 
 
 def _tight_width(fig, renderer, pad):
@@ -92,8 +114,8 @@ def _tight_width(fig, renderer, pad):
     return fig.get_tightbbox(renderer).width + 2 * pad
 
 
-def audit(fig, name, scale):
-    """Print-size checks of a finished figure: lettering of at least MIN_PT, no two texts
+def audit(fig, name, scale, min_pt=MIN_PT):
+    """Print-size checks of a finished figure: lettering of at least ``min_pt``, no two texts
     overlapping, and no text leaving the box, circle or ellipse its anchor sits in.  ``scale``
     is sheet inches per printed inch.  Returns the list of problems (also printed)."""
     fig.draw_without_rendering()
@@ -102,8 +124,8 @@ def audit(fig, name, scale):
     problems = []
     for t in texts:
         size = t.get_fontsize() / scale
-        if size < MIN_PT - 1e-6:
-            problems.append(f"{size:.1f} pt < {MIN_PT:g}: {t.get_text()!r}")
+        if size < min_pt - 1e-6:
+            problems.append(f"{size:.1f} pt < {min_pt:g}: {t.get_text()!r}")
     boxes = [(t, t.get_window_extent(renderer)) for t in texts]
     tol = 0.5 * fig.dpi / 72 * scale          # half a printed point, in display pixels
     for i, (a, ba) in enumerate(boxes):
@@ -136,17 +158,23 @@ def audit(fig, name, scale):
             out = bt.x0 < e.x0 - tol or bt.x1 > e.x1 + tol or bt.y0 < e.y0 - tol or bt.y1 > e.y1 + tol
         if out:
             problems.append(f"leaves its {type(p).__name__}: {t.get_text()!r}")
+    area = fig.get_tightbbox(renderer).transformed(fig.dpi_scale_trans)
+    edge = PAD_IN * scale * fig.dpi
+    for t, bt in boxes:
+        if (bt.x0 < area.x0 - edge or bt.x1 > area.x1 + edge or bt.y0 < area.y0 - edge
+                or bt.y1 > area.y1 + edge):
+            problems.append(f"cut off at the figure edge: {t.get_text()!r}")
     for line in problems:
         print(f"  [{name}] {line}")
     return problems
 
 
-def save(fig, name, width_mm=TEXT_MM, out=None, formats=None):
+def save(fig, name, width_mm=TEXT_MM, out=None, formats=None, min_pt=MIN_PT):
     """Write the figure at print width ``width_mm`` (600 dpi PNG, SVG declaring the print size).
 
     A canvas diagram (``canvas``) is drawn on a sheet larger than the page: its text, declared in
     print points, is scaled here by the sheet-to-print ratio, measured on the tight bounding box.
-    Other figures are drawn at print size and only checked."""
+    Other figures are drawn at print size and only checked; result plots pass PLOT_MIN_PT."""
     out = Path(out or OUT)
     formats = formats or ARGS_FORMATS or FORMATS
     out.mkdir(parents=True, exist_ok=True)
@@ -167,7 +195,7 @@ def save(fig, name, width_mm=TEXT_MM, out=None, formats=None):
     scale = width / target
     if not getattr(fig, "_sheet", False) and abs(scale - 1) > 0.03:
         print(f"  [{name}] printed at {target * 25.4:.0f} mm the figure shrinks by {1 / scale:.2f}")
-    audit(fig, name, scale)
+    audit(fig, name, scale, min_pt)
     height_mm = fig.get_tightbbox(renderer).height / scale * 25.4 + 2 * PAD_IN * 25.4
     for ext in formats:
         path = out / f"{name}.{ext}"
@@ -265,7 +293,7 @@ def style_axes(ax):
         ax.spines[side].set_visible(False)
     for side in ("left", "bottom"):
         ax.spines[side].set_color("#8C8C8C")
-    ax.tick_params(colors=INK, labelsize=BODY, length=2.5, pad=2)
+    ax.tick_params(colors=INK, labelsize=plt.rcParams["xtick.labelsize"], length=2.5, pad=2)
     ax.yaxis.grid(True, color=GRID, lw=0.5)
     ax.set_axisbelow(True)
 
@@ -998,11 +1026,23 @@ def field():
 
 
 # ----------------------------------------------------------------------------- 5 results
+def _plot(build):
+    """Run a result-plot builder under PLOT_RC (lettering of 8-12 pt at print size)."""
+    import functools
+
+    @functools.wraps(build)
+    def run(*args, **kwargs):
+        with plt.rc_context(PLOT_RC):
+            return build(*args, **kwargs)
+    return run
+
+
 SPEED_RESULT = RESULTS / "spatial_current_semantics_v1" / "learning_speed" / "learning_speed.json"
 SPEED_ARMS = (("orl", "ORL (proposed)"), ("untyped_gnn_ppo", "Untyped GNN"),
               ("raw_ppo", "PPO (raw obs.)"))
 
 
+@_plot
 def speed():
     """learning-speed/1 (status doc 21): per-seed first update at difficulty 1.0 and the
     registered ratio intervals, read from the verdict file speed-report wrote."""
@@ -1015,7 +1055,7 @@ def speed():
     arms = {key: data["arms"][proposed if key == "orl" else key] for key, _ in SPEED_ARMS}
     seeds = sorted(int(s) for s in arms["orl"]["first_full_update"])
     T = {key: [arms[key]["first_full_update"][str(s)] for s in seeds] for key in arms}
-    fig = plt.figure(figsize=(TEXT_MM / 25.4, 2.75), layout="constrained")
+    fig = plt.figure(figsize=(PLOT_W, 2.95), layout="constrained")
     fig.get_layout_engine().set(w_pad=0.02, h_pad=0.02, wspace=0.06)
     gs = fig.add_gridspec(1, 2, width_ratios=[1.0, 1.0])
     # (a) per-seed first update, paired lines
@@ -1033,11 +1073,11 @@ def speed():
                     mew=0.6 if hit else 1.0)
         median = arms[key]["median_update_censored_at_cap"]
         ax.plot([i - 0.25, i + 0.25], [median, median], color=INK, lw=1.2, zorder=4)
-        ax.text(i + 0.28, median, f"{median:g}", va="center", fontsize=BODY, color=INK)
+        ax.text(i + 0.28, median, f"{median:g}", va="center", fontsize=P_BODY, color=INK)
     censored = [s for k, s in enumerate(seeds)
                 if any(T[key][k] is None for key, _ in SPEED_ARMS)]
     ax.text(1.5, cap * 0.80, f"seed {', '.join(map(str, censored))}: never left the easiest\n"
-            f"stage, counted as the cap ({cap})", ha="center", va="top", fontsize=NOTE,
+            f"stage, counted as the cap ({cap})", ha="center", va="top", fontsize=P_NOTE,
             color=MUTED, linespacing=1.15, zorder=5, bbox=dict(fc="white", ec="none", pad=0.3))
     ax.set_yscale("log")
     ax.set_ylim(48, 760)
@@ -1068,14 +1108,12 @@ def speed():
         ax.plot(c["ratio_interval"], [y + 0.08] * 2, color=PROPOSED, lw=1.6, solid_capstyle="round")
         ax.plot(c["ratio"], y + 0.08, "o", ms=5.5, mfc=PROPOSED, mec="white", mew=0.8, zorder=3)
         ax.text(1.1, y + 0.08, f"×{c['ratio']:.2f} [{c['ratio_interval'][0]:.2f}, "
-                f"{c['ratio_interval'][1]:.2f}]", va="center", fontsize=BODY, color=INK)
+                f"{c['ratio_interval'][1]:.2f}]", va="center", fontsize=P_BODY, color=INK)
         ax.plot([lo, hi], [y - 0.24] * 2, color=PROPOSED, lw=0.9)
         ax.plot(r, y - 0.24, "o", ms=4.5, mfc="white", mec=PROPOSED, mew=1.0, zorder=3)
-        ax.text(1.1, y - 0.24, f"×{r:.2f} [{lo:.2f}, {hi:.2f}]", va="center", fontsize=NOTE,
+        ax.text(1.1, y - 0.24, f"×{r:.2f} [{lo:.2f}, {hi:.2f}]", va="center", fontsize=P_NOTE,
                 color=MUTED)
-        ax.text(0.23, y + 0.42, f"ORL / {name}: {c['verdict']}, ORL first on "
-                f"{c['proposed_first']}/{c['proposed_first'] + c['other_first'] + c['ties']} seeds",
-                fontsize=BODY, color=INK, va="center", zorder=4,
+        ax.text(0.23, y + 0.42, f"ORL / {name}", fontsize=P_BODY, color=INK, va="center", zorder=4,
                 bbox=dict(fc="white", ec="none", pad=0.4))
     ax.axvline(1.0, color=INK, lw=0.7, ls=(0, (3, 2)), zorder=1)
     ax.set_xscale("log")
@@ -1096,34 +1134,33 @@ def speed():
                    label=f"registered rule, {len(seeds)} seeds (cap counted)"),
         plt.Line2D([], [], color=PROPOSED, lw=0.9, marker="o", ms=4.5, mfc="white", mec=PROPOSED,
                    label=f"exploratory, without seed {', '.join(map(str, censored))}")],
-        loc="lower left", bbox_to_anchor=(0.0, 0.0), ncol=1, frameon=True, fontsize=NOTE,
+        loc="lower left", bbox_to_anchor=(0.0, 0.0), ncol=1, frameon=True, fontsize=P_NOTE,
         borderaxespad=0.2, handlelength=2.2, facecolor="white", edgecolor="none", framealpha=1.0)
-    save(fig, "learning_speed")
+    save(fig, "learning_speed", min_pt=PLOT_MIN_PT)
 
 
 BUDGET_RESULT = RESULTS / "spatial_current_semantics_v1" / "equal_budget" / "equal_budget.json"
 ISAAC_BUDGET_RESULT = (RESULTS / "spatial_current_semantics_v1" / "isaac_equal_budget"
                        / "isaac_equal_budget.json")
-BUDGET_ARMS = (("orl", "ORL (proposed)", PROPOSED, "o"), ("untyped_gnn_ppo", "Untyped GNN", "#5E5E5E", "s"),
-               ("raw_ppo", "PPO", "#A8A8A8", "^"))
+BUDGET_ARMS = (("orl", "ORL (proposed)", PROPOSED, "o"), ("untyped_gnn_ppo", "Untyped GNN", "#4D4D4D", "s"),
+               ("raw_ppo", "PPO", "#909090", "^"))
+ISAAC_CONDITIONS = (("composition_id", "composition\nID"), ("composition_ood", "composition\nOOD"),
+                    ("combined_id", "combined\nID"))
 
 
+@_plot
 def equal_budget():
-    """equal-budget/1 (status doc 24): landing success at the same number of PPO updates, and,
-    once flown, isaac-equal-budget/1 at the last budget.  Read from the verdict files."""
+    """equal-budget/1 (status doc 24): landing success at the same number of PPO updates, read
+    from the verdict file budget-report wrote.  The Isaac flight is ``isaac_budget``."""
     data = json.loads(BUDGET_RESULT.read_text())
     if not data.get("complete"):
         raise SystemExit("equal-budget/1 is not complete; run --stage budget-report first")
-    isaac = json.loads(ISAAC_BUDGET_RESULT.read_text()) if ISAAC_BUDGET_RESULT.exists() else None
-    if isaac is not None and not isaac.get("protocol_complete"):
-        isaac = None
     proposed = data["proposed_arm"]
     budgets = [str(b) for b in data["budgets"]]
     arm_of = {key: proposed if key == "orl" else key for key, *_ in BUDGET_ARMS}
-    panels = 3 if isaac else 2
-    fig = plt.figure(figsize=(TEXT_MM / 25.4, 2.75), layout="constrained")
-    fig.get_layout_engine().set(w_pad=0.02, h_pad=0.02, wspace=0.05)
-    gs = fig.add_gridspec(1, panels, width_ratios=[1.0, 1.0, 0.85][:panels])
+    fig = plt.figure(figsize=(PLOT_W, 2.95), layout="constrained")
+    fig.get_layout_engine().set(w_pad=0.02, h_pad=0.02, wspace=0.06)
+    gs = fig.add_gridspec(1, 2, width_ratios=[1.0, 1.0])
     # (a) ten-cell success after exactly B updates, every training seed
     ax = fig.add_subplot(gs[0])
     offsets = np.linspace(-0.22, 0.22, len(BUDGET_ARMS))
@@ -1134,10 +1171,10 @@ def equal_budget():
             seeds = arm[b]["per_seed_success"]
             ys = [100 * v for v in seeds.values()]
             ax.plot(np.full(len(ys), i + off) + np.linspace(-0.04, 0.04, len(ys)), ys, marker,
-                    ms=2.6, color=color, alpha=1.0, mec="none", zorder=2)
+                    ms=2.8, color=color, alpha=1.0, mec="none", zorder=2)
             means.append(100 * arm[b]["mean_success"])
         ax.plot(np.arange(len(budgets)) + off, means, "-", color=color, lw=1.0, zorder=3)
-        ax.plot(np.arange(len(budgets)) + off, means, marker, ms=5.0, color=color, mec="white",
+        ax.plot(np.arange(len(budgets)) + off, means, marker, ms=5.5, color=color, mec="white",
                 mew=0.6, zorder=4, label=name)
     ax.set_xticks(range(len(budgets)))
     ax.set_xticklabels(budgets)
@@ -1147,8 +1184,8 @@ def equal_budget():
     ax.set_xlabel("PPO updates (budget)", color=INK)
     ax.set_ylabel("ten-cell landing success [%]", color=INK)
     ax.set_title("(a) Success at the same budget", loc="left", color=INK)
-    ax.legend(loc="lower right", frameon=True, facecolor="white", edgecolor="none", framealpha=1.0,
-              fontsize=NOTE, handlelength=1.2, borderaxespad=0.2)
+    ax.legend(loc="lower right", bbox_to_anchor=(1.0, 0.09), frameon=True, facecolor="white",
+              edgecolor="none", framealpha=1.0, handlelength=1.2, borderaxespad=0.2)
     style_axes(ax)
     # (b) ORL minus each comparison, registered fixed sequence
     ax = fig.add_subplot(gs[1])
@@ -1164,7 +1201,7 @@ def equal_budget():
             filled = row["tested"]
             ax.plot([x, x], [lo, hi], color=color, lw=1.4 if filled else 0.9,
                     ls="-" if filled else (0, (2, 1.5)), zorder=2)
-            ax.plot(x, mean, marker, ms=5.0, mfc=color if filled else "white", mec=color,
+            ax.plot(x, mean, marker, ms=5.5, mfc=color if filled else "white", mec=color,
                     mew=1.0, zorder=3)
     ax.axhline(0.0, color=INK, lw=0.7, ls=(0, (3, 2)), zorder=1)
     ax.set_xticks(range(len(budgets)))
@@ -1178,43 +1215,133 @@ def equal_budget():
     handles.append(plt.Line2D([], [], color=MUTED, marker="o", ls=(0, (2, 1.5)), lw=0.9, ms=5,
                               mfc="white", mec=MUTED, label="not tested (sequence stopped)"))
     ax.legend(handles=handles, loc="best", frameon=True, facecolor="white", edgecolor="none",
-              framealpha=1.0, fontsize=NOTE, handlelength=1.6, borderaxespad=0.2)
+              framealpha=1.0, handlelength=1.6, borderaxespad=0.2)
     style_axes(ax)
-    if isaac:
-        ax = fig.add_subplot(gs[2])
-        for i, (key, name, color, marker) in enumerate(BUDGET_ARMS):
-            arm = arm_of[key]
-            models = {k: v for k, v in isaac["per_model"].items() if k.endswith("/" + arm)}
-            ys = [100 * v["success"] for v in models.values() if v["success"] is not None]
-            ls = [100 * v["local_success"] for v in models.values() if v["local_success"] is not None]
-            ax.plot(np.full(len(ys), i - 0.12) + np.linspace(-0.04, 0.04, len(ys)), ys, marker,
-                    ms=2.6, color=color, mec="none", zorder=2)
-            ax.plot(i - 0.12, 100 * isaac["arms"][arm]["success"], marker, ms=5.5, color=color,
-                    mec="white", mew=0.6, zorder=4)
-            if ls:
-                ax.plot(i + 0.14, 100 * isaac["arms"][arm]["local_success"], marker, ms=5.0,
-                        mfc="white", mec=color, mew=1.0, zorder=4)
-        ax.set_xticks(range(len(BUDGET_ARMS)))
-        ax.set_xticklabels(["ORL", "Untyped", "PPO"])
-        ax.set_xlim(-0.5, len(BUDGET_ARMS) - 0.5)
-        ax.set_ylim(-4, 104)
-        ax.set_yticks(range(0, 101, 20))
-        ax.set_ylabel("landing success [%]", color=INK)
-        ax.set_title(f"(c) Isaac Sim + PX4, budget {isaac['plan']['budget']}", loc="left",
-                     color=INK)
-        ax.legend(handles=[
-            plt.Line2D([], [], color=MUTED, marker="o", ls="none", ms=5, mfc=MUTED, mec="white",
-                       label="Isaac (dots: models)"),
-            plt.Line2D([], [], color=MUTED, marker="o", ls="none", ms=5, mfc="white", mec=MUTED,
-                       label="local plant, same cases")],
-            loc="lower left", frameon=True, facecolor="white", edgecolor="none", framealpha=1.0,
-            fontsize=NOTE, handletextpad=0.3, borderaxespad=0.2)
-        style_axes(ax)
-    save(fig, "equal_budget")
+    save(fig, "equal_budget", min_pt=PLOT_MIN_PT)
+
+
+TITLE_PAD = 2.2 * P_NOTE      # panel title above a one-row legend that sits on the axes
+
+
+def _isaac_inputs():
+    """The isaac-equal-budget/1 verdict file and its paired local reference (identical cases)."""
+    if not ISAAC_BUDGET_RESULT.exists():
+        raise SystemExit("isaac-equal-budget/1 has no verdict file yet")
+    isaac = json.loads(ISAAC_BUDGET_RESULT.read_text())
+    if not isaac.get("protocol_complete"):
+        raise SystemExit("isaac-equal-budget/1 is not complete")
+    path = ISAAC_BUDGET_RESULT.parent / "local_reference.jsonl"
+    local = [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+    return isaac, local
+
+
+@_plot
+def isaac_budget():
+    """isaac-equal-budget/1 (status doc 24.6): the budget-600 models of equal-budget/1 flown on
+    Isaac Sim + PX4 SITL, every model on the same 15 cases, beside the identical cases on the
+    local plant (local_reference.jsonl, reported and never decisive)."""
+    isaac, local = _isaac_inputs()
+    proposed = json.loads(BUDGET_RESULT.read_text())["proposed_arm"]
+    arm_of = {key: proposed if key == "orl" else key for key, *_ in BUDGET_ARMS}
+
+    def local_rate(model, condition=None):
+        rows = [r for r in local if r["model"] == model and r.get("status") is not None
+                and (condition is None or r["condition"] == condition)]
+        return sum(r["status"] == "SUCCESS" for r in rows) / len(rows) if rows else None
+
+    groups = [*ISAAC_CONDITIONS, (None, "all\ncases")]
+    fig = plt.figure(figsize=(PLOT_W, 2.95), layout="constrained")
+    fig.get_layout_engine().set(w_pad=0.02, h_pad=0.02, wspace=0.06)
+    gs = fig.add_gridspec(1, 2, width_ratios=[1.25, 1.0])
+    # (a) success per condition: models (small), policy mean on Isaac (large), local mean (bar)
+    ax = fig.add_subplot(gs[0])
+    offsets = np.linspace(-0.25, 0.25, len(BUDGET_ARMS))
+    for (key, name, color, marker), off in zip(BUDGET_ARMS, offsets):
+        arm = arm_of[key]
+        models = sorted(k for k in isaac["per_model"] if k.split("/", 1)[1] == arm)
+        for g, (condition, _) in enumerate(groups):
+            if condition is None:
+                ys = [isaac["per_model"][k]["success"] for k in models]
+                mean = isaac["arms"][arm]["success"]
+            else:
+                ys = [isaac["per_model"][k]["by_condition"][condition] for k in models]
+                mean = isaac["arms"][arm]["by_condition"][condition]
+            ys = [100 * y for y in ys if y is not None]
+            if mean is None:
+                continue
+            ax.plot(np.full(len(ys), g + off) + np.linspace(-0.05, 0.05, len(ys)), ys, marker,
+                    ms=2.8, color=color, mec="none", alpha=0.75, zorder=2)
+            ax.plot(g + off, 100 * mean, marker, ms=6.0, color=color, mec="white", mew=0.7,
+                    zorder=4, label=name if g == 0 else None)
+            ref = [local_rate(k, condition) for k in models]
+            ref = [r for r in ref if r is not None]
+            if ref:
+                ax.plot([g + off - 0.09, g + off + 0.09], [100 * float(np.mean(ref))] * 2,
+                        color=INK, lw=1.3, zorder=5, solid_capstyle="butt")
+    ax.axvline(len(ISAAC_CONDITIONS) - 0.5, color=GRID, lw=0.9, zorder=1)
+    ax.set_xticks(range(len(groups)))
+    ax.set_xticklabels([label for _, label in groups])
+    ax.set_xlim(-0.5, len(groups) - 0.5)
+    ax.set_ylim(-4, 104)
+    ax.set_yticks(range(0, 101, 20))
+    ax.set_ylabel("landing success [%]", color=INK)
+    ax.set_title(f"(a) Isaac Sim + PX4, budget {isaac['plan']['budget']}", loc="left", color=INK,
+                 pad=TITLE_PAD)
+    handles, _ = ax.get_legend_handles_labels()
+    handles.append(plt.Line2D([], [], color=INK, lw=1.3, label="local plant"))
+    ax.legend(handles=handles, loc="lower left", bbox_to_anchor=(0.0, 1.0), frameon=False, ncol=4,
+              handlelength=1.0, handletextpad=0.4, columnspacing=0.9, borderaxespad=0.15,
+              borderpad=0.0).set_in_layout(False)     # its room is the title pad
+    style_axes(ax)
+    # (b) registered comparison (Isaac, filled) and the paired local record (hollow)
+    ax = fig.add_subplot(gs[1])
+    level, lows, highs = None, [], []
+    comparisons = BUDGET_ARMS[1:]
+    for j, (key, name, color, marker) in enumerate(comparisons):
+        comp = isaac["comparisons"][arm_of[key]]
+        y = len(comparisons) - 1 - j
+        for d, dy, filled in ((comp["difference"], 0.17, True),
+                              (comp.get("local_difference"), -0.17, False)):
+            if d is None:
+                continue
+            level = level or d["confidence"]
+            mean, lo, hi = 100 * d["mean"], 100 * d["low"], 100 * d["high"]
+            lows.append(lo)
+            highs.append(hi)
+            ax.plot([lo, hi], [y + dy] * 2, color=color, lw=1.6 if filled else 0.9,
+                    solid_capstyle="round", zorder=2)
+            ax.plot(mean, y + dy, marker, ms=6.0 if filled else 5.0, mfc=color if filled else "white",
+                    mec="white" if filled else color, mew=0.8 if filled else 1.0, zorder=3)
+            ax.text(hi + 1.5, y + dy, f"{mean:+.1f} [{lo:+.1f}, {hi:+.1f}]".replace("-", "−"),
+                    va="center",
+                    fontsize=P_BODY if filled else P_NOTE, color=INK if filled else MUTED)
+    ax.axvline(0.0, color=INK, lw=0.7, ls=(0, (3, 2)), zorder=1)
+    span = max(highs) - min(lows)
+    ax.set_xlim(min(lows) - 0.08 * span, max(highs) + 0.62 * span)
+    ax.set_ylim(-0.6, len(comparisons) - 0.4)
+    ax.set_yticks(range(len(comparisons)))
+    ax.set_yticklabels([f"vs {name}" for _, name, *_ in reversed(comparisons)])
+    ax.set_xlabel(f"ORL minus comparison, success [pp]", color=INK)
+    ax.set_title(f"(b) ORL − comparison, {level * 100:g} % CI", loc="left", color=INK,
+                 pad=TITLE_PAD)
+    style_axes(ax)
+    ax.yaxis.grid(False)
+    ax.xaxis.grid(True, color=GRID, lw=0.5)
+    ax.tick_params(axis="y", length=0)
+    ax.spines["left"].set_visible(False)
+    ax.legend(handles=[
+        plt.Line2D([], [], color=MUTED, lw=1.6, marker="o", ms=5, mfc=MUTED, mec="white",
+                   label="Isaac, registered"),
+        plt.Line2D([], [], color=MUTED, lw=0.9, marker="o", ms=4.5, mfc="white", mec=MUTED,
+                   label="local plant")],
+        loc="lower left", bbox_to_anchor=(0.0, 1.0), frameon=False, ncol=2, handlelength=2.0,
+        handletextpad=0.4, columnspacing=0.9, borderaxespad=0.15, borderpad=0.0
+    ).set_in_layout(False)
+    save(fig, "isaac_equal_budget", min_pt=PLOT_MIN_PT)
 
 
 FIGURES = {"overall": overall, "architecture": architecture, "graph": graph, "field": field,
-           "speed": speed, "budget": equal_budget}
+           "speed": speed, "budget": equal_budget, "isaac": isaac_budget}
 
 
 def main():
@@ -1235,7 +1362,7 @@ def main():
             try:
                 f()
             except (FileNotFoundError, SystemExit) as exc:   # a result not produced yet
-                if name not in ("speed", "budget"):
+                if name not in ("speed", "budget", "isaac"):
                     raise
                 print(f"skipped {name}: {exc}")
     else:

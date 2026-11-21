@@ -1,3 +1,7 @@
+# Copyright (c) 2026 Jun Suk Kim (김준석)
+# Maintainer: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """Causal measurement/estimation/packet/graph/supervision boundaries.
 
 Only ``Measurement`` can enter the estimator. It has no truth, contact,
@@ -111,7 +115,7 @@ from ..two_axis.ontology_v28 import GRAPH_SCHEMA_HASH as TOPOLOGY_HASH
 #: UNSAFE_CONTACT (two: body rate 10.47 deg/s; tilt 5.27 deg at 12.51 deg/s,
 #: against the 5 deg / 10 deg/s touchdown band, both at |vz| <= 0.07). Two
 #: touched inside the terminal-descent corridor at vz -0.62 and -0.38 m/s
-#: against the 0.30 m/s limit. The user ruled the four acceptable landings
+#: against the 0.30 m/s limit. The four were judged acceptable landings
 #: and the two not. The one rule that draws exactly that line is the IMPACT
 #: SPEED: on /7 a pad contact is UNSAFE_CONTACT when its horizontal or
 #: vertical speed exceeds the touchdown limits, SAFETY_ENVELOPE_VIOLATION
@@ -584,7 +588,7 @@ class SpatialConfig:
     def landing_gear_extension_m(self):
         """How far below the stock gear the /4 legs reach; zero elsewhere.
 
-        /4 through /7 carry the legs; /8 removes them again (user decision,
+        /4 through /7 carry the legs; /8 removes them again (design decision,
         see the /8 note above REFERENCE_SCHEMAS), so the stock Iris contact
         height is back and everything derived from this value follows.
         """

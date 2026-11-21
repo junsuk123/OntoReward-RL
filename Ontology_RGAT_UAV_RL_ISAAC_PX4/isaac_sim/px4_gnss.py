@@ -1,3 +1,7 @@
+# Copyright (c) 2026 Jun Suk Kim (김준석)
+# Maintainer: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """Pegasus sensor adapter for the urban GNSS model.
 
 This module is imported only inside Isaac Sim.  The numerical conversion lives

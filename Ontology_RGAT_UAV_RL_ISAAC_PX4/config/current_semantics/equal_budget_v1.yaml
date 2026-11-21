@@ -5,7 +5,7 @@
 # Why: learning-speed/1 (status doc 21.3, seeds 40-49) found ORL reaching difficulty 1.0
 # first on 10/10 seeds (median 65 updates against 100 and 107), but it measured the
 # curriculum, not landing; this protocol asks whether that speed becomes landing success at
-# an equal training budget (user, 2026-11-20: "do those tasks").
+# an equal training budget (2026-11-20).
 #
 # Registered by `./run.sh current-semantics-3d --stage register-budget` before any model
 # trains; `--stage budget` (any number of processes share the models) trains and evaluates,

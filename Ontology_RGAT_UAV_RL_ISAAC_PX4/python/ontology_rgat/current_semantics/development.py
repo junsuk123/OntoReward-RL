@@ -1,3 +1,7 @@
+# Copyright (c) 2026 Jun Suk Kim (김준석)
+# Maintainer: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """Guide 11: the development stage of spatial_current_semantics_v1 (local plant).
 
 Four arms x the registered training seeds, each trained with the G4-passed common

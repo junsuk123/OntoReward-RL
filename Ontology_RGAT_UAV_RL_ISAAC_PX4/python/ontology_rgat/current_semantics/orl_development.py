@@ -1,3 +1,7 @@
+# Copyright (c) 2026 Jun Suk Kim (김준석)
+# Maintainer: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """orl-development/1-/4: ORL as a paired arm of development/1 (status doc 20).
 
 The question is the CNN-vs-MLP one: with the same phi44 input and the same parameter

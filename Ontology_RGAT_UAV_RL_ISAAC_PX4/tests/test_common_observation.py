@@ -1,3 +1,7 @@
+# Copyright (c) 2026 Jun Suk Kim (김준석)
+# Maintainer: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """The common observation O_t = {P_t, D_t, H_t} and its 3D instantiation.
 
 P_t: per-marker image corners in fixed id slots plus a detection mask.

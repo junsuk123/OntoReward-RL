@@ -1,3 +1,7 @@
+# Copyright (c) 2026 Jun Suk Kim (김준석)
+# Maintainer: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """Nine-node/12-channel causal graph ported from upstream v2.8.
 
 Source: contextSchema.m/contextGraph.m at 7efcc10995557bc8435304216ad2ced70ab1da00.

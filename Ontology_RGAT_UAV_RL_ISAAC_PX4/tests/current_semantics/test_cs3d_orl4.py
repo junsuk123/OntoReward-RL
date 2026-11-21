@@ -1,3 +1,7 @@
+# Copyright (c) 2026 Jun Suk Kim (김준석)
+# Maintainer: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """orl/4, its rule control and orl-development/4 (status doc 20.9).
 
 The view rule is the task's own lost-view weight on the policy's own estimate, so it is

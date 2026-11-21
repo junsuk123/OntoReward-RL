@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Jun Suk Kim (김준석)
+# Maintainer: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """Protocol-only fake used to validate the MATLAB adapter without ROS/PX4.
 
 It answers the current wire format: pad-relative position and velocity, the

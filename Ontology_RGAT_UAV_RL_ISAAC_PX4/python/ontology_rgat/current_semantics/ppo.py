@@ -1,3 +1,7 @@
+# Copyright (c) 2026 Jun Suk Kim (김준석)
+# Maintainer: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """Common PPO of spatial_current_semantics_v1 (guide 8.3), identical for every arm.
 
 The actor objective is the clipped surrogate on the latent Gaussian's ratio
@@ -10,7 +14,7 @@ Two measured lessons of this repository are built in.  Discounts are
 term share one time base.  And the KL bound is enforced: each actor minibatch
 step is re-measured on its own minibatch after the step and reverted (weights
 and Adam moments) above 1.5 x ``target_kl``, because measuring before the step
-let the first step of every iteration through unbounded (AGENTS.md, the
+let the first step of every iteration through unbounded (the
 ``--enforce-target-kl`` finding).
 """
 from __future__ import annotations

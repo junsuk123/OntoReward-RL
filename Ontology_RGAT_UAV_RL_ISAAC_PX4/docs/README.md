@@ -23,4 +23,4 @@ ORL이 쓰지 않는 경로의 문서는 2026-11-20에 `archive/non_orl_20261120
 
 ---
 
-Copyright © 2026 Jun Suk Kim (김준석). 관리자: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
+Copyright © 2026 Jun Suk Kim (김준석). 관리자: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>. Apache License 2.0 ([LICENSE](../../LICENSE)).

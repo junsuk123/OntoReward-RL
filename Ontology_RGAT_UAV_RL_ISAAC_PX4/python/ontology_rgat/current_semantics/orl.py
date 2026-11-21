@@ -1,5 +1,9 @@
-"""ORL -- ontology reinforcement learning: the ontology as the policy's inductive bias
-(user, 2026-11-02; status doc 20).
+# Copyright (c) 2026 Jun Suk Kim (김준석)
+# Maintainer: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
+# SPDX-License-Identifier: Apache-2.0
+
+"""ORL -- ontology-structured reinforcement learning: the ontology as the policy's inductive bias
+(2026-11-02; status doc 20).
 
 A convolution makes a CNN local, weight-shared and translation-equivariant; a
 recurrence makes an LSTM carry state through learned gates.  ORL takes the same

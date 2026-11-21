@@ -1,3 +1,7 @@
+# Copyright (c) 2026 Jun Suk Kim (김준석)
+# Maintainer: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """Canonical image-plane landmark order, renderer v2 and exact label warps.
 
 Background (2026-09-20): the shipped six-keypoint encoder predicted the pad

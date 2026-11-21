@@ -1,3 +1,7 @@
+# Copyright (c) 2026 Jun Suk Kim (김준석)
+# Maintainer: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """Navigation uncertainty has to reach the ontology, the policy and the reward.
 
 The whole point of the urban experiment is that the pad-relative pose is

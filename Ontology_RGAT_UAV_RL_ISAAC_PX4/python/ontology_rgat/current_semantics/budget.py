@@ -1,3 +1,7 @@
+# Copyright (c) 2026 Jun Suk Kim (김준석)
+# Maintainer: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """equal-budget/1 and isaac-equal-budget/1: does ORL's faster curriculum (learning-speed/1)
 become better landing at the SAME training budget, on the local plant and on Isaac/PX4?
 

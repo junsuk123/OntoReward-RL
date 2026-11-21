@@ -1,3 +1,7 @@
+# Copyright (c) 2026 Jun Suk Kim (김준석)
+# Maintainer: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """Axis-generic landing-task contract shared by the 2D and 3D routes.
 
 The 3D route began as a copy of the 2D one, so every concern they share drifted

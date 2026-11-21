@@ -1,3 +1,7 @@
+# Copyright (c) 2026 Jun Suk Kim (김준석)
+# Maintainer: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """Screen capture of ORL demo flights in the real operating environment (docs/figures).
 
 ``capture`` flies deterministic episodes of one trained checkpoint on an owned Isaac Sim +
@@ -10,7 +14,7 @@ camera's annotated ArUco topic and RViz2 following the vehicle (TF from
 and an MP4 of every flight, both at 4x with the flight phase written on each frame.
 
 Demo only.  The seeds are demo seeds, nothing here is scored or evidence for anything,
-and every Isaac flight still needs the user's approval and ``--allow-isaac``.
+and every Isaac flight still needs ``--allow-isaac``.
 
     python3 tools/isaac_demo_capture.py capture OUT CHECKPOINT --allow-isaac [--seeds 999902,999903,999904]
     python3 tools/isaac_demo_capture.py media OUT ../docs/figures [--still OUT/still_999902_048.png]

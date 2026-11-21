@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Jun Suk Kim (김준석)
+# Maintainer: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """``./run.sh current-semantics-3d``: the current-observation 3D study (guide 10-12).
 
 Stages that would train or register a comparison are refused until the gates

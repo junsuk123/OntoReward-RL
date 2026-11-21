@@ -1,4 +1,8 @@
 #!/bin/bash
+# Copyright (c) 2026 Jun Suk Kim (김준석)
+# Maintainer: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
+# SPDX-License-Identifier: Apache-2.0
+
 # Read-only study monitor (current_semantics/monitor.py) on this machine's Tailscale address,
 # so it is reachable from devices on the same tailnet only (not localhost-only, not public).
 #   scripts/monitor_tailscale.sh start|stop|status   [port, default 8780]

@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Jun Suk Kim (김준석)
+# Maintainer: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """Convert the pinned official Ranger Mini V3 URDF/DAE package to USD.
 
 Run through Isaac Sim's ``python.sh``; normal Python does not ship the URDF

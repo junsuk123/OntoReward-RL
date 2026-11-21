@@ -1,8 +1,12 @@
+# Copyright (c) 2026 Jun Suk Kim (김준석)
+# Maintainer: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """learning-speed/1: does the ontology-structured policy (ORL, ``orl/1``) reach the task's
 full difficulty in fewer PPO updates than PPO on the raw observation and the untyped GNN,
 under the base self-navigation, i.e. with NO navigation estimator in the loop?
 
-User decision 2026-11-20 ("1"): the kinematic WLS estimator (internal name WMON) belongs to
+Design decision 2026-11-20: the kinematic WLS estimator (internal name WMON) belongs to
 separate research and must not carry this study's contribution; under the base navigation
 and under CA-KF the registered R-GAT arm learned exactly as fast as PPO, while ORL --
 the same ontology used as the policy's STRUCTURE, no raw bypass -- reached difficulty 1.0

@@ -1,3 +1,7 @@
+# Copyright (c) 2026 Jun Suk Kim (김준석)
+# Maintainer: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """Registered contract of the current-observation 3D landing path.
 
 One module holds what the new path may read and how it is scaled: the 21D
@@ -102,7 +106,7 @@ _CHANNEL_SEMANTICS = {
 }
 TRANSFORM_BY_NAME = MappingProxyType({name: spec[1] for name, spec in _CHANNEL_SEMANTICS.items()})
 
-# spatial-current-observation/2 (user request 2026-10-28: reshape the common
+# spatial-current-observation/2 (2026-10-28: reshape the common
 # observation so PPO can learn without BC). Same 21 channels, order and rules;
 # only the signed position/velocity scales change, to the landing regime. The
 # direct-policy source scales (3 m, 8 m, 10 m/s, 1.5 m/s) put the 0.30 m/s
@@ -155,7 +159,7 @@ if any(TRANSFORM_BY_NAME[name] != "signed" for name in OBSERVATION_SCALE_OVERRID
     raise AssertionError("only signed channels may be rescaled")
 
 
-# spatial-current-observation/3 (user choice "a", 2026-10-29): the pad track
+# spatial-current-observation/3 (2026-10-29): the pad track
 # RE-ACQUIRES. The reference ABG track initialises the pad velocity to the own
 # velocity and corrects it by 0.02/gap per frame, so after the Isaac handover
 # kick its prediction drifts past the innovation gate (max(4 sigma, 0.25 m)) and
@@ -632,7 +636,7 @@ class SuccessGatedCurriculum:
 
 @dataclass(frozen=True)
 class HandoverOwnStateError:
-    """Training-only randomisation (pilot 5, user 2026-10-29): right after handover
+    """Training-only randomisation (pilot 5, 2026-10-29): right after handover
     the own velocity the observer receives carries e0 * exp(-t/tau) and the own
     position (and the pose paired with each image) its integral, as Isaac's EKF
     did after the handover kick (G0_G4_STATUS_KO.md 10.7: +-0.6 m/s between two
@@ -648,7 +652,7 @@ class HandoverOwnStateError:
 
 @dataclass(frozen=True)
 class VisionBlackout:
-    """Training-only randomisation (pilot 6, user 2026-10-29): with ``probability``
+    """Training-only randomisation (pilot 6, 2026-10-29): with ``probability``
     per training episode the observer receives no optical frame for a window of
     U(duration_min, duration_max) s starting U(start_min, start_max) s after
     handover, so the policy meets a stale track at altitude.  The trained policies
@@ -708,7 +712,7 @@ ISAAC_EVAL_PROTOCOL = "isaac-eval/5"
 
 @dataclass(frozen=True)
 class IsaacEvalConfig:
-    """The selected G4 checkpoints flown on Isaac/PX4 (user decision 2026-10-28:
+    """The selected G4 checkpoints flown on Isaac/PX4 (design decision 2026-10-28:
     every selected-checkpoint evaluation runs on Isaac).  Deterministic policy,
     the same seeds for every checkpoint, criterion registered before the flight."""
     protocol: str
@@ -771,7 +775,7 @@ TASK_DEFINITION = MappingProxyType({
 
 @dataclass(frozen=True)
 class LostView:
-    """/4 (user 2026-10-29): what the field asks once the policy has not seen the pad
+    """/4 (2026-10-29): what the field asks once the policy has not seen the pad
     for a while.  Past ``after_s`` of vision age (fully at ``full_after_s``) the
     vertical demand turns from the sink to a climb toward ``search_height_m`` above
     the contact height, where the camera footprint is wide again, except in the

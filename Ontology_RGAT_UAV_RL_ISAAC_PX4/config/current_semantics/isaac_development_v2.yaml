@@ -1,7 +1,7 @@
 # spatial_current_semantics_v1, guide 11.6: isaac-development/2 -- the isaac-development/1
 # cases re-flown on the CURRENT Isaac/PX4 stack, under their own artifacts
 # (isaac_development_2_registration.json, isaac_development_2.json, isaac_development_2/),
-# so a root keeps its /1 record (2026-11-13, user request "2 first and 1 next").
+# so a root keeps its /1 record (2026-11-13).
 #
 # Why a second protocol:
 #  * task 5 /3: its isaac-development/1 flight (2026-10-30) predates the 2026-10-31

@@ -94,7 +94,7 @@ g3_isaac:
   # Floor on corr(sin pitch, +a_x) and -corr(sin roll, +a_y); the audit measured
   # 0.686 and 0.966 on earlier Isaac flights.
   axis_sign_min_abs_correlation: 0.5
-# Task v2 (2026-10-28, user request: a common reward/observation PPO can learn
+# Task v2 (2026-10-28, design goal: a common reward/observation PPO can learn
 # without BC). The VERDICT and the terminal table stay the spatial-reference/12
 # Evaluator's (SUCCESS 25 / TASK_TIMEOUT -12 / unsafe -40, impact-speed contact
 # verdict, 21 deg / 20 m / 60 m envelope), scored on the actual transition time,

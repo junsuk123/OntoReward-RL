@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Jun Suk Kim (김준석)
+# Maintainer: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """Whether the diagnostic camera overlay is worth the main loop's time.
 
 Extracted from landing_world.py so it can be tested: that module imports Isaac

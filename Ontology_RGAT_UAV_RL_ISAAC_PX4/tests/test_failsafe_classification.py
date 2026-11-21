@@ -1,3 +1,7 @@
+# Copyright (c) 2026 Jun Suk Kim (김준석)
+# Maintainer: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """Which PX4 failsafe inputs may end a multi-hour run, and which may not.
 
 2026-09-24 a run that had already collected its four teacher demonstrations and

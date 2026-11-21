@@ -4,11 +4,12 @@
 실제 운용 환경(Isaac Sim + PX4 SITL + ROS 2)에서 찍은 시연 영상이다.
 
 - 형식: IJCAS(International Journal of Control, Automation, and Systems) 지면에 맞춘다.
-  - 지면은 2단(단 폭 80 mm, 간격 8 mm)이다. 구조·결과 그림 여섯 개는 모두 두 단 전체 폭인 168 mm로 넣는 것을 기준으로 그렸다.
-  - 그 크기로 인쇄했을 때 가장 작은 글자는 7 pt, 본문 글자는 8 pt, 제목은 9.5 pt이다(본문 Times New Roman 10 pt에 맞춤).
+  - 지면은 2단(단 폭 80 mm, 간격 8 mm)이다. 구조·결과 그림은 모두 두 단 전체 폭인 168 mm로 넣는 것을 기준으로 그렸다.
+  - 구조 그림: 그 크기로 인쇄했을 때 가장 작은 글자는 7 pt, 본문 글자는 8 pt, 제목은 9.5 pt이다(본문 Times New Roman 10 pt에 맞춤).
+  - 결과 그래프(5–7절): Springer 그림 지침(최종 크기에서 글자 8–12 pt)에 맞춰 눈금 8 pt, 축 이름 8.5 pt, 패널 제목 9 pt이다.
   - 캡션은 그림 아래에 따로 쓰므로 그림 안에는 제목이나 설명 문장을 넣지 않는다.
   - PNG는 168 mm 폭에서 600 dpi이고, SVG에는 인쇄 크기(mm)를 적었다.
-  - 저장할 때 인쇄 크기의 글자 크기, 글자끼리의 겹침, 상자 밖으로 넘친 글자를 자동으로 검사한다.
+  - 저장할 때 인쇄 크기의 글자 크기, 글자끼리의 겹침, 상자 밖으로 넘친 글자, 그림 가장자리에서 잘린 글자를 자동으로 검사한다.
   - 흰 배경, 영문, 세리프 글꼴(Times 계열)이다. 관계 유형은 색과 선 모양을 함께 써서 흑백 인쇄에서도 구분된다.
 - 다이어그램: 코드에서 직접 읽어 그렸다. 노드·간선·슬롯 수·파라미터 수는 `current_semantics/orl.py`(`orl/1`)에서 읽는다.
 - 색 규칙:
@@ -91,19 +92,31 @@ Isaac Sim + Pegasus의 이동 패드와 PX4 SITL 쿼드로터에서 정책까지
   - 채운 원은 등록된 판정이다. 두 구간 모두 1보다 작아 "ORL이 더 빠름"이다.
   - 빈 원은 시드 45를 뺀 탐색적 재계산이다. 판정에는 쓰지 않는다.
 
-## 6. 같은 예산 착륙 성능 `equal-budget/1`과 Isaac 평가
+## 6. 같은 예산 착륙 성능 `equal-budget/1`
 
 ![equal budget](equal_budget.png)
 
-- 판정 파일 `results/current_semantics_3d/spatial_current_semantics_v1/equal_budget/equal_budget.json`과 `isaac_equal_budget/isaac_equal_budget.json`에서 그렸다.
+- 판정 파일 `results/current_semantics_3d/spatial_current_semantics_v1/equal_budget/equal_budget.json`에서 그렸다.
 - (a) 학습 시드 50–59의 모델을 정확히 100, 200, 600 업데이트 학습한 직후의 가중치로 평가한 셀 10개 평균 성공률이다. 작은 점은 시드, 큰 점과 선은 평균이다.
   - 0 % 근처의 회색 점은 시드 54의 Untyped GNN과 PPO이다. 600 업데이트 동안 가장 쉬운 단계를 벗어나지 못했다.
 - (b) 예산마다 시드별 차이(ORL − 비교)의 평균과 97.5 % 짝지은 t 구간(Bonferroni)이다.
   - 채운 기호는 등록된 순서 검정에서 판정한 예산이다. 예산 100은 두 비교 모두 구간이 0보다 커서 "더 잘 착륙"이다.
   - 예산 200에서 구간이 0을 포함해 순서 검정이 멈췄다. 빈 기호(예산 600)는 판정 없이 보고만 한다.
-- (c) 예산 600 모델 30개를 Isaac Sim + PX4로 비행한 성공률이다. 작은 점은 모델(15사례), 채운 큰 점은 정책 평균, 빈 점은 같은 사례를 로컬 플랜트로 비행한 평균이다.
 
-## 7. 실제 운용 환경 시연
+## 7. Isaac Sim + PX4 평가 `isaac-equal-budget/1`
+
+![isaac equal budget](isaac_equal_budget.png)
+
+- 판정 파일 `results/current_semantics_3d/spatial_current_semantics_v1/isaac_equal_budget/isaac_equal_budget.json`에서 그렸다. 로컬 기준은 같은 폴더의 `local_reference.jsonl`이다.
+- (a) 예산 600 모델 30개의 Isaac Sim + PX4 SITL 착륙 성공률이다. 조건마다 새 환경 5개이고, 맨 오른쪽은 15사례 전체이다.
+  - 작은 점은 모델(학습 시드), 큰 점은 정책 평균이다.
+  - 검은 가로선은 같은 사례를 로컬 플랜트로 비행한 평균이다.
+  - 0 %의 회색 점은 시드 54의 Untyped GNN과 PPO이다. 로컬에서 학습하지 못한 모델이다.
+- (b) 시드별 차이(ORL − 비교)의 평균과 97.5 % 짝지은 t 구간(Bonferroni)이다.
+  - 채운 기호가 등록된 Isaac 판정이다. 두 구간 모두 0을 포함해 "확립되지 않음"이다.
+  - 빈 기호는 같은 사례의 로컬 결과이다. 보고만 하고 판정에는 쓰지 않는다.
+
+## 8. 실제 운용 환경 시연
 
 ![ORL demo flight](orl_isaac_px4_demo.gif)
 
@@ -151,4 +164,4 @@ python3 Ontology_RGAT_UAV_RL_ISAAC_PX4/tools/make_doc_figures.py all --formats t
 
 ---
 
-Copyright © 2026 Jun Suk Kim (김준석). 관리자: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
+Copyright © 2026 Jun Suk Kim (김준석). 관리자: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>. Apache License 2.0 ([LICENSE](../../LICENSE)).

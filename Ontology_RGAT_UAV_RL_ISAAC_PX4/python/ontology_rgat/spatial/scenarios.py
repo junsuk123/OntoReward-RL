@@ -1,3 +1,7 @@
+# Copyright (c) 2026 Jun Suk Kim (김준석)
+# Maintainer: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """Evaluator/plant-only seeded spatial CV--CA--CV scenario, shared with Isaac.
 
 No phase, switch time or true target velocity belongs in the causal packet.
@@ -51,7 +55,7 @@ def sample_planar_scenario(seed):
     return SpatialScenario(sample.t1, sample.t2, sample.v0, sample.a2, 0.0)
 
 
-# spatial_current_semantics_v1 task v5 on Isaac (guide 11.6, user 2026-10-30).
+# spatial_current_semantics_v1 task v5 on Isaac (guide 11.6, 2026-10-30).
 # The episode's composition draw is made ONCE, by the learner
 # (current_semantics/scenario.py, from the episode seed), and travels to Isaac
 # as the scenario name; the gateway forwards it, pad_motion.py drives the deck

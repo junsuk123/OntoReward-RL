@@ -1,3 +1,7 @@
+# Copyright (c) 2026 Jun Suk Kim (김준석)
+# Maintainer: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """Camera-frame kinematics of the pad estimate, from the current state alone (guide 7).
 
 W is ENU, B is FLU, C is the optical frame (+X right, +Y down, +Z forward).

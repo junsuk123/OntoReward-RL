@@ -1,3 +1,7 @@
+# Copyright (c) 2026 Jun Suk Kim (김준석)
+# Maintainer: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """Live view of the graph encoders' internal state, for the study monitor (read-only).
 
 For a training directory of a graph arm -- the proposed ORL policy (orl.py), the registered

@@ -1,3 +1,7 @@
+# Copyright (c) 2026 Jun Suk Kim (김준석)
+# Maintainer: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """The one proposed ontology graph of spatial_current_semantics_v1 (guide 8.2).
 
 A candidate frozen before training, not a validated graph: eight nodes,

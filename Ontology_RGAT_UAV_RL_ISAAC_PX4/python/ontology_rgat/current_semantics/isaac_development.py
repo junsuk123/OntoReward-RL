@@ -1,3 +1,7 @@
+# Copyright (c) 2026 Jun Suk Kim (김준석)
+# Maintainer: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """Guide 11.6: the development models flown on Isaac/PX4 (protocol isaac-development/1).
 
 After a passed development gate, EVERY development model -- each training seed x

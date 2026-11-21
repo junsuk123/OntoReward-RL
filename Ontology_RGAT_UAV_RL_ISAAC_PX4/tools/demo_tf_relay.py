@@ -1,3 +1,7 @@
+# Copyright (c) 2026 Jun Suk Kim (김준석)
+# Maintainer: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """Demo-only RViz helper: turns the simulator's truth odometry into TF frames (map->uav,
 map->pad) and two trajectory paths, so an RViz follower camera can stay on the vehicle.
 It only subscribes to the evaluator-side truth topics and publishes /demo/* for RViz;

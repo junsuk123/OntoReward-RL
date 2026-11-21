@@ -1,3 +1,7 @@
+# Copyright (c) 2026 Jun Suk Kim (김준석)
+# Maintainer: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """isaac-eval/1: the selected G4 checkpoints flown on a backend the caller owns.
 
 The evaluation logic runs here on the LOCAL plant (any backend works); no test

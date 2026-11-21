@@ -1,3 +1,7 @@
+# Copyright (c) 2026 Jun Suk Kim (김준석)
+# Maintainer: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """Spatial extension of upstream v2.8's causal absolute-pad ABG tracker.
 
 The same gains are applied only to fresh optical solves, not repeated camera

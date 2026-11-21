@@ -1,3 +1,7 @@
+# Copyright (c) 2026 Jun Suk Kim (김준석)
+# Maintainer: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """The common training reward of spatial_current_semantics_v1 (``spatial-current-reward/4``).
 
 Every arm trains on this one function; it reads simulator truth (and the policy's

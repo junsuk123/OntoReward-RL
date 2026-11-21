@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Jun Suk Kim (김준석)
+# Maintainer: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """ArUco landing pad: texture generation and camera-based pose recovery.
 
 Isaac is not imported here, so the geometry is testable without a simulator.

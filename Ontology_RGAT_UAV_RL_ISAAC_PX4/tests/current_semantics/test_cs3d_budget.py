@@ -1,3 +1,7 @@
+# Copyright (c) 2026 Jun Suk Kim (김준석)
+# Maintainer: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """equal-budget/1 and isaac-equal-budget/1 (current_semantics/budget.py): fresh seeds, the
 development cells, weights after exactly B updates, and the registered fixed-sequence rule."""
 from __future__ import annotations

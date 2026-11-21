@@ -143,4 +143,4 @@ python3 -m pytest -q tests/current_semantics  # ORL과 실험 절차만
 
 ---
 
-Copyright © 2026 Jun Suk Kim (김준석). 관리자: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
+Copyright © 2026 Jun Suk Kim (김준석). 관리자: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>. Apache License 2.0 ([LICENSE](../LICENSE)).

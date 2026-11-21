@@ -1,4 +1,8 @@
-"""The omnidirectional landing scenario of task v5 (guide 11.1, user 2026-10-29).
+# Copyright (c) 2026 Jun Suk Kim (김준석)
+# Maintainer: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
+# SPDX-License-Identifier: Apache-2.0
+
+"""The omnidirectional landing scenario of task v5 (guide 11.1, 2026-10-29).
 
 The spatial-reference/12 local plant draws the pad's travel heading from
 U(-0.2, 0.2) rad and the initial horizontal offset from a 0.4 m square, so every

@@ -1,3 +1,7 @@
+# Copyright (c) 2026 Jun Suk Kim (김준석)
+# Maintainer: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """orl/5, its rule control and orl-development/5 (status doc 20.12).
 
 view-rule/2 is the task field's lost-view law on the policy's own estimate: view-rule/1's

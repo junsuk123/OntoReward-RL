@@ -1,3 +1,7 @@
+# Copyright (c) 2026 Jun Suk Kim (김준석)
+# Maintainer: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """The training-only pose stream that labels rendered keypoint frames.
 
 Isaac publishes the rendered frame and its pad-relative truth pose from the

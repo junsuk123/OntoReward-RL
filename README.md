@@ -1,6 +1,6 @@
 # 온톨로지 기반 관계 그래프 어텐션 강화학습을 이용한 이동 플랫폼 UAV 착륙
 
-**ORL: Ontology-Structured Reinforcement Learning** · 관리자 Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
+**ORL: Ontology-Structured Reinforcement Learning** · 관리자 Jun Suk Kim (김준석) <junsuk55944587@gmail.com> · [Apache License 2.0](LICENSE)
 
 이동하는 지상 플랫폼(UGV) 위에 쿼드로터를 착륙시키는 강화학습 정책이다.
 정책은 매 결정 시점의 현재 관측만 받아 월드 좌표계 3축 순가속도 `(a_x, a_y, a_z)`를 낸다.
@@ -25,13 +25,14 @@ CNN이 합성곱에서, LSTM이 게이트에서 귀납 편향을 얻듯이, ORL�
 > |---|---|---|
 > | 같은 과제를 더 빨리 익히는가? | `learning-speed/1`, 새 학습 시드 40–49 | **ORL이 더 빠름.** 최고 난이도 도달 중앙값 65 업데이트(Untyped GNN 100, PPO 107). 소요 비율 ×0.56, ×0.53. 10/10 시드에서 ORL이 먼저 도달 |
 > | 같은 학습 예산에서 더 잘 착륙하는가? | `equal-budget/1`, 새 학습 시드 50–59 | **100 업데이트에서 ORL이 더 잘 착륙.** 셀 10개 평균 성공률 71.3 % (Untyped GNN 43.1 %, PPO 45.9 %). 차이 +28.2 pp, +25.4 pp, 97.5 % 구간 하한 > 0 |
-> | Isaac Sim + PX4에서도 착륙하는가? | `isaac-equal-budget/1`, 모델 30개 × 15사례 | ISAAC_SUMMARY |
+> | Isaac Sim + PX4에서도 착륙하는가? | `isaac-equal-budget/1`, 모델 30개 × 15사례 | **ORL이 Isaac/PX4에서도 착륙.** 예산 600 모델의 성공률 93.3 % (140/150, 같은 사례 로컬 96.7 %). Untyped GNN 88.0 %, PPO 89.3 %. 비교 판정은 두 비교 모두 확립되지 않음(+5.3 pp, +4.0 pp, 97.5 % 구간이 0을 포함) |
 >
 > **해석**
 >
 > - ORL의 이점은 **표본 효율**이다. 온톨로지 구조(국소성, 평면 가중치 공유, 거울 등변성)가 같은 과제를 약 절반의 PPO 업데이트로 익히게 하고, 그 차이가 같은 예산의 착륙 성공률 차이로 나타난다.
 > - **학습 신뢰성:** 두 실험의 새 시드 20개에서 ORL은 모두 최고 난이도에 도달했다. 비교 정책은 각각 2개 시드에서 600 업데이트 동안 가장 쉬운 단계를 벗어나지 못했다(탐색적 집계).
 > - **범위:** 이점은 학습 초반의 것이다. 예산 200에서는 등록된 순서 검정이 멈췄고(구간이 0을 포함), 충분히 학습한 뒤의 최종 성능 우위는 주장하지 않는다.
+> - **실제 비행 스택으로의 전이:** 로컬 플랜트에서 학습한 ORL 정책이 Isaac Sim + PX4 SITL 폐루프에서 로컬과 비슷하게 착륙했다. Isaac에서의 비교 우위는 등록 규칙으로 확립되지 않았다. 예산 600에서는 로컬에서도 판정하지 않았던 것과 같은 결론이다.
 > - 판정 규칙, 시드, 예산은 모두 학습 전에 해시로 고정했고, 판정 전에 등록 검사를 통과했다. 자세한 내용은 3.4.
 
 ![Overall architecture](docs/figures/overall_architecture.png)
@@ -304,10 +305,10 @@ Isaac Sim 쪽 값은 배포 프로필 `config/spatial-isaac-system-v12.yaml`과 
 | Untyped GNN | 97 | 127 | 81 | 89 | 103 | 미도달 | 89 | 121 | 83 | 114 | 100 |
 | PPO (raw obs.) | 119 | 127 | 95 | 87 | 91 | 미도달 | 89 | 140 | 84 | 124 | 107 |
 
-| 비교 | 소요 비율 T(ORL)/T(비교) | 97.5 % 구간 | ORL이 먼저 도달 | 판정 |
-|---|---:|---:|---:|---|
-| ORL / Untyped GNN | ×0.56 | [0.33, 0.94] | 10/10 | **ORL이 더 빠름** |
-| ORL / PPO (raw obs.) | ×0.53 | [0.32, 0.90] | 10/10 | **ORL이 더 빠름** |
+| 비교 | 소요 비율 T(ORL)/T(비교) | 97.5 % 구간 |
+|---|---:|---:|
+| ORL / Untyped GNN | ×0.56 | [0.33, 0.94] |
+| ORL / PPO (raw obs.) | ×0.53 | [0.32, 0.90] |
 
 - 소요 비율은 시드별 비율의 기하평균이다. 미도달은 등록 규칙대로 600으로 셌다.
 - **시드 45:** Untyped GNN과 PPO는 600 업데이트 동안 가장 쉬운 단계(난이도 0)를 벗어나지 못했다. 같은 시드에서 ORL은 66번째 업데이트에 최고 난이도에 도달했다.
@@ -336,14 +337,14 @@ Isaac Sim 쪽 값은 배포 프로필 `config/spatial-isaac-system-v12.yaml`과 
 | PPO (raw obs.) | 45.9 % | 66.6 % | 72.5 % |
 | 예산 시점에 이미 최고 난이도로 학습 중이던 모델 (ORL / Untyped / PPO) | 10 / 2 / 4 | 10 / 9 / 9 | 10 / 9 / 9 |
 
-| ORL − 비교 | 예산 | 평균 | 97.5 % 구간 | ORL이 높은 시드 | 판정 |
-|---|---:|---:|---:|---:|---|
-| Untyped GNN | 100 | +28.2 pp | [+7.1, +49.4] | 9/10 | **더 잘 착륙** |
-| | 200 | +17.9 pp | [−2.5, +38.4] | 9/10 | 확립되지 않음 (검정 종료) |
-| | 600 | +10.7 pp | [−11.8, +33.3] | 7/10 | 판정 없음 (보고만) |
-| PPO (raw obs.) | 100 | +25.4 pp | [+2.0, +48.9] | 9/10 | **더 잘 착륙** |
-| | 200 | +11.8 pp | [−9.6, +33.2] | 7/10 | 확립되지 않음 (검정 종료) |
-| | 600 | +7.0 pp | [−15.8, +29.9] | 6/10 | 판정 없음 (보고만) |
+| ORL − 비교 | 예산 | 평균 | 97.5 % 구간 |
+|---|---:|---:|---:|
+| Untyped GNN | 100 | +28.2 pp | [+7.1, +49.4] |
+| | 200 | +17.9 pp | [−2.5, +38.4] |
+| | 600 | +10.7 pp | [−11.8, +33.3] |
+| PPO (raw obs.) | 100 | +25.4 pp | [+2.0, +48.9] |
+| | 200 | +11.8 pp | [−9.6, +33.2] |
+| | 600 | +7.0 pp | [−15.8, +29.9] |
 
 - **시드 54:** Untyped GNN과 PPO는 600 업데이트 동안 가장 쉬운 단계(난이도 0)를 벗어나지 못했다(성공률 0–2 %). 같은 시드의 ORL은 63번째 업데이트에 최고 난이도에 도달했다.
   - `learning-speed/1`의 시드 45와 같은 양상이다. 두 실험의 새 시드 20개 중 ORL은 20개, 비교 정책은 각각 18개에서 최고 난이도에 도달했다.
@@ -351,12 +352,43 @@ Isaac Sim 쪽 값은 배포 프로필 `config/spatial-isaac-system-v12.yaml`과 
 - 최고 난이도 첫 도달은 ORL 중앙값 64.5, Untyped 103.5, PPO 102.5 업데이트였다. 10개 시드 모두에서 ORL이 먼저 도달해 `learning-speed/1`이 다시 재현됐다(이 실험의 판정 지표는 아니다).
 - 예산 100의 위험 판정 비율도 ORL이 가장 낮다(ORL 18.6 %, Untyped 23.0 %, PPO 24.5 %).
 
-ISAAC_SECTION
+#### Isaac Sim + PX4 평가 `isaac-equal-budget/1` (사전 등록, 판정: 두 비교 모두 확립되지 않음)
+
+- **질문:** 로컬 플랜트에서 600 업데이트 학습한 정책이 Isaac Sim + Pegasus + PX4 SITL 폐루프에서도 착륙하는가?
+- **조건:** `equal-budget/1`의 예산 600 모델 30개를 썼고, 등록 때 체크포인트 30개의 sha256에 묶었다.
+  - 조건 3개(composition ID, composition OOD, combined ID) × 새 환경 5개(994501–994525)로, 모델당 15사례, 모두 450 에피소드이다. 정책은 결정론적으로 비행한다.
+  - 같은 사례를 로컬 플랜트로도 비행해 짝지었다.
+- **판정 규칙(학습 전에 커밋한 계획):** 모델별 Isaac 성공률로 시드별 차이(ORL − 비교)를 구하고, 97.5 % 짝지은 t 구간(Bonferroni)으로 판정한다. 로컬 결과는 보고만 한다.
+- 2026-11-21 11:19에 등록하고 11:20–20:32에 헤드리스로 비행했다. 판정 전에 등록 검사(plan hash `28a8ea3b…`)를 통과했다.
+- **중단 1건(16:43):** 시드 59 ORL의 composition OOD 994514 사례에서, 정책 인계 전에 PX4 SITL의 배터리 상태 메시지가 시동 순간 끊겼다.
+  - 그 결과 PX4가 `battery_unhealthy` failsafe를 냈다. 배터리 값 자체는 정상이었다.
+  - 정책이 비행하기 전의 인프라 결함이므로 기록하지 않았다. 같은 명령으로 재개해 같은 환경 시드로 다시 비행했고, 결과는 SUCCESS였다.
+  - 정책 비행 중의 실패는 하나도 버리지 않았다.
+
+![Isaac equal-budget evaluation](docs/figures/isaac_equal_budget.png)
+
+| 정책 | composition ID | composition OOD | combined ID | 전체 | 같은 사례 로컬 | 위험 판정 |
+|---|---:|---:|---:|---:|---:|---:|
+| **ORL** | **94 %** | **98 %** | 88 % | **93.3 %** (140/150) | 96.7 % | 7 / 150 |
+| Untyped GNN | 88 % | 88 % | 88 % | 88.0 % (132/150) | 86.0 % | 3 / 150 |
+| PPO (raw obs.) | 90 % | 90 % | 88 % | 89.3 % (134/150) | 90.0 % | 1 / 150 |
+
+| ORL − 비교 | Isaac 평균 (등록 판정) | 97.5 % 구간 | 같은 사례 로컬 (보고만) |
+|---|---:|---:|---:|
+| Untyped GNN | +5.3 pp | [−25.0, +35.6] | +10.7 pp [−17.3, +38.7] |
+| PPO (raw obs.) | +4.0 pp | [−26.2, +34.2] | +6.7 pp [−19.9, +33.2] |
+
+- **전이:** 짝지은 450사례 중 397사례는 Isaac과 로컬 모두 성공했고, Isaac에서만 성공 9, 로컬에서만 성공 12, 둘 다 실패 32였다.
+- **시드 54:** Untyped GNN과 PPO는 Isaac에서도 15사례 모두 시간 초과였다(로컬에서 학습하지 못한 모델). 평균 차이는 이 시드에서 나온다.
+  - 시드 54를 빼면(탐색적) ORL − Untyped −5.2 pp, ORL − PPO −6.7 pp이다.
+- **위험 판정:** ORL의 실패 10건 중 7건이 위험 판정(위험 접촉 5, 안전 범위 위반 2)이고, 그중 5건이 시드 57 모델이다. 그 모델은 같은 사례를 로컬에서 14/15 착륙했다.
+  - 비교 정책의 실패는 대부분 시드 54의 시간 초과이다.
 
 #### 해석과 한계
 
 - **확인된 것:** ORL은 같은 과제를 더 적은 업데이트로 익히고(`learning-speed/1`), 비교 정책이 막 최고 난이도에 도달하는 예산에서 더 잘 착륙한다(`equal-budget/1`, 예산 100). 두 결과 모두 새 시드로 사전 등록해 얻었다.
 - **주장하지 않는 것:** 충분히 학습한 뒤의 최종 착륙 성능 우위. 예산 200에서 등록된 순서 검정이 멈췄다. 비교 정책이 학습에 성공한 시드만 보면 예산 600에서는 세 정책이 비슷하다.
+- **Isaac 평가:** ORL 정책은 실제 비행 스택에서도 착륙한다(93.3 %, 로컬 96.7 %). 예산 600의 Isaac 비교는 등록 규칙으로 확립되지 않았다. ORL의 위험 판정은 7/150으로 비교 정책(3, 1)보다 많고, 대부분 한 모델(시드 57)에서 나왔다.
 - **편향의 구성:** 네 편향을 함께 넣었으므로 각각의 기여는 분리되지 않았다. `orl/1`의 학습된 하강 게이트는 학습 후 거의 상수였으므로(표준편차 ≤ 0.027), 이 결과는 실제로는 국소성, 가중치 공유, 거울 등변성 세 가지의 효과이다.
 - **어려운 조건:** 패드 가속, 긴 시야 차단, 광학 잡음 5배가 겹친 combined OOD 셀은 세 정책 모두 10 % 미만으로 착륙한다.
 - 비교 정책은 Untyped GNN과 PPO이다. 이전 단계의 다른 정책과 항법 열화 실험은 `archive/`에 보관했고 이 연구의 주장에 쓰지 않는다.
@@ -390,12 +422,14 @@ ISAAC_SECTION
 4. **3축 가속도 제어로의 확장**
    - 2D 상대 운동 기반 착륙 문제를 월드 3축 순가속도 제어로 확장했다. 자세는 행동에서 유도한다.
    - 이동 플랫폼의 전 방향 접근, 패드 가속, 시야 차단, 광학 잡음 조건에서 평가할 수 있다.
+   - 로컬 플랜트에서 학습한 ORL 정책이 Isaac Sim + PX4 SITL 폐루프에서 150사례 중 140번 착륙했다(사전 등록 평가, 비교 우위는 확립되지 않음).
 
 **향후 과제**
 
 - 편향별 제거 실험(국소성, 평면 공유, 거울 등변성 각각의 기여)
 - 학습 후반의 최종 착륙 성능을 가리기 위한, 학습 시드를 늘린 확인 실험
 - combined OOD(패드 가속 + 긴 시야 차단 + 강한 잡음) 조건의 실패 원인 진단
+- Isaac에서 ORL 시드 57 모델이 낸 위험 접촉의 원인 진단
 
 ## 5. 실행
 
@@ -423,12 +457,12 @@ P=$PWD/Ontology_RGAT_UAV_RL_ISAAC_PX4/config/current_semantics
 그림은 다음 명령으로 다시 만든다. 구조 그림은 코드(`orl.py`, `reward.py`)에서 직접 읽는다.
 
 ```bash
-python3 Ontology_RGAT_UAV_RL_ISAAC_PX4/tools/make_doc_figures.py all      # overall, architecture, graph, field, speed, budget
+python3 Ontology_RGAT_UAV_RL_ISAAC_PX4/tools/make_doc_figures.py all      # overall, architecture, graph, field, speed, budget, isaac
 python3 Ontology_RGAT_UAV_RL_ISAAC_PX4/tools/make_doc_figures.py speed    # 하나만 (speed는 learning_speed.json에서)
 python3 Ontology_RGAT_UAV_RL_ISAAC_PX4/tools/make_doc_figures.py all --formats tif,eps,pdf --out OUT   # IJCAS 투고용
 ```
 
-- 그림은 IJCAS 지면의 두 단 전체 폭(168 mm)에 맞췄다. 그 크기에서 가장 작은 글자가 7 pt이다.
+- 그림은 IJCAS 지면의 두 단 전체 폭(168 mm)에 맞췄다. 그 크기에서 구조 그림의 가장 작은 글자는 7 pt, 결과 그래프의 가장 작은 글자는 8 pt이다.
 - 제목과 설명 문장은 그림 안에 넣지 않고 캡션으로 쓴다.
 - 자세한 규칙은 [docs/figures/README.md](docs/figures/README.md)에 있다.
 
@@ -463,9 +497,10 @@ python3 tools/isaac_demo_capture.py media OUT ../docs/figures --still OUT/still_
 ## 7. 저작권과 관리자
 
 - **저작권:** Copyright © 2026 Jun Suk Kim (김준석). 이 저장소의 코드, 설정, 문서, 그림의 저작권은 저자에게 있다.
+- **라이선스:** [Apache License 2.0](LICENSE). 재배포할 때는 [NOTICE](NOTICE)를 함께 둔다.
 - **관리자:** Jun Suk Kim (김준석), <junsuk55944587@gmail.com>
 - **인용:** 저장소 인용 정보는 [CITATION.cff](CITATION.cff)에 있다.
 - **제3자 저작물:**
-  - R-GAT 층의 개념과 그 출처: [NOTICE](Ontology_RGAT_UAV_RL_ISAAC_PX4/NOTICE)
+  - 관계 그래프 어텐션 층의 개념과 그 출처: [NOTICE](NOTICE)
   - UGV 모델(AgileX Ranger Mini 3.0, BSD): `Ontology_RGAT_UAV_RL_ISAAC_PX4/assets/ranger_mini_v3/`
   - Isaac Sim, Pegasus Simulator, PX4-Autopilot, Micro XRCE-DDS Agent, `px4_msgs`는 이 저장소에 포함하지 않는 외부 의존성이며 각자의 라이선스를 따른다.

@@ -1,3 +1,7 @@
+# Copyright (c) 2026 Jun Suk Kim (김준석)
+# Maintainer: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """Live monitor of everything the current-semantics study is doing now, read-only.
 
 The development dashboard (``dashboard.py``) follows ONE registered four-arm run.  This
@@ -77,7 +81,7 @@ BUDGET_DIR = "equal_budget"       # equal-budget/1 (budget.py)
 STOP_AT_FULL_CAP = 600            # learning-speed runs stop at the first update at difficulty 1.0
 ARM_NAMES = {"raw_ppo": "PPO (raw obs.)", "untyped_gnn_ppo": "Untyped GNN",
              "semantic_mlp_ppo": "Semantic MLP", "ontology_rgat_ppo": "R-GAT (등록 arm)"}
-# Each config's run root, by the self-navigation it uses (user 2026-11-20: the kinematic WLS
+# Each config's run root, by the self-navigation it uses (2026-11-20: the kinematic WLS
 # estimator is separate research and carries no claim of this study).
 ROOT_CONFIGS = (("spatial_view_contact_v1.yaml", "기준 항법"),)
 _ROOT_LABELS: dict[str, str] | None = None

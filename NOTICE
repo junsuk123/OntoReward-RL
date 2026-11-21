@@ -7,14 +7,17 @@ Ontology-RGAT UAV 착륙: Isaac Sim + PX4
 Copyright (c) 2026 Jun Suk Kim (김준석)
 관리자: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
 
+Licensed under the Apache License, Version 2.0 (LICENSE 파일 참조).
+
 이 저장소의 코드, 설정, 문서, 그림은 위 저자가 작성했다. 아래 제3자 저작물과
 외부 의존성은 각자의 저작권자와 라이선스를 따른다.
 
 이 저장소가 기반으로 삼은 제3자 저작물
 ---------------------------------------
 
-python/ontology_rgat/rgat/layers.py는 다음 논문에서 설명한 relational graph
-attention layer를 PyTorch로 재구현한 파일이다.
+Ontology_RGAT_UAV_RL_ISAAC_PX4/python/ontology_rgat/current_semantics/models.py의 RelationalAttentionLayer(ORL과
+비교 정책이 쓰는 관계 어텐션 층)는 다음 논문이 제안한 relational graph attention의
+개념을 따른다.
 
     D. Busbridge, D. Sherburn, P. Cavallo and N. Y. Hammerla,
     "Relational Graph Attention Networks", 2019.
@@ -26,12 +29,10 @@ attention layer를 PyTorch로 재구현한 파일이다.
     Copyright 2019 Babylon Partners
     Licensed under the Apache License, Version 2.0
 
-해당 저장소의 source는 이 저장소에 포함하지 않았다. TensorFlow 1.x 대상이라 이
-workspace의 Python 3.10 / ROS 2 Humble / Isaac Sim 5.1 baseline에서 실행되지 않기
-때문이다. 이어받은 것은 ARGAT/WIRGAT attention normalization,
-additive/multiplicative attention 방식, multi-head aggregation, relational kernel의
-basis decomposition을 포함한 model 개념이다. Batched dense formulation, attention
-logit의 학습 가능한 relation별 embedding과 이 저장소의 나머지 구현은 자체 작성했다.
+해당 저장소의 source는 이 저장소에 포함하지 않았고 복사하지도 않았다. 이어받은 것은
+관계 유형별 변환과 이웃에 대한 어텐션이라는 개념이다. 관계별 가중치, 관계별 bias를
+더한 additive attention 점수, 들어오는 간선에 대한 softmax, 고정 간선 목록 위의
+batched 구현은 자체 작성했다.
 
 Apache License, Version 2.0 전문은 다음 주소에서 확인할 수 있다.
 https://www.apache.org/licenses/LICENSE-2.0
@@ -39,6 +40,6 @@ https://www.apache.org/licenses/LICENSE-2.0
 UGV 모델
 --------
 
-assets/ranger_mini_v3/source/ 는 AgileX Robotics의 ugv_gazebo_sim 저장소(commit
+Ontology_RGAT_UAV_RL_ISAAC_PX4/assets/ranger_mini_v3/source/ 는 AgileX Robotics의 ugv_gazebo_sim 저장소(commit
 27633a956c845903ee630538afeb17fe70afdd84)에서 변경 없이 복사한 ranger_mini_v3
 package이다. upstream package.xml은 license를 BSD로 선언한다.

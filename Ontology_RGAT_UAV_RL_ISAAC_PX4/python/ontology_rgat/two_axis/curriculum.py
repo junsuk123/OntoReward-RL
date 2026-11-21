@@ -1,3 +1,7 @@
+# Copyright (c) 2026 Jun Suk Kim (김준석)
+# Maintainer: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """Training-only difficulty schedule, shared bit-for-bit by every policy arm.
 
 The schedule exists because a randomly initialised policy starting 4-8 m above

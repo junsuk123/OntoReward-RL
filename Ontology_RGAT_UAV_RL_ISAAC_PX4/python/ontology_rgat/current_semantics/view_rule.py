@@ -1,3 +1,7 @@
+# Copyright (c) 2026 Jun Suk Kim (김준석)
+# Maintainer: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """The view rule: no descent without a recent view of the pad (status doc 20.9).
 
 orl/3's gate could close, and a closed gate held altitude, but PPO left it half open when

@@ -7,6 +7,7 @@ authors:
     alias: "김준석"
     email: junsuk55944587@gmail.com
 repository-code: "https://github.com/junsuk123/ONTOLOGY-STRUCTURED-REINFORCEMENT-LEARNING"
+license: Apache-2.0
 keywords:
   - reinforcement learning
   - ontology

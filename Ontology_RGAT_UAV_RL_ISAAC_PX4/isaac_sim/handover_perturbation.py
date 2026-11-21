@@ -1,3 +1,7 @@
+# Copyright (c) 2026 Jun Suk Kim (김준석)
+# Maintainer: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """The seeded policy-handover velocity/rate perturbation, applied so the IMU can see it.
 
 The domain-randomization handover kick (``initial_velocity_m_s``, U(-1, 1) m/s per

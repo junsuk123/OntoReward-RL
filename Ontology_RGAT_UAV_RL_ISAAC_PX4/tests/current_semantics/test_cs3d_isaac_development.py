@@ -1,3 +1,7 @@
+# Copyright (c) 2026 Jun Suk Kim (김준석)
+# Maintainer: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """Guide 11.6: task v5 on Isaac and the Isaac evaluation of the development models.
 
 Nothing here starts Isaac: the world's half is tested through pad_motion.py (pure

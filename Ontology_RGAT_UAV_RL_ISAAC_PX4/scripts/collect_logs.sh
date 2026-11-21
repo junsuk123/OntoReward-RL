@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# Copyright (c) 2026 Jun Suk Kim (김준석)
+# Maintainer: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
+# SPDX-License-Identifier: Apache-2.0
+
 # Gather every log the stack produces into the project, and therefore into
 # Synology Drive.
 #
@@ -40,7 +44,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --all) all=1 ;;
     --watch) mode=watch; [ "${2:-}" ] && [[ "${2}" =~ ^[0-9]+$ ]] && { interval=$2; shift; } ;;
-    -h|--help) sed -n '2,30p' "${BASH_SOURCE[0]}" | sed 's/^# \?//'; exit 0 ;;
+    -h|--help) sed -n '6,34p' "${BASH_SOURCE[0]}" | sed 's/^# \?//'; exit 0 ;;
     *) printf 'unknown argument: %s\n' "$1" >&2; exit 2 ;;
   esac
   shift

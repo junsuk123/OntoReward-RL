@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Jun Suk Kim (김준석)
+# Maintainer: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """Cache a real city block from OpenStreetMap, for isaac_sim/osm_city.py.
 
     scripts/fetch_city.py --name seoul-jongno \

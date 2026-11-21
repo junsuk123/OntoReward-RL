@@ -3,7 +3,7 @@
 # (spatial_view_contact_v1.yaml: no navigation estimator; the kinematic WLS estimator of the
 # author's separate research is not used anywhere in this protocol).
 #
-# User decision 2026-11-20 ("1"): the proposed model is ORL, the ontology used as the
+# Design decision 2026-11-20: the proposed model is ORL, the ontology used as the
 # policy's structure (orl.py; orl/1 = no raw-observation bypass, x/y planes sharing weights,
 # exact mirror equivariance, no hand-written rule).  Observed BEFORE this plan, on the
 # development seeds 10-14 (status doc 20.3, exploratory): first update at difficulty 1.0

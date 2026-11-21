@@ -1,3 +1,7 @@
+# Copyright (c) 2026 Jun Suk Kim (김준석)
+# Maintainer: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """Owned Isaac Sim + PX4 SITL stack for one flight session (moved verbatim from the archived
 ``python/run_spatial_pipeline.py`` on 2026-11-20, when every non-ORL route was archived).
 

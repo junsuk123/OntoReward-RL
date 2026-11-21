@@ -1,3 +1,7 @@
+# Copyright (c) 2026 Jun Suk Kim (김준석)
+# Maintainer: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """spatial-current-observation/3: the pad track re-acquires after repeated rejections.
 
 The reference ABG track initialises the pad velocity to the OWN velocity and

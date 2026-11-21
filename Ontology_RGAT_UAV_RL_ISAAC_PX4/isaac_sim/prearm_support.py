@@ -1,3 +1,7 @@
+# Copyright (c) 2026 Jun Suk Kim (김준석)
+# Maintainer: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """Physical attitude support for the disarmed spatial setup, not an RL aid."""
 import numpy as np
 from scipy.spatial.transform import Rotation

@@ -28,5 +28,5 @@ Import한 URDF/USD는 appearance와 geometry provenance일 뿐 학습되거나 w
 
 ---
 
-이 안내문: Copyright © 2026 Jun Suk Kim (김준석). 관리자: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
+이 안내문: Copyright © 2026 Jun Suk Kim (김준석). 관리자: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>. Apache License 2.0 ([LICENSE](../../../LICENSE)).
 `source/` 아래 파일은 AgileX Robotics의 저작물이며 upstream 라이선스(BSD)를 따른다.

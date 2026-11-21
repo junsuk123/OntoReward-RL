@@ -1,3 +1,7 @@
+# Copyright (c) 2026 Jun Suk Kim (김준석)
+# Maintainer: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """The envelope refuses a descent while the pad is outside the approach cone.
 
 Measured 2026-09-25 over 1302 training episodes of the two learned arms:

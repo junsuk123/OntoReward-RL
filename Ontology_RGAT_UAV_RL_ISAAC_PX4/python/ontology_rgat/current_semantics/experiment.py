@@ -1,3 +1,7 @@
+# Copyright (c) 2026 Jun Suk Kim (김준석)
+# Maintainer: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """Gates, separated report states and run bookkeeping of the current-observation path.
 
 Nothing here trains.  The gate table (guide 10) is evidence, not a verdict to
@@ -108,7 +112,7 @@ _G1_BLOCKING = (
     "struct-copy snapshots of the 2D env are exact only in perception mode "
     "(env.sensorStream is a RandStream handle)",
 )
-# User decision 2026-10-28 ("these two tasks are unnecessary"): the 2D-provenance
+# Decision 2026-10-28: the 2D-provenance
 # gates and two G2 items are waived, not passed.  A waiver is recorded with its
 # date and scope so no report can read it as evidence.
 USER_WAIVERS = MappingProxyType({

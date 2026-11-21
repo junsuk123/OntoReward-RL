@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# Copyright (c) 2026 Jun Suk Kim (김준석)
+# Maintainer: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
+# SPDX-License-Identifier: Apache-2.0
+
 # Experiment routing.  Since 2026-11-20 the repository holds one route: the current-observation
 # 3D study of the ORL landing policy and its comparison arms (current_semantics/).  Every other
 # route (minimal-observation ROS system, spatial-reference ladder, two-axis reference, MATLAB

@@ -1,3 +1,7 @@
+# Copyright (c) 2026 Jun Suk Kim (김준석)
+# Maintainer: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """In-window 3D overlay for the Isaac Sim view.
 
 Isaac already renders the vehicle, the rover and the marker board. What it does

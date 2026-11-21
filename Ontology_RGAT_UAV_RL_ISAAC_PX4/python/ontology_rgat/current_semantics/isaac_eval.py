@@ -1,6 +1,10 @@
+# Copyright (c) 2026 Jun Suk Kim (김준석)
+# Maintainer: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """The selected G4 checkpoints flown on Isaac/PX4 (``isaac_eval``, protocol isaac-eval/1).
 
-User decision 2026-10-28: training runs on the Isaac-calibrated local plant and
+Design decision 2026-10-28: training runs on the Isaac-calibrated local plant and
 every selected-checkpoint evaluation runs on Isaac.  This module takes an OPEN
 ``CurrentSpatialBackend`` (the caller owns the stack), loads each model seed's
 ``best.pt`` under the current hashes, and flies the deterministic policy on the

@@ -1,3 +1,7 @@
+# Copyright (c) 2026 Jun Suk Kim (김준석)
+# Maintainer: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """Bounded relaunch after a crashed simulator startup.
 
 Isaac aborts intermittently during boot on this hardware (a carb tasking

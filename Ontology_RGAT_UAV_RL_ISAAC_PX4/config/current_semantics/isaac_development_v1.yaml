@@ -1,7 +1,7 @@
 # spatial_current_semantics_v1, guide 11.6: the development models on Isaac/PX4.
 # Registered by `./run.sh current-semantics-3d --stage register-isaac-development`
 # (after the development gate PASSED, 2026-10-30) and flown by
-# `--stage isaac-development --allow-isaac` on the user's approval ("3", 2026-10-30).
+# `--stage isaac-development --allow-isaac` (2026-10-30).
 #
 # Every development model (training seeds 10-14 x four arms = 20, each its
 # validation-selected best.pt) flies EVERY case below, deterministically: 20 x 30

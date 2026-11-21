@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# Copyright (c) 2026 Jun Suk Kim (김준석)
+# Maintainer: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
+# SPDX-License-Identifier: Apache-2.0
+
 # Keep the gateway that actually runs in step with the one in this repository.
 #
 # ROS 2 Humble's rosidl dependency parser corrupts non-ASCII source and build
@@ -34,7 +38,7 @@ case "${1:-}" in
   --check) mode=check ;;
   "") ;;
   -h|--help)
-    sed -n '2,22p' "${BASH_SOURCE[0]}" | sed 's/^# \?//'
+    sed -n '6,26p' "${BASH_SOURCE[0]}" | sed 's/^# \?//'
     exit 0 ;;
   *)
     printf 'usage: %s [--check]\n' "$(basename "${BASH_SOURCE[0]}")" >&2

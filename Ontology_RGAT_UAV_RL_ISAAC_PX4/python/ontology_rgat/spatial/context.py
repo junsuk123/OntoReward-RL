@@ -1,3 +1,7 @@
+# Copyright (c) 2026 Jun Suk Kim (김준석)
+# Maintainer: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """Decode the spatial causal packet into one context plane per ENU axis.
 
 The nine rows and twelve channels are NOT defined here -- they are

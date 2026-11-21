@@ -1,3 +1,7 @@
+# Copyright (c) 2026 Jun Suk Kim (김준석)
+# Maintainer: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """phi44 features and the 8x10 node input of spatial_current_semantics_v1 (guide 8.1)."""
 from dataclasses import replace
 import math

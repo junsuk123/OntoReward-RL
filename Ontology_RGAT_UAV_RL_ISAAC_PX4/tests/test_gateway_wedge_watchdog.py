@@ -1,3 +1,7 @@
+# Copyright (c) 2026 Jun Suk Kim (김준석)
+# Maintainer: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """The gateway has to say something when it stops answering.
 
 2026-09-24 it stopped serving UDP roughly four times an hour, for longer than

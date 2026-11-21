@@ -1,3 +1,7 @@
+# Copyright (c) 2026 Jun Suk Kim (김준석)
+# Maintainer: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
+# SPDX-License-Identifier: Apache-2.0
+
 """The handover kick must reach PX4 through an IMU that can measure it.
 
 Isaac wrote the seeded handover velocity step in ONE 4 ms physics tick. The VN-100
